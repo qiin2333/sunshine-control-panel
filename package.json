@@ -1,0 +1,29 @@
+{
+  "name": "sunshine-gui",
+  "version": "0.1.0",
+  "description": "A GUI for sunshine",
+  "main": "build/main/main.js",
+  "scripts": {
+    "start": "node scripts/dev-server.js",
+    "build": "node scripts/build.js && electron-builder",
+    "build:win": "node scripts/build.js && electron-builder --win",
+    "build:mac": "node scripts/build.js && electron-builder --mac",
+    "build:linux": "node scripts/build.js && electron-builder --linux"
+  },
+  "repository": "https://github.com/qiin2333/sunshine",
+  "author": {
+    "name": "qiin2333",
+    "url": "https://github.com/qiin2333"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^4.4.1",
+    "chalk": "^4.1.2",
+    "chokidar": "^3.5.3",
+    "electron": "^29.1.0",
+    "electron-builder": "^24.13.3",
+    "vite": "^4.5.0"
+  },
+  "dependencies": {
+    "vue": "^3.3.8"
+  }
+}

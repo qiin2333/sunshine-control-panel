@@ -5,8 +5,8 @@
   "main": "build/main/main.js",
   "scripts": {
     "start": "node scripts/dev-server.js",
-    "build": "node scripts/build.js && electron-builder",
-    "build:win": "node scripts/build.js && electron-builder --win",
+    "build": "node scripts/build.js && electron-builder -p never",
+    "build:win": "node scripts/build.js && electron-builder --win --publish=never",
     "build:mac": "node scripts/build.js && electron-builder --mac",
     "build:linux": "node scripts/build.js && electron-builder --linux"
   },

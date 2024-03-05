@@ -130,7 +130,7 @@ const template = [
         click: async () => {
           const { shell } = require('electron')
           await shell.openExternal(
-            'http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=wOMgrbiTMY9MNUy3nW48ISytNvvUR_vU&authKey=wdzVqkJZ%2BqQAatwgb8gnVD4sTouR8ZnOQeSZEc28UIynHs9XzbAjMqiKAWEVn7Yj&noverify=0&group_code=904820296'
+            'https://qm.qq.com/q/MOwm7fe68q'
           )
         },
       },

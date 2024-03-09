@@ -126,11 +126,20 @@ const template = [
         },
       },
       {
-        label: '加入串流裙',
+        label: '加入串流基地裙',
         click: async () => {
           const { shell } = require('electron')
           await shell.openExternal(
             'https://qm.qq.com/q/MOwm7fe68q'
+          )
+        },
+      },
+      {
+        label: '加入moonlight游戏串流XX群',
+        click: async () => {
+          const { shell } = require('electron')
+          await shell.openExternal(
+            'https://qm.qq.com/q/RyiWpIRBYK'
           )
         },
       },

@@ -32,7 +32,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
     var btn = document.createElement('div')
     btn.setAttribute('id', 'google_translate_element')
-    btn.setAttribute('style', 'position: absolute; top: 5px; right: 5px;')
+    btn.setAttribute('style', 'position: absolute; top: 12px; right: 10px;')
     document.querySelector('body').appendChild(btn)
   }
 })

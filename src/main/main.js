@@ -116,7 +116,7 @@ const template = [
     ],
   },
   {
-    role: 'help',
+    label: '使用教程',
     submenu: [
       {
         label: '下载最新基地版sunshine',
@@ -140,6 +140,15 @@ const template = [
           const { shell } = require('electron')
           await shell.openExternal(
             'https://qm.qq.com/q/RyiWpIRBYK'
+          )
+        },
+      },
+      {
+        label: '新手入门',
+        click: async () => {
+          const { shell } = require('electron')
+          await shell.openExternal(
+            'https://flowus.cn/share/3a591f93-f48b-4164-9028-bade2c35ef58'
           )
         },
       },

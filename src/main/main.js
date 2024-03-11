@@ -130,7 +130,7 @@ const template = [
         click: async () => {
           const { shell } = require('electron')
           await shell.openExternal(
-            'https://qm.qq.com/q/MOwm7fe68q'
+            'https://qm.qq.com/q/3tWBFVNZ'
           )
         },
       },

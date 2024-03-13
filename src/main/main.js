@@ -1,5 +1,5 @@
 // Modules to control application life and create native browser window
-const { app, Menu, session, BrowserWindow } = require('electron')
+const { app, Menu, session, BrowserWindow, dialog } = require('electron')
 const path = require('node:path')
 let win = null
 
@@ -121,20 +121,32 @@ const template = [
       {
         label: '编辑分辨率',
         click: async () => {
-          const { shell } = require('electron')
-          await shell.openPath('C:/IddSampleDriver/option.txt')
+          const cp = require('child_process')
+          const cmdStr = 'start C:\\iddSampleDriver\\option.txt'
+          cp.spawn('powershell', [`Start-Process powershell -ArgumentList '${cmdStr}' -Verb RunAs`])
         },
       },
       {
         label: '卸载虚拟显示器',
         click: async () => {
           const cp = require('child_process')
-          const cmdStr =
-            'C:\\IddSampleDriver\\nefconw.exe --remove-device-node --hardware-id ROOT\\iddsampledriver --class-guid 4d36e968-e325-11ce-bfc1-08002be10318'
-          await cp.spawn('powershell', [
-            `powershell -command "Start-Process powershell -ArgumentList '${cmdStr}' -Verb RunAs"`,
-          ])
-          new Notification({ title: 'Sunshine', body: '虚拟显示器卸载完成' }).show()
+          const prompt = await dialog.showMessageBox(win, {
+            type: 'question',
+            message: '确认卸载? 卸载后可通过重新安装基地版sunshine恢复。',
+            buttons: ['取消', '确认'],
+          })
+          if (prompt.response) {
+            const cmdStr =
+              'C:\\IddSampleDriver\\nefconw.exe --remove-device-node --hardware-id ROOT\\iddsampledriver --class-guid 4d36e968-e325-11ce-bfc1-08002be10318'
+            cp.spawn('powershell', [`Start-Process powershell -ArgumentList '${cmdStr}' -Verb RunAs`]).on(
+              'close',
+              (code) => {
+                dialog.showMessageBox(win, {
+                  message: `虚拟显示器卸载完成: ${code}`,
+                })
+              }
+            )
+          }
         },
       },
     ],

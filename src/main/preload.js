@@ -4,7 +4,11 @@ contextBridge.exposeInMainWorld('electron', {
   googleTranslateElementInit: () => {
     webFrame.executeJavaScript(
       `new google.translate.TranslateElement(
-        { pageLanguage: 'en', layout: google.translate.TranslateElement.InlineLayout.VERTICAL },
+        { 
+          pageLanguage: 'en',
+          layout: google.translate.TranslateElement.InlineLayout.VERTICAL,
+          includedLanguages: 'en, zh-CN'
+        },
         'google_translate_element'
       )
       console.log('------------ google_translate loaded --------------')`

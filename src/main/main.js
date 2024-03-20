@@ -124,6 +124,10 @@ const template = [
           const cp = require('child_process')
           const cmdStr = 'start C:\\iddSampleDriver\\option.txt'
           cp.spawn('powershell', [`Start-Process powershell -ArgumentList '${cmdStr}' -Verb RunAs`])
+          dialog.showMessageBox(win, {
+            message: `编辑后在【windows设备管理器-】中禁用再启用iddSampleDriver 即可生效`,
+          })
+          cp.spawn('cmd', [`start devmgmt.msc`])
         },
       },
       {
@@ -165,7 +169,7 @@ const template = [
         label: '加入串流基地裙',
         click: async () => {
           const { shell } = require('electron')
-          await shell.openExternal('https://qm.qq.com/q/3tWBFVNZ')
+          await shell.openExternal('https://qm.qq.com/q/s3QnqbxvFK')
         },
       },
       {
@@ -173,13 +177,6 @@ const template = [
         click: async () => {
           const { shell } = require('electron')
           await shell.openExternal('https://qm.qq.com/q/RyiWpIRBYK')
-        },
-      },
-      {
-        label: '新手入门',
-        click: async () => {
-          const { shell } = require('electron')
-          await shell.openExternal('https://flowus.cn/share/3a591f93-f48b-4164-9028-bade2c35ef58')
         },
       },
     ],

@@ -7,7 +7,7 @@ contextBridge.exposeInMainWorld('electron', {
         { 
           pageLanguage: 'en',
           layout: google.translate.TranslateElement.InlineLayout.VERTICAL,
-          includedLanguages: 'en, zh-CN'
+          includedLanguages: 'zh-CN,zh-TW'
         },
         'google_translate_element'
       )

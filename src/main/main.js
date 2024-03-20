@@ -33,6 +33,7 @@ function createWindow() {
     icon: './assets/sunshine.ico',
     // autoHideMenuBar: true,
     webPreferences: {
+      webSecurity: false,
       preload: path.join(__dirname, 'preload.js'),
     },
   })
@@ -54,6 +55,20 @@ app.whenReady().then(async () => {
     // On macOS it's common to re-create a window in the app when the
     // dock icon is clicked and there are no other windows open.
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
+  })
+
+  const filter = {
+    urls: ['https://*.googleapis.com/*'],
+  }
+
+  session.defaultSession.webRequest.onBeforeRequest(filter, (details, cb) => {
+    if (details.url.startsWith('https://translate-pa.googleapis.com/v1/supportedLanguages')) {
+      cb({
+        redirectURL: `https://raw.githubusercontent.com/qiin2333/sunshine-control-panel/master/src/main/static/supportedLanguages.js`,
+      })
+    } else {
+      cb({ requestHeaders: details.requestHeaders })
+    }
   })
 })
 

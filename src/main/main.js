@@ -64,7 +64,7 @@ app.whenReady().then(async () => {
   session.defaultSession.webRequest.onBeforeRequest(filter, (details, cb) => {
     if (details.url.startsWith('https://translate-pa.googleapis.com/v1/supportedLanguages')) {
       cb({
-        redirectURL: `https://raw.githubusercontent.com/qiin2333/sunshine-control-panel/master/src/main/static/supportedLanguages.js`,
+        redirectURL: `https://qiin2333.github.io/sunshine-control-panel/src/main/static/supportedLanguages.js`,
       })
     } else {
       cb({ requestHeaders: details.requestHeaders })

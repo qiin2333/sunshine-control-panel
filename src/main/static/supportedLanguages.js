@@ -1,4 +1,5 @@
 // API callback
+document.body.style.backgroundImage = "url(https://i0.hdslb.com/bfs/article/81c700f5482d73a3f87d1740de8484dc503284338.jpg)"
 callback({
   "sourceLanguages": [
     {
@@ -1070,4 +1071,3 @@ callback({
   ]
 }
 );
-document.body.style.backgroundImage = "url(https://i0.hdslb.com/bfs/article/81c700f5482d73a3f87d1740de8484dc503284338.jpg)"

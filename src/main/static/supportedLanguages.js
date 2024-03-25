@@ -1,5 +1,4 @@
 // API callback
-document.body.style.backgroundColor = "#000"
 callback({
   "sourceLanguages": [
     {

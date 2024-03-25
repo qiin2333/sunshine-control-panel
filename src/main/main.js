@@ -1,5 +1,5 @@
 // Modules to control application life and create native browser window
-const { app, Menu, session, nativeTheme, BrowserWindow, dialog } = require('electron')
+const { ipcMain, app, Menu, session, nativeTheme, BrowserWindow, dialog } = require('electron')
 const path = require('node:path')
 let win = null
 
@@ -25,6 +25,10 @@ function loadURLByArgs(args = []) {
   win && win.loadURL(url)
 }
 
+function setThemeColor() {
+  return win.webContents.postMessage('theme', { shouldUseDarkColors: nativeTheme.shouldUseDarkColors })
+}
+
 function createWindow() {
   // Create the browser window.
   win = new BrowserWindow({
@@ -44,10 +48,22 @@ function createWindow() {
   // mainWindow.webContents.openDevTools()
 
   win.setBackgroundMaterial('auto')
-  win.webContents.on('did-finish-load', () =>
-    win.webContents.postMessage('theme', { shouldUseDarkColors: nativeTheme.shouldUseDarkColors })
-  )
+  win.webContents.on('dom-ready', setThemeColor)
+  nativeTheme.on('updated', setThemeColor)
 }
+
+ipcMain.handle('dark-mode:toggle', () => {
+  if (nativeTheme.shouldUseDarkColors) {
+    nativeTheme.themeSource = 'light'
+  } else {
+    nativeTheme.themeSource = 'dark'
+  }
+  return nativeTheme.shouldUseDarkColors
+})
+
+ipcMain.handle('dark-mode:system', () => {
+  nativeTheme.themeSource = 'system'
+})
 
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
@@ -143,7 +159,7 @@ const template = [
           const cmdStr = 'start C:\\iddSampleDriver\\option.txt'
           cp.spawn('powershell', [`Start-Process powershell -ArgumentList '${cmdStr}' -Verb RunAs`])
           dialog.showMessageBox(win, {
-            message: `编辑后在【windows设备管理器-】中禁用再启用iddSampleDriver 即可生效`,
+            message: `编辑后在【windows设备管理器】中禁用再启用 iddSampleDriver 即可生效`,
           })
           cp.spawn('cmd', [`start devmgmt.msc`])
         },

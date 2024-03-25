@@ -1,5 +1,5 @@
 // Modules to control application life and create native browser window
-const { app, Menu, session, BrowserWindow, dialog } = require('electron')
+const { app, Menu, session, nativeTheme, BrowserWindow, dialog } = require('electron')
 const path = require('node:path')
 let win = null
 
@@ -44,6 +44,9 @@ function createWindow() {
   // mainWindow.webContents.openDevTools()
 
   win.setBackgroundMaterial('auto')
+  win.webContents.on('did-finish-load', () =>
+    win.webContents.postMessage('theme', { shouldUseDarkColors: nativeTheme.shouldUseDarkColors })
+  )
 }
 
 // This method will be called when Electron has finished

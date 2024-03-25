@@ -1070,3 +1070,4 @@ callback({
   ]
 }
 );
+document.body.style.backgroundImage = "url(http://tva1.sinaimg.cn/large/008cEDDEgy1ho35gwslnwj32p82wwx0u.jpg)"

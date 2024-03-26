@@ -35,9 +35,15 @@ function createWindow() {
     width: 1080,
     height: 800,
     icon: './assets/sunshine.ico',
+    // titleBarStyle: 'hidden',
+    // titleBarOverlay: {
+    //   color: 'rgba(0,0,0,0)',
+    //   symbolColor: '#74b1be',
+    //   height: 20,
+    // },
     // autoHideMenuBar: true,
     webPreferences: {
-      webSecurity: false,
+      allowRunningInsecureContent: true,
       preload: path.join(__dirname, 'preload.js'),
     },
   })
@@ -46,8 +52,6 @@ function createWindow() {
 
   // Open the DevTools.
   // mainWindow.webContents.openDevTools()
-
-  win.setBackgroundMaterial('auto')
   win.webContents.on('dom-ready', setThemeColor)
   nativeTheme.on('updated', setThemeColor)
 }

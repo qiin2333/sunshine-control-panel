@@ -4,7 +4,6 @@ sunshine-foundation 是基于官方nightly分支修改得来，旨在提高各�
 
 ## 下载地址
 [Release Sunshine-Foundation v0.1 · qiin2333/Sunshine](https://github.com/qiin2333/Sunshine/releases/foundation)
-
 [https://mirror.ghproxy.com/https://github.com/qiin2333/Sunshine/releases/download/foundation/sunshine-windows-installer.exe](https://mirror.ghproxy.com/https://github.com/qiin2333/Sunshine/releases/download/foundation/sunshine-windows-installer.exe)
 
 
@@ -73,7 +72,12 @@ sunshine.exe
 
 ## 相关资源
 [https://www.bilibili.com/video/BV1xu4y1M7yq/](https://www.bilibili.com/video/BV1xu4y1M7yq/)
+
 [Sunshine官方文档](https://docs.lizardbyte.dev/projects/sunshine/en/latest/index.html)
+
 [串流设备解码性能 - Moonlight Game Streaming Project](https://docs.qq.com/sheet/DSGxMdUl0UVZCeFRQ?tab=BB08J2)
+
 [解锁杜比全景声串流](https://docs.qq.com/pdf/DSEFKbExvRXRzVktF)
+
 [moonlight-android 威力加强版](https://github.com/qiin2333/moonlight-android/releases/shortcut)
+

@@ -29,6 +29,11 @@ function setThemeColor() {
   return win.webContents.postMessage('theme', { shouldUseDarkColors: nativeTheme.shouldUseDarkColors })
 }
 
+function runCmdAsAdmin(cmdStr = '') {
+  const cp = require('child_process')
+  return cp.spawn('powershell', [`Start-Process powershell -WindowStyle Hidden -ArgumentList '${cmdStr}' -Verb RunAs`])
+}
+
 function createWindow() {
   // Create the browser window.
   win = new BrowserWindow({
@@ -154,41 +159,43 @@ const template = [
     ],
   },
   {
-    label: '虚拟显示器管理',
+    label: '管理',
     submenu: [
       {
-        label: '编辑分辨率',
+        label: '编辑虚拟显示器分辨率',
         click: async () => {
           const cp = require('child_process')
-          const cmdStr = 'start C:\\iddSampleDriver\\option.txt'
-          cp.spawn('powershell', [`Start-Process powershell -ArgumentList '${cmdStr}' -Verb RunAs`])
+          runCmdAsAdmin('start C:\\iddSampleDriver\\option.txt')
           dialog.showMessageBox(win, {
             message: `编辑后在【windows设备管理器】中禁用再启用 iddSampleDriver 即可生效`,
           })
-          cp.spawn('cmd', [`start devmgmt.msc`])
+          cp.spawn('powershell', [`start devmgmt.msc`])
         },
       },
       {
         label: '卸载虚拟显示器',
         click: async () => {
-          const cp = require('child_process')
           const prompt = await dialog.showMessageBox(win, {
             type: 'question',
             message: '确认卸载? 卸载后可通过重新安装基地版sunshine恢复。',
             buttons: ['取消', '确认'],
           })
           if (prompt.response) {
-            const cmdStr =
+            runCmdAsAdmin(
               'C:\\IddSampleDriver\\nefconw.exe --remove-device-node --hardware-id ROOT\\iddsampledriver --class-guid 4d36e968-e325-11ce-bfc1-08002be10318'
-            cp.spawn('powershell', [`Start-Process powershell -ArgumentList '${cmdStr}' -Verb RunAs`]).on(
-              'close',
-              (code) => {
-                dialog.showMessageBox(win, {
-                  message: `虚拟显示器卸载完成: ${code}`,
-                })
-              }
-            )
+            ).on('close', (code) => {
+              dialog.showMessageBox(win, {
+                message: `虚拟显示器卸载完成: ${code}`,
+              })
+            })
           }
+        },
+      },
+      { type: 'separator' },
+      {
+        label: '以管理员身份重启sunshine',
+        click: () => {
+          runCmdAsAdmin('net stop sunshineservice; taskkill /IM sunshine.exe /F; cd "C:\\Program` Files\\Sunshine"; ./sunshine.exe').on('close', () => win.close());
         },
       },
     ],

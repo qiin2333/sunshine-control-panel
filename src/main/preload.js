@@ -22,13 +22,16 @@ contextBridge.exposeInMainWorld('darkMode', {
 })
 
 const resetStyles = `
+  p { 
+    margin -bottom: 1rem;
+  }
   ::-webkit-scrollbar-track-piece {
     background-color:#f8f8f8;
   }
   ::-webkit-scrollbar {
     width: 8px;
   }
-  ::-webkit-scrollbar-thumb {//滚动条的设置
+  ::-webkit-scrollbar-thumb {
     background-color:#dddddd;
     background-clip:padding-box;
     min-height:28px;

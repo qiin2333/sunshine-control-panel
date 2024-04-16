@@ -43,6 +43,29 @@ const resetStyles = `
 
 webFrame.insertCSS(resetStyles)
 
+const initBgImg = () => {
+  const localBgPath = localStorage.getItem('WEBUI-BGSRC')
+  if (localBgPath) document.body.style.backgroundImage = `url('${localBgPath}')`
+  document.addEventListener('drop', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const allowedFileTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
+    let bgFile
+
+    for (const f of e.dataTransfer.files) {
+      console.log('File(s) you dragged here: ', f.path)
+      if (allowedFileTypes.includes(f.type)) bgFile = f
+    }
+    const bgPath = bgFile.path.replaceAll('\\', '/')
+    document.body.style.backgroundImage = `url('${bgPath}')`
+    localStorage.setItem('WEBUI-BGSRC', bgPath)
+  })
+  document.addEventListener('dragover', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+  })
+}
+
 /**
  * The preload script runs before `index.html` is loaded
  * in the renderer. It has access to web APIs as well as
@@ -83,4 +106,6 @@ window.addEventListener('DOMContentLoaded', () => {
     btn.setAttribute('style', 'position: absolute; top: 18px; right: 20px;')
     body.appendChild(btn)
   }
+
+  initBgImg()
 })

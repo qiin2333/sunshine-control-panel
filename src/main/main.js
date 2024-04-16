@@ -48,6 +48,7 @@ function createWindow() {
     // },
     // autoHideMenuBar: true,
     webPreferences: {
+      webSecurity: false,
       allowRunningInsecureContent: true,
       preload: path.join(__dirname, 'preload.js'),
     },

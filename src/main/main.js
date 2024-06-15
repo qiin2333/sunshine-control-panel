@@ -1,7 +1,7 @@
 // Modules to control application life and create native browser window
 const { ipcMain, app, Menu, session, nativeTheme, BrowserWindow, dialog } = require('electron')
 const path = require('node:path')
-let win = null
+let win
 
 app.commandLine.appendSwitch('ignore-certificate-errors')
 
@@ -60,6 +60,19 @@ function createWindow() {
   // mainWindow.webContents.openDevTools()
   win.webContents.on('dom-ready', setThemeColor)
   nativeTheme.on('updated', setThemeColor)
+}
+
+function createSubBrowserWin(options = {}) {
+  return new BrowserWindow({
+    parent: win,
+    icon: './assets/sunshine.ico',
+    autoHideMenuBar: true,
+    useContentSize: true,
+    webPreferences: {
+      enablePreferredSizeMode: true,
+    },
+    ...options,
+  })
 }
 
 ipcMain.handle('dark-mode:toggle', () => {
@@ -196,7 +209,9 @@ const template = [
       {
         label: '以管理员身份重启sunshine',
         click: () => {
-          runCmdAsAdmin('net stop sunshineservice; taskkill /IM sunshine.exe /F; cd "C:\\Program` Files\\Sunshine"; ./sunshine.exe').on('close', () => win.close());
+          runCmdAsAdmin(
+            'net stop sunshineservice; taskkill /IM sunshine.exe /F; cd "C:\\Program` Files\\Sunshine"; ./sunshine.exe'
+          ).on('close', () => win.close())
         },
       },
     ],
@@ -207,22 +222,44 @@ const template = [
       {
         label: '下载最新基地版sunshine',
         click: async () => {
-          const { shell } = require('electron')
-          await shell.openExternal('https://github.com/qiin2333/Sunshine/releases/tag/alpha')
+          const subWin = createSubBrowserWin()
+          subWin.loadURL('https://github.com/qiin2333/Sunshine/releases/tag/alpha')
         },
       },
       {
         label: '加入串流基地裙',
         click: async () => {
-          const { shell } = require('electron')
-          await shell.openExternal('https://qm.qq.com/q/s3QnqbxvFK')
+          const subWin = createSubBrowserWin()
+          subWin.loadURL('https://qm.qq.com/q/s3QnqbxvFK')
+          setTimeout(() => {
+            subWin.close()
+          }, 3000)
         },
       },
       {
-        label: '加入moonlight游戏串流XX群',
+        label: '食用指南',
         click: async () => {
           const { shell } = require('electron')
-          await shell.openExternal('https://qm.qq.com/q/RyiWpIRBYK')
+          await shell.openExternal('https://docs.qq.com/aio/DSGdQc3htbFJjSFdO')
+        },
+      },
+    ],
+  },
+  {
+    label: '小工具',
+    submenu: [
+      {
+        label: '串流屏摄专用计时器',
+        click: () => {
+          const subWin = createSubBrowserWin({ width: 1024, height: 600 })
+          subWin.loadFile(path.join(app.getAppPath(), '../renderer/stop-clock-canvas/index.html'))
+        },
+      },
+      {
+        label: '手柄测试',
+        click: async () => {
+          const { shell } = require('electron')
+          await shell.openExternal('https://hardwaretester.com/gamepad')
         },
       },
     ],

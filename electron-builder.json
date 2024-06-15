@@ -18,7 +18,11 @@
     "target": ["snap"]
   },
   "files": [
-    "build/main/**/*",
+    {
+      "from": "build/main",
+      "to": "main",
+      "filter": ["**/*"]
+    },
     {
       "from": "build/renderer",
       "to": "renderer",
@@ -37,7 +41,6 @@
     "!config",
     "!README.md",
     "!scripts",
-    "!build/renderer",
     "!dist"
   ]
 }

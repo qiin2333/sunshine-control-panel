@@ -1,0 +1,147 @@
+<!--
+ * @Author: 欧阳骋宇
+ * @Date: 2022-03-23 16:42:49
+ * @LastEditors: 欧阳骋宇
+ * @LastEditTime: 2022-03-23 16:46:57
+ * @Description: file content
+-->
+
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8">
+  <title>串流屏摄专用钟钟钟钟钟（作者：串流群友）</title>
+  <style>
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      margin: 0;
+    }
+
+    .bg {
+      width: 100%;
+    }
+
+    .btns {
+      position: absolute;
+      z-index: 2;
+      bottom: 10px;
+      right: 10px;
+    }
+
+    .btns button {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 0;
+      margin: 0;
+      width: 30px;
+      height: 30px;
+      font-size: 20px;
+      text-align: center;
+    }
+
+    canvas {
+      position: absolute;
+      z-index: 1;
+      opacity: 0.7;
+      box-shadow: #00ffff 0 0 50px 10px;
+    }
+  </style>
+
+</head>
+
+<body>
+  <img class="bg" src="https://t.alcy.cc/pc/">
+  <canvas id="canvas" width="500" height="500"></canvas>
+  <div class="btns">
+    <button id="btn-inc">+</button>
+    <button id="btn-dec">-</button>
+  </div>
+  <script>
+    const btnInc = document.querySelector('#btn-inc')
+    const btnDec = document.querySelector('#btn-dec')
+    const canvasElem = document.querySelector('#canvas')
+    let curScale = 1
+
+    btnInc.onclick = () => {
+      if (curScale === 3) return
+      canvasElem.style.transform = `scale(${curScale += 0.2})`
+    }
+    btnDec.onclick = () => {
+      if (curScale === 0) return
+      canvasElem.style.transform = `scale(${curScale -= 0.2})`
+    }
+
+    /*
+ * @Author: 欧阳骋宇
+ * @Date: 2022-03-23 16:43:50
+ * @LastEditors: 欧阳骋宇
+ * @LastEditTime: 2022-04-07 16:38:42
+ * @Description: file content
+ */
+    var canvas = document.getElementById("canvas");
+    var ctx = canvas.getContext("2d");
+
+    ctx.strokeStyle = '#00ffff';
+    ctx.lineWidth = 17;
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = '#00ffff'
+
+    function degToRad(degree) {
+      var factor = Math.PI / 180;
+      return degree * factor;
+    }
+
+    function renderTime() {
+      var now = new Date();
+      var today = now.toDateString();
+      var time = now.toLocaleTimeString();
+      var hrs = now.getHours();
+      var min = now.getMinutes();
+      var sec = now.getSeconds();
+      var mil = now.getMilliseconds();
+      var smoothsec = sec + (mil / 1000);
+      var smoothmin = min + (smoothsec / 60);
+
+      //Background
+      gradient = ctx.createRadialGradient(250, 250, 5, 250, 250, 300);
+      gradient.addColorStop(0, "#03303a");
+      gradient.addColorStop(1, "black");
+      ctx.fillStyle = gradient;
+      //ctx.fillStyle = 'rgba(00 ,00 , 00, 1)';
+      ctx.fillRect(0, 0, 500, 500);
+      //Hours
+      ctx.beginPath();
+      ctx.arc(250, 250, 200, degToRad(270), degToRad((hrs * 30) - 90));
+      ctx.stroke();
+      //Minutes
+      ctx.beginPath();
+      ctx.arc(250, 250, 170, degToRad(270), degToRad((smoothmin * 6) - 90));
+      ctx.stroke();
+      //Seconds
+      ctx.beginPath();
+      ctx.arc(250, 250, 140, degToRad(270), degToRad((smoothsec * 6) - 90));
+      ctx.stroke();
+      // Date
+      ctx.beginPath();
+      ctx.font = "25px Helvetica";
+      ctx.fillStyle = 'rgba(00, 255, 255, 1)'
+      ctx.fillText(today, 175, 250);
+      //Time
+      ctx.font = "25px Helvetica Bold";
+      ctx.fillStyle = 'rgba(00, 255, 255, 1)';
+      ctx.fillText(time + ":" + mil.toString().padEnd(3, "0"), 175, 280);
+      console.log(mil)
+
+
+    }
+    setInterval(renderTime, 0.01);
+  </script>
+
+</body>
+
+</html>

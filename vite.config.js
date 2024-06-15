@@ -21,6 +21,7 @@ const config = defineConfig({
       input: {
         index: resolve(rendererSrcPath, 'index.html'),
         iddSetting: resolve(rendererSrcPath, 'idd-setting.html'),
+        clock: resolve(rendererSrcPath, 'stop-clock-canvas/index.html'),
       },
     },
   },

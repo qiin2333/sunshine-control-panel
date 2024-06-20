@@ -251,8 +251,15 @@ const template = [
       {
         label: '串流屏摄专用计时器',
         click: () => {
-          const subWin = createSubBrowserWin({ width: 1024, height: 600 })
-          subWin.loadFile(path.join(app.getAppPath(), '../renderer/stop-clock-canvas/index.html'))
+          const subWin = createSubBrowserWin({ width: 1080, height: 600 })
+          subWin.loadFile(path.join(__dirname, '../renderer/stop-clock-canvas/index.html'))
+        },
+      },
+      {
+        label: '新一代延迟测试钟 by Kile',
+        click: async () => {
+          const subWin = createSubBrowserWin()
+          subWin.loadURL('https://yangkile.github.io/D-lay/')
         },
       },
       {

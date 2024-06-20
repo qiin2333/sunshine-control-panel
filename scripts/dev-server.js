@@ -87,8 +87,7 @@ async function start() {
 
     const devServer = await startRenderer();
     rendererPort = devServer.config.server.port;
-
-    copy('./');
+    
     startElectron();
 
     const path = Path.join(__dirname, '..', 'src', 'main');

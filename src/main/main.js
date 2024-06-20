@@ -1,7 +1,7 @@
 // Modules to control application life and create native browser window
-const { app, Menu, session, BrowserWindow, dialog } = require('electron')
+const { ipcMain, app, Menu, session, nativeTheme, BrowserWindow, dialog } = require('electron')
 const path = require('node:path')
-let win = null
+let win
 
 app.commandLine.appendSwitch('ignore-certificate-errors')
 
@@ -25,14 +25,31 @@ function loadURLByArgs(args = []) {
   win && win.loadURL(url)
 }
 
+function setThemeColor() {
+  return win.webContents.postMessage('theme', { shouldUseDarkColors: nativeTheme.shouldUseDarkColors })
+}
+
+function runCmdAsAdmin(cmdStr = '') {
+  const cp = require('child_process')
+  return cp.spawn('powershell', [`Start-Process powershell -WindowStyle Hidden -ArgumentList '${cmdStr}' -Verb RunAs`])
+}
+
 function createWindow() {
   // Create the browser window.
   win = new BrowserWindow({
     width: 1080,
     height: 800,
     icon: './assets/sunshine.ico',
+    // titleBarStyle: 'hidden',
+    // titleBarOverlay: {
+    //   color: 'rgba(0,0,0,0)',
+    //   symbolColor: '#74b1be',
+    //   height: 20,
+    // },
     // autoHideMenuBar: true,
     webPreferences: {
+      webSecurity: false,
+      allowRunningInsecureContent: true,
       preload: path.join(__dirname, 'preload.js'),
     },
   })
@@ -41,9 +58,35 @@ function createWindow() {
 
   // Open the DevTools.
   // mainWindow.webContents.openDevTools()
-
-  win.setBackgroundMaterial('auto')
+  win.webContents.on('dom-ready', setThemeColor)
+  nativeTheme.on('updated', setThemeColor)
 }
+
+function createSubBrowserWin(options = {}) {
+  return new BrowserWindow({
+    parent: win,
+    icon: './assets/sunshine.ico',
+    autoHideMenuBar: true,
+    useContentSize: true,
+    webPreferences: {
+      enablePreferredSizeMode: true,
+    },
+    ...options,
+  })
+}
+
+ipcMain.handle('dark-mode:toggle', () => {
+  if (nativeTheme.shouldUseDarkColors) {
+    nativeTheme.themeSource = 'light'
+  } else {
+    nativeTheme.themeSource = 'dark'
+  }
+  return nativeTheme.shouldUseDarkColors
+})
+
+ipcMain.handle('dark-mode:system', () => {
+  nativeTheme.themeSource = 'system'
+})
 
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
@@ -54,6 +97,20 @@ app.whenReady().then(async () => {
     // On macOS it's common to re-create a window in the app when the
     // dock icon is clicked and there are no other windows open.
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
+  })
+
+  const filter = {
+    urls: ['https://*.googleapis.com/*'],
+  }
+
+  session.defaultSession.webRequest.onBeforeRequest(filter, (details, cb) => {
+    if (details.url.startsWith('https://translate-pa.googleapis.com/v1/supportedLanguages')) {
+      cb({
+        redirectURL: `https://qiin2333.github.io/sunshine-control-panel/src/main/static/supportedLanguages.js`,
+      })
+    } else {
+      cb({ requestHeaders: details.requestHeaders })
+    }
   })
 })
 
@@ -116,36 +173,45 @@ const template = [
     ],
   },
   {
-    label: '虚拟显示器管理',
+    label: '管理',
     submenu: [
       {
-        label: '编辑分辨率',
+        label: '编辑虚拟显示器分辨率',
         click: async () => {
           const cp = require('child_process')
-          cp.spawn('powershell', [`start C:\\iddSampleDriver\\option.txt`])
+          runCmdAsAdmin('start C:\\iddSampleDriver\\option.txt')
+          dialog.showMessageBox(win, {
+            message: `编辑后在【windows设备管理器】中禁用再启用 iddSampleDriver 即可生效`,
+          })
+          cp.spawn('powershell', [`start devmgmt.msc`])
         },
       },
       {
         label: '卸载虚拟显示器',
         click: async () => {
-          const cp = require('child_process')
           const prompt = await dialog.showMessageBox(win, {
             type: 'question',
             message: '确认卸载? 卸载后可通过重新安装基地版sunshine恢复。',
             buttons: ['取消', '确认'],
           })
           if (prompt.response) {
-            const cmdStr =
+            runCmdAsAdmin(
               'C:\\IddSampleDriver\\nefconw.exe --remove-device-node --hardware-id ROOT\\iddsampledriver --class-guid 4d36e968-e325-11ce-bfc1-08002be10318'
-            cp.spawn('powershell', [`Start-Process powershell -ArgumentList '${cmdStr}' -Verb RunAs`]).on(
-              'close',
-              (code) => {
-                dialog.showMessageBox(win, {
-                  message: `虚拟显示器卸载完成: ${code}`,
-                })
-              }
-            )
+            ).on('close', (code) => {
+              dialog.showMessageBox(win, {
+                message: `虚拟显示器卸载完成: ${code}`,
+              })
+            })
           }
+        },
+      },
+      { type: 'separator' },
+      {
+        label: '以管理员身份重启sunshine',
+        click: () => {
+          runCmdAsAdmin(
+            'net stop sunshineservice; taskkill /IM sunshine.exe /F; cd "C:\\Program` Files\\Sunshine"; ./sunshine.exe'
+          ).on('close', () => win.close())
         },
       },
     ],
@@ -156,29 +222,51 @@ const template = [
       {
         label: '下载最新基地版sunshine',
         click: async () => {
-          const { shell } = require('electron')
-          await shell.openExternal('https://github.com/qiin2333/Sunshine/releases/tag/alpha')
+          const subWin = createSubBrowserWin()
+          subWin.loadURL('https://github.com/qiin2333/Sunshine/releases/tag/alpha')
         },
       },
       {
         label: '加入串流基地裙',
         click: async () => {
-          const { shell } = require('electron')
-          await shell.openExternal('https://qm.qq.com/q/3tWBFVNZ')
+          const subWin = createSubBrowserWin()
+          subWin.loadURL('https://qm.qq.com/q/s3QnqbxvFK')
+          setTimeout(() => {
+            subWin.close()
+          }, 3000)
         },
       },
       {
-        label: '加入moonlight游戏串流XX群',
+        label: '食用指南',
         click: async () => {
           const { shell } = require('electron')
-          await shell.openExternal('https://qm.qq.com/q/RyiWpIRBYK')
+          await shell.openExternal('https://docs.qq.com/aio/DSGdQc3htbFJjSFdO')
+        },
+      },
+    ],
+  },
+  {
+    label: '小工具',
+    submenu: [
+      {
+        label: '串流屏摄专用计时器',
+        click: () => {
+          const subWin = createSubBrowserWin({ width: 1080, height: 600 })
+          subWin.loadFile(path.join(__dirname, '../renderer/stop-clock-canvas/index.html'))
         },
       },
       {
-        label: '新手入门',
+        label: '新一代延迟测试钟 by Kile',
+        click: async () => {
+          const subWin = createSubBrowserWin()
+          subWin.loadURL('https://yangkile.github.io/D-lay/')
+        },
+      },
+      {
+        label: '手柄测试',
         click: async () => {
           const { shell } = require('electron')
-          await shell.openExternal('https://flowus.cn/share/3a591f93-f48b-4164-9028-bade2c35ef58')
+          await shell.openExternal('https://hardwaretester.com/gamepad')
         },
       },
     ],

@@ -1,6 +1,6 @@
-// Modules to control application life and create native browser window
 const { ipcMain, app, Menu, session, nativeTheme, BrowserWindow, dialog } = require('electron')
 const path = require('node:path')
+const openAboutWindow = require('about-window').default
 let win
 
 app.commandLine.appendSwitch('ignore-certificate-errors')
@@ -48,6 +48,7 @@ function createWindow() {
     // },
     // autoHideMenuBar: true,
     webPreferences: {
+      sandbox: false,
       webSecurity: false,
       allowRunningInsecureContent: true,
       preload: path.join(__dirname, 'preload.js'),
@@ -88,6 +89,10 @@ ipcMain.handle('dark-mode:system', () => {
   nativeTheme.themeSource = 'system'
 })
 
+ipcMain.handle('netpierce:toggle', () => {
+  // TODO:
+})
+
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
@@ -126,7 +131,7 @@ app.on('window-all-closed', function () {
 
 const isMac = process.platform === 'darwin'
 
-const template = [
+const menuTmpl = [
   // { role: 'appMenu' }
   ...(isMac
     ? [
@@ -146,22 +151,6 @@ const template = [
         },
       ]
     : []),
-  // { role: 'viewMenu' }
-  {
-    label: 'View',
-    submenu: [
-      { role: 'reload' },
-      { role: 'forceReload' },
-      { role: 'toggleDevTools' },
-      { type: 'separator' },
-      { role: 'resetZoom' },
-      { role: 'zoomIn' },
-      { role: 'zoomOut' },
-      { type: 'separator' },
-      { role: 'togglefullscreen' },
-    ],
-  },
-  // { role: 'windowMenu' }
   {
     label: 'Window',
     submenu: [
@@ -222,8 +211,8 @@ const template = [
       {
         label: '下载最新基地版sunshine',
         click: async () => {
-          const subWin = createSubBrowserWin()
-          subWin.loadURL('https://github.com/qiin2333/Sunshine/releases/tag/alpha')
+          const { shell } = require('electron')
+          await shell.openExternal('https://github.com/qiin2333/Sunshine/releases/tag/alpha')
         },
       },
       {
@@ -271,7 +260,19 @@ const template = [
       },
     ],
   },
+  {
+    label: '关于',
+    click: () =>
+      openAboutWindow({
+        icon_path: path.join(__dirname, '../assets/sunshine.ico'),
+        product_name: 'Sunshine 基地版',
+        copyright: 'Copyright (c) 2023 Qiin',
+        use_version_info: false,
+        package_json_dir: __dirname,
+        open_devtools: process.env.NODE_ENV !== 'production',
+      }),
+  },
 ]
 
-const menu = Menu.buildFromTemplate(template)
+const menu = Menu.buildFromTemplate(menuTmpl)
 Menu.setApplicationMenu(menu)

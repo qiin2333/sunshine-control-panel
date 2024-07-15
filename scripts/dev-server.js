@@ -29,7 +29,7 @@ async function startElectron() {
     }
 
     const args = [
-        Path.join(__dirname, '..', 'build', 'main', 'main.js'),
+        Path.join(__dirname, '..', 'src', 'main', 'main.js'),
         rendererPort,
     ];
     electronProcess = ChildProcess.spawn(Electron, args);

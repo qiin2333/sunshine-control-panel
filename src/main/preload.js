@@ -21,6 +21,11 @@ contextBridge.exposeInMainWorld('darkMode', {
   system: () => ipcRenderer.invoke('dark-mode:system'),
 })
 
+contextBridge.exposeInMainWorld('netpierce', {
+  toggle: () => ipcRenderer.invoke('netpierce:toggle'),
+  start: () => ipcRenderer.invoke('netpierce:start'),
+})
+
 const resetStyles = `
   p { 
     margin -bottom: 1rem;

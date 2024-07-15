@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node scripts/dev-server.js",
     "build": "node scripts/build.js && electron-builder -p never",
-    "build:win": "node scripts/build.js && electron-builder --win --publish=never",
+    "build:win": "node scripts/build.js --production && electron-builder --win --publish=never",
     "build:mac": "node scripts/build.js && electron-builder --mac",
     "build:linux": "node scripts/build.js && electron-builder --linux"
   },
@@ -24,6 +24,7 @@
     "vite": "^4.5.3"
   },
   "dependencies": {
+    "about-window": "^1.15.2",
     "vue": "^3.3.8"
   }
 }

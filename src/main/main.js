@@ -269,7 +269,6 @@ const menuTmpl = [
         copyright: 'Copyright (c) 2023 Qiin',
         use_version_info: false,
         package_json_dir: __dirname,
-        open_devtools: process.env.NODE_ENV !== 'production',
       }),
   },
 ]

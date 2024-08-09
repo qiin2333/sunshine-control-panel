@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node scripts/dev-server.js",
     "build": "node scripts/build.js && electron-builder -p never",
-    "build:win": "node scripts/build.js && electron-builder --win --publish=never",
+    "build:win": "set NODE_ENV=production && node scripts/build.js && electron-builder --win --publish=never",
     "build:mac": "node scripts/build.js && electron-builder --mac",
     "build:linux": "node scripts/build.js && electron-builder --linux"
   },
@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "about-window": "^1.15.2",
+    "electron-sudo": "^4.0.12",
     "vue": "^3.3.8"
   }
 }

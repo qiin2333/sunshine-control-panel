@@ -1,6 +1,8 @@
 const { ipcMain, app, Menu, session, nativeTheme, BrowserWindow, dialog } = require('electron')
 const path = require('node:path')
 const openAboutWindow = require('about-window').default
+const Sudoer = require('electron-sudo').default
+let sudoer = new Sudoer({name: 'Sunshine Control Panel'});
 let win
 
 app.commandLine.appendSwitch('ignore-certificate-errors')
@@ -168,7 +170,18 @@ const menuTmpl = [
         label: '编辑虚拟显示器分辨率',
         click: async () => {
           const cp = require('child_process')
-          runCmdAsAdmin('start C:\\iddSampleDriver\\option.txt')
+          sudoer.spawn('start C:\\iddSampleDriver\\option.txt')
+          dialog.showMessageBox(win, {
+            message: `编辑后在【windows设备管理器】中禁用再启用 iddSampleDriver 即可生效`,
+          })
+          cp.spawn('powershell', [`start devmgmt.msc`])
+        },
+      },
+      {
+        label: '指定虚拟显示器调用的GPU',
+        click: async () => {
+          const cp = require('child_process')
+          sudoer.spawn('start C:\\iddSampleDriver\\adapter.txt')
           dialog.showMessageBox(win, {
             message: `编辑后在【windows设备管理器】中禁用再启用 iddSampleDriver 即可生效`,
           })
@@ -184,7 +197,7 @@ const menuTmpl = [
             buttons: ['取消', '确认'],
           })
           if (prompt.response) {
-            runCmdAsAdmin(
+            sudoer.spawn(
               'C:\\IddSampleDriver\\nefconw.exe --remove-device-node --hardware-id ROOT\\iddsampledriver --class-guid 4d36e968-e325-11ce-bfc1-08002be10318'
             ).on('close', (code) => {
               dialog.showMessageBox(win, {
@@ -196,9 +209,15 @@ const menuTmpl = [
       },
       { type: 'separator' },
       {
+        label: '重启显卡驱动',
+        click: () => {
+          sudoer.spawn('C:\\Program` Files\\Sunshine\\tools\\restart64.exe')
+        },
+      },
+      {
         label: '以管理员身份重启sunshine',
         click: () => {
-          runCmdAsAdmin(
+          sudoer.spawn(
             'net stop sunshineservice; taskkill /IM sunshine.exe /F; cd "C:\\Program` Files\\Sunshine"; ./sunshine.exe'
           ).on('close', () => win.close())
         },

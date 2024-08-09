@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "about-window": "^1.15.2",
+    "electron-sudo": "^4.0.12",
     "vue": "^3.3.8"
   }
 }

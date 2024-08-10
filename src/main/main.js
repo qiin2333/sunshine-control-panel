@@ -1,8 +1,7 @@
 const { ipcMain, app, Menu, session, nativeTheme, BrowserWindow, dialog } = require('electron')
 const path = require('node:path')
 const openAboutWindow = require('about-window').default
-const Sudoer = require('electron-sudo').default
-let sudoer = new Sudoer({name: 'Sunshine Control Panel'});
+const sudo = require('sudo-prompt')
 let win
 
 app.commandLine.appendSwitch('ignore-certificate-errors')
@@ -170,7 +169,7 @@ const menuTmpl = [
         label: '编辑虚拟显示器分辨率',
         click: async () => {
           const cp = require('child_process')
-          sudoer.spawn('start C:\\iddSampleDriver\\option.txt')
+          sudo.exec('start C:\\iddSampleDriver\\option.txt', { name: '212333' })
           dialog.showMessageBox(win, {
             message: `编辑后在【windows设备管理器】中禁用再启用 iddSampleDriver 即可生效`,
           })
@@ -181,7 +180,7 @@ const menuTmpl = [
         label: '指定虚拟显示器调用的GPU',
         click: async () => {
           const cp = require('child_process')
-          sudoer.spawn('start C:\\iddSampleDriver\\adapter.txt')
+          sudo.exec('start C:\\iddSampleDriver\\adapter.txt', { name: '212333' })
           dialog.showMessageBox(win, {
             message: `编辑后在【windows设备管理器】中禁用再启用 iddSampleDriver 即可生效`,
           })
@@ -196,8 +195,9 @@ const menuTmpl = [
             message: '确认卸载? 卸载后可通过重新安装基地版sunshine恢复。',
             buttons: ['取消', '确认'],
           })
+          const cp = require('child_process')
           if (prompt.response) {
-            sudoer.spawn(
+            runCmdAsAdmin(
               'C:\\IddSampleDriver\\nefconw.exe --remove-device-node --hardware-id ROOT\\iddsampledriver --class-guid 4d36e968-e325-11ce-bfc1-08002be10318'
             ).on('close', (code) => {
               dialog.showMessageBox(win, {
@@ -211,13 +211,13 @@ const menuTmpl = [
       {
         label: '重启显卡驱动',
         click: () => {
-          sudoer.spawn('C:\\Program` Files\\Sunshine\\tools\\restart64.exe')
+          sudo.exec('C:\\Program` Files\\Sunshine\\tools\\restart64.exe', { name: '212333' })
         },
       },
       {
         label: '以管理员身份重启sunshine',
         click: () => {
-          sudoer.spawn(
+          runCmdAsAdmin(
             'net stop sunshineservice; taskkill /IM sunshine.exe /F; cd "C:\\Program` Files\\Sunshine"; ./sunshine.exe'
           ).on('close', () => win.close())
         },

@@ -59,7 +59,7 @@ function createWindow() {
   loadURLByArgs(process.argv)
 
   // Open the DevTools.
-  // mainWindow.webContents.openDevTools()
+  // win.webContents.openDevTools()
   win.webContents.on('dom-ready', setThemeColor)
   nativeTheme.on('updated', setThemeColor)
 }
@@ -157,6 +157,7 @@ const menuTmpl = [
     submenu: [
       { role: 'minimize' },
       { role: 'zoom' },
+      { role: 'reload' },
       ...(isMac
         ? [{ type: 'separator' }, { role: 'front' }, { type: 'separator' }, { role: 'window' }]
         : [{ role: 'close' }]),

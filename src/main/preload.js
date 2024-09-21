@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer, webFrame } = require('electron')
+const { contextBridge, ipcRenderer, webFrame, webUtils } = require('electron')
 
 contextBridge.exposeInMainWorld('electron', {
   googleTranslateElementInit: () => {
@@ -58,10 +58,10 @@ const initBgImg = () => {
     let bgFile
 
     for (const f of e.dataTransfer.files) {
-      console.log('File(s) you dragged here: ', f.path)
+      console.log('File(s) you dragged here: ', f)
       if (allowedFileTypes.includes(f.type)) bgFile = f
     }
-    const bgPath = bgFile.path.replaceAll('\\', '/')
+    const bgPath = webUtils.getPathForFile(bgFile).replaceAll('\\', '/')
     document.body.style.backgroundImage = `url('${bgPath}')`
     localStorage.setItem('WEBUI-BGSRC', bgPath)
   })

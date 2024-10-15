@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('electron', {
       console.log('------------ google_translate loaded --------------')`
     )
   },
+  webUtils,
 })
 
 contextBridge.exposeInMainWorld('darkMode', {

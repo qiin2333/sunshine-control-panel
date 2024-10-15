@@ -257,6 +257,13 @@ const menuTmpl = [
     label: '小工具',
     submenu: [
       {
+        label: '剪贴板同步',
+        click: async () => {
+          const subWin = createSubBrowserWin()
+          subWin.loadURL('https://gcopy.rutron.net/zh')
+        },
+      },
+      {
         label: '串流屏摄专用计时器',
         click: () => {
           const subWin = createSubBrowserWin({ width: 1080, height: 600 })

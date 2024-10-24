@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer, webFrame, webUtils } = require('electron')
+import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron'
 
 contextBridge.exposeInMainWorld('electron', {
   googleTranslateElementInit: () => {

@@ -1,10 +1,10 @@
-const Path = require('path');
-const Chalk = require('chalk');
-const FileSystem = require('fs');
-const Vite = require('vite');
+import Path from 'path';
+import Chalk from 'chalk';
+import FileSystem from 'fs';
+import { build } from 'vite';
 
 function buildRenderer() {
-    return Vite.build({
+    return build({
         configFile: Path.join(__dirname, '..', 'vite.config.js'),
         base: './',
         mode: 'production'

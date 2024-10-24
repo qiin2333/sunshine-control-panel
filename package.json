@@ -3,6 +3,7 @@
   "version": "0.1.1",
   "description": "A GUI for sunshine",
   "main": "build/main/main.js",
+  "type": "module",
   "scripts": {
     "start": "node scripts/dev-server.js",
     "build": "node scripts/build.js && electron-builder -p never",
@@ -26,6 +27,7 @@
   },
   "dependencies": {
     "about-window": "^1.15.2",
+    "electron-dl": "^4.0.0",
     "sudo-prompt": "^9.2.1",
     "vue": "^3.5.4"
   }

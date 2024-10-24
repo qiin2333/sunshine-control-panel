@@ -1,31 +1,34 @@
-const { resolve, join } = require('path')
-const vuePlugin = require('@vitejs/plugin-vue')
-const { defineConfig } = require('vite')
+import { resolve, join } from "path";
+import vuePlugin from "@vitejs/plugin-vue";
+import { defineConfig } from "vite";
+import { fileURLToPath } from "node:url";
+import { dirname } from "node:path";
 
-const rendererSrcPath = join(__dirname, 'src', 'renderer')
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+const rendererSrcPath = join(__dirname, "src", "renderer");
 
 /**
  * https://vitejs.dev/config
  */
-const config = defineConfig({
+export default defineConfig(() => ({
   root: rendererSrcPath,
-  publicDir: 'public',
+  publicDir: "public",
   server: {
     port: 8080,
   },
   open: false,
   build: {
-    outDir: join(__dirname, 'build', 'renderer'),
+    outDir: join(__dirname, "build", "renderer"),
     emptyOutDir: true,
     rollupOptions: {
       input: {
-        index: resolve(rendererSrcPath, 'index.html'),
-        iddSetting: resolve(rendererSrcPath, 'idd-setting.html'),
-        clock: resolve(rendererSrcPath, 'stop-clock-canvas/index.html'),
+        index: resolve(rendererSrcPath, "index.html"),
+        iddSetting: resolve(rendererSrcPath, "idd-setting.html"),
+        clock: resolve(rendererSrcPath, "stop-clock-canvas/index.html"),
       },
     },
   },
   plugins: [vuePlugin()],
-})
-
-module.exports = config
+}));

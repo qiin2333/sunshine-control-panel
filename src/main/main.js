@@ -1,7 +1,14 @@
-const { ipcMain, app, Menu, session, nativeTheme, BrowserWindow, dialog } = require('electron')
-const path = require('node:path')
-const openAboutWindow = require('about-window').default
-const sudo = require('sudo-prompt')
+import { ipcMain, app, Menu, session, nativeTheme, BrowserWindow, dialog, shell } from 'electron'
+import openAboutWindow from 'about-window'
+import sudo from 'sudo-prompt'
+import electronDl from 'electron-dl';
+import { fileURLToPath } from 'node:url'
+import { join, dirname } from 'node:path';
+import { spawn } from 'node:child_process';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+electronDl();
 let win
 
 app.commandLine.appendSwitch('ignore-certificate-errors')
@@ -31,8 +38,7 @@ function setThemeColor() {
 }
 
 function runCmdAsAdmin(cmdStr = '') {
-  const cp = require('child_process')
-  return cp.spawn('powershell', [`Start-Process powershell -WindowStyle Hidden -ArgumentList '${cmdStr}' -Verb RunAs`])
+  return spawn('powershell', [`Start-Process powershell -WindowStyle Hidden -ArgumentList '${cmdStr}' -Verb RunAs`])
 }
 
 function createWindow() {
@@ -52,7 +58,7 @@ function createWindow() {
       sandbox: false,
       webSecurity: false,
       allowRunningInsecureContent: true,
-      preload: path.join(__dirname, 'preload.js'),
+      preload: join(__dirname, 'preload.mjs'),
     },
   })
 
@@ -169,11 +175,10 @@ const menuTmpl = [
       {
         label: '编辑虚拟显示器分辨率',
         click: () => {
-          const cp = require('child_process')
           dialog.showMessageBox(win, {
             message: `虚拟显示器的设置已转移到【设置-视频/音频】页面底部, 编辑后在【windows设备管理器】中禁用再启用 Virtual Display 即可生效`,
           })
-          cp.spawn('powershell', [`start devmgmt.msc`])
+          spawn('powershell', [`start devmgmt.msc`])
         },
       },
       // {
@@ -195,7 +200,6 @@ const menuTmpl = [
             message: '确认卸载? 卸载后可通过重新安装基地版sunshine恢复。',
             buttons: ['取消', '确认'],
           })
-          const cp = require('child_process')
           if (prompt.response) {
             runCmdAsAdmin(
               'C:\\IddSampleDriver\\nefconw.exe --remove-device-node --hardware-id ROOT\\iddsampledriver --class-guid 4d36e968-e325-11ce-bfc1-08002be10318'
@@ -230,7 +234,6 @@ const menuTmpl = [
       {
         label: '下载最新基地版sunshine',
         click: async () => {
-          const { shell } = require('electron')
           await shell.openExternal('https://github.com/qiin2333/Sunshine/releases/tag/alpha')
         },
       },
@@ -247,7 +250,6 @@ const menuTmpl = [
       {
         label: '食用指南',
         click: async () => {
-          const { shell } = require('electron')
           await shell.openExternal('https://docs.qq.com/aio/DSGdQc3htbFJjSFdO')
         },
       },
@@ -267,7 +269,7 @@ const menuTmpl = [
         label: '串流屏摄专用计时器',
         click: () => {
           const subWin = createSubBrowserWin({ width: 1080, height: 600 })
-          subWin.loadFile(path.join(__dirname, '../renderer/stop-clock-canvas/index.html'))
+          subWin.loadFile(join(__dirname, '../renderer/stop-clock-canvas/index.html'))
         },
       },
       {
@@ -280,7 +282,6 @@ const menuTmpl = [
       {
         label: '手柄测试',
         click: async () => {
-          const { shell } = require('electron')
           await shell.openExternal('https://hardwaretester.com/gamepad')
         },
       },

@@ -1,13 +1,18 @@
 process.env.NODE_ENV = 'development';
 
-const Vite = require('vite');
-const ChildProcess = require('child_process');
-const Path = require('path');
-const Chalk = require('chalk');
-const Chokidar = require('chokidar');
-const Electron = require('electron');
-const FileSystem = require('fs');
-const { EOL } = require('os');
+import { createServer } from 'vite';
+import ChildProcess from 'child_process';
+import Path from 'path';
+import Chalk from 'chalk';
+import Chokidar from 'chokidar';
+import Electron from 'electron';
+import FileSystem from 'fs';
+import { EOL } from 'os';
+import { fileURLToPath } from 'node:url'
+import { dirname } from 'node:path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 let viteServer = null;
 let electronProcess = null;
@@ -15,7 +20,7 @@ let electronProcessLocker = false;
 let rendererPort = 0;
 
 async function startRenderer() {
-    viteServer = await Vite.createServer({
+    viteServer = await createServer({
         configFile: Path.join(__dirname, '..', 'vite.config.js'),
         mode: 'development',
     });

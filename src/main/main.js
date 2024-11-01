@@ -77,7 +77,7 @@ function createWindow() {
   loadURLByArgs(process.argv);
 
   // Open the DevTools.
-  win.webContents.openDevTools();
+  // win.webContents.openDevTools();
   win.webContents.on("dom-ready", setThemeColor);
   nativeTheme.on("updated", setThemeColor);
   // 监听will-download事件, 使用外部浏览器下载资源

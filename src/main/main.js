@@ -1,56 +1,46 @@
-import {
-  ipcMain,
-  app,
-  Menu,
-  session,
-  nativeTheme,
-  BrowserWindow,
-  dialog,
-  shell,
-} from "electron";
-import openAboutWindow from "about-window";
-import sudo from "sudo-prompt";
-import { download, CancelError } from "electron-dl";
-import { fileURLToPath } from "node:url";
-import { join, dirname } from "node:path";
-import { spawn } from "node:child_process";
+import { ipcMain, app, Menu, session, nativeTheme, BrowserWindow, dialog, shell } from 'electron'
+import openAboutWindow from 'about-window'
+import sudo from 'sudo-prompt'
+import { download, CancelError } from 'electron-dl'
+import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { join, dirname } from 'node:path'
+import { spawn } from 'node:child_process'
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-let win;
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+let win
 
-app.commandLine.appendSwitch("ignore-certificate-errors");
+app.commandLine.appendSwitch('ignore-certificate-errors')
 
-const gotTheLock = app.requestSingleInstanceLock();
+const gotTheLock = app.requestSingleInstanceLock()
 if (!gotTheLock) {
-  app.quit();
+  app.quit()
 } else {
-  app.on("second-instance", (event, argv, workingDirectory) => {
+  app.on('second-instance', (event, argv, workingDirectory) => {
     if (win) {
-      if (win.isMinimized()) win.restore();
-      win.show();
-      win.focus();
-      loadURLByArgs(argv);
+      if (win.isMinimized()) win.restore()
+      win.show()
+      win.focus()
+      loadURLByArgs(argv)
     }
-  });
+  })
 }
 
 function loadURLByArgs(args = []) {
-  const urlArg = args.find((item) => /--url=/.test(item));
-  const url = urlArg?.replace("--url=", "") || "https://localhost:47990/";
-  win && win.loadURL(url);
+  const urlArg = args.find((item) => /--url=/.test(item))
+  const url = urlArg?.replace('--url=', '') || 'https://localhost:47990/'
+  win && win.loadURL(url)
 }
 
 function setThemeColor() {
-  return win.webContents.postMessage("theme", {
+  return win.webContents.postMessage('theme', {
     shouldUseDarkColors: nativeTheme.shouldUseDarkColors,
-  });
+  })
 }
 
-function runCmdAsAdmin(cmdStr = "") {
-  return spawn("powershell", [
-    `Start-Process powershell -WindowStyle Hidden -ArgumentList '${cmdStr}' -Verb RunAs`,
-  ]);
+function runCmdAsAdmin(cmdStr = '') {
+  return spawn('powershell', [`Start-Process powershell -WindowStyle Hidden -ArgumentList '${cmdStr}' -Verb RunAs`])
 }
 
 function createWindow() {
@@ -58,7 +48,7 @@ function createWindow() {
   win = new BrowserWindow({
     width: 1080,
     height: 800,
-    icon: "./assets/sunshine.ico",
+    icon: './assets/sunshine.ico',
     // titleBarStyle: 'hidden',
     // titleBarOverlay: {
     //   color: 'rgba(0,0,0,0)',
@@ -70,98 +60,105 @@ function createWindow() {
       sandbox: false,
       webSecurity: false,
       allowRunningInsecureContent: true,
-      preload: join(__dirname, "preload.mjs"),
+      preload: join(__dirname, 'preload.mjs'),
     },
-  });
+  })
 
-  loadURLByArgs(process.argv);
+  loadURLByArgs(process.argv)
 
   // Open the DevTools.
-  // win.webContents.openDevTools();
-  win.webContents.on("dom-ready", setThemeColor);
-  nativeTheme.on("updated", setThemeColor);
+  // win.webContents.openDevTools()
+  win.webContents.on('dom-ready', setThemeColor)
+  nativeTheme.on('updated', setThemeColor)
   // 监听will-download事件, 使用外部浏览器下载资源
-  win.webContents.session.on(
-    "will-download",
-    async (event, item, webContents) => {
-      // 阻止默认下载行为
-      event.preventDefault();
-      shell.openExternal(item.getURL());
-    }
-  );
+  win.webContents.session.on('will-download', async (event, item, webContents) => {
+    // 阻止默认下载行为
+    event.preventDefault()
+    shell.openExternal(item.getURL())
+  })
 }
 
 function createSubBrowserWin(options = {}) {
   return new BrowserWindow({
     parent: win,
-    icon: "./assets/sunshine.ico",
+    icon: './assets/sunshine.ico',
     autoHideMenuBar: true,
     useContentSize: true,
     webPreferences: {
       enablePreferredSizeMode: true,
     },
     ...options,
-  });
+  })
 }
 
-ipcMain.handle("dark-mode:toggle", () => {
+ipcMain.handle('dark-mode:toggle', () => {
   if (nativeTheme.shouldUseDarkColors) {
-    nativeTheme.themeSource = "light";
+    nativeTheme.themeSource = 'light'
   } else {
-    nativeTheme.themeSource = "dark";
+    nativeTheme.themeSource = 'dark'
   }
-  return nativeTheme.shouldUseDarkColors;
-});
+  return nativeTheme.shouldUseDarkColors
+})
 
-ipcMain.handle("dark-mode:system", () => {
-  nativeTheme.themeSource = "system";
-});
+ipcMain.handle('dark-mode:system', () => {
+  nativeTheme.themeSource = 'system'
+})
 
-ipcMain.handle("netpierce:toggle", () => {
+ipcMain.handle('netpierce:toggle', () => {
   // TODO:
-});
+})
+
+ipcMain.on('read-directory', (event, directoryPath) => {
+  try {
+    fs.readdir(directoryPath, (err, files) => {
+      if (err) {
+        event.reply('directory-read-error', err)
+      } else {
+        event.reply('directory-read-success', files)
+      }
+    })
+  } catch (error) {
+    event.reply('directory-read-error', error)
+  }
+})
 
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(async () => {
-  createWindow();
-  app.on("activate", function () {
+  createWindow()
+  app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the
     // dock icon is clicked and there are no other windows open.
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
+    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+  })
 
   const filter = {
-    urls: ["https://*.googleapis.com/*"],
-  };
+    urls: ['https://*.googleapis.com/*'],
+  }
 
   session.defaultSession.webRequest.onBeforeRequest(filter, (details, cb) => {
-    if (
-      details.url.startsWith(
-        "https://translate-pa.googleapis.com/v1/supportedLanguages"
-      )
-    ) {
+    if (details.url.startsWith('https://translate-pa.googleapis.com/v1/supportedLanguages')) {
       cb({
         redirectURL: `https://qiin2333.github.io/sunshine-control-panel/src/main/static/supportedLanguages.js`,
-      });
+      })
     } else {
-      cb({ requestHeaders: details.requestHeaders });
+      cb({ requestHeaders: details.requestHeaders })
     }
-  });
-});
+  })
+})
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.
-app.on("window-all-closed", function () {
-  if (process.platform !== "darwin") app.quit();
-});
+app.on('window-all-closed', function () {
+  if (process.platform !== 'darwin') app.quit()
+})
 
 // In this file you can include the rest of your app's specific main process
 // code. You can also put them in separate files and require them here.
 
-const isMac = process.platform === "darwin";
+const isMac = process.platform === 'darwin'
 
 const menuTmpl = [
   // { role: 'appMenu' }
@@ -170,45 +167,40 @@ const menuTmpl = [
         {
           label: app.name,
           submenu: [
-            { role: "about" },
-            { type: "separator" },
-            { role: "services" },
-            { type: "separator" },
-            { role: "hide" },
-            { role: "hideOthers" },
-            { role: "unhide" },
-            { type: "separator" },
-            { role: "quit" },
+            { role: 'about' },
+            { type: 'separator' },
+            { role: 'services' },
+            { type: 'separator' },
+            { role: 'hide' },
+            { role: 'hideOthers' },
+            { role: 'unhide' },
+            { type: 'separator' },
+            { role: 'quit' },
           ],
         },
       ]
     : []),
   {
-    label: "Window",
+    label: 'Window',
     submenu: [
-      { role: "minimize" },
-      { role: "zoom" },
-      { role: "reload" },
+      { role: 'minimize' },
+      { role: 'zoom' },
+      { role: 'reload' },
       ...(isMac
-        ? [
-            { type: "separator" },
-            { role: "front" },
-            { type: "separator" },
-            { role: "window" },
-          ]
-        : [{ role: "close" }]),
+        ? [{ type: 'separator' }, { role: 'front' }, { type: 'separator' }, { role: 'window' }]
+        : [{ role: 'close' }]),
     ],
   },
   {
-    label: "管理",
+    label: '管理',
     submenu: [
       {
-        label: "编辑虚拟显示器分辨率",
+        label: '编辑虚拟显示器分辨率',
         click: () => {
           dialog.showMessageBox(win, {
             message: `虚拟显示器的设置已转移到【设置-视频/音频】页面底部, 编辑后在【windows设备管理器】中禁用再启用 Virtual Display 即可生效`,
-          });
-          spawn("powershell", [`start devmgmt.msc`]);
+          })
+          spawn('powershell', [`start devmgmt.msc`])
         },
       },
       // {
@@ -223,119 +215,114 @@ const menuTmpl = [
       //   },
       // },
       {
-        label: "卸载虚拟显示器",
+        label: '卸载虚拟显示器',
         click: async () => {
           const prompt = await dialog.showMessageBox(win, {
-            type: "question",
-            message: "确认卸载? 卸载后可通过重新安装基地版sunshine恢复。",
-            buttons: ["取消", "确认"],
-          });
+            type: 'question',
+            message: '确认卸载? 卸载后可通过重新安装基地版sunshine恢复。',
+            buttons: ['取消', '确认'],
+          })
           if (prompt.response) {
             runCmdAsAdmin(
-              "C:\\IddSampleDriver\\nefconw.exe --remove-device-node --hardware-id ROOT\\iddsampledriver --class-guid 4d36e968-e325-11ce-bfc1-08002be10318"
-            ).on("close", (code) => {
+              'C:\\IddSampleDriver\\nefconw.exe --remove-device-node --hardware-id ROOT\\iddsampledriver --class-guid 4d36e968-e325-11ce-bfc1-08002be10318'
+            ).on('close', (code) => {
               dialog.showMessageBox(win, {
                 message: `虚拟显示器卸载完成: ${code}`,
-              });
-            });
+              })
+            })
           }
         },
       },
-      { type: "separator" },
+      { type: 'separator' },
       {
-        label: "重启显卡驱动",
+        label: '重启显卡驱动',
         click: () => {
-          sudo.exec("C:\\Program` Files\\Sunshine\\tools\\restart64.exe", {
-            name: "212333",
-          });
+          sudo.exec('C:\\Program` Files\\Sunshine\\tools\\restart64.exe', {
+            name: '212333',
+          })
         },
       },
       {
-        label: "以管理员身份重启sunshine",
+        label: '以管理员身份重启sunshine',
         click: () => {
           runCmdAsAdmin(
             'net stop sunshineservice; taskkill /IM sunshine.exe /F; cd "C:\\Program` Files\\Sunshine"; ./sunshine.exe'
-          ).on("close", () => win.close());
+          ).on('close', () => win.close())
         },
       },
     ],
   },
   {
-    label: "使用教程",
+    label: '使用教程',
     submenu: [
       {
-        label: "下载最新基地版sunshine",
+        label: '下载最新基地版sunshine',
         click: async () => {
-          await shell.openExternal(
-            "https://github.com/qiin2333/Sunshine/releases/tag/alpha"
-          );
+          await shell.openExternal('https://github.com/qiin2333/Sunshine/releases/tag/alpha')
         },
       },
       {
-        label: "加入串流基地裙",
+        label: '加入串流基地裙',
         click: async () => {
-          const subWin = createSubBrowserWin();
-          subWin.loadURL("https://qm.qq.com/q/s3QnqbxvFK");
+          const subWin = createSubBrowserWin()
+          subWin.loadURL('https://qm.qq.com/q/s3QnqbxvFK')
           setTimeout(() => {
-            subWin.close();
-          }, 3000);
+            subWin.close()
+          }, 3000)
         },
       },
       {
-        label: "食用指南",
+        label: '食用指南',
         click: async () => {
-          await shell.openExternal("https://docs.qq.com/aio/DSGdQc3htbFJjSFdO");
+          await shell.openExternal('https://docs.qq.com/aio/DSGdQc3htbFJjSFdO')
         },
       },
     ],
   },
   {
-    label: "小工具",
+    label: '小工具',
     submenu: [
       {
-        label: "剪贴板同步",
+        label: '剪贴板同步',
         click: async () => {
-          const subWin = createSubBrowserWin();
-          subWin.loadURL("https://gcopy.rutron.net/zh");
+          const subWin = createSubBrowserWin()
+          subWin.loadURL('https://gcopy.rutron.net/zh')
         },
       },
       {
-        label: "串流屏摄专用计时器",
+        label: '串流屏摄专用计时器',
         click: () => {
-          const subWin = createSubBrowserWin({ width: 1080, height: 600 });
-          subWin.loadFile(
-            join(__dirname, "../renderer/stop-clock-canvas/index.html")
-          );
+          const subWin = createSubBrowserWin({ width: 1080, height: 600 })
+          subWin.loadFile(join(__dirname, '../renderer/stop-clock-canvas/index.html'))
         },
       },
       {
-        label: "新一代延迟测试钟 by Kile",
+        label: '新一代延迟测试钟 by Kile',
         click: async () => {
-          const subWin = createSubBrowserWin();
-          subWin.loadURL("https://yangkile.github.io/D-lay/");
+          const subWin = createSubBrowserWin()
+          subWin.loadURL('https://yangkile.github.io/D-lay/')
         },
       },
       {
-        label: "手柄测试",
+        label: '手柄测试',
         click: async () => {
-          await shell.openExternal("https://hardwaretester.com/gamepad");
+          await shell.openExternal('https://hardwaretester.com/gamepad')
         },
       },
     ],
   },
   {
-    label: "关于",
+    label: '关于',
     click: () =>
       openAboutWindow.default({
-        icon_path:
-          "https://raw.gitmirror.com/qiin2333/qiin.github.io/assets/img/109527119_p1.png",
-        product_name: "Sunshine 基地版",
-        copyright: "Copyright (c) 2023 Qiin",
+        icon_path: 'https://raw.gitmirror.com/qiin2333/qiin.github.io/assets/img/109527119_p1.png',
+        product_name: 'Sunshine 基地版',
+        copyright: 'Copyright (c) 2023 Qiin',
         use_version_info: false,
         package_json_dir: __dirname,
       }),
   },
-];
+]
 
-const menu = Menu.buildFromTemplate(menuTmpl);
-Menu.setApplicationMenu(menu);
+const menu = Menu.buildFromTemplate(menuTmpl)
+Menu.setApplicationMenu(menu)

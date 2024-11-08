@@ -14,6 +14,17 @@ contextBridge.exposeInMainWorld('electron', {
       console.log('------------ google_translate loaded --------------')`
     )
   },
+  getIccFileList: (cb) => {
+    const directoryPath = 'C:\\Windows\\System32\\spool\\drivers\\color'
+    ipcRenderer.send('read-directory', directoryPath)
+    ipcRenderer.on('directory-read-success', (_, files) => {
+      cb && cb(files)
+      console.log('文件列表:', files)
+    })
+    ipcRenderer.on('directory-read-error', (_, error) => {
+      console.error('读取目录出错:', error)
+    })
+  },
   webUtils,
 })
 

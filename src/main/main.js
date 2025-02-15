@@ -1,11 +1,10 @@
-import { ipcMain, app, Menu, session, nativeTheme, BrowserWindow, dialog, shell } from 'electron'
-import openAboutWindow from 'about-window'
-import sudo from 'sudo-prompt'
-import { download, CancelError } from 'electron-dl'
+import { ipcMain, app, session, nativeTheme, BrowserWindow, dialog, shell } from 'electron'
 import fs from 'node:fs'
+import { download, CancelError } from 'electron-dl'
 import { fileURLToPath } from 'node:url'
 import { join, dirname } from 'node:path'
-import { spawn } from 'node:child_process'
+import { setupApplicationMenu } from './menu.js'
+import { loadURLByArgs, setThemeColor, runCmdAsAdmin, createSubBrowserWin } from './utils.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -22,25 +21,9 @@ if (!gotTheLock) {
       if (win.isMinimized()) win.restore()
       win.show()
       win.focus()
-      loadURLByArgs(argv)
+      loadURLByArgs(argv, win)
     }
   })
-}
-
-function loadURLByArgs(args = []) {
-  const urlArg = args.find((item) => /--url=/.test(item))
-  const url = urlArg?.replace('--url=', '') || 'https://localhost:47990/'
-  win && win.loadURL(url)
-}
-
-function setThemeColor() {
-  return win.webContents.postMessage('theme', {
-    shouldUseDarkColors: nativeTheme.shouldUseDarkColors,
-  })
-}
-
-function runCmdAsAdmin(cmdStr = '') {
-  return spawn('powershell', [`Start-Process powershell -WindowStyle Hidden -ArgumentList '${cmdStr}' -Verb RunAs`])
 }
 
 function createWindow() {
@@ -49,13 +32,6 @@ function createWindow() {
     width: 1080,
     height: 800,
     icon: './assets/sunshine.ico',
-    // titleBarStyle: 'hidden',
-    // titleBarOverlay: {
-    //   color: 'rgba(0,0,0,0)',
-    //   symbolColor: '#74b1be',
-    //   height: 20,
-    // },
-    // autoHideMenuBar: true,
     webPreferences: {
       sandbox: false,
       webSecurity: false,
@@ -64,30 +40,39 @@ function createWindow() {
     },
   })
 
-  loadURLByArgs(process.argv)
+  // 先加载占位页面
+  win.loadFile('./static/placeholder.html').catch(console.error)
+
+  // 添加初始化标志
+  let isInitialLoad = true
+
+  // 正常加载完成后加载实际内容
+  win.webContents.on('did-finish-load', () => {
+    if (isInitialLoad) {
+      loadURLByArgs(process.argv, win)  // 将原加载逻辑移到这里
+      win.webContents.send('page-loaded')
+      isInitialLoad = false  // 执行后标记为已完成
+    }
+  })
+
+  // 保留原有的加载失败处理
+  win.webContents.on('did-fail-load', () => {
+    win.loadFile('./static/placeholder.html').catch(console.error)
+  })
 
   // Open the DevTools.
   // win.webContents.openDevTools()
-  win.webContents.on('dom-ready', setThemeColor)
-  nativeTheme.on('updated', setThemeColor)
+  win.webContents.on('dom-ready', () => setThemeColor(win))
+  nativeTheme.on('updated', () => setThemeColor(win))
   // 监听will-download事件, 使用外部浏览器下载资源
   win.webContents.session.on('will-download', async (event, item, webContents) => {
     // 阻止默认下载行为
     event.preventDefault()
-    shell.openExternal(item.getURL())
-  })
-}
-
-function createSubBrowserWin(options = {}) {
-  return new BrowserWindow({
-    parent: win,
-    icon: './assets/sunshine.ico',
-    autoHideMenuBar: true,
-    useContentSize: true,
-    webPreferences: {
-      enablePreferredSizeMode: true,
-    },
-    ...options,
+    let downloadUrl = item.getURL()
+    if (['github.com', 'raw.githubusercontent.com'].includes(new URL(downloadUrl).hostname)) {
+      downloadUrl = `https://github.moeyy.xyz/${downloadUrl}`
+    }
+    shell.openExternal(downloadUrl)
   })
 }
 
@@ -127,6 +112,8 @@ ipcMain.on('read-directory', (event, directoryPath) => {
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(async () => {
   createWindow()
+  setupApplicationMenu(win)
+
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the
     // dock icon is clicked and there are no other windows open.
@@ -154,175 +141,3 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', function () {
   if (process.platform !== 'darwin') app.quit()
 })
-
-// In this file you can include the rest of your app's specific main process
-// code. You can also put them in separate files and require them here.
-
-const isMac = process.platform === 'darwin'
-
-const menuTmpl = [
-  // { role: 'appMenu' }
-  ...(isMac
-    ? [
-        {
-          label: app.name,
-          submenu: [
-            { role: 'about' },
-            { type: 'separator' },
-            { role: 'services' },
-            { type: 'separator' },
-            { role: 'hide' },
-            { role: 'hideOthers' },
-            { role: 'unhide' },
-            { type: 'separator' },
-            { role: 'quit' },
-          ],
-        },
-      ]
-    : []),
-  {
-    label: 'Window',
-    submenu: [
-      { role: 'minimize' },
-      { role: 'zoom' },
-      { role: 'reload' },
-      ...(isMac
-        ? [{ type: 'separator' }, { role: 'front' }, { type: 'separator' }, { role: 'window' }]
-        : [{ role: 'close' }]),
-    ],
-  },
-  {
-    label: '管理',
-    submenu: [
-      {
-        label: '编辑虚拟显示器分辨率',
-        click: () => {
-          dialog.showMessageBox(win, {
-            message: `虚拟显示器的设置已转移到【设置-视频/音频】页面底部, 编辑后在【windows设备管理器】中禁用再启用 Virtual Display 即可生效`,
-          })
-          spawn('powershell', [`start devmgmt.msc`])
-        },
-      },
-      // {
-      //   label: '指定虚拟显示器调用的GPU',
-      //   click: async () => {
-      //     const cp = require('child_process')
-      //     sudo.exec('start C:\\iddSampleDriver\\adapter.txt', { name: '212333' })
-      //     dialog.showMessageBox(win, {
-      //       message: `编辑后在【windows设备管理器】中禁用再启用 iddSampleDriver 即可生效`,
-      //     })
-      //     cp.spawn('powershell', [`start devmgmt.msc`])
-      //   },
-      // },
-      {
-        label: '卸载虚拟显示器',
-        click: async () => {
-          const prompt = await dialog.showMessageBox(win, {
-            type: 'question',
-            message: '确认卸载? 卸载后可通过重新安装基地版sunshine恢复。',
-            buttons: ['取消', '确认'],
-          })
-          if (prompt.response) {
-            runCmdAsAdmin(
-              'C:\\IddSampleDriver\\nefconw.exe --remove-device-node --hardware-id ROOT\\iddsampledriver --class-guid 4d36e968-e325-11ce-bfc1-08002be10318'
-            ).on('close', (code) => {
-              dialog.showMessageBox(win, {
-                message: `虚拟显示器卸载完成: ${code}`,
-              })
-            })
-          }
-        },
-      },
-      { type: 'separator' },
-      {
-        label: '重启显卡驱动',
-        click: () => {
-          sudo.exec('C:\\Program` Files\\Sunshine\\tools\\restart64.exe', {
-            name: '212333',
-          })
-        },
-      },
-      {
-        label: '以管理员身份重启sunshine',
-        click: () => {
-          runCmdAsAdmin(
-            'net stop sunshineservice; taskkill /IM sunshine.exe /F; cd "C:\\Program` Files\\Sunshine"; ./sunshine.exe'
-          ).on('close', () => win.close())
-        },
-      },
-    ],
-  },
-  {
-    label: '使用教程',
-    submenu: [
-      {
-        label: '下载最新基地版sunshine',
-        click: async () => {
-          await shell.openExternal('https://github.com/qiin2333/Sunshine/releases/tag/alpha')
-        },
-      },
-      {
-        label: '加入串流基地裙',
-        click: async () => {
-          const subWin = createSubBrowserWin()
-          subWin.loadURL('https://qm.qq.com/q/s3QnqbxvFK')
-          setTimeout(() => {
-            subWin.close()
-          }, 3000)
-        },
-      },
-      {
-        label: '食用指南',
-        click: async () => {
-          await shell.openExternal('https://docs.qq.com/aio/DSGdQc3htbFJjSFdO')
-        },
-      },
-    ],
-  },
-  {
-    label: '小工具',
-    submenu: [
-      {
-        label: '剪贴板同步',
-        click: async () => {
-          const subWin = createSubBrowserWin()
-          subWin.loadURL('https://gcopy.rutron.net/zh')
-        },
-      },
-      {
-        label: '串流屏摄专用计时器',
-        click: () => {
-          const subWin = createSubBrowserWin({ width: 1080, height: 600 })
-          subWin.loadFile(join(__dirname, '../renderer/stop-clock-canvas/index.html'))
-        },
-      },
-      {
-        label: '新一代延迟测试钟 by Kile',
-        click: async () => {
-          const subWin = createSubBrowserWin()
-          subWin.loadURL('https://yangkile.github.io/D-lay/')
-        },
-      },
-      {
-        label: '手柄测试',
-        click: async () => {
-          await shell.openExternal('https://hardwaretester.com/gamepad')
-        },
-      },
-    ],
-  },
-  {
-    label: '关于',
-    click: () =>
-      openAboutWindow.default({
-        icon_path: 'https://raw.gitmirror.com/qiin2333/qiin.github.io/assets/img/109527119_p1.png',
-        product_name: 'Sunshine 基地版',
-        copyright: 'Copyright (c) 2023 Qiin',
-        use_version_info: false,
-        package_json_dir: __dirname,
-      }),
-  },
-]
-
-const menu = Menu.buildFromTemplate(menuTmpl)
-Menu.setApplicationMenu(menu)

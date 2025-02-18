@@ -1,6 +1,5 @@
 import { ipcMain, app, session, nativeTheme, BrowserWindow, dialog, shell } from 'electron'
 import fs from 'node:fs'
-import { download, CancelError } from 'electron-dl'
 import { fileURLToPath } from 'node:url'
 import { join, dirname } from 'node:path'
 import { setupApplicationMenu } from './menu.js'
@@ -41,23 +40,24 @@ function createWindow() {
   })
 
   // 先加载占位页面
-  win.loadFile('./static/placeholder.html').catch(console.error)
-
-  // 添加初始化标志
-  let isInitialLoad = true
+  if (process.env.NODE_ENV === 'development') {
+    const rendererPort = process.argv[2]
+    win.loadURL(`http://localhost:${rendererPort}/placeholder.html`)
+  } else {
+    win.loadFile(join(app.getAppPath(), 'renderer', 'placeholder.html')).catch(console.error)
+  }
 
   // 正常加载完成后加载实际内容
-  win.webContents.on('did-finish-load', () => {
-    if (isInitialLoad) {
-      loadURLByArgs(process.argv, win)  // 将原加载逻辑移到这里
-      win.webContents.send('page-loaded')
-      isInitialLoad = false  // 执行后标记为已完成
-    }
+  win.webContents.on('did-finish-load', function handleFirstLoaded() {
+    if (win.isDestroyed()) return
+    loadURLByArgs(process.argv, win)
+    win.webContents.send('page-loaded')
+    win.webContents.off('did-finish-load', handleFirstLoaded)
   })
 
   // 保留原有的加载失败处理
   win.webContents.on('did-fail-load', () => {
-    win.loadFile('./static/placeholder.html').catch(console.error)
+    win.loadFile(join(app.getAppPath(), 'renderer', 'placeholder.html')).catch(console.error)
   })
 
   // Open the DevTools.

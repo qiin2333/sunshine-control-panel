@@ -25,6 +25,7 @@ export default defineConfig(() => ({
     rollupOptions: {
       input: {
         index: resolve(rendererSrcPath, "index.html"),
+        placeholder: resolve(rendererSrcPath, "placeholder.html"),
         iddSetting: resolve(rendererSrcPath, "idd-setting.html"),
         clock: resolve(rendererSrcPath, "stop-clock-canvas/index.html"),
       },

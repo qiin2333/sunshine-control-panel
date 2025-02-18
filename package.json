@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node scripts/dev-server.js",
     "build": "node scripts/build.js && electron-builder -p never",
-    "build:win": "set NODE_ENV=production && node scripts/build.js && electron-builder --win --publish=never",
+    "build:win": "set NODE_ENV=production && node scripts/build.js && electron-builder --win --x64 --publish=never --config.asar=true --config.compression=maximum",
     "build:mac": "node scripts/build.js && electron-builder --mac",
     "build:linux": "node scripts/build.js && electron-builder --linux"
   },
@@ -23,11 +23,12 @@
     "chokidar": "^3.5.3",
     "electron": "^32.2.2",
     "electron-builder": "^25.1.8",
+    "less": "^4.2.2",
+    "less-loader": "^12.2.0",
     "vite": "^4.5.5"
   },
   "dependencies": {
     "about-window": "^1.15.2",
-    "electron-dl": "^4.0.0",
     "sudo-prompt": "^9.2.1",
     "vue": "^3.5.4"
   }

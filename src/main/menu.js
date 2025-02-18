@@ -49,7 +49,7 @@ export function createMenuTemplate(mainWindow) {
           label: '编辑虚拟显示器分辨率',
           click: () => {
             dialog.showMessageBox(mainWindow, {
-              message: `虚拟显示器的设置已转移到【设置-视频/音频】页面底部, 编辑后在【windows设备管理器】中禁用再启用 Virtual Display 即可生效`,
+              message: `虚拟显示器的设置已转移到【设置-视频/音频】页面底部, 编辑后保存生效`,
             })
             spawn('powershell', [`start devmgmt.msc`])
           },

@@ -33,14 +33,20 @@
       "to": "static",
       "filter": ["**/*"]
     },
-    "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
-    "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
+    "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme,LICENSE}",
+    "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples,docs}",
     "!**/node_modules/*.d.ts",
     "!**/node_modules/.bin",
+    "!**/*.map",
+    "!**/*.log",
+    "!**/.DS_Store",
+    "!**/Thumbs.db",
     "!src",
     "!config",
     "!README.md",
     "!scripts",
-    "!dist"
+    "!dist",
+    "!**/cypress",
+    "!**/.git"
   ]
 }

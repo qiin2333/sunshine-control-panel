@@ -1,4 +1,4 @@
-import { Menu, dialog, shell } from 'electron'
+import { Menu, dialog, shell, app } from 'electron'
 import openAboutWindow from 'about-window'
 import { fileURLToPath } from 'node:url'
 import { join, dirname } from 'node:path'
@@ -11,35 +11,36 @@ const __dirname = dirname(__filename)
 
 export function createMenuTemplate(mainWindow) {
   const isMac = process.platform === 'darwin'
-  
+
   return [
     // { role: 'appMenu' }
-    ...(isMac ? [{
-      label: app.name,
-      submenu: [
-        { role: 'about' },
-        { type: 'separator' },
-        { role: 'services' },
-        { type: 'separator' },
-        { role: 'hide' },
-        { role: 'hideOthers' },
-        { role: 'unhide' },
-        { type: 'separator' },
-        { role: 'quit' },
-      ],
-    }] : []),
+    ...(isMac
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              { role: 'about' },
+              { type: 'separator' },
+              { role: 'services' },
+              { type: 'separator' },
+              { role: 'hide' },
+              { role: 'hideOthers' },
+              { role: 'unhide' },
+              { type: 'separator' },
+              { role: 'quit' },
+            ],
+          },
+        ]
+      : []),
     {
       label: 'Window',
       submenu: [
         { role: 'minimize' },
         { role: 'zoom' },
         { role: 'reload' },
-        ...(isMac ? [
-          { type: 'separator' },
-          { role: 'front' },
-          { type: 'separator' },
-          { role: 'window' }
-        ] : [{ role: 'close' }]),
+        ...(isMac
+          ? [{ type: 'separator' }, { role: 'front' }, { type: 'separator' }, { role: 'window' }]
+          : [{ role: 'close' }]),
       ],
     },
     {
@@ -48,10 +49,8 @@ export function createMenuTemplate(mainWindow) {
         {
           label: '编辑虚拟显示器分辨率',
           click: () => {
-            dialog.showMessageBox(mainWindow, {
-              message: `虚拟显示器的设置已转移到【设置-视频/音频】页面底部, 编辑后保存生效`,
-            })
-            spawn('powershell', [`start devmgmt.msc`])
+            const subWin = createSubBrowserWin(null, mainWindow)
+            subWin.loadFile(join(__dirname, '../renderer/vdd/index.html'))
           },
         },
         {

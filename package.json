@@ -29,7 +29,9 @@
   },
   "dependencies": {
     "about-window": "^1.15.2",
+    "element-plus": "^2.9.4",
     "sudo-prompt": "^9.2.1",
-    "vue": "^3.5.4"
+    "vue": "^3.5.4",
+    "xml2js": "^0.6.2"
   }
 }

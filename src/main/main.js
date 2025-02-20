@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { join, dirname } from 'node:path'
 import { setupApplicationMenu } from './menu.js'
 import { loadURLByArgs, setThemeColor, runCmdAsAdmin, createSubBrowserWin } from './utils.js'
+import { registerVddHandlers } from './vddSettings.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -36,26 +37,25 @@ function createWindow() {
       webSecurity: false,
       allowRunningInsecureContent: true,
       preload: join(__dirname, 'preload.mjs'),
+      userAgent:
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 SunshineControlPanel',
     },
   })
 
   // 先加载占位页面
   if (process.env.NODE_ENV === 'development') {
     const rendererPort = process.argv[2]
-    win.loadURL(`http://localhost:${rendererPort}/placeholder.html`)
+    win.loadURL(`http://localhost:${rendererPort}/vdd/`)
   } else {
     win.loadFile(join(app.getAppPath(), 'renderer', 'placeholder.html')).catch(console.error)
   }
 
-  // 正常加载完成后加载实际内容
-  win.webContents.on('did-finish-load', function handleFirstLoaded() {
+  win.webContents.once('did-finish-load', async () => {
     if (win.isDestroyed()) return
     loadURLByArgs(process.argv, win)
     win.webContents.send('page-loaded')
-    win.webContents.off('did-finish-load', handleFirstLoaded)
   })
-
-  // 保留原有的加载失败处理
+  
   win.webContents.on('did-fail-load', () => {
     win.loadFile(join(app.getAppPath(), 'renderer', 'placeholder.html')).catch(console.error)
   })
@@ -73,6 +73,12 @@ function createWindow() {
       downloadUrl = `https://github.moeyy.xyz/${downloadUrl}`
     }
     shell.openExternal(downloadUrl)
+  })
+
+  win.webContents.once('did-finish-load', async () => {
+    if (win.isDestroyed()) return
+    await loadURLByArgs(process.argv, win)
+    win.webContents.send('page-loaded')
   })
 }
 
@@ -113,6 +119,8 @@ ipcMain.on('read-directory', (event, directoryPath) => {
 app.whenReady().then(async () => {
   createWindow()
   setupApplicationMenu(win)
+
+  registerVddHandlers()
 
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the

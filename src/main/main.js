@@ -1,4 +1,4 @@
-import { ipcMain, app, session, nativeTheme, BrowserWindow, dialog, shell } from 'electron'
+import { Tray, nativeImage, ipcMain, app, session, nativeTheme, BrowserWindow, dialog, shell, Menu } from 'electron'
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { join, dirname } from 'node:path'
@@ -9,6 +9,11 @@ import { registerVddHandlers } from './vddSettings.js'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 let win
+
+// 提取常量
+const DEFAULT_WINDOW_WIDTH = 1080
+const DEFAULT_WINDOW_HEIGHT = 800
+const TRAY_ICON_PATH = join(__dirname, 'static', 'gura.ico')
 
 app.commandLine.appendSwitch('ignore-certificate-errors')
 
@@ -27,11 +32,11 @@ if (!gotTheLock) {
 }
 
 function createWindow() {
-  // Create the browser window.
+  // 创建浏览器窗口
   win = new BrowserWindow({
-    width: 1080,
-    height: 800,
-    icon: './assets/sunshine.ico',
+    width: DEFAULT_WINDOW_WIDTH,
+    height: DEFAULT_WINDOW_HEIGHT,
+    icon: TRAY_ICON_PATH,
     webPreferences: {
       sandbox: false,
       webSecurity: false,
@@ -41,6 +46,12 @@ function createWindow() {
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 SunshineControlPanel',
     },
   })
+
+  // 初始化托盘
+  createTray()
+
+  // 设置窗口事件
+  setupWindowEvents()
 
   // 先加载占位页面
   if (process.env.NODE_ENV === 'development') {
@@ -52,10 +63,10 @@ function createWindow() {
 
   win.webContents.once('did-finish-load', async () => {
     if (win.isDestroyed()) return
-    loadURLByArgs(process.argv, win)
+    await loadURLByArgs(process.argv, win)
     win.webContents.send('page-loaded')
   })
-  
+
   win.webContents.on('did-fail-load', () => {
     win.loadFile(join(app.getAppPath(), 'renderer', 'placeholder.html')).catch(console.error)
   })
@@ -74,12 +85,76 @@ function createWindow() {
     }
     shell.openExternal(downloadUrl)
   })
+}
 
-  win.webContents.once('did-finish-load', async () => {
-    if (win.isDestroyed()) return
-    await loadURLByArgs(process.argv, win)
-    win.webContents.send('page-loaded')
+// 创建托盘独立函数
+function createTray() {
+  try {
+    // 添加不同尺寸的图标适配
+    const trayIcon = nativeImage.createFromPath(TRAY_ICON_PATH).resize({ width: 32, height: 32 }) // 添加尺寸适配
+
+    const tray = new Tray(trayIcon)
+    tray.setToolTip('Sunshine Control Panel')
+
+    const contextMenu = Menu.buildFromTemplate([
+      {
+        label: '设置虚拟显示器（vdd)',
+        click: () => {
+          const subWin = createSubBrowserWin(null, win)
+          subWin.loadFile(join(__dirname, '../renderer/vdd/index.html'))
+        },
+      },
+      {
+        label: '退出程序',
+        click: () => {
+          app.isQuiting = true
+          app.quit()
+        },
+      },
+    ])
+    tray.setContextMenu(contextMenu)
+
+    tray.on('click', () => toggleWindowVisibility())
+  } catch (error) {
+    console.error('托盘创建失败:', error)
+  }
+}
+
+// 窗口事件处理独立函数
+function setupWindowEvents() {
+  // 窗口关闭时隐藏到托盘
+  win.on('close', (event) => {
+    if (!app.isQuiting) {
+      event.preventDefault()
+      win.hide()
+    }
   })
+
+  // 窗口最小化时隐藏
+  win.on('minimize', (event) => {
+    event.preventDefault()
+    win.hide()
+  })
+
+  // 主题变化监听
+  const updateThemeColor = () => setThemeColor(win)
+  win.webContents.on('dom-ready', updateThemeColor)
+  nativeTheme.on('updated', updateThemeColor)
+
+  // 窗口关闭时移除监听
+  win.on('closed', () => {
+    nativeTheme.off('updated', updateThemeColor)
+  })
+}
+
+// 窗口可见性切换函数
+function toggleWindowVisibility() {
+  if (win.isVisible()) {
+    win.hide()
+  } else {
+    win.show()
+    win.focus()
+  }
 }
 
 ipcMain.handle('dark-mode:toggle', () => {
@@ -99,15 +174,10 @@ ipcMain.handle('netpierce:toggle', () => {
   // TODO:
 })
 
-ipcMain.on('read-directory', (event, directoryPath) => {
+ipcMain.on('read-directory', async (event, directoryPath) => {
   try {
-    fs.readdir(directoryPath, (err, files) => {
-      if (err) {
-        event.reply('directory-read-error', err)
-      } else {
-        event.reply('directory-read-success', files)
-      }
-    })
+    const files = await fs.promises.readdir(directoryPath)
+    event.reply('directory-read-success', files)
   } catch (error) {
     event.reply('directory-read-error', error)
   }
@@ -148,4 +218,9 @@ app.whenReady().then(async () => {
 // explicitly with Cmd + Q.
 app.on('window-all-closed', function () {
   if (process.platform !== 'darwin') app.quit()
+})
+
+// 在退出应用时清理托盘
+app.on('before-quit', () => {
+  app.isQuiting = true
 })

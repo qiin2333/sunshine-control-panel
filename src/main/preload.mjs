@@ -11,9 +11,9 @@ contextBridge.exposeInMainWorld('electron', {
     webFrame.executeJavaScript(
       `new google.translate.TranslateElement(
         { 
-          pageLanguage: 'en',
+          pageLanguage: '',
           layout: google.translate.TranslateElement.InlineLayout.VERTICAL,
-          includedLanguages: 'zh-CN,zh-TW'
+          includedLanguages: 'zh-CN,zh-TW,en'
         },
         'google_translate_element'
       )
@@ -21,7 +21,7 @@ contextBridge.exposeInMainWorld('electron', {
     )
   },
   getIccFileList: (cb) => {
-    const directoryPath = 'C:\\Windows\\System32\\spool\\drivers\\color'
+    const directoryPath = `${process.env.windir}\\System32\\spool\\drivers\\color`
     ipcRenderer.send('read-directory', directoryPath)
     ipcRenderer.on('directory-read-success', (_, files) => {
       cb && cb(files)

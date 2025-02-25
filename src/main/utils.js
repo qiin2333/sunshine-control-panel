@@ -9,7 +9,7 @@ const __dirname = dirname(__filename)
 export function createSubBrowserWin(options = {}, parent) {
   return new BrowserWindow({
     parent,
-    icon: './assets/sunshine.ico',
+    icon: join(__dirname, 'static', 'gura.ico'),
     autoHideMenuBar: true,
     useContentSize: true,
     webPreferences: {
@@ -36,19 +36,22 @@ export function loadURLByArgs(args = [], window) {
     show: false,
     webPreferences: {
       sandbox: false,
-      webSecurity: false
-    }
+      webSecurity: false,
+    },
   })
 
   // 先尝试在隐藏窗口加载
-  testWindow.loadURL(url).then(() => {
-    // 加载成功后才加载真实窗口
-    window && window.loadURL(url)
-    testWindow.close()
-  }).catch(err => {
-    console.error('URL加载失败:', err)
-    testWindow.close()
-  })
+  testWindow
+    .loadURL(url)
+    .then(() => {
+      // 加载成功后才加载真实窗口
+      window && window.loadURL(url)
+      testWindow.close()
+    })
+    .catch((err) => {
+      console.error('URL加载失败:', err)
+      testWindow.close()
+    })
 }
 
 export function setThemeColor(window) {

@@ -1,8 +1,7 @@
 import { Menu, dialog, shell, app } from 'electron'
 import openAboutWindow from 'about-window'
 import { fileURLToPath } from 'node:url'
-import { join, dirname } from 'node:path'
-import { spawn } from 'node:child_process'
+import { join, dirname, parse } from 'node:path'
 import { createSubBrowserWin, runCmdAsAdmin } from './utils.js'
 import sudo from 'sudo-prompt'
 
@@ -11,6 +10,11 @@ const __dirname = dirname(__filename)
 
 export function createMenuTemplate(mainWindow) {
   const isMac = process.platform === 'darwin'
+  const programFilesPath = process.env['ProgramW6432'] || 'C:\\Program Files'
+  const systemDrive = parse(programFilesPath).root
+  const SUNSHINE_PATH = join(programFilesPath, 'Sunshine')
+  const SUNSHINE_TOOLS_PATH = join(SUNSHINE_PATH, 'tools')
+  const VIRTUAL_DRIVER_PATH = join(systemDrive, 'VirtualDisplayDriver')
 
   return [
     // { role: 'appMenu' }
@@ -62,9 +66,14 @@ export function createMenuTemplate(mainWindow) {
               buttons: ['取消', '确认'],
             })
             if (prompt.response) {
-              runCmdAsAdmin(
-                'C:\\VirtualDisplayDriver\\nefconw.exe --remove-device-node --hardware-id ROOT\\iddsampledriver --class-guid 4d36e968-e325-11ce-bfc1-08002be10318'
-              ).on('close', (code) => {
+              const uninstallCmd = [
+                `"${join(VIRTUAL_DRIVER_PATH, 'nefconw.exe')}"`,
+                '--remove-device-node',
+                '--hardware-id ROOT\\iddsampledriver',
+                '--class-guid 4d36e968-e325-11ce-bfc1-08002be10318',
+              ].join(' ')
+
+              runCmdAsAdmin(uninstallCmd).on('close', (code) => {
                 dialog.showMessageBox(mainWindow, {
                   message: `虚拟显示器卸载完成: ${code}`,
                 })
@@ -76,17 +85,23 @@ export function createMenuTemplate(mainWindow) {
         {
           label: '重启显卡驱动',
           click: () => {
-            sudo.exec('C:\\Program` Files\\Sunshine\\tools\\restart64.exe', {
-              name: '212333',
+            const restartExe = join(SUNSHINE_TOOLS_PATH, 'restart64.exe')
+            sudo.exec(`"${restartExe}"`, {
+              name: 'Sunshine Control Panel',
             })
           },
         },
         {
           label: '以管理员身份重启sunshine',
           click: () => {
-            runCmdAsAdmin(
-              'net stop sunshineservice; taskkill /IM sunshine.exe /F; cd "C:\\Program` Files\\Sunshine"; ./sunshine.exe'
-            ).on('close', () => mainWindow.close())
+            const command = [
+              'net stop sunshineservice',
+              'taskkill /IM sunshine.exe /F',
+              `cd "${SUNSHINE_PATH}"`,
+              './sunshine.exe',
+            ].join(' && ')
+
+            runCmdAsAdmin(command).on('close', () => mainWindow.close())
           },
         },
       ],

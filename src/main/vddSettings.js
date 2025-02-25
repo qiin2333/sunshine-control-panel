@@ -3,6 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import { parseStringPromise, Parser, Builder } from 'xml2js'
 import sudo from 'sudo-prompt'
+import { connect } from 'net'
 
 const VDD_SETTINGS_PATH = path.join(process.env.SystemDrive, 'VirtualDisplayDriver', 'vdd_settings.xml')
 
@@ -94,16 +95,29 @@ async function saveVddSettings(settings) {
       console.log('文件验证成功，文件大小:', fs.statSync(VDD_SETTINGS_PATH).size + '字节')
 
       // 通过命名管道通知驱动重启
-      const reloadCommand = `powershell -Command "$pipe = New-Object System.IO.Pipes.NamedPipeClientStream('.', 'ZakoVDDPipe', [System.IO.Pipes.PipeDirection]::Out); $pipe.Connect(5000); $writer = New-Object System.IO.StreamWriter($pipe); $writer.WriteLine('RELOAD_DRIVER'); $writer.Flush(); $pipe.Dispose();"`
-
-      console.log('执行驱动重启命令:', reloadCommand)
-      await new Promise((resolve, reject) => {
-        sudo.exec(reloadCommand, options, (error, stdout, stderr) => {
-          console.log('驱动重启命令输出:', stdout)
-          console.log('驱动重启命令错误:', stderr)
-          error ? reject(error) : resolve()
-        })
-      })
+      try {
+        console.log('正在通过Node.js连接命名管道通知驱动重启');
+        
+        const client = connect('\\\\.\\pipe\\ZakoVDDPipe', () => {
+          console.log('已连接到管道');
+          client.write('RELOAD_DRIVER');
+          client.end();
+        });
+        
+        client.on('error', (err) => {
+          console.error('管道连接错误:', err);
+        });
+        
+        // 设置连接超时
+        setTimeout(() => {
+          client.destroy();
+        }, 5000);
+        
+        console.log('成功通知驱动重启');
+      } catch (error) {
+        console.error('通知驱动重启失败:', error);
+        // 继续处理，不要影响整体流程
+      }
     }
 
     return { success: true }

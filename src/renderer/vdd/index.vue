@@ -233,6 +233,10 @@ const addResolution = () => {
 }
 
 const removeResolution = (value) => {
+  if (resolutionOptions.value.size <= 1) {
+    ElMessage.error('必须至少保留一个分辨率')
+    return
+  }
   resolutionOptions.value.delete(value)
   ElMessage.info(`已移除分辨率 ${value}`)
 }
@@ -273,6 +277,10 @@ const addRefreshRate = () => {
 }
 
 const removeRefreshRate = (value) => {
+  if (refreshRateOptions.value.size <= 1) {
+    ElMessage.error('必须至少保留一个刷新率')
+    return
+  }
   refreshRateOptions.value.delete(value)
   ElMessage.info(`已移除刷新率 ${value}Hz`)
 }

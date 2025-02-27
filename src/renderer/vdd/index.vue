@@ -37,12 +37,22 @@
       <!-- 显卡设置 -->
       <el-form-item label="GPU绑定">
         <div class="setting-content">
-          <el-input
+          <el-select
             v-model="gpuFriendlyName"
+            filterable
+            allow-create
+            default-first-option
             style="width: 360px"
             @blur="saveGpuEdit"
             @keyup.enter="saveGpuEdit"
-          />
+          >
+            <el-option
+              v-for="gpu in gpuOptions"
+              :key="gpu"
+              :label="gpu"
+              :value="gpu"
+            />
+          </el-select>
         </div>
       </el-form-item>
 
@@ -103,6 +113,9 @@ const MIN_REFRESH_RATE = 60
 const MAX_REFRESH_RATE = 240
 const RESOLUTION_PATTERN = /^\d+x\d+$/
 const CHINESE_PATTERN = /[\u4e00-\u9fa5]/
+
+// 新增GPU选项列表
+const gpuOptions = ref([])
 
 // 优化初始状态设置
 const initialSettings = {
@@ -165,6 +178,22 @@ const loadSettings = async () => {
   } catch (error) {
     console.error('加载设置错误:', error)
     ElMessage.error('加载设置失败')
+  }
+}
+
+// 在loadSettings方法后添加获取GPU列表的方法
+const loadGPUs = async () => {
+  try {
+    const result = await window.electron.ipcRenderer.invoke('vdd:getGPUs')
+    if (result?.success) {
+      gpuOptions.value = result.data
+      // 如果当前选中的GPU不在列表中，则添加到选项
+      if (gpuFriendlyName.value && !gpuOptions.value.includes(gpuFriendlyName.value)) {
+        gpuOptions.value.unshift(gpuFriendlyName.value)
+      }
+    }
+  } catch (error) {
+    console.error('获取GPU列表失败:', error)
   }
 }
 
@@ -292,13 +321,17 @@ const handleRateInputConfirm = () => {
   showRateInput.value = false
 }
 
-// 实现保存GPU设置方法
+// 修改保存GPU设置方法
 const saveGpuEdit = () => {
-  // 添加中文校验
   if (CHINESE_PATTERN.test(gpuFriendlyName.value)) {
     ElMessage.error('GPU名称不能包含中文')
     gpuFriendlyName.value = ''
     return
+  }
+
+  // 如果输入的是新选项，添加到列表
+  if (gpuFriendlyName.value && !gpuOptions.value.includes(gpuFriendlyName.value)) {
+    gpuOptions.value.unshift(gpuFriendlyName.value)
   }
 
   settings.value.gpu[0].friendlyname = [gpuFriendlyName.value]
@@ -307,6 +340,7 @@ const saveGpuEdit = () => {
 
 onMounted(() => {
   loadSettings()
+  loadGPUs()
 })
 </script>
 

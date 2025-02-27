@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BrowserWindow, nativeTheme, net } from 'electron'
+import https from 'https'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -57,5 +58,42 @@ export function loadURLByArgs(args = [], window) {
 export function setThemeColor(window) {
   return window.webContents.postMessage('theme', {
     shouldUseDarkColors: nativeTheme.shouldUseDarkColors,
+  })
+}
+
+export async function sendHttpRequest({ hostname, port, path, method, headers, data }) {
+  return new Promise((resolve, reject) => {
+    const options = {
+      hostname,
+      port,
+      path,
+      method,
+      headers,
+      rejectUnauthorized: false,
+    }
+
+    const req = https.request(options, (res) => {
+      let responseData = ''
+      res.on('data', (chunk) => (responseData += chunk))
+      res.on('end', () =>
+        resolve({
+          ok: res.statusCode >= 200 && res.statusCode < 300,
+          status: res.statusCode,
+          text: () => Promise.resolve(responseData),
+        })
+      )
+    })
+
+    req.on('error', reject)
+
+    req.setTimeout(10000, () => {
+      req.destroy(new Error('连接超时'))
+    })
+
+    // 仅在存在数据时写入请求体
+    if (data) {
+      req.write(JSON.stringify(data))
+    }
+    req.end() // 无论是否有数据都需要调用 end()
   })
 }

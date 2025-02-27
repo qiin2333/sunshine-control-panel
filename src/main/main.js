@@ -2,6 +2,7 @@ import { Tray, nativeImage, ipcMain, app, session, nativeTheme, BrowserWindow, d
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { join, dirname } from 'node:path'
+import si from 'systeminformation'
 import { setupApplicationMenu } from './menu.js'
 import { loadURLByArgs, setThemeColor, runCmdAsAdmin, createSubBrowserWin } from './utils.js'
 import { registerVddHandlers } from './vddSettings.js'
@@ -67,8 +68,11 @@ function createWindow() {
     win.webContents.send('page-loaded')
   })
 
-  win.webContents.on('did-fail-load', () => {
+  win.webContents.on('did-fail-load', async (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame) return
     win.loadFile(join(app.getAppPath(), 'renderer', 'placeholder.html')).catch(console.error)
+    await new Promise((resolve) => setTimeout(resolve, 3000)) // 3秒后重试
+    win.loadURL(validatedURL)
   })
 
   // Open the DevTools.
@@ -157,6 +161,12 @@ function toggleWindowVisibility() {
   }
 }
 
+// GPU信息处理函数
+async function getGPUFriendlyNames() {
+  const gpuInfo = await si.graphics()
+  return gpuInfo.controllers.filter((controller) => controller.vram > 0).map((controller) => controller.model)
+}
+
 ipcMain.handle('dark-mode:toggle', () => {
   if (nativeTheme.shouldUseDarkColors) {
     nativeTheme.themeSource = 'light'
@@ -172,6 +182,17 @@ ipcMain.handle('dark-mode:system', () => {
 
 ipcMain.handle('netpierce:toggle', () => {
   // TODO:
+})
+
+ipcMain.handle('vdd:getGPUs', async () => {
+  try {
+    // 获取GPU信息并转换为友好名称
+    const gpus = await getGPUFriendlyNames()
+    return { success: true, data: gpus }
+  } catch (error) {
+    console.error('获取GPU信息失败:', error)
+    return { success: false, message: error.message }
+  }
 })
 
 ipcMain.on('read-directory', async (event, directoryPath) => {

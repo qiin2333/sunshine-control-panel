@@ -18,7 +18,7 @@ export function createSubBrowserWin(options = {}, parent) {
       webSecurity: false,
       allowRunningInsecureContent: true,
       enablePreferredSizeMode: true,
-      preload: join(__dirname, 'preload.mjs'),
+      preload: join(__dirname, 'preload/tinyworld.mjs'),
     },
     ...options,
   })

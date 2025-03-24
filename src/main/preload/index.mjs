@@ -1,11 +1,16 @@
-import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron'
+import { contextBridge, ipcRenderer, webFrame, webUtils, shell } from 'electron'
+import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { join, dirname } from 'node:path'
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
 contextBridge.exposeInMainWorld('electron', {
   ipcRenderer: {
     invoke: (channel, data) => ipcRenderer.invoke(channel, data),
     on: (channel, func) => {
       ipcRenderer.on(channel, (event, ...args) => func(...args))
-    }
+    },
   },
   googleTranslateElementInit: () => {
     webFrame.executeJavaScript(
@@ -39,30 +44,9 @@ contextBridge.exposeInMainWorld('darkMode', {
   system: () => ipcRenderer.invoke('dark-mode:system'),
 })
 
-contextBridge.exposeInMainWorld('netpierce', {
-  toggle: () => ipcRenderer.invoke('netpierce:toggle'),
-  start: () => ipcRenderer.invoke('netpierce:start'),
-})
-
-const resetStyles = `
-  p { 
-    margin -bottom: 1rem;
-  }
-  ::-webkit-scrollbar-track-piece {
-    background-color:#f8f8f8;
-  }
-  ::-webkit-scrollbar {
-    width: 8px;
-  }
-  ::-webkit-scrollbar-thumb {
-    background-color:#dddddd;
-    background-clip:padding-box;
-    min-height:28px;
-  }
-  ::-webkit-scrollbar-thumb:hover {
-    background-color:#bbb;
-  }
-`
+// 替换为从文件读取样式
+const stylePath = join(__dirname, '..', 'styles', 'reset.css')
+const resetStyles = fs.readFileSync(stylePath, 'utf8')
 
 webFrame.insertCSS(resetStyles)
 

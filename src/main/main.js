@@ -42,7 +42,7 @@ function createWindow() {
       sandbox: false,
       webSecurity: false,
       allowRunningInsecureContent: true,
-      preload: join(__dirname, 'preload.mjs'),
+      preload: join(__dirname, 'preload/index.mjs'),
       userAgent:
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 SunshineControlPanel',
     },
@@ -76,7 +76,7 @@ function createWindow() {
   })
 
   // Open the DevTools.
-  // win.webContents.openDevTools()
+  if (process.env.NODE_ENV === 'development') win.webContents.openDevTools()
   win.webContents.on('dom-ready', () => setThemeColor(win))
   nativeTheme.on('updated', () => setThemeColor(win))
   // 监听will-download事件, 使用外部浏览器下载资源
@@ -178,6 +178,14 @@ ipcMain.handle('dark-mode:toggle', () => {
 
 ipcMain.handle('dark-mode:system', () => {
   nativeTheme.themeSource = 'system'
+})
+
+ipcMain.handle('openExternalUrl', async (_, url) => {
+  if (typeof url === 'string' && url.startsWith('http')) {
+    await shell.openExternal(url);
+    return true;
+  }
+  return false;
 })
 
 ipcMain.handle('netpierce:toggle', () => {

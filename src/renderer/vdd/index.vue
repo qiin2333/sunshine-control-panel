@@ -46,12 +46,7 @@
             @blur="saveGpuEdit"
             @keyup.enter="saveGpuEdit"
           >
-            <el-option
-              v-for="gpu in gpuOptions"
-              :key="gpu"
-              :label="gpu"
-              :value="gpu"
-            />
+            <el-option v-for="gpu in gpuOptions" :key="gpu" :label="gpu" :value="gpu" />
           </el-select>
         </div>
       </el-form-item>
@@ -92,6 +87,26 @@
         </div>
       </el-form-item>
 
+      <!-- SDR10 -->
+      <el-form-item label="SDR 10bit">
+        <el-switch v-model="settings.colour[0].SDR10bit" />
+      </el-form-item>
+
+      <!-- HDR+ -->
+      <el-form-item label="HDR 12bit">
+        <el-switch v-model="settings.colour[0].HDRPlus" />
+      </el-form-item>
+
+      <!-- 色彩模式 -->
+      <el-form-item label="色彩模式">
+        <el-select v-model="settings.colour[0].ColourFormat" placeholder="请选择色彩模式" style="width: 160px">
+          <el-option label="RGB" value="RGB" />
+          <el-option label="YCbCr444" value="YCbCr444" />
+          <el-option label="YCbCr422" value="YCbCr422" />
+          <el-option label="YCbCr420" value="YCbCr420" />
+        </el-select>
+      </el-form-item>
+
       <!-- 保存按钮 -->
       <el-form-item>
         <el-button type="primary" @click="saveSettings">保存设置</el-button>
@@ -122,6 +137,13 @@ const initialSettings = {
   monitors: [{ count: 1 }],
   gpu: [{ friendlyname: [''] }],
   resolutions: [],
+  colour: [
+    {
+      SDR10bit: false,
+      HDRPlus: false,
+      ColourFormat: 'RGB',
+    },
+  ],
 }
 
 const settings = ref({ ...initialSettings })

@@ -5,7 +5,7 @@ import { join, dirname } from 'node:path'
 import si from 'systeminformation'
 import { setupApplicationMenu } from './menu.js'
 import { loadURLByArgs, setThemeColor, runCmdAsAdmin, createSubBrowserWin } from './utils.js'
-import { registerVddHandlers } from './vddSettings.js'
+import { registerVddHandlers, execPipeCmd } from './vddSettings.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -63,6 +63,7 @@ function createWindow() {
   }
 
   win.webContents.once('did-finish-load', async () => {
+    if (process.env.NODE_ENV === 'development') return
     if (win.isDestroyed()) return
     await loadURLByArgs(process.argv, win)
     win.webContents.send('page-loaded')
@@ -182,10 +183,10 @@ ipcMain.handle('dark-mode:system', () => {
 
 ipcMain.handle('openExternalUrl', async (_, url) => {
   if (typeof url === 'string' && url.startsWith('http')) {
-    await shell.openExternal(url);
-    return true;
+    await shell.openExternal(url)
+    return true
   }
-  return false;
+  return false
 })
 
 ipcMain.handle('netpierce:toggle', () => {

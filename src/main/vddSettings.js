@@ -16,6 +16,13 @@ const DEFAULT_SETTINGS = {
     monitors: [{ count: 1 }],
     gpu: [{ friendlyname: [''] }],
     resolutions: [],
+    colour: [
+      {
+        SDR10bit: [false],
+        HDRPlus: [false],
+        ColourFormat: ['RGB'],
+      },
+    ],
   },
 }
 
@@ -30,18 +37,64 @@ async function loadVddSettings() {
     const parser = new Parser({ explicitArray: false })
     const result = await parseStringPromise(xmlData, { parser })
 
+    console.log('result', result)
+
     return {
       success: true,
       data: {
-        monitors: result.vdd_settings.monitors,
-        gpu: result.vdd_settings.gpu,
-        resolutions: result.vdd_settings.resolutions,
+        monitors: result.vdd_settings.monitors ?? [{ count: 1 }],
+        gpu: result.vdd_settings.gpu ?? [{ friendlyname: [''] }],
+        resolutions: result.vdd_settings.resolutions ?? [],
+        colour: (result.vdd_settings.colour || DEFAULT_SETTINGS.settings.colour).map((item) => ({
+          SDR10bit: item.SDR10bit[0] === 'true' ? true : false,
+          HDRPlus: item.HDRPlus[0] === 'true' ? true : false,
+          ColourFormat: item.ColourFormat[0],
+        })),
       },
     }
   } catch (error) {
     console.error('读取设置文件失败:', error)
     return { success: false, data: DEFAULT_SETTINGS.settings }
   }
+}
+
+// 发送pipe命令
+async function execPipeCmd(command) {
+  return new Promise((resolve, reject) => {
+    try {
+      console.log(`正在通过命名管道发送命令: ${command}`)
+
+      const client = connect('\\\\.\\pipe\\ZakoVDDPipe', () => {
+        console.log('已连接到管道')
+        client.write(command)
+        client.end()
+        resolve(true)
+      })
+
+      client.on('error', (err) => {
+        console.error('管道连接错误:', err)
+        reject(err)
+      })
+
+      client.on('close', () => {
+        console.log('管道连接关闭')
+      })
+
+      // 设置连接超时
+      const timeout = setTimeout(() => {
+        client.destroy()
+        reject(new Error('管道连接超时'))
+      }, 5000)
+
+      // 清除超时
+      client.on('connect', () => {
+        clearTimeout(timeout)
+      })
+    } catch (error) {
+      console.error('通知驱动失败:', error)
+      reject(error)
+    }
+  })
 }
 
 // 保存设置
@@ -53,6 +106,7 @@ async function saveVddSettings(settings) {
         monitors: settings.monitors,
         gpu: settings.gpu,
         resolutions: settings.resolutions,
+        colour: settings.colour,
       },
     }
 
@@ -100,25 +154,9 @@ async function saveVddSettings(settings) {
     if (fs.existsSync(VDD_SETTINGS_PATH)) {
       console.log('文件验证成功，文件大小:', fs.statSync(VDD_SETTINGS_PATH).size + '字节')
 
-      // 通过命名管道通知驱动重启
+      // 使用优化后的管道命令通知驱动重启
       try {
-        console.log('正在通过Node.js连接命名管道通知驱动重启')
-
-        const client = connect('\\\\.\\pipe\\ZakoVDDPipe', () => {
-          console.log('已连接到管道')
-          client.write('RELOAD_DRIVER')
-          client.end()
-        })
-
-        client.on('error', (err) => {
-          console.error('管道连接错误:', err)
-        })
-
-        // 设置连接超时
-        setTimeout(() => {
-          client.destroy()
-        }, 5000)
-
+        await execPipeCmd('RELOAD_DRIVER')
         console.log('成功通知驱动重启')
       } catch (error) {
         console.error('通知驱动重启失败:', error)
@@ -256,6 +294,10 @@ function registerVddHandlers() {
   ipcMain.handle('vdd:saveSettings', async (_, settings) => {
     return await saveVddSettings(settings)
   })
+
+  ipcMain.handle('vdd:execPipeCmd', async (_, command) => {
+    return await execPipeCmd(command)
+  })
 }
 
-export { registerVddHandlers }
+export { registerVddHandlers, execPipeCmd }

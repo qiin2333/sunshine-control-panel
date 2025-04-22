@@ -16,12 +16,18 @@ function buildRenderer() {
     });
 }
 
-function copy(path) {
-    FileSystem.cpSync(
-        Path.join(__dirname, '..', 'src', 'main', path),
-        Path.join(__dirname, '..', 'build', 'main', path),
-        { recursive: true }
-    );
+async function copy(path) {
+    const source = Path.join(__dirname, '..', 'src', 'main', path);
+    const dest = Path.join(__dirname, '..', 'build', 'main', path);
+    if (!FileSystem.existsSync(source)) {
+        console.error(`Error: Source path does not exist - ${source}`);
+        return Promise.reject(new Error('Source path does not exist'));
+    }
+    
+    await FileSystem.promises.mkdir(Path.dirname(dest), { recursive: true });
+    await FileSystem.promises.cp(source, dest, { recursive: true });
+
+    console.log(Chalk.yellowBright(`Copied: ${source} → ${dest}`));
 }
 
 FileSystem.rmSync(Path.join(__dirname, '..', 'build'), {
@@ -36,4 +42,6 @@ Promise.allSettled([
     copy('./')
 ]).then(() => {
     console.log(Chalk.greenBright('Renderer & main successfully transpiled! (ready to be built with electron-builder)'));
+}).catch(err => {
+    console.error(Chalk.redBright('Build failed:'), err);
 });

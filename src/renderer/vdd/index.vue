@@ -234,18 +234,14 @@ const saveSettings = async () => {
           friendlyname: [gpuFriendlyName.value],
         },
       ],
-      resolutions: Array.from(resolutionOptions.value).map((res) => {
-        const [width, height] = res.split('x').map(Number)
-        return {
-          resolution: [
-            {
-              width: [width],
-              height: [height],
-              refresh_rate: Array.from(refreshRateOptions.value).map(Number),
-            },
-          ],
-        }
-      }),
+      resolutions: [
+        {
+          resolution: Array.from(resolutionOptions.value).map((res) => {
+            const [width, height] = res.split('x').map(Number)
+            return { width: [width], height: [height], refresh_rate: Array.from(refreshRateOptions.value).map(Number) }
+          }),
+        },
+      ],
     }
 
     const payload = JSON.parse(JSON.stringify(settingsToSave))

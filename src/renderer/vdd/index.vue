@@ -107,6 +107,11 @@
         </el-select>
       </el-form-item>
 
+      <!-- 日志 -->
+      <el-form-item label="日志">
+        <el-switch v-model="settings.logging[0].logging" />
+      </el-form-item>
+
       <!-- 保存按钮 -->
       <el-form-item>
         <el-button type="primary" @click="saveSettings">保存设置</el-button>
@@ -144,6 +149,7 @@ const initialSettings = {
       ColourFormat: 'RGB',
     },
   ],
+  logging: [{ logging: true, debuglogging: true }],
 }
 
 const settings = ref({ ...initialSettings })
@@ -234,18 +240,14 @@ const saveSettings = async () => {
           friendlyname: [gpuFriendlyName.value],
         },
       ],
-      resolutions: Array.from(resolutionOptions.value).map((res) => {
-        const [width, height] = res.split('x').map(Number)
-        return {
-          resolution: [
-            {
-              width: [width],
-              height: [height],
-              refresh_rate: Array.from(refreshRateOptions.value).map(Number),
-            },
-          ],
-        }
-      }),
+      resolutions: [
+        {
+          resolution: Array.from(resolutionOptions.value).map((res) => {
+            const [width, height] = res.split('x').map(Number)
+            return { width: [width], height: [height], refresh_rate: Array.from(refreshRateOptions.value).map(Number) }
+          }),
+        },
+      ],
     }
 
     const payload = JSON.parse(JSON.stringify(settingsToSave))

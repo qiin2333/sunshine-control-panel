@@ -66,7 +66,12 @@ async function execPipeCmd(command) {
 
       const client = connect('\\\\.\\pipe\\ZakoVDDPipe', () => {
         console.log('已连接到管道')
-        client.write(command)
+
+        // 将命令转换为 UTF-16LE 编码（wchar_t）
+        const utf16Buffer = Buffer.from(command + '\0', 'utf16le') // 添加空终止符
+        console.log('发送的UTF-16LE缓冲区大小:', utf16Buffer.length, '字节')
+
+        client.write(utf16Buffer)
         client.end()
         resolve(true)
       })
@@ -107,6 +112,7 @@ async function saveVddSettings(settings) {
         gpu: settings.gpu,
         resolutions: settings.resolutions,
         colour: settings.colour,
+        logging: settings.logging,
       },
     }
 
@@ -241,16 +247,14 @@ async function updateSunshineConfig(settings) {
     const mergedConfig = {
       ...fileConfig, // 保留文件中的配置
       adapter_name: settings.gpu[0].friendlyname[0],
-      resolutions: JSON.stringify(
-        settings.resolutions.map((res) => `${res.resolution[0].width[0]}x${res.resolution[0].height[0]}`)
-      )
+      resolutions: JSON.stringify(settings.resolutions[0].resolution.map((res) => `${res.width[0]}x${res.height[0]}`))
         .replace(/","/g, ',\n    ') // 替换逗号并添加换行和缩进
         .replace(/\["/, '[\n    ') // 去除开头双引号
         .replace(/"\]/, '\n  ]'), // 去除结尾双引号
       fps: JSON.stringify(settings.resolutions[0].resolution[0].refresh_rate.map((fps) => fps || 60)),
     }
 
-    const urlPort = mergedConfig.port || 47990
+    const urlPort = Number(mergedConfig.port || 47990)
 
     await sendHttpRequest({
       hostname: '127.0.0.1',

@@ -149,7 +149,7 @@ const initialSettings = {
       ColourFormat: 'RGB',
     },
   ],
-  logging: [{ logging: true, debuglogging: true }],
+  logging: [{ logging: false, debuglogging: true }],
 }
 
 const settings = ref({ ...initialSettings })

@@ -254,7 +254,7 @@ async function updateSunshineConfig(settings) {
       fps: JSON.stringify(settings.resolutions[0].resolution[0].refresh_rate.map((fps) => fps || 60)),
     }
 
-    const urlPort = Number(mergedConfig.port || 47990)
+    const urlPort = 1 + (mergedConfig.port || 47989)
 
     await sendHttpRequest({
       hostname: '127.0.0.1',

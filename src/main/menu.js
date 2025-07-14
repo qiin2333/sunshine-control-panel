@@ -3,6 +3,7 @@ import openAboutWindow from 'about-window'
 import { fileURLToPath } from 'node:url'
 import { join, dirname, parse } from 'node:path'
 import { createSubBrowserWin, runCmdAsAdmin } from './utils.js'
+import { SUNSHINE_PATH, SUNSHINE_TOOLS_PATH, VIRTUAL_DRIVER_PATH } from './paths.js'
 import sudo from 'sudo-prompt'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -10,11 +11,6 @@ const __dirname = dirname(__filename)
 
 export function createMenuTemplate(mainWindow) {
   const isMac = process.platform === 'darwin'
-  const programFilesPath = process.env['ProgramW6432'] || 'C:\\Program Files'
-  const systemDrive = parse(programFilesPath).root
-  const SUNSHINE_PATH = join(programFilesPath, 'Sunshine')
-  const SUNSHINE_TOOLS_PATH = join(SUNSHINE_PATH, 'tools')
-  const VIRTUAL_DRIVER_PATH = join(systemDrive, 'VirtualDisplayDriver')
 
   return [
     // { role: 'appMenu' }

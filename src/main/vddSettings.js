@@ -5,10 +5,7 @@ import { parseStringPromise, Parser, Builder } from 'xml2js'
 import sudo from 'sudo-prompt'
 import { connect } from 'net'
 import { sendHttpRequest } from './utils.js'
-
-const VDD_SETTINGS_PATH = path.join(process.env.SystemDrive, 'VirtualDisplayDriver', 'vdd_settings.xml')
-// "C:\Program Files\Sunshine\config\sunshine.conf"
-const SUNSHINE_CONF_PATH = path.join(process.env.PROGRAMFILES, 'Sunshine', 'config', 'sunshine.conf')
+import { VDD_SETTINGS_PATH, SUNSHINE_CONF_PATH } from './paths.js'
 
 // XML 格式示例
 const DEFAULT_SETTINGS = {

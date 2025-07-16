@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron'
+import os from 'os'
 import fs from 'fs'
 import path from 'path'
 import { parseStringPromise, Parser, Builder } from 'xml2js'
@@ -128,9 +129,24 @@ async function saveVddSettings(settings) {
       icns: './build/icon.icns',
     }
 
-    // 使用临时文件并正确转义特殊字符
-    const tempPath = path.join(dir, 'vdd_temp.xml')
-    fs.writeFileSync(tempPath, xml, 'utf8')
+    // 使用Windows临时目录
+    const winTempDir = os.tmpdir()
+    let tempPath = path.join(winTempDir, `vdd_temp_${Date.now()}.xml`)
+    try {
+      fs.writeFileSync(tempPath, xml, 'utf8')
+      console.log('已将临时文件写入Windows临时目录:', tempPath)
+    } catch (error) {
+      console.error('写入Windows临时目录失败:', error)
+      // 尝试写入用户目录
+      tempPath = path.join(os.homedir(), 'vdd_temp.xml')
+      try {
+        fs.writeFileSync(tempPath, xml, 'utf8')
+        console.log('已将临时文件写入用户目录:', tempPath)
+      } catch (innerError) {
+        console.error('写入用户目录也失败:', innerError)
+        throw new Error('无法创建临时文件: ' + error.message)
+      }
+    }
 
     const command = `powershell -ExecutionPolicy Bypass -Command "$content = Get-Content '${tempPath}' -Raw; Set-Content -Path '${VDD_SETTINGS_PATH}' -Value $content -Encoding UTF8"`
     console.log('执行命令:', command)

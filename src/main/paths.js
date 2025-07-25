@@ -7,5 +7,5 @@ export const SUNSHINE_PATH =
   process.env.NODE_ENV === 'development' ? 'C:\\Program Files\\Sunshine' : dirname(dirname(appDir))
 export const SUNSHINE_TOOLS_PATH = join(SUNSHINE_PATH, 'tools')
 export const VIRTUAL_DRIVER_PATH = join(SUNSHINE_TOOLS_PATH, 'vdd')
-export const VDD_SETTINGS_PATH = join(VIRTUAL_DRIVER_PATH, 'vdd_settings.xml')
+export const VDD_SETTINGS_PATH = join(SUNSHINE_PATH, 'config', 'vdd_settings.xml')
 export const SUNSHINE_CONF_PATH = join(SUNSHINE_PATH, 'config', 'sunshine.conf')

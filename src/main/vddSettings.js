@@ -35,11 +35,10 @@ async function loadVddSettings() {
     const parser = new Parser({ explicitArray: false })
     const result = await parseStringPromise(xmlData, { parser })
 
-    console.log('result', result)
-
     return {
       success: true,
       data: {
+        ...result.vdd_settings,
         monitors: result.vdd_settings.monitors ?? [{ count: 1 }],
         gpu: result.vdd_settings.gpu ?? [{ friendlyname: [''] }],
         resolutions: result.vdd_settings.resolutions ?? [],
@@ -47,6 +46,10 @@ async function loadVddSettings() {
           SDR10bit: item.SDR10bit[0] === 'true' ? true : false,
           HDRPlus: item.HDRPlus[0] === 'true' ? true : false,
           ColourFormat: item.ColourFormat[0],
+        })),
+        logging: result.vdd_settings.logging.map((item) => ({
+          logging: item.logging[0] === 'true' ? true : false,
+          debuglogging: item.debuglogging[0] === 'true' ? true : false,
         })),
       },
     }

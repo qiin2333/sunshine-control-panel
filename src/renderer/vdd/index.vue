@@ -121,7 +121,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 
 const resolutionOptions = ref(new Set())
@@ -129,7 +129,7 @@ const gpuFriendlyName = ref('')
 const refreshRateOptions = ref(new Set([60])) // 默认添加60Hz
 
 // 将默认值和验证逻辑提取为常量
-const MIN_REFRESH_RATE = 60
+const MIN_REFRESH_RATE = 30
 const MAX_REFRESH_RATE = 240
 const RESOLUTION_PATTERN = /^\d+x\d+$/
 const CHINESE_PATTERN = /[\u4e00-\u9fa5]/
@@ -152,7 +152,7 @@ const initialSettings = {
   logging: [{ logging: false, debuglogging: true }],
 }
 
-const settings = ref({ ...initialSettings })
+const settings = reactive({ ...initialSettings })
 
 // 新增状态
 const showResInput = ref(false)
@@ -170,17 +170,17 @@ const loadSettings = async () => {
     }
 
     const { data } = result
-    settings.value = {
+    Object.assign(settings, {
       ...initialSettings,
       ...data,
-    }
+    })
 
     // GPU数据结构处理优化
     if (Array.isArray(data.gpu) && data.gpu[0]) {
       const gpuData = data.gpu[0]
       gpuFriendlyName.value = typeof gpuData === 'string' ? gpuData : gpuData.friendlyname?.[0] || ''
 
-      settings.value.gpu[0] = {
+      settings.gpu[0] = {
         friendlyname: [gpuFriendlyName.value],
       }
     }
@@ -234,7 +234,7 @@ const saveSettings = async () => {
     }
 
     const settingsToSave = {
-      ...settings.value,
+      ...settings,
       gpu: [
         {
           friendlyname: [gpuFriendlyName.value],
@@ -309,13 +309,13 @@ const validateRefreshRate = (value) => {
 const addRefreshRate = () => {
   const value = newRefreshRate.value.trim()
   if (!validateRefreshRate(value)) {
-    ElMessage.warning('请输入有效的刷新率（60-240）')
+    ElMessage.warning('请输入有效的刷新率（30-240）')
     newRefreshRate.value = ''
     return
   }
   const rate = parseInt(value)
   if (rate < MIN_REFRESH_RATE || rate > MAX_REFRESH_RATE) {
-    ElMessage.warning('刷新率范围应在60-240之间')
+    ElMessage.warning('刷新率范围应在30-240之间')
     return
   }
   if (refreshRateOptions.value.has(rate)) {
@@ -358,7 +358,7 @@ const saveGpuEdit = () => {
     gpuOptions.value.unshift(gpuFriendlyName.value)
   }
 
-  settings.value.gpu[0].friendlyname = [gpuFriendlyName.value]
+      settings.gpu[0].friendlyname = [gpuFriendlyName.value]
   ElMessage.success('GPU名称已更新')
 }
 

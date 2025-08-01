@@ -126,7 +126,7 @@ import { ElMessage } from 'element-plus'
 
 const resolutionOptions = ref(new Set())
 const gpuFriendlyName = ref('')
-const refreshRateOptions = ref(new Set([60])) // 默认添加60Hz
+const refreshRateOptions = ref(new Set([60, 120, 240])) // 使用默认全局刷新率
 
 // 将默认值和验证逻辑提取为常量
 const MIN_REFRESH_RATE = 30
@@ -141,6 +141,9 @@ const gpuOptions = ref([])
 const initialSettings = {
   monitors: [{ count: 1 }],
   gpu: [{ friendlyname: [''] }],
+  global: {
+    g_refresh_rate: [60, 120, 240],
+  },
   resolutions: [],
   colour: [
     {
@@ -185,9 +188,8 @@ const loadSettings = async () => {
       }
     }
 
-    // 分辨率和刷新率处理优化
+    // 分辨率处理优化
     const processedResolutions = new Set()
-    const processedRefreshRates = new Set()
 
     data.resolutions?.forEach((device) => {
       device.resolution?.forEach((res) => {
@@ -195,12 +197,15 @@ const loadSettings = async () => {
           const h = res.height?.[i]
           if (w && h) processedResolutions.add(`${w}x${h}`)
         })
-        res.refresh_rate?.forEach((rate) => processedRefreshRates.add(rate))
       })
     })
 
     resolutionOptions.value = processedResolutions
-    refreshRateOptions.value = processedRefreshRates
+
+    // 处理全局刷新率设置
+    if (data.global?.g_refresh_rate) {
+      refreshRateOptions.value = new Set(data.global.g_refresh_rate)
+    }
 
     ElMessage.success('设置加载成功')
   } catch (error) {
@@ -240,11 +245,17 @@ const saveSettings = async () => {
           friendlyname: [gpuFriendlyName.value],
         },
       ],
+      global: {
+        g_refresh_rate: Array.from(refreshRateOptions.value).map(Number),
+      },
       resolutions: [
         {
           resolution: Array.from(resolutionOptions.value).map((res) => {
             const [width, height] = res.split('x').map(Number)
-            return { width: [width], height: [height], refresh_rate: Array.from(refreshRateOptions.value).map(Number) }
+            return {
+              width: [width],
+              height: [height]
+            }
           }),
         },
       ],

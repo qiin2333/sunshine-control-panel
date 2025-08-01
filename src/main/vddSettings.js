@@ -13,6 +13,9 @@ const DEFAULT_SETTINGS = {
   settings: {
     monitors: [{ count: 1 }],
     gpu: [{ friendlyname: [''] }],
+    global: {
+      g_refresh_rate: [60, 120, 240],
+    },
     resolutions: [],
     colour: [
       {
@@ -28,7 +31,7 @@ const DEFAULT_SETTINGS = {
 async function loadVddSettings() {
   try {
     if (!fs.existsSync(VDD_SETTINGS_PATH)) {
-      return { success: false, data: DEFAULT_SETTINGS.VirtualDisplaySettings }
+      return { success: false, data: DEFAULT_SETTINGS.settings }
     }
 
     const xmlData = await fs.promises.readFile(VDD_SETTINGS_PATH, 'utf-8')
@@ -41,6 +44,7 @@ async function loadVddSettings() {
         ...result.vdd_settings,
         monitors: result.vdd_settings.monitors ?? [{ count: 1 }],
         gpu: result.vdd_settings.gpu ?? [{ friendlyname: [''] }],
+        global: result.vdd_settings.global ?? DEFAULT_SETTINGS.settings.global,
         resolutions: result.vdd_settings.resolutions ?? [],
         colour: (result.vdd_settings.colour || DEFAULT_SETTINGS.settings.colour).map((item) => ({
           SDR10bit: item.SDR10bit[0] === 'true' ? true : false,
@@ -111,6 +115,7 @@ async function saveVddSettings(settings) {
       vdd_settings: {
         monitors: settings.monitors,
         gpu: settings.gpu,
+        global: settings.global,
         resolutions: settings.resolutions,
         colour: settings.colour,
         logging: settings.logging,
@@ -267,7 +272,7 @@ async function updateSunshineConfig(settings) {
         .replace(/","/g, ',\n    ') // 替换逗号并添加换行和缩进
         .replace(/\["/, '[\n    ') // 去除开头双引号
         .replace(/"\]/, '\n  ]'), // 去除结尾双引号
-      fps: JSON.stringify(settings.resolutions[0].resolution[0].refresh_rate.map((fps) => fps || 60)),
+      fps: JSON.stringify(settings.global.g_refresh_rate || [60]),
     }
 
     const urlPort = 1 + (Number(mergedConfig.port) || 47989)

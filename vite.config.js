@@ -32,4 +32,22 @@ export default defineConfig(() => ({
     },
   },
   plugins: [vuePlugin()],
+  resolve: {
+    alias: {
+      '@': rendererSrcPath,
+    },
+  },
+  css: {
+    preprocessorOptions: {
+      less: {
+        math: 'always',
+        relativeUrls: true,
+        javascriptEnabled: true,
+        additionalData: `
+          @import "@/styles/variables.less";
+          @import "@/styles/mixins.less";
+        `,
+      },
+    },
+  },
 }))

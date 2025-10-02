@@ -187,7 +187,7 @@ const clients = [
       <div class="container">
         <div class="hero-content">
           <h1 class="hero-title">让游戏串流更优雅</h1>
-          <p class="hero-subtitle">基于LizardByte/Sunshine的分支，提供完整的文档支持和增强功能</p>
+          <p class="hero-subtitle">Sunshine, a self-hosted game-stream host for Moonlight, now features an HDR-friendly fork that integrates virtual displays and control panels.</p>
           <div class="hero-actions">
             <a :href="downloadLinks.windows" class="btn btn-primary"> 🚀 立即下载 </a>
             <a :href="downloadLinks.github" class="btn btn-secondary"> 📦 GitHub Releases </a>

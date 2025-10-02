@@ -1,0 +1,218 @@
+// 响应式断点混入
+.respond-to(@breakpoint) when (@breakpoint = sm) {
+  @media (min-width: @breakpoint-sm) { & { .respond-content(); } }
+}
+.respond-to(@breakpoint) when (@breakpoint = md) {
+  @media (min-width: @breakpoint-md) { & { .respond-content(); } }
+}
+.respond-to(@breakpoint) when (@breakpoint = lg) {
+  @media (min-width: @breakpoint-lg) { & { .respond-content(); } }
+}
+.respond-to(@breakpoint) when (@breakpoint = xl) {
+  @media (min-width: @breakpoint-xl) { & { .respond-content(); } }
+}
+
+// 容器混入
+.container() {
+  max-width: @container-max-width;
+  margin: 0 auto;
+  padding: 0 @spacing-md;
+}
+
+// Flexbox 混入
+.flex-center() {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.flex-between() {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.flex-column() {
+  display: flex;
+  flex-direction: column;
+}
+
+// 按钮混入
+.btn-base() {
+  display: inline-block;
+  padding: 12px 24px;
+  border-radius: @border-radius-sm;
+  text-decoration: none;
+  font-weight: @font-weight-semibold;
+  transition: all @transition-normal;
+  border: none;
+  cursor: pointer;
+  
+  &:hover {
+    transform: translateY(-2px);
+  }
+}
+
+.btn-primary() {
+  .btn-base();
+  background: @primary-color;
+  color: white;
+  
+  &:hover {
+    background: @primary-hover;
+  }
+}
+
+.btn-secondary() {
+  .btn-base();
+  background: transparent;
+  color: @primary-color;
+  border: 2px solid @primary-color;
+  
+  &:hover {
+    background: @primary-color;
+    color: white;
+  }
+}
+
+// 卡片混入
+.card() {
+  background: @background-primary;
+  border-radius: @border-radius-lg;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.1);
+  transition: all @transition-normal;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  position: relative;
+  overflow: hidden;
+  
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: @gradient-primary;
+    opacity: 0;
+    transition: opacity @transition-normal;
+  }
+  
+  &:hover {
+    transform: translateY(-8px);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1), 0 8px 16px rgba(0, 0, 0, 0.1);
+    
+    &::before {
+      opacity: 1;
+    }
+  }
+}
+
+// 网格布局混入
+.grid-auto-fit(@min-width: 250px) {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(@min-width, 1fr));
+  gap: @spacing-md;
+}
+
+.grid-responsive(@columns: 2, @gap: @spacing-lg) {
+  display: grid;
+  grid-template-columns: repeat(@columns, 1fr);
+  gap: @gap;
+  
+  @media (max-width: @breakpoint-md) {
+    grid-template-columns: 1fr;
+  }
+}
+
+// 文本混入
+.text-truncate() {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.text-gradient(@start-color, @end-color) {
+  background: linear-gradient(135deg, @start-color, @end-color);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+// 动画混入
+.fade-in(@duration: @transition-normal) {
+  animation: fadeIn @duration ease-in-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.slide-up(@duration: @transition-normal) {
+  animation: slideUp @duration ease-out;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(30px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+// 响应式隐藏/显示
+.hide-on-mobile() {
+  @media (max-width: @breakpoint-md) {
+    display: none;
+  }
+}
+
+.show-on-mobile() {
+  display: none;
+  @media (max-width: @breakpoint-md) {
+    display: block;
+  }
+}
+
+// 清除浮动
+.clearfix() {
+  &::after {
+    content: "";
+    display: table;
+    clear: both;
+  }
+}
+
+// 绝对居中
+.absolute-center() {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+// 背景图片混入
+.bg-cover(@url) {
+  background-image: url(@url);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+// 滚动条样式
+.custom-scrollbar() {
+  &::-webkit-scrollbar {
+    width: 8px;
+  }
+  
+  &::-webkit-scrollbar-track {
+    background: @background-secondary;
+  }
+  
+  &::-webkit-scrollbar-thumb {
+    background: @border-color;
+    border-radius: 4px;
+    
+    &:hover {
+      background: @text-secondary;
+    }
+  }
+}

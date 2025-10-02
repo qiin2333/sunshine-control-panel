@@ -1,0 +1,193 @@
+// 全局样式重置和基础样式
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+  line-height: @line-height-normal;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  color: @text-primary;
+  background-color: @background-primary;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+// 链接样式
+a {
+  color: @primary-color;
+  text-decoration: none;
+  transition: color @transition-normal;
+  
+  &:hover {
+    color: @primary-hover;
+  }
+}
+
+// 标题样式
+h1, h2, h3, h4, h5, h6 {
+  margin: 0 0 @spacing-sm 0;
+  font-weight: @font-weight-bold;
+  line-height: @line-height-tight;
+  color: @text-primary;
+}
+
+h1 { font-size: @font-size-4xl; }
+h2 { font-size: @font-size-3xl; }
+h3 { font-size: @font-size-2xl; }
+h4 { font-size: @font-size-xl; }
+h5 { font-size: @font-size-lg; }
+h6 { font-size: @font-size-base; }
+
+// 段落样式
+p {
+  margin: 0 0 @spacing-sm 0;
+  line-height: @line-height-normal;
+  color: @text-primary;
+}
+
+// 列表样式
+ul, ol {
+  margin: 0 0 @spacing-sm 0;
+  padding-left: @spacing-lg;
+}
+
+li {
+  margin-bottom: @spacing-xs;
+  line-height: @line-height-normal;
+}
+
+// 按钮基础样式
+button {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+  transition: all @transition-normal;
+  
+  &:focus {
+    outline: 2px solid @primary-color;
+    outline-offset: 2px;
+  }
+}
+
+// 输入框样式
+input, textarea, select {
+  font-family: inherit;
+  font-size: inherit;
+  border: 1px solid @border-color;
+  border-radius: @border-radius-sm;
+  padding: @spacing-xs @spacing-sm;
+  transition: border-color @transition-normal;
+  
+  &:focus {
+    outline: none;
+    border-color: @primary-color;
+    box-shadow: 0 0 0 3px fade(@primary-color, 10%);
+  }
+}
+
+// 图片样式
+img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+// 滚动条样式
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: @background-secondary;
+}
+
+::-webkit-scrollbar-thumb {
+  background: @border-color;
+  border-radius: 4px;
+  
+  &:hover {
+    background: @text-secondary;
+  }
+}
+
+// 选择文本样式
+::selection {
+  background: fade(@primary-color, 20%);
+  color: @text-primary;
+}
+
+// 工具类
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.text-center { text-align: center; }
+.text-left { text-align: left; }
+.text-right { text-align: right; }
+
+.font-bold { font-weight: @font-weight-bold; }
+.font-semibold { font-weight: @font-weight-semibold; }
+.font-medium { font-weight: @font-weight-medium; }
+.font-normal { font-weight: @font-weight-normal; }
+
+.text-primary { color: @primary-color; }
+.text-secondary { color: @text-secondary; }
+.text-muted { color: @text-muted; }
+
+.bg-primary { background-color: @primary-color; }
+.bg-secondary { background-color: @background-secondary; }
+
+.rounded { border-radius: @border-radius-sm; }
+.rounded-md { border-radius: @border-radius-md; }
+.rounded-lg { border-radius: @border-radius-lg; }
+
+.shadow { box-shadow: @shadow-sm; }
+.shadow-md { box-shadow: @shadow-md; }
+.shadow-lg { box-shadow: @shadow-lg; }
+
+// 动画类
+.fade-in {
+  .fade-in();
+}
+
+.slide-up {
+  .slide-up();
+}
+
+// 响应式工具类
+@media (max-width: @breakpoint-md) {
+  .hide-mobile {
+    display: none !important;
+  }
+  
+  .show-mobile {
+    display: block !important;
+  }
+}
+
+@media (min-width: @breakpoint-md) {
+  .hide-desktop {
+    display: none !important;
+  }
+  
+  .show-desktop {
+    display: block !important;
+  }
+}

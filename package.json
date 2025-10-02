@@ -9,7 +9,10 @@
     "build": "node scripts/build.js && electron-builder -p never",
     "build:win": "set NODE_ENV=production && node scripts/build.js && electron-builder --win --x64 --publish=never --config.asar=true --config.compression=maximum",
     "build:mac": "node scripts/build.js && electron-builder --mac",
-    "build:linux": "node scripts/build.js && electron-builder --linux"
+    "build:linux": "node scripts/build.js && electron-builder --linux",
+    "build:web": "vite build --config vite.web.config.js --mode production",
+    "dev:web": "vite --config vite.web.config.js --mode development",
+    "preview:web": "vite preview --config vite.web.config.js"
   },
   "repository": "https://github.com/qiin2333/sunshine",
   "author": {
@@ -17,7 +20,7 @@
     "url": "https://github.com/qiin2333"
   },
   "devDependencies": {
-    "@rollup/rollup-win32-x64-msvc": "^4.22.4",
+    "rollup": "^4.22.4",
     "@vitejs/plugin-vue": "^4.5.1",
     "chalk": "^4.1.2",
     "chokidar": "^3.5.3",

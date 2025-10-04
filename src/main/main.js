@@ -22,12 +22,12 @@ const gotTheLock = app.requestSingleInstanceLock()
 if (!gotTheLock) {
   app.quit()
 } else {
-  app.on('second-instance', (event, argv, workingDirectory) => {
+  app.on('second-instance', async (event, argv, workingDirectory) => {
     if (win) {
       if (win.isMinimized()) win.restore()
       win.show()
       win.focus()
-      loadURLByArgs(argv, win)
+      await loadURLByArgs(argv, win)
     }
   })
 }
@@ -63,7 +63,7 @@ function createWindow() {
   }
 
   win.webContents.once('did-finish-load', async () => {
-    if (process.env.NODE_ENV === 'development') return
+    // if (process.env.NODE_ENV === 'development') return
     if (win.isDestroyed()) return
     await loadURLByArgs(process.argv, win)
     win.webContents.send('page-loaded')
@@ -71,7 +71,11 @@ function createWindow() {
 
   win.webContents.on('did-fail-load', async (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
     if (!isMainFrame) return
-    win.loadFile(join(app.getAppPath(), 'renderer', 'placeholder.html')).catch(console.error)
+    if (process.env.NODE_ENV === 'development') {
+      win.loadFile(join(__dirname, '../renderer/placeholder.html')).catch(console.error)
+    } else {
+      win.loadFile(join(app.getAppPath(), 'renderer', 'placeholder.html')).catch(console.error)
+    }
     await new Promise((resolve) => setTimeout(resolve, 3000)) // 3秒后重试
     win.loadURL(validatedURL)
   })

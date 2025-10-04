@@ -28,6 +28,7 @@ export default defineConfig(() => ({
         placeholder: resolve(rendererSrcPath, 'placeholder.html'),
         vdd: resolve(rendererSrcPath, 'vdd/index.html'),
         clock: resolve(rendererSrcPath, 'stop-clock-canvas/index.html'),
+        home: resolve(rendererSrcPath, 'home/index.html'),
       },
     },
   },

@@ -1,5 +1,5 @@
 {
-  "buildCommand": "npm run build:web",
+  "buildCommand": "npm run build:home",
   "outputDirectory": "dist",
   "installCommand": "npm install",
   "framework": "vite",
@@ -21,3 +21,4 @@
     }
   ]
 }
+

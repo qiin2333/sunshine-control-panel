@@ -1,0 +1,41 @@
+{
+  "menu": {
+    "window": "ウィンドウ",
+    "management": "管理",
+    "tutorial": "チュートリアル",
+    "tools": "ツール",
+    "language": "言語",
+    "about": "について"
+  },
+  "submenu": {
+    "minimize": "最小化",
+    "zoom": "ズーム",
+    "reload": "再読み込み",
+    "close": "閉じる",
+    "front": "すべてを前面に",
+    "window": "ウィンドウ",
+    "editVirtualDisplay": "仮想ディスプレイ解像度を編集",
+    "uninstallVirtualDisplay": "仮想ディスプレイをアンインストール",
+    "restartGraphicsDriver": "グラフィックドライバーを再起動",
+    "restartSunshineAsAdmin": "管理者としてSunshineを再起動",
+    "joinStreamingGroup": "ストリーミンググループに参加",
+    "userGuide": "ユーザーガイド",
+    "clipboardSync": "クリップボード同期",
+    "streamingTimer": "ストリーミングタイマー",
+    "delayTestClock": "Kileによる新世代遅延テストクロック",
+    "gamepadTest": "ゲームパッドテスト"
+  },
+  "dialog": {
+    "confirmUninstall": "アンインストールを確認しますか？アンインストール後、基地版sunshineを再インストールすることで復元できます。",
+    "cancel": "キャンセル",
+    "confirm": "確認",
+    "uninstallComplete": "仮想ディスプレイのアンインストール完了: {code}",
+    "languageChanged": "言語が変更されました",
+    "restartRequired": "新しい言語設定を適用するには、アプリケーションの再起動が必要です。",
+    "ok": "OK"
+  },
+  "about": {
+    "copyright": "Copyright (c) 2023 Qiin",
+    "sunshineVersion": "Sunshine バージョン"
+  }
+}

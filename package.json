@@ -1,6 +1,6 @@
 {
   "name": "sunshine-gui",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "A GUI for sunshine",
   "main": "build/main/main.js",
   "type": "module",
@@ -10,9 +10,9 @@
     "build:win": "set NODE_ENV=production && node scripts/build.js && electron-builder --win --x64 --publish=never --config.asar=true --config.compression=maximum",
     "build:mac": "node scripts/build.js && electron-builder --mac",
     "build:linux": "node scripts/build.js && electron-builder --linux",
-    "build:web": "vite build --config vite.web.config.js --mode production",
-    "dev:web": "vite --config vite.web.config.js --mode development",
-    "preview:web": "vite preview --config vite.web.config.js"
+    "build:home": "vite build --config vite.home.config.js --mode production",
+    "dev:home": "vite --config vite.home.config.js --mode development",
+    "preview:home": "vite preview --config vite.home.config.js"
   },
   "repository": "https://github.com/qiin2333/sunshine",
   "author": {
@@ -20,7 +20,6 @@
     "url": "https://github.com/qiin2333"
   },
   "devDependencies": {
-    "rollup": "^4.22.4",
     "@vitejs/plugin-vue": "^4.5.1",
     "chalk": "^4.1.2",
     "chokidar": "^3.5.3",
@@ -28,9 +27,11 @@
     "electron-builder": "^25.1.8",
     "less": "^4.2.2",
     "less-loader": "^12.2.0",
+    "rollup": "^4.22.4",
     "vite": "^4.5.5"
   },
   "dependencies": {
+    "@element-plus/icons-vue": "^2.3.2",
     "about-window": "^1.15.2",
     "element-plus": "^2.9.4",
     "sudo-prompt": "^9.2.1",

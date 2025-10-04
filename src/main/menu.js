@@ -2,9 +2,11 @@ import { Menu, dialog, shell, app } from 'electron'
 import openAboutWindow from 'about-window'
 import { fileURLToPath } from 'node:url'
 import { join, dirname, parse } from 'node:path'
-import { createSubBrowserWin, runCmdAsAdmin } from './utils.js'
+import { createSubBrowserWin, runCmdAsAdmin, getSunshineVersion } from './utils.js'
 import { SUNSHINE_PATH, SUNSHINE_TOOLS_PATH, VIRTUAL_DRIVER_PATH } from './paths.js'
 import sudo from 'sudo-prompt'
+import { t, initI18n } from './i18n/index.js'
+import { addLanguageSwitcherToMenu } from './i18n/languageSwitcher.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -12,7 +14,7 @@ const __dirname = dirname(__filename)
 export function createMenuTemplate(mainWindow) {
   const isMac = process.platform === 'darwin'
 
-  return [
+  const menuTemplate = [
     // { role: 'appMenu' }
     ...(isMac
       ? [
@@ -33,33 +35,38 @@ export function createMenuTemplate(mainWindow) {
         ]
       : []),
     {
-      label: 'Window',
+      label: t('menu.window'),
       submenu: [
-        { role: 'minimize' },
-        { role: 'zoom' },
-        { role: 'reload' },
+        { role: 'minimize', label: t('submenu.minimize') },
+        { role: 'zoom', label: t('submenu.zoom') },
+        { role: 'reload', label: t('submenu.reload') },
         ...(isMac
-          ? [{ type: 'separator' }, { role: 'front' }, { type: 'separator' }, { role: 'window' }]
-          : [{ role: 'close' }]),
+          ? [
+              { type: 'separator' }, 
+              { role: 'front', label: t('submenu.front') }, 
+              { type: 'separator' }, 
+              { role: 'window', label: t('submenu.window') }
+            ]
+          : [{ role: 'close', label: t('submenu.close') }]),
       ],
     },
     {
-      label: '管理',
+      label: t('menu.management'),
       submenu: [
         {
-          label: '编辑虚拟显示器分辨率',
+          label: t('submenu.editVirtualDisplay'),
           click: () => {
             const subWin = createSubBrowserWin(null, mainWindow)
             subWin.loadFile(join(__dirname, '../renderer/vdd/index.html'))
           },
         },
         {
-          label: '卸载虚拟显示器',
+          label: t('submenu.uninstallVirtualDisplay'),
           click: async () => {
             const prompt = await dialog.showMessageBox(mainWindow, {
               type: 'question',
-              message: '确认卸载? 卸载后可通过重新安装基地版sunshine恢复。',
-              buttons: ['取消', '确认'],
+              message: t('dialog.confirmUninstall'),
+              buttons: [t('dialog.cancel'), t('dialog.confirm')],
             })
             if (prompt.response) {
               const uninstallCmd = [
@@ -71,7 +78,7 @@ export function createMenuTemplate(mainWindow) {
 
               runCmdAsAdmin(uninstallCmd).on('close', (code) => {
                 dialog.showMessageBox(mainWindow, {
-                  message: `虚拟显示器卸载完成: ${code}`,
+                  message: t('dialog.uninstallComplete', { code }),
                 })
               })
             }
@@ -79,7 +86,7 @@ export function createMenuTemplate(mainWindow) {
         },
         { type: 'separator' },
         {
-          label: '重启显卡驱动',
+          label: t('submenu.restartGraphicsDriver'),
           click: () => {
             const restartExe = join(SUNSHINE_TOOLS_PATH, 'restart64.exe')
             sudo.exec(`"${restartExe}"`, {
@@ -88,7 +95,7 @@ export function createMenuTemplate(mainWindow) {
           },
         },
         {
-          label: '以管理员身份重启sunshine',
+          label: t('submenu.restartSunshineAsAdmin'),
           click: () => {
             const command = [
               'net stop sunshineservice',
@@ -103,16 +110,10 @@ export function createMenuTemplate(mainWindow) {
       ],
     },
     {
-      label: '使用教程',
+      label: t('menu.tutorial'),
       submenu: [
         {
-          label: '下载最新基地版sunshine',
-          click: async () => {
-            await shell.openExternal('https://github.com/qiin2333/Sunshine/releases/tag/alpha')
-          },
-        },
-        {
-          label: '加入串流基地裙',
+          label: t('submenu.joinStreamingGroup'),
           click: async () => {
             const subWin = createSubBrowserWin(null, mainWindow)
             subWin.loadURL('https://qm.qq.com/q/s3QnqbxvFK')
@@ -122,7 +123,7 @@ export function createMenuTemplate(mainWindow) {
           },
         },
         {
-          label: '食用指南',
+          label: t('submenu.userGuide'),
           click: async () => {
             await shell.openExternal('https://docs.qq.com/aio/DSGdQc3htbFJjSFdO')
           },
@@ -130,31 +131,31 @@ export function createMenuTemplate(mainWindow) {
       ],
     },
     {
-      label: '小工具',
+      label: t('menu.tools'),
       submenu: [
         {
-          label: '剪贴板同步',
+          label: t('submenu.clipboardSync'),
           click: async () => {
             const subWin = createSubBrowserWin(null, mainWindow)
             subWin.loadURL('https://gcopy.rutron.net/zh')
           },
         },
         {
-          label: '串流屏摄专用计时器',
+          label: t('submenu.streamingTimer'),
           click: () => {
             const subWin = createSubBrowserWin({ width: 1080, height: 600 }, mainWindow)
             subWin.loadFile(join(__dirname, '../renderer/stop-clock-canvas/index.html'))
           },
         },
         {
-          label: '新一代延迟测试钟 by Kile',
+          label: t('submenu.delayTestClock'),
           click: async () => {
             const subWin = createSubBrowserWin(null, mainWindow)
             subWin.loadURL('https://yangkile.github.io/D-lay/')
           },
         },
         {
-          label: '手柄测试',
+          label: t('submenu.gamepadTest'),
           click: async () => {
             await shell.openExternal('https://hardwaretester.com/gamepad')
           },
@@ -162,20 +163,27 @@ export function createMenuTemplate(mainWindow) {
       ],
     },
     {
-      label: '关于',
+      label: t('menu.about'),
       click: () =>
         openAboutWindow.default({
           icon_path: 'https://raw.gitmirror.com/qiin2333/qiin.github.io/assets/img/109527119_p1.png',
-          product_name: 'Sunshine 基地版',
-          copyright: 'Copyright (c) 2023 Qiin',
+          product_name: 'Sunshine Control Panel',
+          homepage: 'https://sunshine-foundation.vercel.app',
+          copyright: t('about.copyright'),
           use_version_info: false,
           package_json_dir: __dirname,
         }),
     },
   ]
+
+  // 添加语言切换功能
+  return addLanguageSwitcherToMenu(menuTemplate, mainWindow)
 }
 
 export function setupApplicationMenu(mainWindow) {
+  // 初始化国际化
+  initI18n()
+  
   const menu = Menu.buildFromTemplate(createMenuTemplate(mainWindow))
   Menu.setApplicationMenu(menu)
 }

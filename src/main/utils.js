@@ -3,6 +3,8 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BrowserWindow, nativeTheme, net } from 'electron'
 import https from 'https'
+import { parseSunshineConf } from './sunshineConfig.js'
+import { SUNSHINE_PATH } from './paths.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -28,9 +30,24 @@ export function runCmdAsAdmin(cmdStr = '') {
   return spawn('powershell', [`Start-Process powershell -WindowStyle Hidden -ArgumentList '${cmdStr}' -Verb RunAs`])
 }
 
-export function loadURLByArgs(args = [], window) {
+export async function loadURLByArgs(args = [], window) {
+  let url = ''
+
+  // 检查是否有URL参数
   const urlArg = args.find((item) => /--url=/.test(item))
-  const url = urlArg?.replace('--url=', '') || 'https://localhost:47990/'
+  if (urlArg) {
+    url = urlArg.replace('--url=', '')
+  } else {
+    // 如果没有URL参数，尝试从配置文件获取端口
+    try {
+      const config = await parseSunshineConf()
+      const port = 1 + (Number(config.port) || 47989)
+      url = `https://localhost:${port}/`
+    } catch (error) {
+      console.error('从配置文件获取端口失败:', error)
+      url = 'https://localhost:47990/'
+    }
+  }
 
   // 创建隐藏的测试窗口
   const testWindow = new BrowserWindow({
@@ -95,5 +112,74 @@ export async function sendHttpRequest({ hostname, port, path, method, headers, d
       req.write(JSON.stringify(data))
     }
     req.end() // 无论是否有数据都需要调用 end()
+  })
+}
+
+/**
+ * 获取Sunshine版本号
+ * @returns {Promise<string>} Sunshine版本号
+ */
+export async function getSunshineVersion() {
+  return new Promise((resolve) => {
+    try {
+      const sunshineExe = join(SUNSHINE_PATH, 'sunshine.exe')
+      
+      // 使用sunshine.exe --version命令获取版本
+      const child = spawn(sunshineExe, ['--version'], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        shell: true
+      })
+      
+      let stdout = ''
+      let stderr = ''
+      
+      child.stdout.on('data', (data) => {
+        stdout += data.toString()
+      })
+      
+      child.stderr.on('data', (data) => {
+        stderr += data.toString()
+      })
+      
+      child.on('close', (code) => {
+        const output = stdout + stderr
+        
+        // 解析版本号，支持多种格式
+        const patterns = [
+          /Sunshine\s+v?([\d.]+)/i,           // "Sunshine v0.21.0"
+          /version\s*:?\s*v?([\d.]+)/i,       // "version: 0.21.0"
+          /v?(\d+\.\d+\.\d+)/,                // "0.21.0" 或 "v0.21.0"
+          /(\d+\.\d+)/                        // "0.21" (备用格式)
+        ]
+        
+        for (const pattern of patterns) {
+          const match = output.match(pattern)
+          if (match) {
+            resolve(match[1])
+            return
+          }
+        }
+        
+        // 如果所有模式都失败，返回Unknown
+        resolve('Unknown')
+      })
+      
+      child.on('error', (error) => {
+        console.warn('获取Sunshine版本失败:', error)
+        resolve('Unknown')
+      })
+      
+      // 设置超时
+      setTimeout(() => {
+        if (!child.killed) {
+          child.kill()
+        }
+        resolve('Unknown')
+      }, 5000)
+      
+    } catch (error) {
+      console.warn('获取Sunshine版本时发生错误:', error)
+      resolve('Unknown')
+    }
   })
 }

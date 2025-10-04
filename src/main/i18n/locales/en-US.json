@@ -1,0 +1,41 @@
+{
+  "menu": {
+    "window": "Window",
+    "management": "Management",
+    "tutorial": "Tutorial",
+    "tools": "Tools",
+    "language": "Language",
+    "about": "About"
+  },
+  "submenu": {
+    "minimize": "Minimize",
+    "zoom": "Zoom",
+    "reload": "Reload",
+    "close": "Close",
+    "front": "Bring All to Front",
+    "window": "Window",
+    "editVirtualDisplay": "Edit Virtual Display Resolution",
+    "uninstallVirtualDisplay": "Uninstall Virtual Display",
+    "restartGraphicsDriver": "Restart Graphics Driver",
+    "restartSunshineAsAdmin": "Restart Sunshine as Administrator",
+    "joinStreamingGroup": "Join Streaming Group",
+    "userGuide": "User Guide",
+    "clipboardSync": "Clipboard Sync",
+    "streamingTimer": "Streaming Timer",
+    "delayTestClock": "New Generation Delay Test Clock by Kile",
+    "gamepadTest": "Gamepad Test"
+  },
+  "dialog": {
+    "confirmUninstall": "Confirm uninstall? After uninstalling, you can restore by reinstalling the base version of sunshine.",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "uninstallComplete": "Virtual display uninstall complete: {code}",
+    "languageChanged": "Language Changed",
+    "restartRequired": "Application restart required to apply new language settings.",
+    "ok": "OK"
+  },
+  "about": {
+    "copyright": "Copyright (c) 2023 Qiin",
+    "sunshineVersion": "Sunshine Version"
+  }
+}

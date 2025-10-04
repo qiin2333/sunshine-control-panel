@@ -1,0 +1,42 @@
+{
+  "menu": {
+    "window": "Fenêtre",
+    "management": "Gestion",
+    "tutorial": "Tutoriel",
+    "tools": "Outils",
+    "language": "Langue",
+    "about": "À propos"
+  },
+  "submenu": {
+    "minimize": "Réduire",
+    "zoom": "Zoom",
+    "reload": "Recharger",
+    "close": "Fermer",
+    "front": "Mettre tout au premier plan",
+    "window": "Fenêtre",
+    "editVirtualDisplay": "Modifier la résolution de l'affichage virtuel",
+    "uninstallVirtualDisplay": "Désinstaller l'affichage virtuel",
+    "restartGraphicsDriver": "Redémarrer le pilote graphique",
+    "restartSunshineAsAdmin": "Redémarrer Sunshine en tant qu'administrateur",
+    "joinStreamingGroup": "Rejoindre le groupe de streaming",
+    "userGuide": "Guide utilisateur",
+    "clipboardSync": "Synchronisation du presse-papiers",
+    "streamingTimer": "Minuteur de streaming",
+    "delayTestClock": "Horloge de test de latence nouvelle génération par Kile",
+    "gamepadTest": "Test de manette"
+  },
+  "dialog": {
+    "confirmUninstall": "Confirmer la désinstallation ? Après la désinstallation, vous pouvez restaurer en réinstallant la version de base de sunshine.",
+    "cancel": "Annuler",
+    "confirm": "Confirmer",
+    "uninstallComplete": "Désinstallation de l'affichage virtuel terminée : {code}",
+    "languageChanged": "Langue modifiée",
+    "restartRequired": "Redémarrage de l'application requis pour appliquer les nouveaux paramètres de langue.",
+    "ok": "OK"
+  },
+  "about": {
+    "productName": "Sunshine Édition de Base",
+    "copyright": "Copyright (c) 2023 Qiin",
+    "sunshineVersion": "Version Sunshine"
+  }
+}

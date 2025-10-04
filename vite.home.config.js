@@ -3,22 +3,22 @@ import vuePlugin from '@vitejs/plugin-vue'
 import { defineConfig } from 'vite'
 
 /**
- * Vite config for website deployment with LESS support
+ * Vite config for home website deployment
  */
 export default defineConfig(({ mode }) => ({
-  root: 'src/renderer',
-  publicDir: 'public',
+  root: 'src/renderer/home',
+  publicDir: '../../public',
   base: mode === 'production' ? '/' : '/',
   server: {
     port: 3000,
     host: true
   },
   build: {
-    outDir: '../../dist',
+    outDir: '../../../dist',
     emptyOutDir: true,
     rollupOptions: {
       input: {
-        main: resolve('src/renderer', 'index.html'),
+        main: resolve('src/renderer/home', 'index.html'),
       },
     },
     sourcemap: mode === 'development'
@@ -26,8 +26,8 @@ export default defineConfig(({ mode }) => ({
   plugins: [vuePlugin()],
   resolve: {
     alias: {
-      '@': resolve('src/renderer')
-    }
+      '@': resolve('src/renderer'),
+    },
   },
   css: {
     preprocessorOptions: {

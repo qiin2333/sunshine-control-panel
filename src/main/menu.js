@@ -113,6 +113,18 @@ export function createMenuTemplate(mainWindow) {
       label: t('menu.tutorial'),
       submenu: [
         {
+          label: t('submenu.officialWebsite'),
+          click: () => {
+            const subWin = createSubBrowserWin({ width: 1280, height: 900 }, mainWindow)
+            if (process.env.NODE_ENV === 'development') {
+              const rendererPort = process.argv[2]
+              subWin.loadURL(`http://localhost:${rendererPort}/home/`)
+            } else {
+              subWin.loadFile(join(__dirname, '../renderer/home/index.html'))
+            }
+          },
+        },
+        {
           label: t('submenu.joinStreamingGroup'),
           click: async () => {
             const subWin = createSubBrowserWin(null, mainWindow)

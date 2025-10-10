@@ -1,5 +1,29 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
+import { translations } from './i18n.js'
+
+// 语言状态管理
+const currentLang = ref(localStorage.getItem('language') || 'zh')
+
+// 切换语言
+const toggleLanguage = () => {
+  currentLang.value = currentLang.value === 'zh' ? 'en' : 'zh'
+  localStorage.setItem('language', currentLang.value)
+  document.documentElement.lang = currentLang.value === 'zh' ? 'zh-CN' : 'en'
+  
+  // 更新页面标题
+  updatePageTitle()
+}
+
+// 更新页面标题
+const updatePageTitle = () => {
+  document.title = currentLang.value === 'zh' 
+    ? 'Sunshine 基地版 - 让游戏串流更优雅' 
+    : 'Sunshine Foundation - Make Game Streaming Greater'
+}
+
+// 当前语言的翻译内容
+const t = computed(() => translations[currentLang.value])
 
 // 检查是否在 Electron 环境中
 const isElectron = ref(false)
@@ -70,6 +94,10 @@ const checkLatestVersion = async () => {
 }
 
 onMounted(() => {
+  // 设置初始语言
+  document.documentElement.lang = currentLang.value === 'zh' ? 'zh-CN' : 'en'
+  updatePageTitle()
+  
   isElectron.value = typeof window !== 'undefined' && window.electronAPI
   if (isElectron.value) {
     window.electronAPI.sendMessage('Hello from App.vue!')
@@ -98,40 +126,6 @@ const downloadLinks = ref({
     'https://ghfast.top/https://github.com/qiin2333/Sunshine/releases/download/foundation/sunshine-windows-installer.exe',
   latest: null,
 })
-
-// 功能特性
-const features = [
-  {
-    icon: '🎮',
-    title: 'HDR友好支持',
-    description: '经过优化的HDR处理管线，提供真正的HDR游戏流媒体体验',
-  },
-  {
-    icon: '🖥️',
-    title: '虚拟显示器',
-    description: '内置虚拟显示器管理，无需额外软件即可创建和管理虚拟显示器',
-  },
-  {
-    icon: '🎤',
-    title: '远程麦克风',
-    description: '支持接收客户端麦克风，提供高音质的语音直通功能',
-  },
-  {
-    icon: '⚡',
-    title: '低延迟传输',
-    description: '结合最新硬件能力优化的编码处理，提供流畅的游戏体验',
-  },
-  {
-    icon: '🎛️',
-    title: '高级控制面板',
-    description: '直观的Web控制界面，提供实时监控和配置管理',
-  },
-  {
-    icon: '🔗',
-    title: '智能配对',
-    description: '智能管理配对设备的对应配置文件',
-  },
-]
 
 // 客户端推荐
 const clients = [
@@ -169,14 +163,17 @@ const clients = [
       <div class="container">
         <div class="nav">
           <div class="logo">
-            <h1>Sunshine 基地版</h1>
+            <h1>{{ t.title }}</h1>
           </div>
           <nav class="nav-links">
-            <a href="#features">特性</a>
-            <a href="#download">下载</a>
-            <a href="#clients">客户端</a>
-            <a href="#stats">Star History</a>
-            <a href="#docs">文档</a>
+            <a href="#features">{{ t.nav.features }}</a>
+            <a href="#download">{{ t.nav.download }}</a>
+            <a href="#clients">{{ t.nav.clients }}</a>
+            <a href="#stats">{{ t.nav.stats }}</a>
+            <a href="#docs">{{ t.nav.docs }}</a>
+            <button @click="toggleLanguage" class="lang-toggle">
+              {{ currentLang === 'zh' ? 'EN' : '中文' }}
+            </button>
           </nav>
         </div>
       </div>
@@ -186,12 +183,12 @@ const clients = [
     <section class="hero">
       <div class="container">
         <div class="hero-content">
-          <h1 class="hero-title">让游戏串流更优雅</h1>
-          <p class="hero-subtitle">Sunshine, a self-hosted game-stream host for Moonlight, now features an HDR-friendly fork that integrates virtual displays and control panels.</p>
+          <h1 class="hero-title">{{ t.tagline }}</h1>
+          <p class="hero-subtitle">{{ t.subtitle }}</p>
           <div class="hero-actions">
-            <a :href="downloadLinks.windows" class="btn btn-primary"> 🚀 立即下载 </a>
-            <a :href="downloadLinks.github" class="btn btn-secondary"> 📦 GitHub Releases </a>
-            <a :href="downloadLinks.mirror" class="btn btn-secondary"> 🌐 镜像下载 </a>
+            <a :href="downloadLinks.windows" class="btn btn-primary">{{ t.hero.download }}</a>
+            <a :href="downloadLinks.github" class="btn btn-secondary">{{ t.hero.github }}</a>
+            <a :href="downloadLinks.mirror" class="btn btn-secondary">{{ t.hero.mirror }}</a>
           </div>
         </div>
       </div>
@@ -200,9 +197,9 @@ const clients = [
     <!-- 核心特性 -->
     <section id="features" class="features">
       <div class="container">
-        <h2 class="section-title">🌟 核心特性</h2>
+        <h2 class="section-title">{{ t.features.title }}</h2>
         <div class="features-grid">
-          <div v-for="feature in features" :key="feature.title" class="feature-card">
+          <div v-for="feature in t.features.items" :key="feature.title" class="feature-card">
             <div class="feature-icon">{{ feature.icon }}</div>
             <h3 class="feature-title">{{ feature.title }}</h3>
             <p class="feature-description">{{ feature.description }}</p>
@@ -214,19 +211,19 @@ const clients = [
     <!-- 下载区域 -->
     <section id="download" class="download">
       <div class="container">
-        <h2 class="section-title">📥 下载 Sunshine 基地版</h2>
+        <h2 class="section-title">{{ t.download.title }}</h2>
 
         <!-- 版本信息 -->
         <div class="version-info" v-if="versionInfo.latest">
           <div class="version-badge">
-            <span class="version-label">最新版本</span>
+            <span class="version-label">{{ t.download.latestVersion }}</span>
             <span class="version-number">{{ versionInfo.latest.version }}</span>
           </div>
           <div class="version-actions">
             <button @click="checkLatestVersion" class="btn-refresh" :disabled="versionInfo.loading">
               <span v-if="versionInfo.loading">🔄</span>
               <span v-else>🔄</span>
-              检查更新
+              {{ t.download.checkUpdate }}
             </button>
           </div>
         </div>
@@ -234,47 +231,43 @@ const clients = [
         <!-- 加载状态 -->
         <div v-if="versionInfo.loading" class="loading-state">
           <div class="loading-spinner"></div>
-          <p>正在检查最新版本...</p>
+          <p>{{ t.download.checking }}</p>
         </div>
 
         <!-- 错误状态 -->
         <div v-if="versionInfo.error" class="error-state">
-          <p>⚠️ 无法检查版本信息，使用默认下载地址</p>
-          <button @click="checkLatestVersion" class="btn btn-secondary">重试</button>
+          <p>{{ t.download.error }}</p>
+          <button @click="checkLatestVersion" class="btn btn-secondary">{{ t.download.retry }}</button>
         </div>
 
         <div class="download-content">
           <div class="download-info">
-            <h3>系统要求</h3>
+            <h3>{{ t.download.requirements }}</h3>
             <ul>
-              <li>系统: Windows10 22H2+</li>
-              <li>CPU: Intel Core i3 / AMD Ryzen 3 以上</li>
-              <li>GPU: 支持硬件编码的显卡, 支持VCE 1.0或更高版本, Intel VAAPI / AMD VCE / <a target="_blank" href="https://developer.nvidia.com/video-encode-and-decode-gpu-support-matrix-new">Nvidia NVENC</a></li>
-              <li>RAM: 4GB 或更多</li>
-              <li>网络: 5GHz, 802.11ac</li>
+              <li v-for="(req, index) in t.download.requirementsList" :key="index" v-html="req"></li>
             </ul>
           </div>
           <div class="download-actions">
             <a :href="downloadLinks.windows" class="download-btn">
               <span class="download-icon">🪟</span>
               <span class="download-text">
-                <strong>Windows 最新版</strong>
+                <strong>{{ t.download.windowsLatest }}</strong>
                 <small v-if="versionInfo.latest">{{ versionInfo.latest.version }}</small>
-                <small v-else>推荐使用</small>
+                <small v-else>{{ t.download.recommended }}</small>
               </span>
             </a>
             <a :href="downloadLinks.github" class="download-btn secondary">
               <span class="download-icon">📦</span>
               <span class="download-text">
-                <strong>所有版本</strong>
-                <small>GitHub Releases</small>
+                <strong>{{ t.download.allVersions }}</strong>
+                <small>{{ t.download.githubReleases }}</small>
               </span>
             </a>
             <a :href="downloadLinks.mirror" class="download-btn secondary">
               <span class="download-icon">🌐</span>
               <span class="download-text">
-                <strong>镜像下载</strong>
-                <small>国内加速</small>
+                <strong>{{ t.download.mirrorDownload }}</strong>
+                <small>{{ t.download.domesticSpeed }}</small>
               </span>
             </a>
           </div>
@@ -283,11 +276,11 @@ const clients = [
         <!-- 预发布版本提示 -->
         <div v-if="versionInfo.preRelease" class="prerelease-alert">
           <div class="alert-content">
-            <h4>🚀 预发布版本可用</h4>
+            <h4>{{ t.download.prerelease }}</h4>
             <p>
-              发现新的预发布版本 <strong>{{ versionInfo.preRelease.version }}</strong>
+              {{ t.download.prereleaseFound }} <strong>{{ versionInfo.preRelease.version }}</strong>
             </p>
-            <a :href="versionInfo.preRelease.releaseUrl" class="btn btn-warning" target="_blank"> 查看预发布版本 </a>
+            <a :href="versionInfo.preRelease.releaseUrl" class="btn btn-warning" target="_blank">{{ t.download.viewPrerelease }}</a>
           </div>
         </div>
       </div>
@@ -296,15 +289,15 @@ const clients = [
     <!-- 推荐客户端 -->
     <section id="clients" class="clients">
       <div class="container">
-        <h2 class="section-title">📱 推荐的 Moonlight 客户端</h2>
-        <p class="section-subtitle">建议使用以下经过优化的客户端获得最佳的串流体验</p>
+        <h2 class="section-title">{{ t.clients.title }}</h2>
+        <p class="section-subtitle">{{ t.clients.subtitle }}</p>
         <div class="clients-grid">
           <div v-for="client in clients" :key="client.name" class="client-card">
             <div class="client-info">
               <h3 class="client-name">{{ client.name }}</h3>
               <p class="client-platform">{{ client.platform }}</p>
             </div>
-            <a :href="client.link" class="client-link" target="_blank" rel="noopener"> 下载 → </a>
+            <a :href="client.link" class="client-link" target="_blank" rel="noopener">{{ t.clients.downloadBtn }}</a>
           </div>
         </div>
       </div>
@@ -313,41 +306,41 @@ const clients = [
     <!-- Star History -->
     <section id="stats" class="stats">
       <div class="container">
-        <h2 class="section-title">⭐ Star History</h2>
-        <p class="section-subtitle">查看项目的 GitHub Star 增长趋势</p>
+        <h2 class="section-title">{{ t.stats.title }}</h2>
+        <p class="section-subtitle">{{ t.stats.subtitle }}</p>
         <div class="star-history-container">
           <div v-if="!starHistoryLoaded && !starHistoryError" class="loading-state">
             <div class="loading-spinner"></div>
-            <p>正在加载 Star History...</p>
+            <p>{{ t.stats.loading }}</p>
           </div>
           <div v-else-if="starHistoryError" class="error-state">
-            <p>⚠️ 无法加载 Star History 图表</p>
+            <p>{{ t.stats.error }}</p>
             <a
               href="https://star-history.com/#qiin2333/Sunshine-Foundation&Date"
               target="_blank"
               class="btn btn-secondary"
             >
-              手动查看
+              {{ t.stats.viewManually }}
             </a>
           </div>
           <img
             v-else
             src="https://api.star-history.com/svg?repos=qiin2333/Sunshine-Foundation&type=Date&width=800&height=400"
-            alt="Sunshine 基地版 Star History"
+            :alt="`${t.title} Star History`"
             class="star-history-chart"
             loading="lazy"
           />
         </div>
         <div class="stats-actions">
           <a href="https://github.com/qiin2333/Sunshine-Foundation" class="btn btn-primary" target="_blank">
-            ⭐ 给个 Star
+            {{ t.stats.giveStar }}
           </a>
           <a
             href="https://star-history.com/#qiin2333/Sunshine-Foundation&Date"
             class="btn btn-secondary"
             target="_blank"
           >
-            📊 查看详细统计
+            {{ t.stats.viewStats }}
           </a>
         </div>
       </div>
@@ -356,23 +349,23 @@ const clients = [
     <!-- 文档链接 -->
     <section id="docs" class="docs">
       <div class="container">
-        <h2 class="section-title">📚 文档与支持</h2>
+        <h2 class="section-title">{{ t.docs.title }}</h2>
         <div class="docs-grid">
           <a href="https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=YTpMj5JNNdB5hEKJhhqlSB" class="doc-card" target="_blank">
-            <h3>📖 使用文档</h3>
-            <p>详细的使用指南和配置说明</p>
+            <h3>{{ t.docs.userGuide }}</h3>
+            <p>{{ t.docs.userGuideDesc }}</p>
           </a>
           <a href="https://docs.lizardbyte.dev/projects/sunshine/latest/" class="doc-card" target="_blank">
-            <h3>📋 官方文档</h3>
-            <p>LizardByte 官方文档参考</p>
+            <h3>{{ t.docs.officialDocs }}</h3>
+            <p>{{ t.docs.officialDocsDesc }}</p>
           </a>
           <a
             href="https://qm.qq.com/cgi-bin/qm/qr?k=5qnkzSaLIrIaU4FvumftZH_6Hg7fUuLD&jump_from=webapi"
             class="doc-card"
             target="_blank"
           >
-            <h3>💬 QQ 交流群</h3>
-            <p>加入社区获取帮助</p>
+            <h3>{{ t.docs.qqGroup }}</h3>
+            <p>{{ t.docs.qqGroupDesc }}</p>
     </a>
   </div>
       </div>
@@ -383,11 +376,11 @@ const clients = [
       <div class="container">
         <div class="footer-content">
           <div class="footer-section">
-            <h4>Sunshine 基地版</h4>
-            <p>让游戏串流更优雅</p>
+            <h4>{{ t.footer.title }}</h4>
+            <p>{{ t.footer.subtitle }}</p>
           </div>
           <div class="footer-section">
-            <h4>相关链接</h4>
+            <h4>{{ t.footer.links }}</h4>
             <ul>
               <li><a href="https://github.com/qiin2333/Sunshine" target="_blank">GitHub</a></li>
               <li><a href="https://github.com/LizardByte/awesome-sunshine" target="_blank">awesome-sunshine</a></li>
@@ -395,7 +388,7 @@ const clients = [
           </div>
         </div>
         <div class="footer-bottom">
-          <p>&copy; 2024 Sunshine 基地版. 基于 LizardByte/Sunshine 修改.</p>
+          <p>{{ t.footer.copyright }}</p>
         </div>
       </div>
     </footer>
@@ -436,6 +429,7 @@ const clients = [
 .nav-links {
   display: flex;
   gap: @spacing-lg;
+  align-items: center;
 
   a {
     text-decoration: none;
@@ -446,6 +440,30 @@ const clients = [
     &:hover {
       color: @primary-color;
     }
+  }
+}
+
+.lang-toggle {
+  background: @gradient-primary;
+  color: white;
+  border: 2px solid @primary-color;
+  padding: @spacing-xs @spacing-md;
+  border-radius: @border-radius-md;
+  font-weight: @font-weight-medium;
+  cursor: pointer;
+  transition: all @transition-normal;
+  font-size: @font-size-sm;
+  margin-left: @spacing-sm;
+
+  &:hover {
+    background: @primary-hover;
+    border-color: @primary-hover;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(255, 107, 107, 0.3);
+  }
+
+  &:active {
+    transform: translateY(0);
   }
 }
 
@@ -1127,8 +1145,23 @@ const clients = [
     grid-template-columns: 1fr;
   }
 
+  .nav {
+    flex-direction: column;
+    gap: @spacing-sm;
+  }
+
   .nav-links {
-    .hide-on-mobile();
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: @spacing-sm;
+
+    a {
+      font-size: @font-size-sm;
+    }
+  }
+
+  .lang-toggle {
+    margin-left: 0;
   }
 
   .star-history-container {

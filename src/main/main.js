@@ -107,12 +107,25 @@ function createTray() {
 
     const contextMenu = Menu.buildFromTemplate([
       {
+        label: '打开官网',
+        click: () => {
+          const subWin = createSubBrowserWin({ width: 1280, height: 900 }, win)
+          if (process.env.NODE_ENV === 'development') {
+            const rendererPort = process.argv[2]
+            subWin.loadURL(`http://localhost:${rendererPort}/home/`)
+          } else {
+            subWin.loadFile(join(__dirname, '../renderer/home/index.html'))
+          }
+        },
+      },
+      {
         label: '设置虚拟显示器（vdd)',
         click: () => {
           const subWin = createSubBrowserWin(null, win)
           subWin.loadFile(join(__dirname, '../renderer/vdd/index.html'))
         },
       },
+      { type: 'separator' },
       {
         label: '退出程序',
         click: () => {

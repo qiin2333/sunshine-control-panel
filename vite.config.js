@@ -17,15 +17,22 @@ export default defineConfig(() => ({
   publicDir: 'public',
   server: {
     port: 8080,
+    strictPort: true,
+    host: '127.0.0.1',
   },
+  envPrefix: ['VITE_', 'TAURI_'],
   open: false,
   build: {
-    outDir: join(__dirname, 'build', 'renderer'),
+    outDir: join(__dirname, 'dist'),
     emptyOutDir: true,
+    target: ['es2021', 'chrome100', 'safari13'],
+    minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
+    sourcemap: !!process.env.TAURI_DEBUG,
     rollupOptions: {
       input: {
         index: resolve(rendererSrcPath, 'index.html'),
         placeholder: resolve(rendererSrcPath, 'placeholder.html'),
+        sunshineFrame: resolve(rendererSrcPath, 'sunshine-frame.html'),
         vdd: resolve(rendererSrcPath, 'vdd/index.html'),
         clock: resolve(rendererSrcPath, 'stop-clock-canvas/index.html'),
         home: resolve(rendererSrcPath, 'home/index.html'),
@@ -51,4 +58,5 @@ export default defineConfig(() => ({
       },
     },
   },
+  clearScreen: false,
 }))

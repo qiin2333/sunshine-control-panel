@@ -1,18 +1,17 @@
 {
   "name": "sunshine-gui",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "description": "A GUI for sunshine",
-  "main": "build/main/main.js",
   "type": "module",
   "scripts": {
-    "start": "node scripts/dev-server.js",
-    "build": "node scripts/build.js && electron-builder -p never",
-    "build:win": "set NODE_ENV=production && node scripts/build.js && electron-builder --win --x64 --publish=never --config.asar=true --config.compression=maximum",
-    "build:mac": "node scripts/build.js && electron-builder --mac",
-    "build:linux": "node scripts/build.js && electron-builder --linux",
+    "dev": "tauri dev",
+    "dev:renderer": "vite --config vite.config.js",
+    "build": "tauri build",
+    "build:renderer": "vite build --config vite.config.js",
     "build:home": "vite build --config vite.home.config.js --mode production",
     "dev:home": "vite --config vite.home.config.js --mode development",
-    "preview:home": "vite preview --config vite.home.config.js"
+    "preview:home": "vite preview --config vite.home.config.js",
+    "build:win": "npm run build:renderer && tauri build --target x86_64-pc-windows-msvc --bundles nsis"
   },
   "repository": "https://github.com/qiin2333/sunshine",
   "author": {
@@ -20,11 +19,8 @@
     "url": "https://github.com/qiin2333"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.8.4",
     "@vitejs/plugin-vue": "^4.5.1",
-    "chalk": "^4.1.2",
-    "chokidar": "^3.5.3",
-    "electron": "^32.2.2",
-    "electron-builder": "^25.1.8",
     "less": "^4.2.2",
     "less-loader": "^12.2.0",
     "rollup": "^4.22.4",
@@ -32,9 +28,11 @@
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
-    "about-window": "^1.15.2",
+    "@tauri-apps/api": "^2.8.0",
+    "@tauri-apps/plugin-dialog": "^2.4.0",
+    "@tauri-apps/plugin-fs": "^2.4.2",
+    "@tauri-apps/plugin-shell": "^2.3.1",
     "element-plus": "^2.9.4",
-    "sudo-prompt": "^9.2.1",
     "systeminformation": "^5.25.11",
     "vue": "^3.5.4",
     "xml2js": "^0.6.2"

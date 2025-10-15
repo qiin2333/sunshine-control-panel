@@ -11,10 +11,19 @@
         src: url('./public/fonts/PixelMplus12-Bold.woff2') format('woff2');
         font-weight: 700;
       }
+      :root {
+        --gura-blue: #4a9eff;
+        --gura-light-blue: #7ab8ff;
+        --gura-pale-blue: #a2d2ff;
+        --gura-bg-light: #f0f8ff;
+        --gura-bg-mid: #e6f2ff;
+        --gura-text: #3a7ed5;
+      }
+
       body {
         margin: 0;
         padding: 0;
-        background-color: #e6f4ff;
+        background: linear-gradient(135deg, var(--gura-bg-light) 0%, var(--gura-bg-mid) 50%, #d4e8ff 100%);
         display: flex;
         justify-content: center;
         align-items: center;
@@ -29,22 +38,23 @@
       .placeholder-image {
         width: 60%;
         max-width: 200px;
-        opacity: 0.8;
-        margin-bottom: 20px;
+        opacity: 0.85;
+        margin-bottom: 24px;
         animation: gura 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
         position: relative;
         left: -20%;
         transform-style: preserve-3d;
+        filter: drop-shadow(0 4px 12px rgba(74, 158, 255, 0.3));
       }
       .placeholder-text {
-        color: #1a3d6d;
+        color: var(--gura-blue);
         font-size: 18px;
-        line-height: 1.5;
+        line-height: 1.6;
         font-family: 'PixelMplus12', 'YouYuan', cursive;
-        text-shadow: 1px 1px 2px rgba(168, 216, 255, 0.3);
+        text-shadow: 1px 1px 3px rgba(74, 158, 255, 0.2);
         letter-spacing: 0.5px;
         font-weight: 500;
-        transform: skew(-5deg);
+        transform: skew(-3deg);
       }
       @keyframes gura {
         0% {
@@ -63,24 +73,46 @@
           transform: translateX(100%) rotate(5deg) translateY(-5px) scale(0.9);
         }
       }
-      /* 暗黑模式适配 */
-      @media (prefers-color-scheme: dark) {
-        body {
-          background-color: #0d1a26;
-        }
-        .placeholder-text {
-          color: #66b3ff;
-          text-shadow: 0 0 8px rgba(102, 179, 255, 0.3);
-        }
+      /* 深色模式适配*/
+      body[data-bs-theme='dark'] {
+        background: linear-gradient(135deg, #2d2628 0%, #3d3235 100%);
+      }
+
+      body[data-bs-theme='dark'] .placeholder-image {
+        filter: drop-shadow(0 4px 12px rgba(212, 165, 165, 0.3));
+      }
+
+      body[data-bs-theme='dark'] .placeholder-text {
+        color: #e6d5b8;
+        text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.4);
       }
     </style>
   </head>
   <body>
+    <script>
+      // 立即设置主题，避免闪烁
+      (function() {
+        const savedTheme = localStorage.getItem('sunshine-theme')
+        if (savedTheme) {
+          document.body.setAttribute('data-bs-theme', savedTheme)
+        } else {
+          // 如果没有保存的主题，使用系统偏好
+          const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+          document.body.setAttribute('data-bs-theme', prefersDark ? 'dark' : 'light')
+        }
+      })()
+    </script>
     <div class="placeholder-container">
       <img src="./public/gura-pix.png" class="placeholder-image" alt="加载指示" />
       <div class="placeholder-text">
-        <p>長時間応答がない場合は、サービスが正常に起動しているかご確認ください</p>
+        <p>正在连接 Sunshine...</p>
+        <p style="font-size: 14px; opacity: 0.7; margin-top: 10px;">
+          長時間応答がない場合は、サービスが正常に起動しているかご確認ください
+        </p>
       </div>
     </div>
+    
+    <!-- Tauri 自动加载脚本 -->
+    <script type="module" src="./placeholder-loader.js"></script>
   </body>
 </html>

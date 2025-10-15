@@ -1,0 +1,109 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Sunshine GUI",
+  "version": "0.2.0",
+  "identifier": "com.212333.app",
+  "build": {
+    "beforeDevCommand": "npm run dev:renderer",
+    "devUrl": "http://localhost:8080",
+    "beforeBuildCommand": "npm run build:renderer",
+    "frontendDist": "../dist"
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": null
+    }
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Sunshine Control Panel",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
+        "center": true,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "visible": true,
+        "url": "placeholder.html"
+      }
+    ],
+    "security": {
+      "csp": null,
+      "capabilities": [
+        {
+          "identifier": "default",
+          "description": "Default permissions for all windows",
+          "windows": ["*"],
+          "permissions": [
+            "core:default",
+            "core:window:allow-minimize",
+            "core:window:allow-maximize",
+            "core:window:allow-unmaximize",
+            "core:window:allow-is-maximized",
+            "core:window:allow-is-minimized",
+            "core:window:allow-is-visible",
+            "core:window:allow-is-focused",
+            "core:window:allow-unminimize",
+            "core:window:allow-hide",
+            "core:window:allow-show",
+            "core:window:allow-close",
+            "core:window:allow-set-focus",
+            "core:window:allow-set-always-on-top",
+            "core:window:allow-center",
+            "core:window:allow-create",
+            "core:window:allow-start-dragging",
+            "core:window:default",
+            "core:webview:allow-webview-position",
+            "core:webview:allow-webview-size",
+            "core:webview:allow-create-webview-window",
+            "core:webview:allow-create-webview",
+            "core:webview:default",
+            "core:event:default",
+            "shell:allow-open",
+            "shell:default",
+            "fs:allow-read-dir",
+            "fs:allow-read-file",
+            "fs:default",
+            "dialog:allow-message",
+            "dialog:allow-ask",
+            "dialog:allow-confirm",
+            "dialog:allow-save",
+            "dialog:allow-open",
+            "dialog:default"
+          ],
+          "remote": {
+            "urls": [
+              "http://localhost:*",
+              "https://localhost:*",
+              "http://127.0.0.1:*",
+              "https://127.0.0.1:*",
+              "https://*.lizardbyte.dev/*",
+              "https://github.com/*",
+              "https://ghfast.top/*",
+              "https://vip.123pan.cn/*",
+              "https://*.qq.com/*"
+            ]
+          }
+        }
+      ]
+    },
+    "withGlobalTauri": true
+  },
+  "plugins": {
+    "shell": {
+      "open": true
+    }
+  }
+}

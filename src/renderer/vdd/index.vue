@@ -123,6 +123,7 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { vdd } from '@/tauri-adapter.js'
 
 const resolutionOptions = ref(new Set())
 const gpuFriendlyName = ref('')
@@ -166,7 +167,7 @@ const newRefreshRate = ref('')
 // 读取设置
 const loadSettings = async () => {
   try {
-    const result = await window.electron.ipcRenderer.invoke('vdd:loadSettings')
+    const result = await vdd.loadSettings()
     if (!result?.success) {
       ElMessage.warning('加载默认设置')
       return
@@ -217,7 +218,7 @@ const loadSettings = async () => {
 // 在loadSettings方法后添加获取GPU列表的方法
 const loadGPUs = async () => {
   try {
-    const result = await window.electron.ipcRenderer.invoke('vdd:getGPUs')
+    const result = await vdd.getGPUs()
     if (result?.success) {
       gpuOptions.value = result.data
       // 如果当前选中的GPU不在列表中，则添加到选项
@@ -265,7 +266,7 @@ const saveSettings = async () => {
 
     console.log('Payload structure:', structuredClone(payload))
 
-    const result = await window.electron.ipcRenderer.invoke('vdd:saveSettings', payload)
+    const result = await vdd.saveSettings(payload)
 
     if (result?.success) {
       ElMessage.success('设置已保存')

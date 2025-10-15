@@ -1,0 +1,144 @@
+// ========================================
+// Sunshine GUI 主题配置文件
+// ========================================
+
+// ========== 深色模式 - 莫兰迪红黄主题 ==========
+@morandi-red: #d4a5a5;
+@morandi-yellow: #e6d5b8;
+@morandi-dark-bg: #2d2628;
+@morandi-mid-bg: #3d3235;
+@morandi-light-bg: #4a3f42;
+
+// ========== 浅色模式 - Gura 蓝色主题 ==========
+@gura-blue: #4a9eff;
+@gura-light-blue: #7ab8ff;
+@gura-pale-blue: #a2d2ff;
+@gura-yellow: #ffc107;
+@gura-bg-light: #f0f8ff;
+@gura-bg-mid: #e6f2ff;
+@gura-accent: #5ba3ff;
+@gura-text: #3a7ed5;
+
+// ========== 通用尺寸变量 ==========
+@sidebar-width: 240px;
+@sidebar-collapsed-width: 74px;
+@border-radius: 12px;
+
+// ========== 过渡动画 ==========
+@transition-smooth: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+@transition-fast: 0.2s ease;
+
+// ========== Mixins ==========
+.flex-center() {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.morandi-gradient() {
+  background: linear-gradient(135deg, @morandi-red 0%, @morandi-yellow 100%);
+}
+
+.gura-gradient() {
+  background: linear-gradient(135deg, @gura-blue 0%, @gura-light-blue 100%);
+}
+
+.glass-effect(@opacity: 0.15) {
+  background: rgba(230, 213, 184, @opacity);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(230, 213, 184, 0.2);
+}
+
+// ========== 深色模式阴影 ==========
+.shadow-sidebar-dark() {
+  box-shadow: 
+    2px 0 24px rgba(212, 165, 165, 0.25),
+    4px 0 48px rgba(212, 165, 165, 0.15),
+    8px 0 80px rgba(212, 165, 165, 0.1);
+}
+
+.shadow-sidebar-dark-collapsed() {
+  box-shadow: 
+    2px 0 16px rgba(212, 165, 165, 0.2),
+    4px 0 32px rgba(212, 165, 165, 0.1);
+}
+
+.shadow-content-dark() {
+  box-shadow: 
+    inset 4px 0 16px rgba(0, 0, 0, 0.15),
+    inset 8px 0 32px rgba(0, 0, 0, 0.08);
+}
+
+.shadow-menu-item-dark() {
+  box-shadow: 
+    2px 4px 12px rgba(212, 165, 165, 0.2),
+    4px 8px 24px rgba(212, 165, 165, 0.1);
+}
+
+.shadow-float-btn-dark() {
+  box-shadow: 
+    0 4px 32px rgba(0, 0, 0, 0.4),
+    0 8px 48px rgba(0, 0, 0, 0.25),
+    0 2px 8px rgba(0, 0, 0, 0.3),
+    inset 0 1px 3px rgba(255, 255, 255, 0.2);
+}
+
+.shadow-float-btn-hover-yellow() {
+  box-shadow: 
+    0 8px 48px rgba(230, 213, 184, 0.8),
+    0 12px 64px rgba(230, 213, 184, 0.6),
+    0 0 32px rgba(230, 213, 184, 0.6),
+    0 0 56px rgba(230, 213, 184, 0.4);
+}
+
+.shadow-float-btn-hover-red() {
+  box-shadow: 
+    0 8px 48px rgba(212, 165, 165, 0.8),
+    0 12px 64px rgba(212, 165, 165, 0.6),
+    0 0 32px rgba(212, 165, 165, 0.6),
+    0 0 56px rgba(212, 165, 165, 0.4);
+}
+
+// ========== 浅色模式阴影 ==========
+.shadow-sidebar-light() {
+  box-shadow: 
+    2px 0 24px rgba(74, 158, 255, 0.3),
+    4px 0 48px rgba(74, 158, 255, 0.2),
+    8px 0 80px rgba(74, 158, 255, 0.15);
+}
+
+.shadow-sidebar-light-collapsed() {
+  box-shadow: 
+    2px 0 16px rgba(74, 158, 255, 0.25),
+    4px 0 32px rgba(74, 158, 255, 0.15);
+}
+
+.shadow-content-light() {
+  box-shadow: 
+    inset 4px 0 16px rgba(74, 158, 255, 0.12),
+    inset 8px 0 32px rgba(74, 158, 255, 0.08);
+}
+
+.shadow-menu-item-light() {
+  box-shadow: 
+    2px 4px 12px rgba(74, 158, 255, 0.25),
+    4px 8px 24px rgba(74, 158, 255, 0.15);
+}
+
+.shadow-float-btn-hover-blue() {
+  box-shadow: 
+    0 8px 48px rgba(122, 184, 255, 0.8),
+    0 12px 64px rgba(122, 184, 255, 0.6),
+    0 0 32px rgba(122, 184, 255, 0.6),
+    0 0 56px rgba(122, 184, 255, 0.4);
+}
+
+.shadow-float-btn-hover-gura() {
+  box-shadow: 
+    0 8px 48px rgba(74, 158, 255, 0.8),
+    0 12px 64px rgba(74, 158, 255, 0.6),
+    0 0 32px rgba(74, 158, 255, 0.6),
+    0 0 56px rgba(74, 158, 255, 0.4);
+}
+
+

@@ -1,83 +1,96 @@
-# Sunshine 基地版串流食用指南
-sunshine-foundation 是基于官方nightly分支修改得来，旨在提高各种串流终端设备与windows主机的接入体验。
+# Sunshine Control Panel (Tauri)
 
+基于 Tauri 2.8.4 的 Sunshine 控制面板 GUI。
 
-## 下载地址
-[Release Sunshine-Foundation v0.1 · qiin2333/Sunshine](https://github.com/qiin2333/Sunshine/releases/foundation)
-[https://mirror.ghproxy.com/https://github.com/qiin2333/Sunshine/releases/download/foundation/sunshine-windows-installer.exe](https://mirror.ghproxy.com/https://github.com/qiin2333/Sunshine/releases/download/foundation/sunshine-windows-installer.exe)
+## 前置要求
 
+- Node.js 和 npm
+- Rust 和 Cargo (用于 Tauri)
+- Windows SDK (Windows)
 
+## 开发
 
-## 安装
-##### 非首次安装弹出是否卸载旧版
-- 选择是将会清空原有配置信息，以及虚拟显示器的分辨率信息
-- 选择否会保留原有配置信息
-https://docs.gtimg.com/docs-design-resources/individuation/desktop/tmoji/qq_emoji/basic/77_dog_head_qqemoji-91208afa3a.png 21推荐： 否
-##### 安装选项
-- 首次安全推荐组件全部勾上，非首次安装建议如图勾选。
-- IddSampleDriver （虚拟HDR显示器）不支持win10，[win10点击下载非HDR版本虚拟显示器自行安装](https://github.com/itsmikethetech/Virtual-Display-Driver/releases/tag/23.10.20.2)
-https://docs.gtimg.com/docs-design-resources/individuation/desktop/tmoji/qq_emoji/basic/77_dog_head_qqemoji-91208afa3a.png 21推荐： 默认安装目录，不随意更改目录，不安装在中文路径下。
+```bash
+# 安装依赖
+npm install
 
+# 启动开发服务器
+npm run dev
 
-## 设置
-##### 配对(pin)
-![image](https://github.com/qiin2333/sunshine-control-panel/assets/2795904/073421a9-f2da-4656-8f4d-6eb3e766c887)
-TODO: 为不同的串流接入设备自动启用指定的配置
-
-
-
-##### 游戏&应用
-![image (1)](https://github.com/qiin2333/sunshine-control-panel/assets/2795904/d1caf52a-4f26-4aac-b2b9-c6857ddc5f13)
-按图所示添加/编辑游戏的执行路径
-
-21推荐： 使用游戏管理工具 [r](g)来统一管理主机上的所有游戏，这样串流程序只需要指定Playnite。
-
-
-##### 串流显示器行为
-Sunshine 设置 → 视频/音频
-
-![image (2)](https://github.com/qiin2333/sunshine-control-panel/assets/2795904/a580b32c-2980-426d-bdcd-0c8a5d4563ad)
-
-如图是最佳推荐设置，显示设备指定(Display Device Specify)为可用的虚拟显示器，同时串流准备设置为“停用其他激活指定”，即可实现串流自动息屏物理显示器，退出串流后自动恢复物理显示器。
-
-基地版默认安装的虚拟显示器支持多种分辨率与刷新率，如需要添加修改更多的分辨率可以从菜单上进行修改。
-
-若使用物理欺骗器需要修改其内置的显示参数可以参考：[你奶奶都能学会的显示器超频指北](https://meowbot.page/2021/09/02/monitor-overclocking/)
-
-##### HDR
-- 一般 HDR 支持信息和要求：
-    - HDR 必须在主机操作系统中激活，需要连接到主机 PC 的支持 HDR 的显示器（虚拟）或 EDID 显卡欺骗器。
-    - 您还必须在 Moonlight 客户端设置中启用 HDR 选项，否则数据流将是 SDR 格式（如果主机是 HDR 格式，则可能曝光过度）。
-    - 良好的 HDR 体验有赖于操作系统和游戏中正确的 HDR 显示校准。客户端和主机显示器的 HDR 校准可能会有很大不同。
-支持编码 HEVC Main 10 或 AV1 10 位配置文件的英特尔、AMD 和英伟达™（NVIDIA®）图形处理器均支持 HDR 流媒体。
-
-21推荐： 通过将 [r](g)串流到客户端设备来校准显示屏，并保存 HDR 校准配置文件，以便在串流时使用。
-## 高级用法
-##### 超采样串流
-方法一：使用 威力加强版 Moonlight-Android 调整主机缩放比例。
-
-方法二：Sunshine 设置 → 视频/音频 → Display device options → Remap display modes。
-
-## Q&A
-Q: sunshine串流不能显示XBOXGAMEBAR
-
-A: 设置 → 高级 → Force a Specific Capture Method → WGC，您可能需要停止服务并手动运行可执行文件才能测试新的捕获路径，像下面这样的简单批处理脚本就可以工作。
-
-```powershell
-cd /d "c:\program files\sunshine"
-net stop sunshineservice
-sunshine.exe
+# 仅启动前端开发服务器
+npm run dev:renderer
 ```
 
+## 构建
 
-## 相关资源
-[https://www.bilibili.com/video/BV1xu4y1M7yq/](https://www.bilibili.com/video/BV1xu4y1M7yq/)
+```bash
+# 构建渲染进程
+npm run build:renderer
 
-[Sunshine官方文档](https://docs.lizardbyte.dev/projects/sunshine/en/latest/index.html)
+# 构建完整应用
+npm run build
 
-[串流设备解码性能 - Moonlight Game Streaming Project](https://docs.qq.com/sheet/DSGxMdUl0UVZCeFRQ?tab=BB08J2)
+# Windows 构建
+npm run build:win
+```
 
-[解锁杜比全景声串流](https://docs.qq.com/pdf/DSEFKbExvRXRzVktF)
+## 项目结构
 
-[moonlight-android 威力加强版](https://github.com/qiin2333/moonlight-android/releases/shortcut)
+```
+src-tauri/           # Tauri 后端 (Rust)
+  ├── src/
+  │   ├── main.rs            # 主入口
+  │   ├── proxy_server.rs    # 本地代理服务器
+  │   ├── sunshine.rs        # Sunshine 相关功能
+  │   ├── vdd.rs            # VDD 驱动管理
+  │   ├── utils.rs          # 工具函数
+  │   ├── system.rs         # 系统信息
+  │   └── fs_utils.rs       # 文件系统工具
+  ├── inject-script.js      # 注入到 Sunshine Web UI 的脚本
+  └── Cargo.toml            # Rust 依赖配置
 
+src/renderer/        # 前端 (Vue 3)
+  ├── components/           # Vue 组件
+  │   ├── SidebarMenu.vue   # 侧边栏菜单
+  │   ├── SunshineFrame.vue # Sunshine Web UI iframe
+  │   └── ...
+  ├── styles/              # Less 样式
+  └── ...
+
+vite.config.js       # Vite 构建配置
+package.json         # NPM 依赖配置
+```
+
+## 特性
+
+- 🎨 现代化 UI，基于 Element Plus
+- 🌐 本地代理服务器，解决跨域问题
+- 🎭 主题同步 (亮色/暗色)
+- 🖼️ 拖放背景图片
+- 📊 VDD 驱动管理
+- 🔧 Sunshine 配置管理
+- 🪟 Windows 风格窗口控件
+
+## 技术栈
+
+- **前端**: Vue 3 + Element Plus + Less
+- **后端**: Rust + Tauri 2.8.4
+- **HTTP**: Axum (代理服务器)
+- **构建**: Vite
+
+## 集成到 Sunshine
+
+编译后的 GUI 会自动安装到 Sunshine 的 `assets/gui` 目录：
+
+```
+Sunshine/
+  └── assets/
+      └── gui/
+          └── sunshine-gui.exe
+```
+
+## 注意事项
+
+- Tauri GUI 是可选组件，不影响 Sunshine 核心功能
+- 需要 Rust 工具链才能构建 Tauri 应用
+- 首次构建会下载并编译 Rust 依赖，需要较长时间

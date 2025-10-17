@@ -73,13 +73,6 @@
             </transition>
           </div>
 
-          <div class="menu-item" @click="openUrl('https://gcopy.rutron.net/zh')">
-            <el-icon :size="20"><CopyDocument /></el-icon>
-            <transition name="fade">
-              <span v-if="!isCollapsed">剪贴板同步</span>
-            </transition>
-          </div>
-
           <div class="menu-item" @click="openTimer">
             <el-icon :size="20"><Timer /></el-icon>
             <transition name="fade">
@@ -98,6 +91,13 @@
             <el-icon :size="20"><Cpu /></el-icon>
             <transition name="fade">
               <span v-if="!isCollapsed">手柄测试</span>
+            </transition>
+          </div>
+
+          <div class="menu-item" @click="openUrl('https://gcopy.rutron.net/zh')">
+            <el-icon :size="20"><CopyDocument /></el-icon>
+            <transition name="fade">
+              <span v-if="!isCollapsed">剪贴板同步</span>
             </transition>
           </div>
 

@@ -85,7 +85,7 @@
 
         <!-- 显示器数量 -->
         <el-form-item label="显示器数量">
-          <el-input-number v-model="settings.monitors[0].count" :min="1" :max="1" disabled />
+          <el-input-number v-model="settings.monitors.count" :min="1" :max="1" disabled />
           <span class="form-tip">当前版本仅支持1个虚拟显示器</span>
         </el-form-item>
 
@@ -127,19 +127,19 @@
 
         <!-- SDR10 -->
         <el-form-item label="SDR 10bit">
-          <el-switch v-model="settings.colour[0].SDR10bit" />
+          <el-switch v-model="settings.colour.SDR10bit" />
           <span class="form-tip">启用10bit SDR色彩深度</span>
         </el-form-item>
 
         <!-- HDR+ -->
         <el-form-item label="HDR 12bit">
-          <el-switch v-model="settings.colour[0].HDRPlus" />
+          <el-switch v-model="settings.colour.HDRPlus" />
           <span class="form-tip">启用12bit HDR+色彩深度</span>
         </el-form-item>
 
         <!-- 色彩模式 -->
         <el-form-item label="色彩模式">
-          <el-select v-model="settings.colour[0].ColourFormat" placeholder="请选择色彩模式" style="width: 180px">
+          <el-select v-model="settings.colour.ColourFormat" placeholder="请选择色彩模式" style="width: 180px">
             <el-option label="RGB" value="RGB" />
             <el-option label="YCbCr444" value="YCbCr444" />
             <el-option label="YCbCr422" value="YCbCr422" />
@@ -149,14 +149,14 @@
 
         <!-- 日志 -->
         <el-form-item label="调试日志">
-          <el-switch v-model="settings.logging[0].logging" />
+          <el-switch v-model="settings.logging.logging" />
           <span class="form-tip">启用VDD调试日志</span>
         </el-form-item>
 
         <!-- 保存按钮 -->
         <el-form-item class="form-actions">
           <el-button type="primary" @click="saveSettings" size="large">
-            <el-icon><Select /></el-icon>
+            <el-icon style="margin-right: 6px"><UploadFilled /></el-icon>
             保存设置
           </el-button>
         </el-form-item>
@@ -168,7 +168,7 @@
 <script setup>
 import { ref, reactive, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Monitor, Plus, Select } from '@element-plus/icons-vue'
+import { Monitor, Plus, UploadFilled } from '@element-plus/icons-vue'
 import { vdd } from '../tauri-adapter.js'
 
 const resolutionOptions = ref(new Set())
@@ -183,22 +183,20 @@ const CHINESE_PATTERN = /[\u4e00-\u9fa5]/
 
 const gpuOptions = ref([])
 
-// 初始设置
+// 初始设置 - 匹配后端的新结构
 const initialSettings = {
-  monitors: [{ count: 1 }],
-  gpu: [{ friendlyname: [''] }],
+  monitors: { count: 1 },
+  gpu: { friendlyname: '' },
   global: {
     g_refresh_rate: [60, 120, 240],
   },
-  resolutions: [],
-  colour: [
-    {
-      SDR10bit: false,
-      HDRPlus: false,
-      ColourFormat: 'RGB',
-    },
-  ],
-  logging: [{ logging: false, debuglogging: true }],
+  resolutions: { resolution: [] },
+  colour: {
+    SDR10bit: false,
+    HDRPlus: false,
+    ColourFormat: 'RGB',
+  },
+  logging: { logging: false, debuglogging: true },
 }
 
 const settings = reactive({ ...initialSettings })
@@ -233,30 +231,32 @@ const loadSettings = async () => {
     }
 
     const { data } = result
-    Object.assign(settings, {
+    
+    // 确保 colour 和 logging 字段存在（它们在后端是 Option 类型）
+    const mergedData = {
       ...initialSettings,
       ...data,
-    })
+      colour: data.colour || initialSettings.colour,
+      logging: data.logging || initialSettings.logging,
+    }
+    
+    Object.assign(settings, mergedData)
 
-    // GPU数据处理
-    if (Array.isArray(data.gpu) && data.gpu[0]) {
-      const gpuData = data.gpu[0]
-      gpuFriendlyName.value = typeof gpuData === 'string' ? gpuData : gpuData.friendlyname?.[0] || ''
-      settings.gpu[0] = {
-        friendlyname: [gpuFriendlyName.value],
-      }
+    // GPU数据处理 - 新结构：gpu 是单个对象
+    if (data.gpu) {
+      gpuFriendlyName.value = data.gpu.friendlyname || ''
+      settings.gpu.friendlyname = gpuFriendlyName.value
     }
 
-    // 分辨率处理
+    // 分辨率处理 - 新结构：resolutions 是单个对象，包含 resolution 数组
     const processedResolutions = new Set()
-    data.resolutions?.forEach((device) => {
-      device.resolution?.forEach((res) => {
-        res.width?.forEach((w, i) => {
-          const h = res.height?.[i]
-          if (w && h) processedResolutions.add(`${w}x${h}`)
-        })
+    if (data.resolutions?.resolution) {
+      data.resolutions.resolution.forEach((res) => {
+        if (res.width && res.height) {
+          processedResolutions.add(`${res.width}x${res.height}`)
+        }
       })
-    })
+    }
     resolutionOptions.value = processedResolutions
 
     // 刷新率处理
@@ -294,27 +294,24 @@ const saveSettings = async () => {
       return
     }
 
+    // 使用新的单对象结构
     const settingsToSave = {
       ...settings,
-      gpu: [
-        {
-          friendlyname: [gpuFriendlyName.value],
-        },
-      ],
+      gpu: {
+        friendlyname: gpuFriendlyName.value,
+      },
       global: {
         g_refresh_rate: Array.from(refreshRateOptions.value).map(Number),
       },
-      resolutions: [
-        {
-          resolution: Array.from(resolutionOptions.value).map((res) => {
-            const [width, height] = res.split('x').map(Number)
-            return {
-              width: [width],
-              height: [height],
-            }
-          }),
-        },
-      ],
+      resolutions: {
+        resolution: Array.from(resolutionOptions.value).map((res) => {
+          const [width, height] = res.split('x').map(Number)
+          return {
+            width,
+            height,
+          }
+        }),
+      },
     }
 
     const payload = JSON.parse(JSON.stringify(settingsToSave))
@@ -417,7 +414,7 @@ const saveGpuEdit = () => {
     gpuOptions.value.unshift(gpuFriendlyName.value)
   }
 
-  settings.gpu[0].friendlyname = [gpuFriendlyName.value]
+  settings.gpu.friendlyname = gpuFriendlyName.value
   ElMessage.success('GPU名称已更新')
 }
 

@@ -71,6 +71,5 @@
 </style>
 
 <style lang="less">
-// 全局对话框样式（不使用 scoped）
 @import './styles/dialog.less';
 </style>

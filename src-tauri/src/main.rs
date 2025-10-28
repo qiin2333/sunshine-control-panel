@@ -22,9 +22,61 @@ struct AppState {
 }
 
 #[tauri::command]
+async fn show_toolbar_menu(app: AppHandle, window: tauri::Window) -> Result<(), String> {
+    println!("🔧 显示工具栏菜单");
+    
+    // 创建菜单
+    let menu = create_toolbar_menu(&app).map_err(|e| format!("创建菜单失败: {}", e))?;
+    
+    // 在鼠标位置弹出菜单
+    window.popup_menu(&menu).map_err(|e| format!("弹出菜单失败: {}", e))?;
+    
+    Ok(())
+}
+
+#[tauri::command]
 async fn toggle_dark_mode(_window: tauri::Window) -> Result<bool, String> {
     // Tauri 通过前端控制主题，这里只是示例
     Ok(true)
+}
+
+#[tauri::command]
+async fn set_desktop_dpi(dpi: u32) -> Result<(), String> {
+    println!("🖥️ 设置桌面 DPI: {}%", dpi);
+    
+    #[cfg(target_os = "windows")]
+    {
+        use std::path::PathBuf;
+        
+        // 从 Sunshine 安装目录获取路径
+        let install_path = sunshine::get_sunshine_install_path();
+        let setdpi_path = PathBuf::from(&install_path).join("tools").join("SetDpi.exe");
+        
+        println!("🔍 SetDpi.exe 路径: {:?}", setdpi_path);
+        
+        if setdpi_path.exists() {
+            match std::process::Command::new(setdpi_path)
+                .arg(dpi.to_string())
+                .spawn()
+            {
+                Ok(_) => {
+                    println!("✅ DPI 已设置为 {}%", dpi);
+                    Ok(())
+                }
+                Err(e) => {
+                    eprintln!("❌ 执行 SetDpi.exe 失败: {}", e);
+                    Err(format!("执行失败: {}", e))
+                }
+            }
+        } else {
+            Err(format!("找不到 SetDpi.exe: {:?}", setdpi_path))
+        }
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("DPI 调整功能仅在 Windows 上可用".to_string())
+    }
 }
 
 #[tauri::command]
@@ -53,15 +105,246 @@ async fn open_external_url(url: String) -> Result<bool, String> {
     }
 }
 
+#[tauri::command]
+async fn open_tool_window(app: AppHandle, tool_name: String) -> Result<(), String> {
+    println!("🔧 打开工具窗口: {}", tool_name);
+    
+    match tool_name.as_str() {
+        "main" => {
+            // 打开主窗口
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }
+        "vdd" => {
+            // 打开 VDD 设置窗口
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+                let _ = window.emit("open-vdd-settings", ());
+            }
+        }
+        "about" => {
+            // 打开关于窗口
+            const ABOUT_WINDOW_ID: &str = "about";
+            
+            if let Some(window) = app.get_webview_window(ABOUT_WINDOW_ID) {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            } else {
+                match tauri::WebviewWindowBuilder::new(
+                    &app,
+                    ABOUT_WINDOW_ID,
+                    tauri::WebviewUrl::App("about/index.html".into())
+                )
+                .title("关于 Sunshine Control Panel")
+                .inner_size(540.0, 620.0)
+                .resizable(false)
+                .maximizable(false)
+                .minimizable(true)
+                .decorations(true)
+                .center()
+                .build()
+                {
+                    Ok(_) => println!("✅ 关于窗口创建成功"),
+                    Err(e) => eprintln!("❌ 创建关于窗口失败: {}", e),
+                }
+            }
+        }
+        _ => {
+            return Err(format!("未知的工具名称: {}", tool_name));
+        }
+    }
+    
+    Ok(())
+}
+
+// 为工具栏窗口创建右键菜单
+fn create_toolbar_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
+    let main_panel = MenuItem::with_id(app, "toolbar_main", "控制面板", true, None::<&str>)?;
+    let vdd_settings = MenuItem::with_id(app, "toolbar_vdd", "虚拟显示器 (VDD)", true, None::<&str>)?;
+    let dpi_adjuster = MenuItem::with_id(app, "toolbar_dpi", "调整 DPI", true, None::<&str>)?;
+    let about = MenuItem::with_id(app, "toolbar_about", "关于", true, None::<&str>)?;
+    let close_toolbar = MenuItem::with_id(app, "toolbar_close", "关闭工具栏", true, None::<&str>)?;
+    
+    Menu::with_items(app, &[
+        &main_panel,
+        &vdd_settings,
+        &dpi_adjuster,
+        &about,
+        &close_toolbar,
+    ])
+}
+
+// 处理工具栏菜单事件
+fn handle_toolbar_menu_event<R: Runtime>(app: &AppHandle<R>, event_id: &str) {
+    match event_id {
+        "toolbar_main" => {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }
+        "toolbar_vdd" => {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+                let _ = window.emit("open-vdd-settings", ());
+            }
+        }
+        "toolbar_dpi" => {
+            const DPI_WINDOW_ID: &str = "dpi_adjuster";
+            if let Some(window) = app.get_webview_window(DPI_WINDOW_ID) {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            } else {
+                let _ = tauri::WebviewWindowBuilder::new(
+                    app,
+                    DPI_WINDOW_ID,
+                    tauri::WebviewUrl::App("dpi-adjuster/index.html".into())
+                )
+                .title("DPI 调整")
+                .inner_size(400.0, 300.0)
+                .resizable(false)
+                .maximizable(false)
+                .minimizable(true)
+                .decorations(true)
+                .center()
+                .build();
+            }
+        }
+        "toolbar_about" => {
+            const ABOUT_WINDOW_ID: &str = "about";
+            if let Some(window) = app.get_webview_window(ABOUT_WINDOW_ID) {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            } else {
+                let _ = tauri::WebviewWindowBuilder::new(
+                    app,
+                    ABOUT_WINDOW_ID,
+                    tauri::WebviewUrl::App("about/index.html".into())
+                )
+                .title("关于 Sunshine Control Panel")
+                .inner_size(540.0, 620.0)
+                .resizable(false)
+                .maximizable(false)
+                .minimizable(true)
+                .decorations(true)
+                .center()
+                .build();
+            }
+        }
+        "toolbar_close" => {
+            if let Some(window) = app.get_webview_window("toolbar") {
+                let _ = window.close();
+            }
+        }
+        _ => {}
+    }
+}
+
+// 内部泛型函数，用于创建工具栏窗口
+fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    const TOOLBAR_WINDOW_ID: &str = "toolbar";
+    
+    // 检查工具栏窗口是否已存在
+    if app.get_webview_window(TOOLBAR_WINDOW_ID).is_some() {
+        println!("🔧 工具栏窗口已存在");
+        return Ok(());
+    }
+    
+    println!("🔧 创建工具栏窗口");
+    
+    // 窗口大小和边距配置
+    let toolbar_size = 100.0;  // 窗口大小（正方形，包含光晕空间）
+    let margin = 20.0;         // 距离屏幕边缘的边距
+    
+    // 先创建窗口在默认位置
+    let window = match tauri::WebviewWindowBuilder::new(
+        app,
+        TOOLBAR_WINDOW_ID,
+        tauri::WebviewUrl::App("toolbar/index.html".into())
+    )
+    .title("工具栏")
+    .inner_size(toolbar_size, toolbar_size)
+    .resizable(false)
+    .maximizable(false)
+    .minimizable(false)
+    .decorations(false)
+    .transparent(true)
+    .shadow(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .visible(false)  // 先隐藏，等设置好位置再显示
+    .build()
+    {
+        Ok(win) => win,
+        Err(e) => {
+            eprintln!("❌ 创建工具栏窗口失败: {}", e);
+            return Err(format!("创建工具栏窗口失败: {}", e));
+        }
+    };
+    
+    // 获取主显示器信息并设置到右下角
+    if let Ok(monitor) = window.current_monitor() {
+        if let Some(monitor) = monitor {
+            let size = monitor.size();
+            let scale_factor = monitor.scale_factor();
+            
+            // 计算逻辑像素尺寸
+            let screen_width = size.width as f64 / scale_factor;
+            let screen_height = size.height as f64 / scale_factor;
+            
+            // 计算右下角位置（考虑任务栏）
+            let x = screen_width - toolbar_size - margin - 60.0;
+            let y = screen_height - toolbar_size - margin - 80.0;
+            
+            println!("📍 屏幕尺寸: {}x{}, 缩放: {}, 工具栏位置: ({}, {})", 
+                     screen_width, screen_height, scale_factor, x, y);
+            
+            // 设置位置
+            if let Err(e) = window.set_position(tauri::PhysicalPosition::new(
+                (x * scale_factor) as i32,
+                (y * scale_factor) as i32
+            )) {
+                eprintln!("❌ 设置工具栏位置失败: {}", e);
+            }
+        }
+    }
+    
+    // 显示窗口
+    if let Err(e) = window.show() {
+        eprintln!("❌ 显示工具栏窗口失败: {}", e);
+    }
+    
+    println!("✅ 工具栏窗口创建成功");
+    Ok(())
+}
+
+#[tauri::command]
+async fn create_toolbar_window(app: AppHandle) -> Result<(), String> {
+    create_toolbar_window_internal(&app)
+}
+
 fn create_system_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let open_website = MenuItem::with_id(app, "open_website", "打开官网", true, None::<&str>)?;
     let vdd_settings = MenuItem::with_id(app, "vdd_settings", "设置虚拟显示器（VDD）", true, None::<&str>)?;
+    let show_toolbar = MenuItem::with_id(app, "show_toolbar", "显示工具栏", true, None::<&str>)?;
     let about = MenuItem::with_id(app, "about", "关于", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出程序", true, None::<&str>)?;
     
     let menu = Menu::with_items(app, &[
         &open_website,
         &vdd_settings,
+        &show_toolbar,
         &about,
         &quit,
     ])?;
@@ -193,6 +476,12 @@ fn handle_tray_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) {
                 
                 // 发送事件到前端，让它在主窗口中打开VDD设置
                 let _ = window.emit("open-vdd-settings", ());
+            }
+        }
+        "show_toolbar" => {
+            println!("🔧 托盘菜单：显示工具栏");
+            if let Err(e) = create_toolbar_window_internal(app) {
+                eprintln!("❌ 显示工具栏失败: {}", e);
             }
         }
         "about" => {
@@ -331,6 +620,16 @@ fn main() {
             // 创建系统托盘
             create_system_tray(&app.handle())?;
             
+            // 设置全局菜单事件处理
+            let app_handle = app.handle().clone();
+            app.handle().on_menu_event(move |_app, event| {
+                let event_id = event.id().as_ref();
+                if event_id.starts_with("toolbar_") {
+                    println!("🔧 全局菜单事件: {:?}", event.id());
+                    handle_toolbar_menu_event(&app_handle, event_id);
+                }
+            });
+            
             // 获取 Sunshine URL 并配置代理目标
             tauri::async_runtime::spawn(async {
                 // 尝试获取 Sunshine URL
@@ -366,6 +665,10 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             toggle_dark_mode,
             open_external_url,
+            show_toolbar_menu,
+            set_desktop_dpi,
+            open_tool_window,
+            create_toolbar_window,
             vdd::get_vdd_settings_file_path,
             vdd::get_vdd_tools_dir_path,
             vdd::load_vdd_settings,

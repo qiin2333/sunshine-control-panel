@@ -81,7 +81,13 @@
             "dialog:allow-confirm",
             "dialog:allow-save",
             "dialog:allow-open",
-            "dialog:default"
+            "dialog:default",
+            "global-shortcut:allow-is-registered",
+            "global-shortcut:allow-register",
+            "global-shortcut:allow-register-all",
+            "global-shortcut:allow-unregister",
+            "global-shortcut:allow-unregister-all",
+            "global-shortcut:default"
           ],
           "remote": {
             "urls": [

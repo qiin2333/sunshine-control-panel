@@ -155,4 +155,64 @@ async fn get_windows_system_info() -> Result<(String, u64, String), String> {
     Ok((os_version, memory_bytes, cpu_model))
 }
 
+#[tauri::command]
+pub async fn get_current_dpi() -> Result<u32, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::UI::HiDpi::GetDpiForSystem;
+        
+        unsafe {
+            let dpi = GetDpiForSystem();
+            // Windows 默认 DPI 是 96，转换为百分比
+            let percentage = (dpi as f32 / 96.0 * 100.0).round() as u32;
+            println!("🖥️ 当前系统 DPI: {} ({}%)", dpi, percentage);
+            Ok(percentage)
+        }
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(100) // 非 Windows 系统返回默认值
+    }
+}
+
+#[tauri::command]
+pub async fn set_desktop_dpi(dpi: u32) -> Result<(), String> {
+    println!("🖥️ 设置桌面 DPI: {}%", dpi);
+    
+    #[cfg(target_os = "windows")]
+    {
+        use std::path::PathBuf;
+        use crate::sunshine;
+        
+        // 从 Sunshine 安装目录获取路径
+        let install_path = sunshine::get_sunshine_install_path();
+        let setdpi_path = PathBuf::from(&install_path).join("tools").join("SetDpi.exe");
+        
+        println!("🔍 SetDpi.exe 路径: {:?}", setdpi_path);
+        
+        if setdpi_path.exists() {
+            match std::process::Command::new(setdpi_path)
+                .arg(dpi.to_string())
+                .spawn()
+            {
+                Ok(_) => {
+                    println!("✅ DPI 已设置为 {}%", dpi);
+                    Ok(())
+                }
+                Err(e) => {
+                    eprintln!("❌ 执行 SetDpi.exe 失败: {}", e);
+                    Err(format!("执行失败: {}", e))
+                }
+            }
+        } else {
+            Err(format!("找不到 SetDpi.exe: {:?}", setdpi_path))
+        }
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("DPI 调整功能仅在 Windows 上可用".to_string())
+    }
+}
 

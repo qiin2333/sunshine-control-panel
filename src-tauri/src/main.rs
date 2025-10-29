@@ -21,16 +21,17 @@ struct AppState {
     main_window: Mutex<Option<tauri::Window>>,
 }
 
+// 注意：菜单现在是气泡样式，直接在工具栏窗口内部渲染，此函数已弃用
 #[tauri::command]
-async fn show_toolbar_menu(app: AppHandle, window: tauri::Window) -> Result<(), String> {
-    println!("🔧 显示工具栏菜单");
-    
-    // 创建菜单
-    let menu = create_toolbar_menu(&app).map_err(|e| format!("创建菜单失败: {}", e))?;
-    
-    // 在鼠标位置弹出菜单
-    window.popup_menu(&menu).map_err(|e| format!("弹出菜单失败: {}", e))?;
-    
+async fn show_toolbar_menu(_app: AppHandle) -> Result<(), String> {
+    // 菜单现在是工具栏内部的气泡菜单，不需要创建独立窗口
+    Ok(())
+}
+
+#[tauri::command]
+async fn handle_toolbar_menu_action(app: AppHandle, action: String) -> Result<(), String> {
+    println!("🔧 处理菜单操作: {}", action);
+    handle_toolbar_menu_event(&app, &action);
     Ok(())
 }
 
@@ -38,45 +39,6 @@ async fn show_toolbar_menu(app: AppHandle, window: tauri::Window) -> Result<(), 
 async fn toggle_dark_mode(_window: tauri::Window) -> Result<bool, String> {
     // Tauri 通过前端控制主题，这里只是示例
     Ok(true)
-}
-
-#[tauri::command]
-async fn set_desktop_dpi(dpi: u32) -> Result<(), String> {
-    println!("🖥️ 设置桌面 DPI: {}%", dpi);
-    
-    #[cfg(target_os = "windows")]
-    {
-        use std::path::PathBuf;
-        
-        // 从 Sunshine 安装目录获取路径
-        let install_path = sunshine::get_sunshine_install_path();
-        let setdpi_path = PathBuf::from(&install_path).join("tools").join("SetDpi.exe");
-        
-        println!("🔍 SetDpi.exe 路径: {:?}", setdpi_path);
-        
-        if setdpi_path.exists() {
-            match std::process::Command::new(setdpi_path)
-                .arg(dpi.to_string())
-                .spawn()
-            {
-                Ok(_) => {
-                    println!("✅ DPI 已设置为 {}%", dpi);
-                    Ok(())
-                }
-                Err(e) => {
-                    eprintln!("❌ 执行 SetDpi.exe 失败: {}", e);
-                    Err(format!("执行失败: {}", e))
-                }
-            }
-        } else {
-            Err(format!("找不到 SetDpi.exe: {:?}", setdpi_path))
-        }
-    }
-    
-    #[cfg(not(target_os = "windows"))]
-    {
-        Err("DPI 调整功能仅在 Windows 上可用".to_string())
-    }
 }
 
 #[tauri::command]
@@ -168,14 +130,14 @@ fn create_toolbar_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>>
     let main_panel = MenuItem::with_id(app, "toolbar_main", "控制面板", true, None::<&str>)?;
     let vdd_settings = MenuItem::with_id(app, "toolbar_vdd", "虚拟显示器 (VDD)", true, None::<&str>)?;
     let dpi_adjuster = MenuItem::with_id(app, "toolbar_dpi", "调整 DPI", true, None::<&str>)?;
-    let about = MenuItem::with_id(app, "toolbar_about", "关于", true, None::<&str>)?;
+    let bitrate = MenuItem::with_id(app, "toolbar_bitrate", "码率调整", true, None::<&str>)?;
     let close_toolbar = MenuItem::with_id(app, "toolbar_close", "关闭工具栏", true, None::<&str>)?;
     
     Menu::with_items(app, &[
         &main_panel,
         &vdd_settings,
         &dpi_adjuster,
-        &about,
+        &bitrate,
         &close_toolbar,
     ])
 }
@@ -183,14 +145,14 @@ fn create_toolbar_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>>
 // 处理工具栏菜单事件
 fn handle_toolbar_menu_event<R: Runtime>(app: &AppHandle<R>, event_id: &str) {
     match event_id {
-        "toolbar_main" => {
+        "main" | "toolbar_main" => {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
             }
         }
-        "toolbar_vdd" => {
+        "vdd" | "toolbar_vdd" => {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
                 let _ = window.show();
@@ -198,7 +160,7 @@ fn handle_toolbar_menu_event<R: Runtime>(app: &AppHandle<R>, event_id: &str) {
                 let _ = window.emit("open-vdd-settings", ());
             }
         }
-        "toolbar_dpi" => {
+        "dpi" | "toolbar_dpi" => {
             const DPI_WINDOW_ID: &str = "dpi_adjuster";
             if let Some(window) = app.get_webview_window(DPI_WINDOW_ID) {
                 let _ = window.unminimize();
@@ -220,29 +182,24 @@ fn handle_toolbar_menu_event<R: Runtime>(app: &AppHandle<R>, event_id: &str) {
                 .build();
             }
         }
-        "toolbar_about" => {
-            const ABOUT_WINDOW_ID: &str = "about";
-            if let Some(window) = app.get_webview_window(ABOUT_WINDOW_ID) {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-            } else {
-                let _ = tauri::WebviewWindowBuilder::new(
-                    app,
-                    ABOUT_WINDOW_ID,
-                    tauri::WebviewUrl::App("about/index.html".into())
-                )
-                .title("关于 Sunshine Control Panel")
-                .inner_size(540.0, 620.0)
-                .resizable(false)
-                .maximizable(false)
-                .minimizable(true)
-                .decorations(true)
-                .center()
-                .build();
+        "bitrate" | "toolbar_bitrate" => {
+            use tauri::Manager;
+            println!("🎬 码率调整功能 - 开发中");
+            
+            // 显示开发中提示
+            if let Some(main_window) = app.get_webview_window("main") {
+                let _ = main_window.eval(
+                    r#"
+                    if (typeof alert !== 'undefined') {
+                        alert('🎬 码率调整功能正在开发中\n\n敬请期待！');
+                    } else if (typeof window !== 'undefined' && window.__TAURI__) {
+                        window.__TAURI__.dialog.message('🎬 码率调整功能正在开发中\n\n敬请期待！', { title: '提示', type: 'info' });
+                    }
+                    "#
+                );
             }
         }
-        "toolbar_close" => {
+        "close" | "toolbar_close" => {
             if let Some(window) = app.get_webview_window("toolbar") {
                 let _ = window.close();
             }
@@ -264,7 +221,7 @@ fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     println!("🔧 创建工具栏窗口");
     
     // 窗口大小和边距配置
-    let toolbar_size = 100.0;  // 窗口大小（正方形，包含光晕空间）
+    let toolbar_size = 240.0;  // 窗口大小（正方形，包含气泡菜单空间）
     let margin = 20.0;         // 距离屏幕边缘的边距
     
     // 先创建窗口在默认位置
@@ -545,6 +502,7 @@ fn main() {
         .manage(AppState {
             main_window: Mutex::new(None),
         })
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             // 当检测到第二个实例启动时，显示并聚焦已有的主窗口
             println!("🔔 检测到第二个实例启动，激活现有窗口");
@@ -620,6 +578,38 @@ fn main() {
             // 创建系统托盘
             create_system_tray(&app.handle())?;
             
+            // 注册全局快捷键 CTRL+SHIFT+ALT+T 显示工具栏
+            {
+                use tauri_plugin_global_shortcut::GlobalShortcutExt;
+                use tauri_plugin_global_shortcut::ShortcutState;
+                
+                let app_handle = app.handle().clone();
+                
+                app.handle().global_shortcut().on_shortcut("CmdOrCtrl+Shift+Alt+T", move |_app, _shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        println!("⌨️ 全局快捷键触发: CTRL+SHIFT+ALT+T");
+                        
+                        // 切换工具栏显示/隐藏
+                        if let Some(toolbar_window) = app_handle.get_webview_window("toolbar") {
+                            // 工具栏已存在，关闭它
+                            println!("🔧 工具栏已存在，关闭");
+                            let _ = toolbar_window.close();
+                        } else {
+                            // 工具栏不存在，创建它
+                            println!("🔧 工具栏不存在，创建");
+                            let app_clone = app_handle.clone();
+                            tauri::async_runtime::spawn(async move {
+                                if let Err(e) = create_toolbar_window_internal(&app_clone) {
+                                    eprintln!("❌ 快捷键创建工具栏失败: {}", e);
+                                }
+                            });
+                        }
+                    }
+                })?;
+                
+                println!("⌨️ 全局快捷键已注册: CTRL+SHIFT+ALT+T");
+            }
+            
             // 设置全局菜单事件处理
             let app_handle = app.handle().clone();
             app.handle().on_menu_event(move |_app, event| {
@@ -666,7 +656,9 @@ fn main() {
             toggle_dark_mode,
             open_external_url,
             show_toolbar_menu,
-            set_desktop_dpi,
+            handle_toolbar_menu_action,
+            system::get_current_dpi,
+            system::set_desktop_dpi,
             open_tool_window,
             create_toolbar_window,
             vdd::get_vdd_settings_file_path,

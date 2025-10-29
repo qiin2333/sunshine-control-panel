@@ -6,7 +6,8 @@
 
     <div class="content">
       <div class="dpi-display">
-        <span class="dpi-value">{{ dpiValue }}%</span>
+        <span class="dpi-value" v-if="!loading">{{ dpiValue }}%</span>
+        <span class="dpi-value loading" v-else>加载中...</span>
       </div>
 
       <div class="slider-container">
@@ -46,15 +47,30 @@
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { ref, onMounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 
 const dpiValue = ref(100);
 const applying = ref(false);
 const message = ref('');
 const messageType = ref('');
+const loading = ref(true);
 
 const presets = [100, 125, 150, 175, 200, 225, 250, 300];
+
+// 获取当前系统 DPI
+const loadCurrentDpi = async () => {
+  try {
+    const currentDpi = await invoke('get_current_dpi');
+    dpiValue.value = currentDpi;
+    console.log('当前 DPI:', currentDpi);
+  } catch (error) {
+    console.error('获取当前 DPI 失败:', error);
+    // 如果获取失败，保持默认值 100
+  } finally {
+    loading.value = false;
+  }
+};
 
 const applyDpi = async () => {
   applying.value = true;
@@ -76,6 +92,11 @@ const applyDpi = async () => {
     }, 3000);
   }
 };
+
+// 组件挂载时加载当前 DPI
+onMounted(() => {
+  loadCurrentDpi();
+});
 </script>
 
 <style scoped>
@@ -129,6 +150,11 @@ const applyDpi = async () => {
   text-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
   display: inline-block;
   animation: pulse 2s ease-in-out infinite;
+}
+
+.dpi-value.loading {
+  font-size: 24px;
+  opacity: 0.8;
 }
 
 @keyframes pulse {

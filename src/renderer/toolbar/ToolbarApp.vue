@@ -206,10 +206,10 @@ const getBubbleStyle = (index) => {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
   animation: bubbleIn 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
   position: relative;
-  will-change: transform, opacity;
+  will-change: transform, opacity, box-shadow;
   transform: translateZ(0);
   backface-visibility: hidden;
   -webkit-font-smoothing: antialiased;
@@ -264,7 +264,7 @@ const getBubbleStyle = (index) => {
   box-shadow: 0 8px 35px rgba(255, 182, 193, 0.9), 0 0 0 4px rgba(255, 255, 255, 0.6),
     inset 0 3px 10px rgba(255, 255, 255, 0.5);
   z-index: 10;
-  animation: wiggle 0.5s ease-in-out infinite;
+  transform: scale(1.1) translateZ(0);
 }
 
 .bubble-item:hover .bubble-icon {
@@ -288,7 +288,7 @@ const getBubbleStyle = (index) => {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: transform 0.2s;
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
   will-change: transform;
   backface-visibility: hidden;
 }
@@ -313,6 +313,8 @@ const getBubbleStyle = (index) => {
   margin: 0;
   border-radius: 50%;
   animation: float 3s ease-in-out infinite;
+  filter: drop-shadow(0 0 8px rgba(255, 182, 193, 0.4)) 
+          drop-shadow(0 0 16px rgba(221, 160, 221, 0.2));
   transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
   position: relative;
   z-index: 100;
@@ -324,10 +326,14 @@ const getBubbleStyle = (index) => {
 
 .toolbar-icon:hover {
   animation: pulse 1.5s ease-in-out infinite;
+  filter: drop-shadow(0 0 12px rgba(255, 182, 193, 0.6)) 
+          drop-shadow(0 0 24px rgba(221, 160, 221, 0.3));
 }
 
 .toolbar-icon.active {
   transform: scale(1.15) translateZ(0);
+  filter: drop-shadow(0 0 16px rgba(123, 80, 87, 0.8)) 
+          drop-shadow(0 0 32px rgba(221, 160, 221, 0.4));
 }
 
 .icon-image {

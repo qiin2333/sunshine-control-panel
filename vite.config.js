@@ -38,7 +38,7 @@ export default defineConfig(() => ({
         home: resolve(rendererSrcPath, 'home/index.html'),
         about: resolve(rendererSrcPath, 'about/index.html'),
         toolbar: resolve(rendererSrcPath, 'toolbar/index.html'),
-        dpiAdjuster: resolve(rendererSrcPath, 'dpi-adjuster/index.html'),
+        toolWindow: resolve(rendererSrcPath, 'tool-window/index.html'),
       },
     },
   },

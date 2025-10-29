@@ -159,14 +159,40 @@ async fn get_windows_system_info() -> Result<(String, u64, String), String> {
 pub async fn get_current_dpi() -> Result<u32, String> {
     #[cfg(target_os = "windows")]
     {
-        use windows::Win32::UI::HiDpi::GetDpiForSystem;
+        use windows::Win32::Graphics::Gdi::{
+            MonitorFromPoint, MONITOR_DEFAULTTOPRIMARY
+        };
+        use windows::Win32::UI::HiDpi::GetDpiForMonitor;
+        use windows::Win32::UI::HiDpi::MDT_EFFECTIVE_DPI;
+        use windows::Win32::Foundation::POINT;
         
         unsafe {
-            let dpi = GetDpiForSystem();
-            // Windows 默认 DPI 是 96，转换为百分比
-            let percentage = (dpi as f32 / 96.0 * 100.0).round() as u32;
-            println!("🖥️ 当前系统 DPI: {} ({}%)", dpi, percentage);
-            Ok(percentage)
+            // 获取主显示器
+            let point = POINT { x: 0, y: 0 };
+            let monitor = MonitorFromPoint(point, MONITOR_DEFAULTTOPRIMARY);
+            
+            // 获取显示器的有效 DPI
+            let mut dpi_x: u32 = 0;
+            let mut dpi_y: u32 = 0;
+            
+            match GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) {
+                Ok(_) => {
+                    // 转换为百分比（96 DPI = 100%）
+                    let percentage = (dpi_x as f32 / 96.0 * 100.0).round() as u32;
+                    println!("🖥️ 主显示器实时 DPI: {} x {} -> {}%", dpi_x, dpi_y, percentage);
+                    Ok(percentage)
+                }
+                Err(e) => {
+                    eprintln!("❌ 获取显示器 DPI 失败: {:?}", e);
+                    
+                    // 回退方案：使用系统 DPI
+                    use windows::Win32::UI::HiDpi::GetDpiForSystem;
+                    let dpi = GetDpiForSystem();
+                    let percentage = (dpi as f32 / 96.0 * 100.0).round() as u32;
+                    println!("🖥️ 回退：使用系统 DPI: {} ({}%)", dpi, percentage);
+                    Ok(percentage)
+                }
+            }
         }
     }
     

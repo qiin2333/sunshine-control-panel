@@ -313,12 +313,10 @@ const getBubbleStyle = (index) => {
   margin: 0;
   border-radius: 50%;
   animation: float 3s ease-in-out infinite;
-  filter: drop-shadow(0 0 12px rgba(255, 182, 193, 0.6)) drop-shadow(0 0 20px rgba(221, 160, 221, 0.4))
-    drop-shadow(0 0 28px rgba(173, 216, 230, 0.3));
   transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
   position: relative;
   z-index: 100;
-  will-change: transform, filter;
+  will-change: transform;
   transform: translateZ(0);
   backface-visibility: hidden;
   -webkit-font-smoothing: antialiased;
@@ -326,13 +324,9 @@ const getBubbleStyle = (index) => {
 
 .toolbar-icon:hover {
   animation: pulse 1.5s ease-in-out infinite;
-  filter: drop-shadow(0 0 20px rgba(255, 182, 193, 0.9)) drop-shadow(0 0 35px rgba(221, 160, 221, 0.7))
-    drop-shadow(0 0 50px rgba(173, 216, 230, 0.5));
 }
 
 .toolbar-icon.active {
-  filter: drop-shadow(0 0 30px rgba(255, 182, 193, 1)) drop-shadow(0 0 50px rgba(221, 160, 221, 0.9))
-    drop-shadow(0 0 70px rgba(173, 216, 230, 0.7));
   transform: scale(1.15) translateZ(0);
 }
 

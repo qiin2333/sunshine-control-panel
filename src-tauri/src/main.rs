@@ -142,6 +142,47 @@ fn create_toolbar_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>>
     ])
 }
 
+// 辅助函数：创建工具窗口
+fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &str) {
+    const TOOL_WINDOW_ID: &str = "tool_window";
+    
+    // 如果窗口已存在，先关闭它
+    if let Some(window) = app.get_webview_window(TOOL_WINDOW_ID) {
+        let _ = window.close();
+    }
+    
+    // 创建工具窗口，通过 URL 参数传递工具类型
+    let url = format!("tool-window/index.html?tool={}", tool_type);
+    let title = format!("ZakoToolsWindow - {}", tool_type);
+    println!("🔧 创建工具窗口 URL: {}", url);
+    
+    match tauri::WebviewWindowBuilder::new(
+        app,
+        TOOL_WINDOW_ID,
+        tauri::WebviewUrl::App(url.into())
+    )
+    .title(&title)
+    .fullscreen(true)
+    .decorations(false)
+    .transparent(true)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .visible(false)  // 先隐藏，避免闪白
+    .build()
+    {
+        Ok(window) => {
+            // 等待一小段时间让内容加载，然后显示窗口
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                let _ = window.show();
+            });
+        }
+        Err(e) => {
+            eprintln!("❌ 创建工具窗口失败: {}", e);
+        }
+    }
+}
+
 // 处理工具栏菜单事件
 fn handle_toolbar_menu_event<R: Runtime>(app: &AppHandle<R>, event_id: &str) {
     match event_id {
@@ -161,43 +202,10 @@ fn handle_toolbar_menu_event<R: Runtime>(app: &AppHandle<R>, event_id: &str) {
             }
         }
         "dpi" | "toolbar_dpi" => {
-            const DPI_WINDOW_ID: &str = "dpi_adjuster";
-            if let Some(window) = app.get_webview_window(DPI_WINDOW_ID) {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-            } else {
-                let _ = tauri::WebviewWindowBuilder::new(
-                    app,
-                    DPI_WINDOW_ID,
-                    tauri::WebviewUrl::App("dpi-adjuster/index.html".into())
-                )
-                .title("DPI 调整")
-                .inner_size(400.0, 300.0)
-                .resizable(false)
-                .maximizable(false)
-                .minimizable(true)
-                .decorations(true)
-                .center()
-                .build();
-            }
+            create_tool_window_internal(app, "dpi");
         }
         "bitrate" | "toolbar_bitrate" => {
-            use tauri::Manager;
-            println!("🎬 码率调整功能 - 开发中");
-            
-            // 显示开发中提示
-            if let Some(main_window) = app.get_webview_window("main") {
-                let _ = main_window.eval(
-                    r#"
-                    if (typeof alert !== 'undefined') {
-                        alert('🎬 码率调整功能正在开发中\n\n敬请期待！');
-                    } else if (typeof window !== 'undefined' && window.__TAURI__) {
-                        window.__TAURI__.dialog.message('🎬 码率调整功能正在开发中\n\n敬请期待！', { title: '提示', type: 'info' });
-                    }
-                    "#
-                );
-            }
+            create_tool_window_internal(app, "bitrate");
         }
         "close" | "toolbar_close" => {
             if let Some(window) = app.get_webview_window("toolbar") {

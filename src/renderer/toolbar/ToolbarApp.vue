@@ -25,19 +25,85 @@
       @click.stop="toggleMenu"
       @contextmenu.prevent="toggleMenu"
     >
-      <img src="/toolbar-icon.png" class="icon-image" alt="工具栏" />
+      <!-- PixiJS Canvas 容器 -->
+      <canvas ref="pixiCanvas" class="icon-canvas"></canvas>
+      <transition name="speech">
+        <div v-if="speechVisible" class="speech-bubble" role="status" aria-live="polite">
+          {{ speechText }}
+        </div>
+      </transition>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onUnmounted } from 'vue'
+import { ref, onUnmounted, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import * as PIXI from 'pixi.js'
 
 const menuVisible = ref(false)
 const isDragActive = ref(false)
 const DRAG_THRESHOLD_SQ = 9 // 3px 的平方
+const speechVisible = ref(false)
+const speechText = ref('')
+let speechTimer = null
+let speechInterval = null
+
+// PixiJS 相关
+const pixiCanvas = ref(null)
+let pixiApp = null
+let spriteFrames = []
+let currentSprite = null
+let currentFrameIndex = 0
+let animationTimer = null
+
+const speechPhrases = [
+  '杂鱼～杂鱼～',
+  '串流画质又调低了？杂鱼～',
+  '码率不够高哦，杂鱼看得清吗♡',
+  '延迟这么高，杂鱼在干什么呢～',
+  '帧率掉了吧？杂鱼的网络不太行呢',
+  '虚拟显示器开着呢，杂鱼想看什么？',
+  '嘿嘿，杂鱼又在偷偷串流了～',
+  'DPI调那么高，杂鱼眼睛受得了吗♡',
+  '连接不稳定哦，杂鱼要检查网络啦～',
+  '串流质量还不错嘛，杂鱼今天很乖♡',
+  '又在调码率了？杂鱼真是麻烦呢～',
+  '分辨率调这么低，杂鱼是想省流量吗',
+  '串流开这么久，杂鱼不累吗？',
+  '网络波动了哦，杂鱼要注意啦♡',
+  '画面卡顿了吧？杂鱼就是杂鱼～',
+  '音频延迟了呢，杂鱼听得清吗♡',
+  '串流设置改来改去，杂鱼真挑剔～',
+]
+
+const showSpeech = () => {
+  if (speechVisible.value) return
+  const text = speechPhrases[Math.floor(Math.random() * speechPhrases.length)]
+  speechText.value = text
+  speechVisible.value = true
+  if (speechTimer) {
+    clearTimeout(speechTimer)
+    speechTimer = null
+  }
+  speechTimer = setTimeout(() => {
+    speechVisible.value = false
+  }, 2600)
+}
+
+const startSpeechLoop = () => {
+  // 首次延迟随机出现
+  const firstDelay = 4000 + Math.random() * 6000
+  setTimeout(() => showSpeech(), firstDelay)
+  // 后续随机间隔 15s ~ 35s
+  speechInterval = setInterval(() => {
+    // 避免拖动或菜单展开时打断交互
+    if (!isDragActive.value && !menuVisible.value) {
+      showSpeech()
+    }
+  }, 15000 + Math.random() * 20000)
+}
 
 const menuItems = [
   {
@@ -170,17 +236,20 @@ const handleMenuItem = async (action) => {
   }
 }
 
-// 计算气泡位置（圆形分布 + 旋转动画）
+// 计算气泡位置（六角星布局：固定六个顶点分布）
 const getBubbleStyle = (index) => {
-  const totalItems = menuItems.length
-  const radius = 70 // 气泡圆的半径（紧凑）
-  const startAngle = -90 // 从顶部开始
-  const angleStep = 360 / totalItems
-  const angle = startAngle + angleStep * index
-  const radian = (angle * Math.PI) / 180
+  const outerRadius = 80 // 外圈半径
+  const jitter = 0 // 轻微抖动保留为 0，便于后续微调
 
-  const x = Math.cos(radian) * radius
-  const y = Math.sin(radian) * radius
+  // 六角星（大卫星）可视为正六边形的六个顶点
+  // 顶点从顶部开始，顺时针每 60° 一个
+  const baseAngles = [-90, -30, 30, 90, 150, -150]
+  const k = index % 6
+  const angle = baseAngles[k]
+  const rad = (angle * Math.PI) / 180
+
+  const x = Math.cos(rad) * outerRadius + (jitter ? (Math.random() - 0.5) * jitter : 0)
+  const y = Math.sin(rad) * outerRadius + (jitter ? (Math.random() - 0.5) * jitter : 0)
 
   return {
     transform: `translate(${x}px, ${y}px)`,
@@ -189,10 +258,115 @@ const getBubbleStyle = (index) => {
   }
 }
 
+// 初始化 PixiJS 精灵动画
+const initPixiApp = async () => {
+  if (!pixiCanvas.value) return
+
+  // 创建 PixiJS 应用
+  pixiApp = new PIXI.Application()
+  await pixiApp.init({
+    canvas: pixiCanvas.value,
+    width: 80,
+    height: 80,
+    backgroundColor: 0x000000,
+    backgroundAlpha: 0,
+    antialias: true,
+    resolution: window.devicePixelRatio || 1,
+    autoDensity: true,
+  })
+
+  // 加载精灵图集
+  const spritesheet = await PIXI.Assets.load('/toolbar-spritesheet.png')
+  
+  // 4列x4行 (16帧)
+  const frameWidth = spritesheet.width / 4
+  const frameHeight = spritesheet.height / 4
+  
+  // 创建所有帧的纹理
+  for (let row = 0; row < 4; row++) {
+    for (let col = 0; col < 4; col++) {
+      const rect = new PIXI.Rectangle(
+        col * frameWidth,
+        row * frameHeight,
+        frameWidth,
+        frameHeight
+      )
+      const texture = new PIXI.Texture({
+        source: spritesheet.source,
+        frame: rect
+      })
+      spriteFrames.push(texture)
+    }
+  }
+
+  // 创建精灵并添加到舞台
+  currentSprite = new PIXI.Sprite(spriteFrames[0])
+  
+  // 缩放精灵以适应画布（保持宽高比）
+  const scale = Math.min(80 / frameWidth, 80 / frameHeight) * 0.9
+  currentSprite.scale.set(scale)
+  currentSprite.anchor.set(0.5)
+  currentSprite.x = 40
+  currentSprite.y = 40
+
+  pixiApp.stage.addChild(currentSprite)
+
+  // 启动动画循环：idle动作（帧0-3），偶尔切换到其他表情
+  startIdleAnimation()
+}
+
+// 随机切换表情/动作帧（静态显示，不连续播放）
+const startIdleAnimation = () => {
+  // 随机切换表情的定时器
+  const switchRandomFrame = () => {
+    if (!currentSprite || !spriteFrames.length) return
+    
+    // 随机选择一帧显示
+    const randomFrame = Math.floor(Math.random() * spriteFrames.length)
+    currentSprite.texture = spriteFrames[randomFrame]
+    
+    // 下次切换的随机延迟：5-10秒
+    const nextDelay = 5000 + Math.random() * 5000
+    animationTimer = setTimeout(switchRandomFrame, nextDelay)
+  }
+  
+  // 首次随机延迟 3-5 秒后开始
+  const firstDelay = 3000 + Math.random() * 2000
+  animationTimer = setTimeout(switchRandomFrame, firstDelay)
+}
+
+// 清理 PixiJS
+const cleanupPixiApp = () => {
+  if (animationTimer) {
+    clearTimeout(animationTimer)
+    animationTimer = null
+  }
+  if (pixiApp) {
+    pixiApp.destroy(true, { children: true, texture: true, baseTexture: true })
+    pixiApp = null
+  }
+  spriteFrames = []
+  currentSprite = null
+}
+
+onMounted(async () => {
+  await initPixiApp()
+  startSpeechLoop()
+})
+
 onUnmounted(() => {
   unbindTempDragListeners()
   mouseMoveHandler = null
   mouseUpHandler = null
+  if (speechInterval) {
+    clearInterval(speechInterval)
+    speechInterval = null
+  }
+  if (speechTimer) {
+    clearTimeout(speechTimer)
+    speechTimer = null
+  }
+  cleanupPixiApp()
 })
 </script>
 
@@ -362,8 +536,8 @@ onUnmounted(() => {
 
 /* 中心工具栏图标 */
 .toolbar-icon {
-  width: 52px;
-  height: 52px;
+  width: 80px;
+  height: 80px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -404,6 +578,54 @@ onUnmounted(() => {
   will-change: transform;
   transform: translateZ(0);
   backface-visibility: hidden;
+}
+
+.icon-canvas {
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  display: block;
+}
+
+/* 说话气泡样式 */
+.speech-bubble {
+  position: absolute;
+  bottom: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 220px;
+  padding: 8px 12px;
+  color: #4b2b34;
+  font-size: 12px;
+  line-height: 1.4;
+  background: rgba(255, 248, 252, 0.95);
+  border-radius: 12px;
+  box-shadow: 0 6px 18px rgba(255, 182, 193, 0.45), 0 0 0 2px rgba(255, 255, 255, 0.7) inset;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.speech-bubble::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 6px;
+  border-style: solid;
+  border-color: rgba(255, 248, 252, 0.95) transparent transparent transparent;
+}
+
+/* 说话出现/消失动画 */
+.speech-enter-active,
+.speech-leave-active {
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.speech-enter-from,
+.speech-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(6px);
 }
 
 /* 气泡入场动画（带旋转，使用 3D 加速） */

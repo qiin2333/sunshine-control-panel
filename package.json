@@ -33,6 +33,7 @@
     "@tauri-apps/plugin-fs": "^2.4.2",
     "@tauri-apps/plugin-shell": "^2.3.1",
     "element-plus": "^2.9.4",
+    "pixi.js": "^8.6.6",
     "systeminformation": "^5.25.11",
     "vue": "^3.5.4",
     "xml2js": "^0.6.2"

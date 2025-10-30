@@ -18,8 +18,15 @@
       </div>
 
       <!-- 折叠按钮 -->
-      <div class="collapse-btn" @click="toggleCollapse">
-        <el-icon><DArrowLeft v-if="!isCollapsed" /><DArrowRight v-else /></el-icon>
+      <div class="collapse-btn" @click="toggleCollapse" aria-label="折叠菜单">
+        <img
+          :class="['clip-icon', { collapsed: isCollapsed }]"
+          src="../public/gura-clip.svg"
+          alt="折叠发卡"
+          width="24"
+          height="24"
+          aria-hidden="true"
+        />
       </div>
 
       <!-- 菜单列表 -->
@@ -155,22 +162,34 @@
       <div class="window-controls">
         <el-tooltip content="最小化" placement="bottom">
           <div class="control-btn minimize" @click="minimizeWindow">
-            <el-icon :size="16"><Minus /></el-icon>
+            <img class="control-icon" src="../public/icons/btn-minimize-buoy.svg" alt="最小化" width="20" height="20" />
           </div>
         </el-tooltip>
 
         <el-tooltip :content="isMaximized ? '还原' : '最大化'" placement="bottom">
           <div class="control-btn maximize" @click="toggleMaximize">
-            <el-icon :size="16">
-              <CopyDocument v-if="isMaximized" />
-              <FullScreen v-else />
-            </el-icon>
+            <img
+              v-if="isMaximized"
+              class="control-icon"
+              src="../public/icons/btn-restore-buoy.svg"
+              alt="还原"
+              width="20"
+              height="20"
+            />
+            <img
+              v-else
+              class="control-icon"
+              src="../public/icons/btn-maximize-buoy.svg"
+              alt="最大化"
+              width="20"
+              height="20"
+            />
           </div>
         </el-tooltip>
 
         <el-tooltip content="关闭" placement="bottom">
           <div class="control-btn close" @click="closeWindow">
-            <el-icon :size="16"><Close /></el-icon>
+            <img class="control-icon" src="../public/icons/btn-close-buoy.svg" alt="关闭" width="20" height="20" />
           </div>
         </el-tooltip>
       </div>
@@ -328,15 +347,11 @@ const cleanupCovers = async () => {
     
     if (!isRunningAsAdmin) {
       // 不是管理员，提示重启
-      await ElMessageBox.confirm(
-        '清理临时文件需要管理员权限。\n\n是否以管理员身份重启应用？',
-        '需要管理员权限',
-        {
+      await ElMessageBox.confirm('清理临时文件需要管理员权限。\n\n是否以管理员身份重启应用？', '需要管理员权限', {
           confirmButtonText: '以管理员重启',
           cancelButtonText: '取消',
           type: 'warning',
-        }
-      )
+      })
       
       // 用户确认后，调用重启为管理员
       await restartAsAdmin()
@@ -576,7 +591,7 @@ const closeWindow = async () => {
 
 // 暴露方法供父组件调用
 defineExpose({
-  openVddSettings
+  openVddSettings,
 })
 </script>
 
@@ -691,24 +706,53 @@ defineExpose({
 // ========== 折叠按钮 ==========
 .collapse-btn {
   position: absolute;
-  right: -12px;
-  top: 80px;
-  width: 24px;
-  height: 24px;
-  .morandi-gradient();
-  border-radius: 50%;
+  right: -10px;
+  top: 76px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  width: auto;
+  height: auto;
+  transform: none;
   .flex-center();
   cursor: pointer;
-  color: @morandi-mid-bg;
   z-index: 20; // 确保在 Gura 背景上方
-  transition: all @transition-smooth;
-  box-shadow: 0 2px 8px rgba(212, 165, 165, 0.4);
+  transition: none;
+  box-shadow: none;
 
-  &:hover {
-    transform: scale(1.1);
-    box-shadow: 0 4px 12px rgba(230, 213, 184, 0.6);
-    background: linear-gradient(135deg, #e6b8b8 0%, #f0e5cc 100%);
+  &::before,
+  &::after {
+    content: none;
+    display: none;
   }
+
+  .clip-icon {
+    width: 26px;
+    height: 26px;
+    transform: rotate(90deg);
+    transform-origin: 50% 50%;
+    transition: transform @transition-fast, filter @transition-fast;
+  }
+
+  &:hover,
+  &:active {
+    transform: none;
+    box-shadow: none;
+  }
+}
+
+// 发卡交互：悬停放大、按下压缩；根据收起状态切换方向
+.collapse-btn:hover .clip-icon {
+  transform: rotate(90deg) scale(1.06);
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.25));
+}
+
+.collapse-btn:active .clip-icon {
+  transform: rotate(90deg) scale(0.96);
+}
+
+.clip-icon.collapsed {
+  transform: rotate(-90deg);
 }
 
 // ========== 菜单区域 ==========
@@ -904,12 +948,14 @@ defineExpose({
   border: none;
   background: transparent;
 
-  .el-icon {
+  .el-icon,
+  .control-icon {
     // 多重阴影让图标看起来更粗
     filter: drop-shadow(0 0.5px 0 currentColor) drop-shadow(0.5px 0 0 currentColor) drop-shadow(0 -0.5px 0 currentColor)
       drop-shadow(-0.5px 0 0 currentColor);
     font-weight: bold;
-    transform: scale(1.1);
+    transform: scale(1.05);
+    transition: transform 0.15s ease;
   }
 
   &.minimize {
@@ -919,7 +965,8 @@ defineExpose({
       background: rgba(230, 213, 184, 0.25);
       color: #fff8e7;
 
-      .el-icon {
+      .el-icon,
+      .control-icon {
         transform: scale(1.15);
       }
     }
@@ -937,7 +984,8 @@ defineExpose({
       background: rgba(230, 213, 184, 0.25);
       color: #fff8e7;
 
-      .el-icon {
+      .el-icon,
+      .control-icon {
         transform: scale(1.15);
       }
     }
@@ -955,7 +1003,8 @@ defineExpose({
       background: #e81123;
       color: white;
 
-      .el-icon {
+      .el-icon,
+      .control-icon {
         transform: scale(1.15);
       }
     }
@@ -1014,13 +1063,19 @@ body[data-bs-theme='light'] {
   }
 
   .collapse-btn {
-    background: linear-gradient(135deg, @gura-blue 0%, @gura-light-blue 100%);
-    color: white;
-    box-shadow: 0 2px 8px rgba(74, 158, 255, 0.4);
+    background: transparent !important;
+    color: inherit;
+    box-shadow: none;
+
+    &::before,
+    &::after {
+      content: none;
+      display: none;
+    }
 
     &:hover {
-      background: linear-gradient(135deg, @gura-light-blue 0%, @gura-pale-blue 100%);
-      box-shadow: 0 4px 12px rgba(74, 158, 255, 0.6);
+      background: transparent;
+      box-shadow: none;
     }
   }
 

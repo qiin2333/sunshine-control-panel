@@ -1,0 +1,12 @@
+<svg width="60" height="100" viewBox="0 0 60 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 上半部蓝色三角（鲨鲨头部） -->
+  <polygon points="30,0 0,50 60,50" fill="#4a9eff" />
+  <!-- 眼睛 -->
+  <circle cx="22" cy="34" r="3.2" fill="#0d0d0d" />
+  <circle cx="38" cy="34" r="3.2" fill="#0d0d0d" />
+  <!-- 下半部红色菱形（发卡主体） -->
+  <polygon points="0,50 60,50 30,100" fill="#d24c43" />
+  <!-- 白色锯齿分隔（鲨牙） -->
+  <polygon fill="#ffffff" points="0,50 60,50 52,58 46,52 40,58 34,52 30,60 26,52 20,58 14,52 8,58 0,50" />
+</svg>
+

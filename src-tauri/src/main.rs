@@ -444,9 +444,12 @@ fn handle_tray_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) {
             }
         }
         "show_toolbar" => {
-            println!("🔧 托盘菜单：显示工具栏");
-            if let Err(e) = create_toolbar_window_internal(app) {
-                eprintln!("❌ 显示工具栏失败: {}", e);
+            println!("🔧 托盘菜单：切换工具栏显示/隐藏");
+            if let Some(toolbar_window) = app.get_webview_window("toolbar") {
+                // 已存在则关闭（达到隐藏效果）
+                let _ = toolbar_window.close();
+            } else if let Err(e) = create_toolbar_window_internal(app) {
+                eprintln!("❌ 创建工具栏失败: {}", e);
             }
         }
         "about" => {

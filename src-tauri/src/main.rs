@@ -173,7 +173,7 @@ fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &str) 
         Ok(window) => {
             // 等待一小段时间让内容加载，然后显示窗口
             tauri::async_runtime::spawn(async move {
-                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                 let _ = window.show();
             });
         }

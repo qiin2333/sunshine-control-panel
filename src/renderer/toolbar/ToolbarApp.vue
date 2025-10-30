@@ -1,5 +1,5 @@
 <template>
-  <div id="toolbar-container" @click.self="handleOutsideClick">
+  <div id="toolbar-container" :class="{ dragging: isDragActive }" @click.self="handleOutsideClick">
     <!-- 气泡菜单 -->
     <transition name="bubble">
       <div v-if="menuVisible" class="bubble-menu" @click.stop>
@@ -31,11 +31,13 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 
 const menuVisible = ref(false)
+const isDragActive = ref(false)
+const DRAG_THRESHOLD_SQ = 9 // 3px 的平方
 
 const menuItems = [
   {
@@ -66,8 +68,25 @@ const menuItems = [
   },
 ]
 
-let dragTimeout = null
 let isDragging = false
+let startX = 0
+let startY = 0
+let mouseMoveHandler = null
+let mouseUpHandler = null
+
+const bindTempDragListeners = () => {
+  window.addEventListener('mousemove', mouseMoveHandler)
+  window.addEventListener('mouseup', mouseUpHandler)
+}
+
+const unbindTempDragListeners = () => {
+  if (mouseMoveHandler) {
+    window.removeEventListener('mousemove', mouseMoveHandler)
+  }
+  if (mouseUpHandler) {
+    window.removeEventListener('mouseup', mouseUpHandler)
+  }
+}
 
 const handleMouseDown = (e) => {
   // 右键不处理
@@ -77,20 +96,44 @@ const handleMouseDown = (e) => {
 
   // 左键长按才拖动
   if (e.button === 0) {
+    // 使用位移阈值触发拖动，避免动画导致的偏移
+    startX = e.clientX
+    startY = e.clientY
     isDragging = false
-    dragTimeout = setTimeout(() => {
-      isDragging = true
-      const window = getCurrentWindow()
-      window.startDragging()
-    }, 200) // 200ms 后开始拖动
+
+    mouseMoveHandler = (ev) => {
+      if (isDragging) return
+      const dx = ev.clientX - startX
+      const dy = ev.clientY - startY
+      if (dx * dx + dy * dy > DRAG_THRESHOLD_SQ) {
+        // 超过阈值判定为拖动
+        isDragging = true
+        isDragActive.value = true
+        const window = getCurrentWindow()
+        window.startDragging().finally(() => {
+          isDragActive.value = false
+        })
+      }
+    }
+
+    mouseUpHandler = () => {
+      unbindTempDragListeners()
+      mouseMoveHandler = null
+      mouseUpHandler = null
+      // 延后一帧复位，避免与点击冲突
+      setTimeout(() => {
+        isDragging = false
+      }, 0)
+    }
+
+    bindTempDragListeners()
   }
 }
 
 const handleMouseUp = () => {
-  if (dragTimeout) {
-    clearTimeout(dragTimeout)
-    dragTimeout = null
-  }
+  unbindTempDragListeners()
+  mouseMoveHandler = null
+  mouseUpHandler = null
 }
 
 const toggleMenu = (e) => {
@@ -145,9 +188,18 @@ const getBubbleStyle = (index) => {
     animationDelay: `${index * 50}ms`,
   }
 }
+
+onUnmounted(() => {
+  unbindTempDragListeners()
+  mouseMoveHandler = null
+  mouseUpHandler = null
+})
 </script>
 
-<style scoped>
+<style scoped lang="less">
+@halo-default: drop-shadow(0 0 8px rgba(255, 182, 193, 0.4)) drop-shadow(0 0 16px rgba(221, 160, 221, 0.2));
+@halo-hover: drop-shadow(0 0 12px rgba(255, 182, 193, 0.6)) drop-shadow(0 0 24px rgba(221, 160, 221, 0.3));
+@halo-active: drop-shadow(0 0 16px rgba(123, 80, 87, 0.8)) drop-shadow(0 0 32px rgba(221, 160, 221, 0.4));
 #toolbar-container {
   width: 100%;
   height: 100%;
@@ -158,6 +210,16 @@ const getBubbleStyle = (index) => {
   box-sizing: border-box;
   transform: translateZ(0);
   -webkit-font-smoothing: antialiased;
+}
+
+/* 拖动进行时，关闭图标的浮动/缩放动画，避免视觉与鼠标偏移 */
+#toolbar-container.dragging .toolbar-icon {
+  animation: none !important;
+  transform: none !important;
+}
+
+#toolbar-container.dragging .toolbar-icon:hover {
+  animation: none !important;
 }
 
 /* 气泡菜单容器 */
@@ -313,8 +375,7 @@ const getBubbleStyle = (index) => {
   margin: 0;
   border-radius: 50%;
   animation: float 3s ease-in-out infinite;
-  filter: drop-shadow(0 0 8px rgba(255, 182, 193, 0.4)) 
-          drop-shadow(0 0 16px rgba(221, 160, 221, 0.2));
+  filter: @halo-default;
   transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
   position: relative;
   z-index: 100;
@@ -322,18 +383,16 @@ const getBubbleStyle = (index) => {
   transform: translateZ(0);
   backface-visibility: hidden;
   -webkit-font-smoothing: antialiased;
-}
 
-.toolbar-icon:hover {
-  animation: pulse 1.5s ease-in-out infinite;
-  filter: drop-shadow(0 0 12px rgba(255, 182, 193, 0.6)) 
-          drop-shadow(0 0 24px rgba(221, 160, 221, 0.3));
-}
+  &:hover {
+    animation: pulse 1.5s ease-in-out infinite;
+    filter: @halo-hover;
+  }
 
-.toolbar-icon.active {
-  transform: scale(1.15) translateZ(0);
-  filter: drop-shadow(0 0 16px rgba(123, 80, 87, 0.8)) 
-          drop-shadow(0 0 32px rgba(221, 160, 221, 0.4));
+  &.active {
+    transform: scale(1.15) translateZ(0);
+    filter: @halo-active;
+  }
 }
 
 .icon-image {
@@ -362,17 +421,6 @@ const getBubbleStyle = (index) => {
   }
 }
 
-/* 气泡浮动（入场后） */
-@keyframes bubbleFloat2 {
-  0%,
-  100% {
-    transform: scale(1) rotate(0deg) translate3d(0, 0, 0);
-  }
-  50% {
-    transform: scale(1) rotate(0deg) translate3d(0, -5px, 0);
-  }
-}
-
 .bubble-item .bubble-icon {
   animation: iconScale 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
   will-change: transform;
@@ -389,28 +437,6 @@ const getBubbleStyle = (index) => {
   }
   100% {
     transform: scale(1) rotate(0deg) translateZ(0);
-  }
-}
-
-/* 可爱的浮动动画（使用 margin 避免 transform 冲突） */
-@keyframes bubbleFloat {
-  0%,
-  100% {
-    margin-top: -24px;
-  }
-  50% {
-    margin-top: -28px;
-  }
-}
-
-/* 摆动动画（结合缩放，使用 3D 加速） */
-@keyframes wiggle {
-  0%,
-  100% {
-    transform: scale(1.15) rotate(-5deg) translateZ(0);
-  }
-  50% {
-    transform: scale(1.15) rotate(5deg) translateZ(0);
   }
 }
 
@@ -457,26 +483,6 @@ const getBubbleStyle = (index) => {
   }
   75% {
     transform: translate3d(0, -5px, 0) scale(1.05);
-  }
-}
-
-/* 心跳动画（使用 translate3d 硬件加速） */
-@keyframes heartbeat {
-  0%,
-  100% {
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-  10% {
-    transform: translate3d(0, -2px, 0) scale(1.1);
-  }
-  20% {
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-  30% {
-    transform: translate3d(0, -3px, 0) scale(1.15);
-  }
-  40% {
-    transform: translate3d(0, 0, 0) scale(1);
   }
 }
 </style>

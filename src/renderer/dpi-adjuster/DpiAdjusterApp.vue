@@ -121,7 +121,7 @@ onMounted(() => {
 })
 </script>
 
-<style scoped>
+<style scoped lang="less">
 * {
   margin: 0;
   padding: 0;
@@ -196,9 +196,11 @@ onMounted(() => {
   justify-content: center;
 }
 
-.close-btn:hover {
-  background: rgba(255, 255, 255, 0.3);
-  transform: rotate(90deg);
+.close-btn {
+  &:hover {
+    background: rgba(255, 255, 255, 0.3);
+    transform: rotate(90deg);
+  }
 }
 
 .content {
@@ -248,6 +250,7 @@ onMounted(() => {
   border-radius: 3px;
   background: rgba(255, 255, 255, 0.3);
   outline: none;
+  appearance: none;
   -webkit-appearance: none;
   cursor: pointer;
 }
@@ -268,20 +271,7 @@ onMounted(() => {
   transform: scale(1.15);
 }
 
-.dpi-slider::-moz-range-thumb {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: white;
-  cursor: pointer;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
-  border: none;
-  transition: transform 0.2s;
-}
-
-.dpi-slider::-moz-range-thumb:hover {
-  transform: scale(1.15);
-}
+/* 移除 Firefox 专有样式，WebView2 基于 Chromium 无需此段 */
 
 .presets {
   display: flex;
@@ -302,16 +292,17 @@ onMounted(() => {
   transition: all 0.2s;
 }
 
-.preset-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
-  border-color: rgba(255, 255, 255, 0.5);
-}
-
-.preset-btn.active {
-  background: white;
-  color: #667eea;
-  border-color: white;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+.preset-btn {
+  &:hover {
+    background: rgba(255, 255, 255, 0.2);
+    border-color: rgba(255, 255, 255, 0.5);
+  }
+  &.active {
+    background: white;
+    color: #667eea;
+    border-color: white;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  }
 }
 
 .actions {
@@ -331,18 +322,18 @@ onMounted(() => {
   box-shadow: 0 3px 8px rgba(0, 0, 0, 0.2);
 }
 
-.apply-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-}
-
-.apply-btn:active:not(:disabled) {
-  transform: translateY(0);
-}
-
-.apply-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+.apply-btn {
+  &:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  }
+  &:active:not(:disabled) {
+    transform: translateY(0);
+  }
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
 }
 
 .message {
@@ -364,15 +355,9 @@ onMounted(() => {
   }
 }
 
-.message.success {
-  background: rgba(76, 175, 80, 0.9);
-}
-
-.message.warning {
-  background: rgba(255, 152, 0, 0.9);
-}
-
-.message.error {
-  background: rgba(244, 67, 54, 0.9);
+.message {
+  &.success { background: rgba(76, 175, 80, 0.9); }
+  &.warning { background: rgba(255, 152, 0, 0.9); }
+  &.error { background: rgba(244, 67, 54, 0.9); }
 }
 </style>

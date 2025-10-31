@@ -58,7 +58,22 @@ let currentSprite = null
 let currentFrameIndex = 0
 let animationTimer = null
 
-const speechPhrases = [
+// 精灵图集 URL
+const SPRITESHEET_URL =
+  'https://hub.gitmirror.com/raw.githubusercontent.com/qiin2333/qiin.github.io/assets/img/toolbar-spritesheet.png?t=' +
+  Date.now()
+
+// 使用浏览器原生 prefetch 预加载
+if (typeof document !== 'undefined') {
+  const link = document.createElement('link')
+  link.rel = 'prefetch'
+  link.as = 'image'
+  link.href = SPRITESHEET_URL
+  document.head.appendChild(link)
+}
+
+// 默认话术（fallback）
+const defaultPhrases = [
   '杂鱼～杂鱼～',
   '串流画质又调低了？杂鱼～',
   '码率不够高哦，杂鱼看得清吗♡',
@@ -78,9 +93,32 @@ const speechPhrases = [
   '串流设置改来改去，杂鱼真挑剔～',
 ]
 
+// 响应式话术列表
+const speechPhrases = ref([...defaultPhrases])
+
+// 通过后端代理加载话术
+const loadSpeechPhrases = async () => {
+  try {
+    console.log('💬 开始加载话术配置...')
+    const phrases = await invoke('fetch_speech_phrases')
+    if (Array.isArray(phrases) && phrases.length > 0) {
+      speechPhrases.value = phrases
+      console.log('✅ 话术加载成功，共', phrases.length, '条')
+    } else {
+      console.warn('⚠️  话术格式错误，使用默认话术')
+    }
+  } catch (error) {
+    console.warn('⚠️  话术加载失败，使用默认话术:', error)
+  }
+}
+
+// 立即加载话术
+loadSpeechPhrases()
+
 const showSpeech = () => {
   if (speechVisible.value) return
-  const text = speechPhrases[Math.floor(Math.random() * speechPhrases.length)]
+  const phrases = speechPhrases.value
+  const text = phrases[Math.floor(Math.random() * phrases.length)]
   speechText.value = text
   speechVisible.value = true
   if (speechTimer) {
@@ -125,6 +163,11 @@ const menuItems = [
     id: 'bitrate',
     label: '码率调整',
     icon: '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path fill="white" d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14zm2.5-4h-2v2H9v-2H7V9h2V7h1v2h2v1z"/></svg>',
+  },
+  {
+    id: 'shortcuts',
+    label: '快捷键手册',
+    icon: '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path fill="white" d="M20 5H4c-1.1 0-1.99.9-1.99 2L2 17c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-9 3h2v2h-2V8zm0 3h2v2h-2v-2zM8 8h2v2H8V8zm0 3h2v2H8v-2zm-1 2H5v-2h2v2zm0-3H5V8h2v2zm9 7H8v-2h8v2zm0-4h-2v-2h2v2zm0-3h-2V8h2v2zm3 3h-2v-2h2v2zm0-3h-2V8h2v2z"/></svg>',
   },
   {
     id: 'close',
@@ -275,33 +318,27 @@ const initPixiApp = async () => {
     autoDensity: true,
   })
 
-  // 加载精灵图集
-  const spritesheet = await PIXI.Assets.load('/toolbar-spritesheet.png')
-  
+  const spritesheet = await PIXI.Assets.load(SPRITESHEET_URL)
+
   // 4列x4行 (16帧)
   const frameWidth = spritesheet.width / 4
   const frameHeight = spritesheet.height / 4
-  
+
   // 创建所有帧的纹理
   for (let row = 0; row < 4; row++) {
     for (let col = 0; col < 4; col++) {
-      const rect = new PIXI.Rectangle(
-        col * frameWidth,
-        row * frameHeight,
-        frameWidth,
-        frameHeight
-      )
+      const rect = new PIXI.Rectangle(col * frameWidth, row * frameHeight, frameWidth, frameHeight)
       const texture = new PIXI.Texture({
         source: spritesheet.source,
-        frame: rect
+        frame: rect,
       })
       spriteFrames.push(texture)
-    }
   }
+}
 
   // 创建精灵并添加到舞台
   currentSprite = new PIXI.Sprite(spriteFrames[0])
-  
+
   // 缩放精灵以适应画布（保持宽高比）
   const scale = Math.min(80 / frameWidth, 80 / frameHeight) * 0.9
   currentSprite.scale.set(scale)
@@ -320,16 +357,16 @@ const startIdleAnimation = () => {
   // 随机切换表情的定时器
   const switchRandomFrame = () => {
     if (!currentSprite || !spriteFrames.length) return
-    
+
     // 随机选择一帧显示
     const randomFrame = Math.floor(Math.random() * spriteFrames.length)
     currentSprite.texture = spriteFrames[randomFrame]
-    
+
     // 下次切换的随机延迟：5-10秒
     const nextDelay = 5000 + Math.random() * 5000
     animationTimer = setTimeout(switchRandomFrame, nextDelay)
   }
-  
+
   // 首次随机延迟 3-5 秒后开始
   const firstDelay = 3000 + Math.random() * 2000
   animationTimer = setTimeout(switchRandomFrame, firstDelay)

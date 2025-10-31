@@ -207,6 +207,9 @@ fn handle_toolbar_menu_event<R: Runtime>(app: &AppHandle<R>, event_id: &str) {
         "bitrate" | "toolbar_bitrate" => {
             create_tool_window_internal(app, "bitrate");
         }
+        "shortcuts" | "toolbar_shortcuts" => {
+            create_tool_window_internal(app, "shortcuts");
+        }
         "close" | "toolbar_close" => {
             if let Some(window) = app.get_webview_window("toolbar") {
                 let _ = window.close();
@@ -297,6 +300,32 @@ fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
 #[tauri::command]
 async fn create_toolbar_window(app: AppHandle) -> Result<(), String> {
     create_toolbar_window_internal(&app)
+}
+
+#[tauri::command]
+async fn fetch_speech_phrases() -> Result<Vec<String>, String> {
+    println!("💬 开始获取话术配置");
+    
+    let url = "https://raw.githubusercontent.com/qiin2333/qiin.github.io/assets/speech-phrases.json";
+    
+    match reqwest::get(url).await {
+        Ok(response) => {
+            match response.json::<Vec<String>>().await {
+                Ok(phrases) => {
+                    println!("✅ 话术加载成功，共 {} 条", phrases.len());
+                    Ok(phrases)
+                }
+                Err(e) => {
+                    eprintln!("❌ 话术解析失败: {}", e);
+                    Err(format!("解析失败: {}", e))
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("❌ 话术请求失败: {}", e);
+            Err(format!("请求失败: {}", e))
+        }
+    }
 }
 
 fn create_system_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
@@ -672,6 +701,7 @@ fn main() {
             system::set_desktop_dpi,
             open_tool_window,
             create_toolbar_window,
+            fetch_speech_phrases,
             vdd::get_vdd_settings_file_path,
             vdd::get_vdd_tools_dir_path,
             vdd::load_vdd_settings,

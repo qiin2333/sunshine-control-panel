@@ -53,6 +53,9 @@ onMounted(async () => {
       case 'bitrate':
         currentTool.value = defineAsyncComponent(() => import('./tools/BitrateTool.vue'))
         break
+      case 'shortcuts':
+        currentTool.value = defineAsyncComponent(() => import('./tools/ShortcutsTool.vue'))
+        break
       default:
         console.error('未知的工具类型:', toolType)
     }

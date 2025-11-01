@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>哎呀！Sunshine好像睡着了～</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+            background: linear-gradient(135deg, #0a1828 0%, #1e3a5f 50%, #2c5f7f 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        /* 深海光线效果 */
+        body::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle at 30% 20%, rgba(100, 200, 255, 0.1) 0%, transparent 50%);
+            animation: shimmer 8s ease-in-out infinite;
+            pointer-events: none;
+        }
+        
+        @keyframes shimmer {
+            0%, 100% {
+                opacity: 0.3;
+                transform: translate(0, 0);
+            }
+            50% {
+                opacity: 0.6;
+                transform: translate(5%, 5%);
+            }
+        }
+        
+        /* 深海气泡 */
+        .bubble {
+            position: absolute;
+            bottom: -100px;
+            background: radial-gradient(circle at 30% 30%, rgba(150, 220, 255, 0.4), rgba(100, 180, 230, 0.15));
+            border-radius: 50%;
+            animation: rise 10s infinite ease-in;
+            backdrop-filter: blur(3px);
+            border: 1px solid rgba(150, 220, 255, 0.3);
+            box-shadow: 
+                inset 0 0 10px rgba(200, 240, 255, 0.3),
+                0 0 20px rgba(100, 180, 230, 0.2);
+        }
+        
+        /* 不同大小的气泡有不同的颜色 */
+        .bubble:nth-child(odd) {
+            background: radial-gradient(circle at 30% 30%, rgba(100, 200, 255, 0.4), rgba(80, 160, 220, 0.15));
+        }
+        
+        .bubble:nth-child(3n) {
+            background: radial-gradient(circle at 30% 30%, rgba(120, 230, 255, 0.35), rgba(90, 190, 240, 0.12));
+        }
+        
+        @keyframes rise {
+            0% {
+                bottom: -100px;
+                opacity: 0;
+            }
+            10% {
+                opacity: 0.8;
+            }
+            90% {
+                opacity: 0.8;
+            }
+            100% {
+                bottom: 110%;
+                transform: translateX(50px);
+                opacity: 0;
+            }
+        }
+        
+        .container {
+            text-align: center;
+            color: white;
+            z-index: 10;
+            padding: 2rem;
+            max-width: 600px;
+        }
+        
+        .error-code {
+            width: min(280px, 80vw);
+            margin: 0 auto 1.2rem;
+            animation: float 3s ease-in-out infinite;
+        }
+
+        .error-code svg {
+            width: 100%;
+            height: auto;
+            filter: drop-shadow(0 0 20px rgba(100, 200, 255, 0.35))
+                drop-shadow(0 6px 18px rgba(0, 20, 60, 0.55));
+        }
+        
+        @keyframes float {
+            0%, 100% {
+                transform: translateY(0px);
+            }
+            50% {
+                transform: translateY(-20px);
+            }
+        }
+        
+        .mascot {
+            font-size: 4rem;
+            animation: shake 2s ease-in-out infinite;
+            display: inline-block;
+            margin: 0.5rem 0;
+        }
+        
+        @keyframes shake {
+            0%, 100% {
+                transform: rotate(0deg);
+            }
+            25% {
+                transform: rotate(-10deg);
+            }
+            75% {
+                transform: rotate(10deg);
+            }
+        }
+        
+        h1 {
+            font-size: 2rem;
+            margin-bottom: 0.8rem;
+            text-shadow: 
+                0 0 10px rgba(100, 200, 255, 0.5),
+                2px 2px 4px rgba(0, 0, 0, 0.5);
+            color: rgba(220, 245, 255, 0.95);
+        }
+        
+        .message {
+            font-size: 1.1rem;
+            margin-bottom: 1.2rem;
+            line-height: 1.5;
+            opacity: 0.95;
+        }
+        
+        .tips {
+            background: rgba(30, 70, 110, 0.4);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            padding: 1rem 1.2rem;
+            margin: 1rem 0;
+            border: 1px solid rgba(100, 200, 255, 0.3);
+            box-shadow: 
+                0 4px 20px rgba(0, 0, 0, 0.3),
+                inset 0 1px 0 rgba(150, 220, 255, 0.2);
+            text-align: left;
+            font-size: 0.95rem;
+        }
+        
+        .tips h3 {
+            margin-bottom: 0.5rem;
+            font-size: 1.1rem;
+        }
+        
+        .tips ul {
+            list-style: none;
+            padding-left: 0;
+            margin: 0;
+        }
+        
+        .tips li {
+            padding: 0.3rem 0;
+            padding-left: 1.3rem;
+            position: relative;
+            line-height: 1.4;
+        }
+        
+        .btn {
+            display: inline-block;
+            padding: 0.8rem 1.8rem;
+            background: rgba(50, 150, 220, 0.4);
+            color: rgba(230, 250, 255, 0.95);
+            text-decoration: none;
+            border-radius: 50px;
+            border: 2px solid rgba(100, 200, 255, 0.5);
+            font-size: 1rem;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(5px);
+            cursor: pointer;
+            margin: 0.3rem;
+            box-shadow: 
+                0 4px 15px rgba(50, 150, 220, 0.3),
+                inset 0 1px 0 rgba(150, 220, 255, 0.3);
+        }
+        
+        .btn:hover {
+            background: rgba(80, 180, 240, 0.6);
+            color: white;
+            border-color: rgba(150, 220, 255, 0.8);
+            transform: translateY(-3px);
+            box-shadow: 
+                0 6px 25px rgba(80, 180, 240, 0.5),
+                inset 0 1px 0 rgba(180, 230, 255, 0.4),
+                0 0 30px rgba(100, 200, 255, 0.3);
+        }
+        
+        .footer {
+            margin-top: 1rem;
+            font-size: 0.85rem;
+            opacity: 0.8;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="error-code">
+            <svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg" aria-labelledby="title desc" role="img">
+                <defs>
+                    <linearGradient id="hullGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stop-color="#6ad4ff" stop-opacity="0.85" />
+                        <stop offset="50%" stop-color="#2f76c8" stop-opacity="0.95" />
+                        <stop offset="100%" stop-color="#134a7a" stop-opacity="0.9" />
+                    </linearGradient>
+                    <linearGradient id="periscopeGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" stop-color="#bde9ff" />
+                        <stop offset="100%" stop-color="#3d7bb5" />
+                    </linearGradient>
+                    <radialGradient id="windowGlow" cx="50%" cy="50%" r="60%">
+                        <stop offset="0%" stop-color="#d9f8ff" stop-opacity="0.95" />
+                        <stop offset="70%" stop-color="#7fd0ff" stop-opacity="0.85" />
+                        <stop offset="100%" stop-color="#2b5f88" stop-opacity="0.1" />
+                    </radialGradient>
+                </defs>
+
+                <!-- 船身 -->
+                <path d="M38 130 C50 98 120 78 188 88 L240 88 C275 88 302 112 302 136 C302 160 275 184 240 184 L190 184 C120 194 50 172 38 140 Z"
+                    fill="url(#hullGradient)" stroke="#0d2d4f" stroke-width="4" stroke-linejoin="round" />
+
+                <!-- 尾翼 -->
+                <path d="M32 126 L32 146 L12 156 L12 116 Z" fill="#124069" stroke="#0d2d4f" stroke-width="4" stroke-linejoin="round" />
+
+                <!-- 船身高光 -->
+                <path d="M54 124 C70 104 134 94 190 102" fill="none" stroke="rgba(205, 245, 255, 0.45)" stroke-width="6" stroke-linecap="round" />
+
+                <!-- 潜望镜 -->
+                <rect x="176" y="32" width="20" height="58" rx="8" fill="url(#periscopeGradient)" stroke="#0d2d4f" stroke-width="4" />
+                <path d="M168 32 H216" stroke="#0d2d4f" stroke-width="10" stroke-linecap="round" />
+                <circle cx="210" cy="32" r="12" fill="#7fd6ff" stroke="#0d2d4f" stroke-width="4" />
+
+                <!-- 舷窗 404 -->
+                <g fill="none" stroke="#d9f8ff" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M92 134 V170 H110 V188 H128 V170 H146 V150 H128 V134 Z" opacity="0.95" />
+                    <ellipse cx="188" cy="164" rx="26" ry="34" opacity="0.85" />
+                    <path d="M232 134 V170 H250 V188 H268 V170 H286 V150 H268 V134 Z" opacity="0.95" />
+                </g>
+
+                <!-- 舷窗光晕 -->
+                <circle cx="104" cy="164" r="26" fill="url(#windowGlow)" opacity="0.65" />
+                <circle cx="188" cy="164" r="30" fill="url(#windowGlow)" opacity="0.6" />
+                <circle cx="272" cy="164" r="26" fill="url(#windowGlow)" opacity="0.65" />
+
+                <!-- 船身细节 -->
+                <path d="M150 150 H214" stroke="rgba(0, 25, 45, 0.45)" stroke-width="6" stroke-linecap="round" />
+                <path d="M210 116 C226 112 244 112 260 118" stroke="rgba(205, 245, 255, 0.25)" stroke-width="5" stroke-linecap="round" />
+
+                <!-- 标识 -->
+                <text x="56" y="156" font-size="18" fill="rgba(210, 240, 255, 0.75)" font-family="'Segoe UI', 'Microsoft YaHei', sans-serif" letter-spacing="4">
+                    SS-404
+                </text>
+
+                <!-- 气泡 -->
+                <g fill="rgba(160, 220, 255, 0.35)">
+                    <circle cx="36" cy="72" r="6" />
+                    <circle cx="24" cy="52" r="4" />
+                    <circle cx="50" cy="48" r="3" />
+                    <circle cx="298" cy="60" r="5" />
+                    <circle cx="310" cy="78" r="3" />
+                </g>
+            </svg>
+        </div>
+        <h1>呜～Sunshine 好像被玩坏掉了呢～</h1>
+        <p class="message">
+            杂鱼～连 Sunshine 都启动不了，真是没用呢♡
+        </p>
+        
+        <div class="tips">
+            <h3>💫 让 Sunshine 重新站起来的方法：</h3>
+            <ul>
+                <li>Sunshine 服务是不是在偷懒睡觉呢～</li>
+                <li>端口 47990 准备好了吗？杂鱼要好好确认哦</li>
+                <li>防火墙可不能把 Sunshine 关在外面呢～</li>
+            </ul>
+        </div>
+        
+        <div>
+            <button class="btn" onclick="location.reload()">再试一次</button>
+        </div>
+        
+        <div class="footer" id="footer-text">
+            🎀 快点让 Sunshine 醒过来嘛～
+        </div>
+    </div>
+    
+    <script>
+        // 创建随机气泡
+        function createBubble() {
+            const bubble = document.createElement('div');
+            bubble.className = 'bubble';
+            const size = Math.random() * 60 + 20;
+            bubble.style.width = size + 'px';
+            bubble.style.height = size + 'px';
+            bubble.style.left = Math.random() * 100 + '%';
+            bubble.style.animationDuration = (Math.random() * 5 + 5) + 's';
+            bubble.style.animationDelay = Math.random() * 5 + 's';
+            document.body.appendChild(bubble);
+            
+            setTimeout(() => {
+                bubble.remove();
+            }, 15000);
+        }
+        
+        // 持续生成气泡
+        setInterval(createBubble, 300);
+        
+        // 初始气泡
+        for (let i = 0; i < 10; i++) {
+            createBubble();
+        }
+        
+        // 自动重试连接（30秒后）
+        let countdown = 30;
+        const footerEl = document.getElementById('footer-text');
+        
+        const timer = setInterval(() => {
+            countdown--;
+            if (countdown > 0) {
+                footerEl.textContent = `⏰ 还有${countdown}秒就要惩罚杂鱼了哦～`;
+            } else {
+                clearInterval(timer);
+                location.reload();
+            }
+        }, 1000);
+    </script>
+</body>
+</html>
+

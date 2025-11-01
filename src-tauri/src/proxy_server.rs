@@ -7,10 +7,15 @@ use tower_http::cors::CorsLayer;
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 use once_cell::sync::Lazy;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// 全局 Sunshine 目标 URL（动态配置）
 static SUNSHINE_TARGET: Lazy<Arc<RwLock<String>>> = 
     Lazy::new(|| Arc::new(RwLock::new(String::from("https://localhost:47990"))));
+
+/// 快速失败机制：记录 Sunshine 是否可用
+static SUNSHINE_AVAILABLE: AtomicBool = AtomicBool::new(true);
+static LAST_CHECK_TIME: AtomicU64 = AtomicU64::new(0);
 
 /// 设置 Sunshine 目标 URL
 pub fn set_sunshine_target(url: String) {
@@ -63,6 +68,9 @@ body {
 
 /// 注入的 JavaScript 脚本（编译时从文件读取）
 const INJECT_SCRIPT: &str = include_str!("../inject-script.js");
+
+/// 调皮的404页面（当Sunshine未启动时显示，编译时从文件读取）
+const ERROR_404_PAGE: &str = include_str!("../error-404.html");
 
 /// 启动本地代理服务器
 pub async fn start_proxy_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -129,25 +137,64 @@ async fn proxy_handler(req: Request) -> Response {
         println!("📡 代理请求: {} {}", method, &path);
     }
     
+    // 快速失败检查：如果最近3秒内检测到 Sunshine 不可用，直接返回 404
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let last_check = LAST_CHECK_TIME.load(Ordering::Relaxed);
+    
+    if !SUNSHINE_AVAILABLE.load(Ordering::Relaxed) && (now - last_check) < 3 {
+        // 3秒内检测过不可用，直接返回 404
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            ERROR_404_PAGE
+        ).into_response();
+    }
+    
     // 请求 Sunshine
     match fetch_and_proxy(&target_url, &method, &headers, body).await {
-        Ok(response) => response,
+        Ok(response) => {
+            // 连接成功，标记为可用
+            SUNSHINE_AVAILABLE.store(true, Ordering::Relaxed);
+            response
+        }
         Err(e) => {
             eprintln!("❌ 代理错误 [{}]: {}", path, e);
             eprintln!("   目标 URL: {}", target_url);
             eprintln!("   错误详情: {:?}", e);
             
             // 检查是否是连接错误
-            let error_msg = if e.to_string().contains("connection") || e.to_string().contains("refused") {
-                format!("⚠️  无法连接到 Sunshine 服务 ({})\n请检查:\n1. Sunshine 是否正在运行\n2. 端口配置是否正确\n3. 防火墙是否允许连接", target_url)
-            } else {
-                format!("代理错误: {}", e)
-            };
+            let error_str = e.to_string().to_lowercase();
+            let is_connection_error = error_str.contains("connection") 
+                || error_str.contains("refused")
+                || error_str.contains("timed out")
+                || error_str.contains("timeout")
+                || error_str.contains("unreachable")
+                || error_str.contains("error sending request")
+                || error_str.contains("network")
+                || error_str.contains("dns");
             
+            if is_connection_error {
+                // 标记为不可用，记录检查时间
+                SUNSHINE_AVAILABLE.store(false, Ordering::Relaxed);
+                LAST_CHECK_TIME.store(now, Ordering::Relaxed);
+                
+                // 返回调皮的404页面
+                (
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                    [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                    ERROR_404_PAGE
+                ).into_response()
+            } else {
+                // 其他错误返回简单的错误信息
+                let error_msg = format!("代理错误: {}", e);
             (
                 axum::http::StatusCode::BAD_GATEWAY,
                 error_msg
             ).into_response()
+            }
         }
     }
 }
@@ -160,8 +207,8 @@ fn get_http_client() -> &'static reqwest::Client {
         reqwest::Client::builder()
             .danger_accept_invalid_certs(true)
             .pool_max_idle_per_host(20)  // 增加连接池
-            .timeout(std::time::Duration::from_secs(30))
-            .connect_timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(5))  // 总超时
+            .connect_timeout(std::time::Duration::from_millis(500))  // 500ms 快速检测
             .build()
             .expect("Failed to create HTTP client")
     })
@@ -219,8 +266,13 @@ async fn fetch_and_proxy(
     
     let response = match response_result {
         Ok(resp) => resp,
-        Err(_) if url_to_use.starts_with("https://") => {
-            // HTTPS 失败，尝试 HTTP
+        Err(e) if url_to_use.starts_with("https://") => {
+            let error_str = e.to_string().to_lowercase();
+            // 如果是连接拒绝错误，直接返回，不要再尝试 HTTP
+            if error_str.contains("refused") || error_str.contains("connection") {
+                return Err(e);
+            }
+            // 其他 HTTPS 错误（如证书问题），尝试 HTTP
             let http_url = url_to_use.replace("https://", "http://");
             eprintln!("⚠️  HTTPS 连接失败，尝试 HTTP: {}", http_url);
             send_request(client, &http_url, method, headers, &body).await?

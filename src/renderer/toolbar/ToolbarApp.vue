@@ -63,14 +63,8 @@ const SPRITESHEET_URL =
   'https://hub.gitmirror.com/raw.githubusercontent.com/qiin2333/qiin.github.io/assets/img/toolbar-spritesheet.png?t=' +
   Date.now()
 
-// 使用浏览器原生 prefetch 预加载
-if (typeof document !== 'undefined') {
-  const link = document.createElement('link')
-  link.rel = 'prefetch'
-  link.as = 'image'
-  link.href = SPRITESHEET_URL
-  document.head.appendChild(link)
-}
+// 精灵图集别名，便于使用 PixiJS 资源缓存
+const SPRITESHEET_ALIAS = 'toolbar-spritesheet'
 
 // 默认话术（fallback）
 const defaultPhrases = [
@@ -318,7 +312,13 @@ const initPixiApp = async () => {
     autoDensity: true,
   })
 
-  const spritesheet = await PIXI.Assets.load(SPRITESHEET_URL)
+  if (!PIXI.Assets.resolver.hasKey(SPRITESHEET_ALIAS)) {
+    PIXI.Assets.add({ alias: SPRITESHEET_ALIAS, src: SPRITESHEET_URL })
+  }
+
+  const spritesheet = PIXI.Assets.cache.has(SPRITESHEET_ALIAS)
+    ? PIXI.Assets.cache.get(SPRITESHEET_ALIAS)
+    : await PIXI.Assets.load(SPRITESHEET_ALIAS)
 
   // 4列x4行 (16帧)
   const frameWidth = spritesheet.width / 4
@@ -333,8 +333,8 @@ const initPixiApp = async () => {
         frame: rect,
       })
       spriteFrames.push(texture)
+    }
   }
-}
 
   // 创建精灵并添加到舞台
   currentSprite = new PIXI.Sprite(spriteFrames[0])
@@ -639,7 +639,16 @@ onUnmounted(() => {
   border-radius: 12px;
   box-shadow: 0 6px 18px rgba(255, 182, 193, 0.45), 0 0 0 2px rgba(255, 255, 255, 0.7) inset;
   pointer-events: none;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: keep-all;
+  hyphens: auto;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  line-clamp: 2;
+  -webkit-line-clamp: 2;
+  text-overflow: ellipsis;
 }
 
 .speech-bubble::after {

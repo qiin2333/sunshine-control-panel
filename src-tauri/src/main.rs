@@ -685,9 +685,13 @@ fn main() {
         })
         .on_window_event(|window, event| {
             match event {
-                WindowEvent::CloseRequested { .. } => {
-                    // 关闭时隐藏而不是退出
-                    window.hide().unwrap();
+                WindowEvent::CloseRequested { api, .. } => {
+                    // 只对主窗口隐藏，其他窗口（工具栏、工具窗口）允许正常关闭
+                    if window.label() == "main" {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    }
+                    // 其他窗口不调用 prevent_close()，让它们正常关闭
                 }
                 _ => {}
             }

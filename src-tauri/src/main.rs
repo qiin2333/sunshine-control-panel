@@ -7,6 +7,7 @@ mod sunshine;
 mod utils;
 mod proxy_server;
 mod fs_utils;
+mod toolbar;
 
 use tauri::{
     menu::{Menu, MenuItem},
@@ -25,13 +26,6 @@ struct AppState {
 #[tauri::command]
 async fn show_toolbar_menu(_app: AppHandle) -> Result<(), String> {
     // 菜单现在是工具栏内部的气泡菜单，不需要创建独立窗口
-    Ok(())
-}
-
-#[tauri::command]
-async fn handle_toolbar_menu_action(app: AppHandle, action: String) -> Result<(), String> {
-    println!("🔧 处理菜单操作: {}", action);
-    handle_toolbar_menu_event(&app, &action);
     Ok(())
 }
 
@@ -125,182 +119,6 @@ async fn open_tool_window(app: AppHandle, tool_name: String) -> Result<(), Strin
     Ok(())
 }
 
-// 为工具栏窗口创建右键菜单
-fn create_toolbar_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
-    let main_panel = MenuItem::with_id(app, "toolbar_main", "控制面板", true, None::<&str>)?;
-    let vdd_settings = MenuItem::with_id(app, "toolbar_vdd", "虚拟显示器 (VDD)", true, None::<&str>)?;
-    let dpi_adjuster = MenuItem::with_id(app, "toolbar_dpi", "调整 DPI", true, None::<&str>)?;
-    let bitrate = MenuItem::with_id(app, "toolbar_bitrate", "码率调整", true, None::<&str>)?;
-    let close_toolbar = MenuItem::with_id(app, "toolbar_close", "关闭工具栏", true, None::<&str>)?;
-    
-    Menu::with_items(app, &[
-        &main_panel,
-        &vdd_settings,
-        &dpi_adjuster,
-        &bitrate,
-        &close_toolbar,
-    ])
-}
-
-// 辅助函数：创建工具窗口
-fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &str) {
-    const TOOL_WINDOW_ID: &str = "tool_window";
-    
-    // 如果窗口已存在，先关闭它
-    if let Some(window) = app.get_webview_window(TOOL_WINDOW_ID) {
-        let _ = window.close();
-    }
-    
-    // 创建工具窗口，通过 URL 参数传递工具类型
-    let url = format!("tool-window/index.html?tool={}", tool_type);
-    let title = format!("ZakoToolsWindow - {}", tool_type);
-    println!("🔧 创建工具窗口 URL: {}", url);
-    
-    match tauri::WebviewWindowBuilder::new(
-        app,
-        TOOL_WINDOW_ID,
-        tauri::WebviewUrl::App(url.into())
-    )
-    .title(&title)
-    .fullscreen(true)
-    .decorations(false)
-    .transparent(true)
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .visible(false)  // 先隐藏，避免闪白
-    .build()
-    {
-        Ok(window) => {
-            // 等待一小段时间让内容加载，然后显示窗口
-            tauri::async_runtime::spawn(async move {
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                let _ = window.show();
-            });
-        }
-        Err(e) => {
-            eprintln!("❌ 创建工具窗口失败: {}", e);
-        }
-    }
-}
-
-// 处理工具栏菜单事件
-fn handle_toolbar_menu_event<R: Runtime>(app: &AppHandle<R>, event_id: &str) {
-    match event_id {
-        "main" | "toolbar_main" => {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
-        }
-        "vdd" | "toolbar_vdd" => {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-                let _ = window.emit("open-vdd-settings", ());
-            }
-        }
-        "dpi" | "toolbar_dpi" => {
-            create_tool_window_internal(app, "dpi");
-        }
-        "bitrate" | "toolbar_bitrate" => {
-            create_tool_window_internal(app, "bitrate");
-        }
-        "shortcuts" | "toolbar_shortcuts" => {
-            create_tool_window_internal(app, "shortcuts");
-        }
-        "close" | "toolbar_close" => {
-            if let Some(window) = app.get_webview_window("toolbar") {
-                let _ = window.close();
-            }
-        }
-        _ => {}
-    }
-}
-
-// 内部泛型函数，用于创建工具栏窗口
-fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
-    const TOOLBAR_WINDOW_ID: &str = "toolbar";
-    
-    // 检查工具栏窗口是否已存在
-    if app.get_webview_window(TOOLBAR_WINDOW_ID).is_some() {
-        println!("🔧 工具栏窗口已存在");
-        return Ok(());
-    }
-    
-    println!("🔧 创建工具栏窗口");
-    
-    // 窗口大小和边距配置
-    let toolbar_size = 240.0;  // 窗口大小（正方形，包含气泡菜单空间）
-    let margin = 20.0;         // 距离屏幕边缘的边距
-    
-    // 先创建窗口在默认位置
-    let window = match tauri::WebviewWindowBuilder::new(
-        app,
-        TOOLBAR_WINDOW_ID,
-        tauri::WebviewUrl::App("toolbar/index.html".into())
-    )
-    .title("工具栏")
-    .inner_size(toolbar_size, toolbar_size)
-    .resizable(false)
-    .maximizable(false)
-    .minimizable(false)
-    .decorations(false)
-    .transparent(true)
-    .shadow(false)
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .visible(false)  // 先隐藏，等设置好位置再显示
-    .build()
-    {
-        Ok(win) => win,
-        Err(e) => {
-            eprintln!("❌ 创建工具栏窗口失败: {}", e);
-            return Err(format!("创建工具栏窗口失败: {}", e));
-        }
-    };
-    
-    // 获取主显示器信息并设置到右下角
-    if let Ok(monitor) = window.current_monitor() {
-        if let Some(monitor) = monitor {
-            let size = monitor.size();
-            let scale_factor = monitor.scale_factor();
-            
-            // 计算逻辑像素尺寸
-            let screen_width = size.width as f64 / scale_factor;
-            let screen_height = size.height as f64 / scale_factor;
-            
-            // 计算右下角位置（考虑任务栏）
-            let x = screen_width - toolbar_size - margin - 60.0;
-            let y = screen_height - toolbar_size - margin - 80.0;
-            
-            println!("📍 屏幕尺寸: {}x{}, 缩放: {}, 工具栏位置: ({}, {})", 
-                     screen_width, screen_height, scale_factor, x, y);
-            
-            // 设置位置
-            if let Err(e) = window.set_position(tauri::PhysicalPosition::new(
-                (x * scale_factor) as i32,
-                (y * scale_factor) as i32
-            )) {
-                eprintln!("❌ 设置工具栏位置失败: {}", e);
-            }
-        }
-    }
-    
-    // 显示窗口
-    if let Err(e) = window.show() {
-        eprintln!("❌ 显示工具栏窗口失败: {}", e);
-    }
-    
-    println!("✅ 工具栏窗口创建成功");
-    Ok(())
-}
-
-#[tauri::command]
-async fn create_toolbar_window(app: AppHandle) -> Result<(), String> {
-    create_toolbar_window_internal(&app)
-}
 
 #[tauri::command]
 async fn fetch_speech_phrases() -> Result<Vec<String>, String> {
@@ -477,7 +295,7 @@ fn handle_tray_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) {
             if let Some(toolbar_window) = app.get_webview_window("toolbar") {
                 // 已存在则关闭（达到隐藏效果）
                 let _ = toolbar_window.close();
-            } else if let Err(e) = create_toolbar_window_internal(app) {
+            } else if let Err(e) = toolbar::create_toolbar_window_internal(app) {
                 eprintln!("❌ 创建工具栏失败: {}", e);
             }
         }
@@ -639,7 +457,7 @@ fn main() {
                             println!("🔧 工具栏不存在，创建");
                             let app_clone = app_handle.clone();
                             tauri::async_runtime::spawn(async move {
-                                if let Err(e) = create_toolbar_window_internal(&app_clone) {
+                                if let Err(e) = toolbar::create_toolbar_window_internal(&app_clone) {
                                     eprintln!("❌ 快捷键创建工具栏失败: {}", e);
                                 }
                             });
@@ -656,7 +474,7 @@ fn main() {
                 let event_id = event.id().as_ref();
                 if event_id.starts_with("toolbar_") {
                     println!("🔧 全局菜单事件: {:?}", event.id());
-                    handle_toolbar_menu_event(&app_handle, event_id);
+                    toolbar::handle_toolbar_menu_event(&app_handle, event_id);
                 }
             });
             
@@ -690,6 +508,12 @@ fn main() {
                     if window.label() == "main" {
                         api.prevent_close();
                         let _ = window.hide();
+                    } else if window.label() == "toolbar" {
+                        // 工具栏窗口关闭前保存位置
+                        if let Ok(position) = window.outer_position() {
+                            let app = window.app_handle();
+                            toolbar::save_toolbar_position_internal(&app, position.x as f64, position.y as f64);
+                        }
                     }
                     // 其他窗口不调用 prevent_close()，让它们正常关闭
                 }
@@ -700,11 +524,12 @@ fn main() {
             toggle_dark_mode,
             open_external_url,
             show_toolbar_menu,
-            handle_toolbar_menu_action,
+            toolbar::handle_toolbar_menu_action,
+            toolbar::save_toolbar_position,
             system::get_current_dpi,
             system::set_desktop_dpi,
             open_tool_window,
-            create_toolbar_window,
+            toolbar::create_toolbar_window,
             fetch_speech_phrases,
             vdd::get_vdd_settings_file_path,
             vdd::get_vdd_tools_dir_path,

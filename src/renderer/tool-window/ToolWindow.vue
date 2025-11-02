@@ -96,9 +96,9 @@ onUnmounted(() => {
 .tool-panel {
   max-width: 90vw;
   max-height: 90vh;
-  background: linear-gradient(135deg, #4a9eff 0%, #7ab8ff 100%);
+  background: linear-gradient(135deg, #2b7fd9 0%, #5a9fe6 100%);
   border-radius: 20px;
-  box-shadow: 0 20px 60px rgba(74, 158, 255, 0.5);
+  box-shadow: 0 20px 60px rgba(43, 127, 217, 0.5);
   overflow: hidden;
   cursor: default;
   animation: panelIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);

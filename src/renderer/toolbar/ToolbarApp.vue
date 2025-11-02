@@ -7,6 +7,7 @@
           <div
             class="bubble-item"
             :class="{ danger: item.danger }"
+            :style="{ animationDelay: `${index * 100}ms` }"
             @click="handleMenuItem(item.id)"
             :title="item.label"
           >
@@ -22,6 +23,8 @@
       :class="{ active: menuVisible }"
       @mousedown="handleMouseDown"
       @mouseup="handleMouseUp"
+      @touchstart.prevent="handleMouseDown"
+      @touchend="handleMouseUp"
       @click.stop="toggleMenu"
       @contextmenu.prevent="toggleMenu"
     >
@@ -180,15 +183,27 @@ let mouseUpHandler = null
 const bindTempDragListeners = () => {
   window.addEventListener('mousemove', mouseMoveHandler)
   window.addEventListener('mouseup', mouseUpHandler)
+  window.addEventListener('touchmove', mouseMoveHandler, { passive: false })
+  window.addEventListener('touchend', mouseUpHandler)
 }
 
 const unbindTempDragListeners = () => {
   if (mouseMoveHandler) {
     window.removeEventListener('mousemove', mouseMoveHandler)
+    window.removeEventListener('touchmove', mouseMoveHandler)
   }
   if (mouseUpHandler) {
     window.removeEventListener('mouseup', mouseUpHandler)
+    window.removeEventListener('touchend', mouseUpHandler)
   }
+}
+
+// 统一获取坐标（支持鼠标和触摸）
+const getEventCoords = (e) => {
+  if (e.touches && e.touches.length > 0) {
+    return { x: e.touches[0].clientX, y: e.touches[0].clientY }
+  }
+  return { x: e.clientX, y: e.clientY }
 }
 
 const handleMouseDown = (e) => {
@@ -197,17 +212,25 @@ const handleMouseDown = (e) => {
     return
   }
 
-  // 左键长按才拖动
-  if (e.button === 0) {
+  // 左键或触摸
+  if (e.button === 0 || e.type === 'touchstart') {
     // 使用位移阈值触发拖动，避免动画导致的偏移
-    startX = e.clientX
-    startY = e.clientY
+    const coords = getEventCoords(e)
+    startX = coords.x
+    startY = coords.y
     isDragging = false
 
     mouseMoveHandler = (ev) => {
       if (isDragging) return
-      const dx = ev.clientX - startX
-      const dy = ev.clientY - startY
+
+      // 阻止触摸滚动
+      if (ev.type === 'touchmove') {
+        ev.preventDefault()
+      }
+
+      const coords = getEventCoords(ev)
+      const dx = coords.x - startX
+      const dy = coords.y - startY
       if (dx * dx + dy * dy > DRAG_THRESHOLD_SQ) {
         // 超过阈值判定为拖动
         isDragging = true
@@ -290,8 +313,7 @@ const getBubbleStyle = (index) => {
 
   return {
     transform: `translate(${x}px, ${y}px)`,
-    transitionDelay: `${index * 50}ms`,
-    animationDelay: `${index * 50}ms`,
+    transitionDelay: `${index * 200}ms`,
   }
 }
 
@@ -392,6 +414,8 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  // 位置保存已在 Rust 后端窗口关闭事件中处理
+  
   unbindTempDragListeners()
   mouseMoveHandler = null
   mouseUpHandler = null
@@ -480,7 +504,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-  animation: bubbleIn 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: bubbleIn 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   position: relative;
   will-change: transform, opacity, box-shadow;
   transform: translateZ(0);
@@ -488,19 +512,11 @@ onUnmounted(() => {
   -webkit-font-smoothing: antialiased;
 }
 
-/* 为每个气泡添加不同的可爱颜色和动画延迟 */
-.bubble-wrapper:nth-child(1) {
-  animation-delay: 0.1s;
-}
-
+/* 为每个气泡添加不同的可爱颜色 */
 .bubble-wrapper:nth-child(1) .bubble-item {
   background: linear-gradient(135deg, rgba(255, 182, 193, 0.95) 0%, rgba(255, 192, 203, 0.95) 100%);
   box-shadow: 0 4px 20px rgba(255, 182, 193, 0.6), 0 0 0 3px rgba(255, 255, 255, 0.4),
     inset 0 2px 8px rgba(255, 255, 255, 0.3);
-}
-
-.bubble-wrapper:nth-child(2) {
-  animation-delay: 0.6s;
 }
 
 .bubble-wrapper:nth-child(2) .bubble-item {
@@ -509,28 +525,16 @@ onUnmounted(() => {
     inset 0 2px 8px rgba(255, 255, 255, 0.3);
 }
 
-.bubble-wrapper:nth-child(3) {
-  animation-delay: 1.2s;
-}
-
 .bubble-wrapper:nth-child(3) .bubble-item {
   background: linear-gradient(135deg, rgba(221, 160, 221, 0.95) 0%, rgba(218, 112, 214, 0.95) 100%);
   box-shadow: 0 4px 20px rgba(221, 160, 221, 0.6), 0 0 0 3px rgba(255, 255, 255, 0.4),
     inset 0 2px 8px rgba(255, 255, 255, 0.3);
 }
 
-.bubble-wrapper:nth-child(4) {
-  animation-delay: 1.8s;
-}
-
 .bubble-wrapper:nth-child(4) .bubble-item {
   background: linear-gradient(135deg, rgba(255, 193, 7, 0.95) 0%, rgba(255, 152, 0, 0.95) 100%);
   box-shadow: 0 4px 20px rgba(255, 193, 7, 0.6), 0 0 0 3px rgba(255, 255, 255, 0.4),
     inset 0 2px 8px rgba(255, 255, 255, 0.3);
-}
-
-.bubble-wrapper:nth-child(5) {
-  animation-delay: 2.4s;
 }
 
 .bubble-item:hover {
@@ -690,7 +694,8 @@ onUnmounted(() => {
 }
 
 .bubble-item .bubble-icon {
-  animation: iconScale 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: iconScale 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation-delay: inherit; /* 继承父元素的动画延迟 */
   will-change: transform;
   transform: translateZ(0);
   backface-visibility: hidden;

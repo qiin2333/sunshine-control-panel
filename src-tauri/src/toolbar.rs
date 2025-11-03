@@ -106,6 +106,13 @@ pub fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &s
     .build()
     {
         Ok(window) => {
+            // 开发模式下自动打开 DevTools
+            #[cfg(debug_assertions)]
+            {
+                window.open_devtools();
+                println!("🔧 [开发模式] 工具窗口已自动打开 DevTools");
+            }
+            
             // 等待一小段时间让内容加载，然后显示窗口
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -189,7 +196,15 @@ pub fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<
     .visible(false)  // 先隐藏，等设置好位置再显示
     .build()
     {
-        Ok(win) => win,
+        Ok(win) => {
+            // 开发模式下自动打开 DevTools
+            #[cfg(debug_assertions)]
+            {
+                win.open_devtools();
+                println!("🔧 [开发模式] 已自动打开 DevTools");
+            }
+            win
+        }
         Err(e) => {
             eprintln!("❌ 创建工具栏窗口失败: {}", e);
             return Err(format!("创建工具栏窗口失败: {}", e));
@@ -198,13 +213,78 @@ pub fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<
     
     // 尝试加载保存的位置，如果没有则使用默认位置（右下角）
     if let Some((saved_x, saved_y)) = load_toolbar_position(app) {
-        // 保存的坐标已经是物理像素，直接使用
-        println!("📂 使用保存的工具栏位置: ({}, {})", saved_x, saved_y);
-        if let Err(e) = window.set_position(tauri::PhysicalPosition::new(
-            saved_x as i32,
-            saved_y as i32
-        )) {
-            eprintln!("❌ 设置工具栏位置失败: {}", e);
+        // 保存的坐标已经是物理像素，需要验证是否在屏幕范围内
+        println!("📂 读取保存的工具栏位置: ({}, {})", saved_x, saved_y);
+        
+        // 获取当前显示器信息进行边界检查
+        if let Ok(monitor) = window.current_monitor() {
+            if let Some(monitor) = monitor {
+                let size = monitor.size();
+                let scale_factor = monitor.scale_factor();
+                
+                // 计算逻辑像素尺寸
+                let screen_width = size.width as f64 / scale_factor;
+                let screen_height = size.height as f64 / scale_factor;
+                
+                // 转换保存的物理坐标为逻辑坐标（用于边界检查）
+                let logical_x = saved_x / scale_factor;
+                let logical_y = saved_y / scale_factor;
+                
+                // 边界保护：确保工具栏至少有一部分可见
+                let min_visible = 50.0;  // 至少 50px 可见
+                let max_x = screen_width - min_visible;
+                let max_y = screen_height - min_visible;
+                
+                // 检查是否越界
+                let is_out_of_bounds = 
+                    logical_x < -toolbar_size + min_visible ||
+                    logical_y < -toolbar_size + min_visible ||
+                    logical_x > max_x ||
+                    logical_y > max_y;
+                
+                if is_out_of_bounds {
+                    println!("⚠️  保存的位置越界，使用默认位置");
+                    println!("   屏幕尺寸: {}x{}, 保存位置(逻辑): ({}, {})", 
+                             screen_width, screen_height, logical_x, logical_y);
+                    // 使用默认位置（右下角）
+                    let x = screen_width - toolbar_size - margin - 60.0;
+                    let y = screen_height - toolbar_size - margin - 80.0;
+                    
+                    if let Err(e) = window.set_position(tauri::PhysicalPosition::new(
+                        (x * scale_factor) as i32,
+                        (y * scale_factor) as i32
+                    )) {
+                        eprintln!("❌ 设置默认位置失败: {}", e);
+                    }
+                } else {
+                    // 位置有效，直接使用
+                    println!("✅ 位置有效，应用保存的位置");
+                    if let Err(e) = window.set_position(tauri::PhysicalPosition::new(
+                        saved_x as i32,
+                        saved_y as i32
+                    )) {
+                        eprintln!("❌ 设置工具栏位置失败: {}", e);
+                    }
+                }
+            } else {
+                // 无法获取显示器信息，直接使用保存的位置
+                println!("⚠️  无法获取显示器信息，直接使用保存的位置");
+                if let Err(e) = window.set_position(tauri::PhysicalPosition::new(
+                    saved_x as i32,
+                    saved_y as i32
+                )) {
+                    eprintln!("❌ 设置工具栏位置失败: {}", e);
+                }
+            }
+        } else {
+            // 无法获取显示器，直接使用保存的位置
+            println!("⚠️  无法获取当前显示器，直接使用保存的位置");
+            if let Err(e) = window.set_position(tauri::PhysicalPosition::new(
+                saved_x as i32,
+                saved_y as i32
+            )) {
+                eprintln!("❌ 设置工具栏位置失败: {}", e);
+            }
         }
     } else {
         // 获取主显示器信息并计算右下角位置

@@ -1,8 +1,8 @@
 <template>
-  <div id="toolbar-container" :class="{ dragging: isDragActive }" @click.self="handleOutsideClick">
+  <div id="toolbar-container" @click.self="handleOutsideClick" data-tauri-drag-region>
     <!-- 气泡菜单 -->
     <transition name="bubble">
-      <div v-if="menuVisible" class="bubble-menu" @click.stop>
+      <div v-if="menuVisible" class="bubble-menu" @click.stop data-tauri-drag-region="false">
         <div v-for="(item, index) in menuItems" :key="item.id" class="bubble-wrapper" :style="getBubbleStyle(index)">
           <div
             class="bubble-item"
@@ -21,10 +21,7 @@
     <div
       class="toolbar-icon"
       :class="{ active: menuVisible }"
-      @mousedown="handleMouseDown"
-      @mouseup="handleMouseUp"
-      @touchstart.prevent="handleMouseDown"
-      @touchend="handleMouseUp"
+      data-tauri-drag-region="false"
       @click.stop="toggleMenu"
       @contextmenu.prevent="toggleMenu"
     >
@@ -46,8 +43,6 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import * as PIXI from 'pixi.js'
 
 const menuVisible = ref(false)
-const isDragActive = ref(false)
-const DRAG_THRESHOLD_SQ = 9 // 3px 的平方
 const speechVisible = ref(false)
 const speechText = ref('')
 let speechTimer = null
@@ -63,11 +58,64 @@ let animationTimer = null
 
 // 精灵图集 URL
 const SPRITESHEET_URL =
-  'https://hub.gitmirror.com/raw.githubusercontent.com/qiin2333/qiin.github.io/assets/img/toolbar-spritesheet.png?t=' +
-  Date.now()
+  'https://hub.gitmirror.com/raw.githubusercontent.com/qiin2333/qiin.github.io/assets/img/toolbar-spritesheet.png'
 
 // 精灵图集别名，便于使用 PixiJS 资源缓存
 const SPRITESHEET_ALIAS = 'toolbar-spritesheet'
+
+// IndexedDB 缓存配置
+const DB_NAME = 'toolbar-cache'
+const DB_STORE = 'images'
+const CACHE_KEY = 'spritesheet-blob'
+
+// 打开 IndexedDB
+const openDB = () => {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1)
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => resolve(request.result)
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result
+      if (!db.objectStoreNames.contains(DB_STORE)) {
+        db.createObjectStore(DB_STORE)
+      }
+    }
+  })
+}
+
+// 从 IndexedDB 获取缓存的 Blob
+const getCachedBlob = async () => {
+  try {
+    const db = await openDB()
+    const transaction = db.transaction([DB_STORE], 'readonly')
+    const store = transaction.objectStore(DB_STORE)
+    return new Promise((resolve, reject) => {
+      const request = store.get(CACHE_KEY)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+  } catch (error) {
+    console.warn('⚠️  IndexedDB 读取失败:', error)
+    return null
+  }
+}
+
+// 保存 Blob 到 IndexedDB
+const saveBlobToCache = async (blob) => {
+  try {
+    const db = await openDB()
+    const transaction = db.transaction([DB_STORE], 'readwrite')
+    const store = transaction.objectStore(DB_STORE)
+    await new Promise((resolve, reject) => {
+      const request = store.put(blob, CACHE_KEY)
+      request.onsuccess = () => resolve()
+      request.onerror = () => reject(request.error)
+    })
+    console.log('✅ 精灵图已缓存到 IndexedDB')
+  } catch (error) {
+    console.warn('⚠️  IndexedDB 保存失败:', error)
+  }
+}
 
 // 默认话术（fallback）
 const defaultPhrases = [
@@ -93,7 +141,7 @@ const defaultPhrases = [
 // 响应式话术列表
 const speechPhrases = ref([...defaultPhrases])
 
-// 通过后端代理加载话术
+// 通过后端代理加载话术（延迟加载，不阻塞图标显示）
 const loadSpeechPhrases = async () => {
   try {
     console.log('💬 开始加载话术配置...')
@@ -108,9 +156,6 @@ const loadSpeechPhrases = async () => {
     console.warn('⚠️  话术加载失败，使用默认话术:', error)
   }
 }
-
-// 立即加载话术
-loadSpeechPhrases()
 
 const showSpeech = () => {
   if (speechVisible.value) return
@@ -133,8 +178,8 @@ const startSpeechLoop = () => {
   setTimeout(() => showSpeech(), firstDelay)
   // 后续随机间隔 15s ~ 35s
   speechInterval = setInterval(() => {
-    // 避免拖动或菜单展开时打断交互
-    if (!isDragActive.value && !menuVisible.value) {
+    // 避免菜单展开时打断交互
+    if (!menuVisible.value) {
       showSpeech()
     }
   }, 15000 + Math.random() * 20000)
@@ -154,12 +199,12 @@ const menuItems = [
   {
     id: 'dpi',
     label: '调整 DPI',
-    icon: '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path fill="white" d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path fill="white" d="M21 3H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14zM5 7h5v5H5zm6 0h8v2h-8zm0 3h8v2h-8zM5 13h5v5H5zm6 0h8v2h-8z"/></svg>',
   },
   {
     id: 'bitrate',
     label: '码率调整',
-    icon: '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path fill="white" d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14zm2.5-4h-2v2H9v-2H7V9h2V7h1v2h2v1z"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path fill="white" d="M9 3L5 6.99h3V14h2V6.99h3L9 3zm7 14.01V10h-2v7.01h-3L15 21l4-3.99h-3z"/></svg>',
   },
   {
     id: 'shortcuts',
@@ -174,104 +219,10 @@ const menuItems = [
   },
 ]
 
-let isDragging = false
-let startX = 0
-let startY = 0
-let mouseMoveHandler = null
-let mouseUpHandler = null
-
-const bindTempDragListeners = () => {
-  window.addEventListener('mousemove', mouseMoveHandler)
-  window.addEventListener('mouseup', mouseUpHandler)
-  window.addEventListener('touchmove', mouseMoveHandler, { passive: false })
-  window.addEventListener('touchend', mouseUpHandler)
-}
-
-const unbindTempDragListeners = () => {
-  if (mouseMoveHandler) {
-    window.removeEventListener('mousemove', mouseMoveHandler)
-    window.removeEventListener('touchmove', mouseMoveHandler)
-  }
-  if (mouseUpHandler) {
-    window.removeEventListener('mouseup', mouseUpHandler)
-    window.removeEventListener('touchend', mouseUpHandler)
-  }
-}
-
-// 统一获取坐标（支持鼠标和触摸）
-const getEventCoords = (e) => {
-  if (e.touches && e.touches.length > 0) {
-    return { x: e.touches[0].clientX, y: e.touches[0].clientY }
-  }
-  return { x: e.clientX, y: e.clientY }
-}
-
-const handleMouseDown = (e) => {
-  // 右键不处理
-  if (e.button === 2) {
-    return
-  }
-
-  // 左键或触摸
-  if (e.button === 0 || e.type === 'touchstart') {
-    // 使用位移阈值触发拖动，避免动画导致的偏移
-    const coords = getEventCoords(e)
-    startX = coords.x
-    startY = coords.y
-    isDragging = false
-
-    mouseMoveHandler = (ev) => {
-      if (isDragging) return
-
-      // 阻止触摸滚动
-      if (ev.type === 'touchmove') {
-        ev.preventDefault()
-      }
-
-      const coords = getEventCoords(ev)
-      const dx = coords.x - startX
-      const dy = coords.y - startY
-      if (dx * dx + dy * dy > DRAG_THRESHOLD_SQ) {
-        // 超过阈值判定为拖动
-        isDragging = true
-        isDragActive.value = true
-        const window = getCurrentWindow()
-        window.startDragging().finally(() => {
-          isDragActive.value = false
-        })
-      }
-    }
-
-    mouseUpHandler = () => {
-      unbindTempDragListeners()
-      mouseMoveHandler = null
-      mouseUpHandler = null
-      // 延后一帧复位，避免与点击冲突
-      setTimeout(() => {
-        isDragging = false
-      }, 0)
-    }
-
-    bindTempDragListeners()
-  }
-}
-
-const handleMouseUp = () => {
-  unbindTempDragListeners()
-  mouseMoveHandler = null
-  mouseUpHandler = null
-}
-
 const toggleMenu = (e) => {
   if (e) {
     e.preventDefault()
     e.stopPropagation()
-  }
-
-  // 如果正在拖动，不切换菜单
-  if (isDragging) {
-    isDragging = false
-    return
   }
 
   console.log('切换菜单，当前状态:', menuVisible.value)
@@ -334,13 +285,52 @@ const initPixiApp = async () => {
     autoDensity: true,
   })
 
-  if (!PIXI.Assets.resolver.hasKey(SPRITESHEET_ALIAS)) {
-    PIXI.Assets.add({ alias: SPRITESHEET_ALIAS, src: SPRITESHEET_URL })
+  let spritesheet = null
+  let shouldUpdateCache = true
+
+  const cachedBlob = await getCachedBlob()
+  if (cachedBlob) {
+    try {
+      console.log('⚡ 使用 IndexedDB 缓存的精灵图')
+
+      // 将 Blob 转换为 ImageBitmap（PixiJS 支持）
+      const imageBitmap = await createImageBitmap(cachedBlob)
+
+      // 从 ImageBitmap 创建纹理（PixiJS 会自动处理）
+      const texture = PIXI.Texture.from(imageBitmap)
+
+      // 创建一个兼容的 spritesheet 对象
+      spritesheet = {
+        width: imageBitmap.width,
+        height: imageBitmap.height,
+        source: texture.source,
+      }
+
+      console.log('✅ 缓存的精灵图加载成功', spritesheet.width, 'x', spritesheet.height)
+    } catch (error) {
+      console.warn('⚠️  缓存的精灵图加载失败，将重新下载:', error)
+      spritesheet = null
+    }
   }
 
-  const spritesheet = PIXI.Assets.cache.has(SPRITESHEET_ALIAS)
-    ? PIXI.Assets.cache.get(SPRITESHEET_ALIAS)
-    : await PIXI.Assets.load(SPRITESHEET_ALIAS)
+  if (!spritesheet) {
+    console.log('📥 首次加载精灵图')
+    if (!PIXI.Assets.resolver.hasKey(SPRITESHEET_ALIAS)) {
+      PIXI.Assets.add({ alias: SPRITESHEET_ALIAS, src: SPRITESHEET_URL })
+    }
+    spritesheet = await PIXI.Assets.load(SPRITESHEET_ALIAS)
+  } else {
+    // 使用了缓存，在后台更新
+    shouldUpdateCache = true
+  }
+
+  if (shouldUpdateCache) {
+    const updateUrl = `${SPRITESHEET_URL}?t=${Date.now()}`
+    fetch(updateUrl)
+      .then((res) => res.blob())
+      .then((blob) => saveBlobToCache(blob))
+      .catch((err) => console.warn('⚠️  后台更新精灵图失败:', err))
+  }
 
   // 4列x4行 (16帧)
   const frameWidth = spritesheet.width / 4
@@ -409,16 +399,14 @@ const cleanupPixiApp = () => {
 }
 
 onMounted(async () => {
+  // 优先显示图标，话术后台加载不阻塞
   await initPixiApp()
   startSpeechLoop()
+
+  loadSpeechPhrases()
 })
 
 onUnmounted(() => {
-  // 位置保存已在 Rust 后端窗口关闭事件中处理
-  
-  unbindTempDragListeners()
-  mouseMoveHandler = null
-  mouseUpHandler = null
   if (speechInterval) {
     clearInterval(speechInterval)
     speechInterval = null
@@ -445,16 +433,6 @@ onUnmounted(() => {
   box-sizing: border-box;
   transform: translateZ(0);
   -webkit-font-smoothing: antialiased;
-}
-
-/* 拖动进行时，关闭图标的浮动/缩放动画，避免视觉与鼠标偏移 */
-#toolbar-container.dragging .toolbar-icon {
-  animation: none !important;
-  transform: none !important;
-}
-
-#toolbar-container.dragging .toolbar-icon:hover {
-  animation: none !important;
 }
 
 /* 气泡菜单容器 */
@@ -583,7 +561,6 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  -webkit-app-region: no-drag;
   background: transparent;
   border: none;
   padding: 0;
@@ -634,7 +611,7 @@ onUnmounted(() => {
   bottom: 100px;
   left: 50%;
   transform: translateX(-50%);
-  max-width: 220px;
+  max-width: 280px;
   padding: 8px 12px;
   color: #4b2b34;
   font-size: 12px;
@@ -643,15 +620,8 @@ onUnmounted(() => {
   border-radius: 12px;
   box-shadow: 0 6px 18px rgba(255, 182, 193, 0.45), 0 0 0 2px rgba(255, 255, 255, 0.7) inset;
   pointer-events: none;
-  white-space: normal;
-  overflow-wrap: break-word;
-  word-break: keep-all;
-  hyphens: auto;
+  white-space: nowrap;
   overflow: hidden;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  line-clamp: 2;
-  -webkit-line-clamp: 2;
   text-overflow: ellipsis;
 }
 

@@ -16,6 +16,7 @@ use tauri::{
 };
 use std::sync::Mutex;
 use std::time::Duration;
+use url::Url;
 
 struct AppState {
     #[allow(dead_code)]
@@ -362,163 +363,16 @@ fn main() {
         })
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            // 当检测到第二个实例启动时，显示并聚焦已有的主窗口
-            println!("🔔 检测到第二个实例启动，激活现有窗口");
-            
-            if !args.is_empty() {
-                println!("   启动参数: {:?}", args);
-            }
-            
-            // 激活主窗口的函数
-            let activate_window = || {
-                if let Some(window) = app.get_webview_window("main") {
-                    println!("📱 正在激活主窗口...");
-                    
-                    // 检查窗口当前状态
-                    match (window.is_visible(), window.is_minimized()) {
-                        (Ok(is_visible), Ok(is_minimized)) => {
-                            println!("   当前状态: visible={}, minimized={}", is_visible, is_minimized);
-                            
-                            // 处理最小化状态
-                            if is_minimized {
-                                let _ = window.unminimize();
-                                println!("   ✅ 已取消最小化");
-                            }
-                            
-                            // 处理可见性
-                            if !is_visible {
-                                let _ = window.show();
-                                println!("   ✅ 已显示窗口");
-                            }
-                            
-                            // 聚焦窗口
-                            let _ = window.set_focus();
-                            println!("   ✅ 已聚焦窗口");
-                            
-                            // 短暂置顶以强制显示在前台
-                            let window_clone = window.clone();
-                            let _ = window.set_always_on_top(true);
-                            
-                            // 异步重置置顶状态
-                            tauri::async_runtime::spawn(async move {
-                                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-                                let _ = window_clone.set_always_on_top(false);
-                            });
-                            
-                            println!("✅ 窗口激活完成");
-                            true
-                        }
-                        (Err(e1), Err(e2)) => {
-                            println!("❌ 无法获取窗口状态: visible={:?}, minimized={:?}", e1, e2);
-                            false
-                        }
-                        _ => {
-                            println!("⚠️  部分窗口状态获取失败，尝试直接激活");
-                            let _ = window.unminimize();
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                            true
-                        }
-                    }
-                } else {
-                    println!("❌ 未找到主窗口 'main'");
-                    false
-                }
-            };
-            
-            // 执行激活
-            activate_window();
+            handle_single_instance(app, args);
         }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .setup(|app| {
-            // 创建系统托盘
-            create_system_tray(&app.handle())?;
-            
-            // 注册全局快捷键 CTRL+SHIFT+ALT+T 显示工具栏
-            {
-                use tauri_plugin_global_shortcut::GlobalShortcutExt;
-                use tauri_plugin_global_shortcut::ShortcutState;
-                
-                let app_handle = app.handle().clone();
-                
-                app.handle().global_shortcut().on_shortcut("CmdOrCtrl+Shift+Alt+T", move |_app, _shortcut, event| {
-                    if event.state == ShortcutState::Pressed {
-                        println!("⌨️ 全局快捷键触发: CTRL+SHIFT+ALT+T");
-                        
-                        // 切换工具栏显示/隐藏
-                        if let Some(toolbar_window) = app_handle.get_webview_window("toolbar") {
-                            // 工具栏已存在，关闭它
-                            println!("🔧 工具栏已存在，关闭");
-                            let _ = toolbar_window.close();
-                        } else {
-                            // 工具栏不存在，创建它
-                            println!("🔧 工具栏不存在，创建");
-                            let app_clone = app_handle.clone();
-                            tauri::async_runtime::spawn(async move {
-                                if let Err(e) = toolbar::create_toolbar_window_internal(&app_clone) {
-                                    eprintln!("❌ 快捷键创建工具栏失败: {}", e);
-                                }
-                            });
-                        }
-                    }
-                })?;
-                
-                println!("⌨️ 全局快捷键已注册: CTRL+SHIFT+ALT+T");
-            }
-            
-            // 设置全局菜单事件处理
-            let app_handle = app.handle().clone();
-            app.handle().on_menu_event(move |_app, event| {
-                let event_id = event.id().as_ref();
-                if event_id.starts_with("toolbar_") {
-                    println!("🔧 全局菜单事件: {:?}", event.id());
-                    toolbar::handle_toolbar_menu_event(&app_handle, event_id);
-                }
-            });
-            
-            // 获取 Sunshine URL 并配置代理目标
-            tauri::async_runtime::spawn(async {
-                // 尝试获取 Sunshine URL
-                match sunshine::get_sunshine_url().await {
-                    Ok(url) => {
-                        println!("🎯 Sunshine URL: {}", url);
-                        // 移除尾部的 /
-                        let base_url = url.trim_end_matches('/').to_string();
-                        proxy_server::set_sunshine_target(base_url);
-                    }
-                    Err(e) => {
-                        eprintln!("⚠️  无法获取 Sunshine URL，使用默认: {}", e);
-                    }
-                }
-                
-                // 启动代理服务器
-                if let Err(e) = proxy_server::start_proxy_server().await {
-                    eprintln!("❌ 代理服务器启动失败: {}", e);
-                }
-            });
-            
-            Ok(())
+            setup_application(app)
         })
         .on_window_event(|window, event| {
-            match event {
-                WindowEvent::CloseRequested { api, .. } => {
-                    // 只对主窗口隐藏，其他窗口（工具栏、工具窗口）允许正常关闭
-                    if window.label() == "main" {
-                        api.prevent_close();
-                        let _ = window.hide();
-                    } else if window.label() == "toolbar" {
-                        // 工具栏窗口关闭前保存位置
-                        if let Ok(position) = window.outer_position() {
-                            let app = window.app_handle();
-                            toolbar::save_toolbar_position_internal(&app, position.x as f64, position.y as f64);
-                        }
-                    }
-                    // 其他窗口不调用 prevent_close()，让它们正常关闭
-                }
-                _ => {}
-            }
+            handle_window_event(window, event);
         })
         .invoke_handler(tauri::generate_handler![
             toggle_dark_mode,
@@ -557,4 +411,209 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// 处理单实例逻辑
+fn handle_single_instance(app: &tauri::AppHandle, args: Vec<String>) {
+    println!("🔔 检测到第二个实例启动，激活现有窗口");
+    
+    if !args.is_empty() {
+        println!("   启动参数: {:?}", args);
+    }
+    
+    // 提取 URL 参数
+    let target_url = args.iter()
+        .find(|arg| arg.starts_with("--url="))
+        .map(|arg| arg.trim_start_matches("--url=").to_string());
+    
+    if let Some(url) = &target_url {
+        println!("📍 检测到 URL 参数: {}", url);
+    }
+    
+    // 激活主窗口
+    activate_main_window(app, target_url);
+}
+
+/// 激活主窗口
+fn activate_main_window(app: &tauri::AppHandle, target_url: Option<String>) {
+    let Some(window) = app.get_webview_window("main") else {
+        println!("❌ 未找到主窗口 'main'");
+        return;
+    };
+    
+    println!("📱 正在激活主窗口...");
+    
+    // 获取窗口状态
+    let is_visible = window.is_visible().unwrap_or(false);
+    let is_minimized = window.is_minimized().unwrap_or(false);
+    
+    println!("   当前状态: visible={}, minimized={}", is_visible, is_minimized);
+    
+    // 恢复窗口状态
+    if is_minimized {
+        let _ = window.unminimize();
+        println!("   ✅ 已取消最小化");
+    }
+    
+    if !is_visible {
+        let _ = window.show();
+        println!("   ✅ 已显示窗口");
+    }
+    
+    let _ = window.set_focus();
+    println!("   ✅ 已聚焦窗口");
+    
+    // 处理 URL 导航
+    if let Some(url) = target_url {
+        navigate_to_url(&window, &url);
+    }
+    
+    // 短暂置顶以强制显示在前台
+    let _ = window.set_always_on_top(true);
+    let window_clone = window.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let _ = window_clone.set_always_on_top(false);
+    });
+    
+    println!("✅ 窗口激活完成");
+}
+
+/// 导航到指定 URL
+fn navigate_to_url(window: &tauri::WebviewWindow, url: &str) {
+    println!("🔄 正在导航到: {}", url);
+    
+    let Ok(parsed_url) = Url::parse(url) else {
+        println!("❌ URL 解析失败: {}", url);
+        return;
+    };
+    
+    let path = format!(
+        "{}{}",
+        parsed_url.path(),
+        parsed_url.query().map(|q| format!("?{}", q)).unwrap_or_default()
+    );
+    
+    let script = format!(
+        r#"
+        (function() {{
+            const iframe = document.querySelector('.sunshine-iframe');
+            if (iframe && iframe.contentWindow) {{
+                iframe.src = 'http://localhost:48081{}';
+                console.log('📍 导航到:', '{}');
+            }}
+        }})();
+        "#,
+        path, path
+    );
+    
+    let _ = window.eval(&script);
+    println!("✅ 已发送导航命令");
+}
+
+/// 应用程序初始化设置
+fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    // 创建系统托盘
+    create_system_tray(&app.handle())?;
+    
+    // 注册全局快捷键
+    register_global_shortcuts(app)?;
+    
+    // 设置全局菜单事件处理
+    setup_menu_event_handler(app);
+    
+    // 启动代理服务器
+    start_proxy_server_async();
+    
+    Ok(())
+}
+
+/// 注册全局快捷键
+fn register_global_shortcuts(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+    
+    let app_handle = app.handle().clone();
+    
+    app.handle().global_shortcut().on_shortcut("CmdOrCtrl+Shift+Alt+T", move |_app, _shortcut, event| {
+        if event.state == ShortcutState::Pressed {
+            println!("⌨️ 全局快捷键触发: CTRL+SHIFT+ALT+T");
+            toggle_toolbar_window(&app_handle);
+        }
+    })?;
+    
+    println!("⌨️ 全局快捷键已注册: CTRL+SHIFT+ALT+T");
+    Ok(())
+}
+
+/// 切换工具栏窗口显示/隐藏
+fn toggle_toolbar_window(app_handle: &tauri::AppHandle) {
+    if let Some(toolbar_window) = app_handle.get_webview_window("toolbar") {
+        println!("🔧 工具栏已存在，关闭");
+        let _ = toolbar_window.close();
+    } else {
+        println!("🔧 工具栏不存在，创建");
+        let app_clone = app_handle.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = toolbar::create_toolbar_window_internal(&app_clone) {
+                eprintln!("❌ 快捷键创建工具栏失败: {}", e);
+            }
+        });
+    }
+}
+
+/// 设置全局菜单事件处理器
+fn setup_menu_event_handler(app: &mut tauri::App) {
+    let app_handle = app.handle().clone();
+    app.handle().on_menu_event(move |_app, event| {
+        let event_id = event.id().as_ref();
+        if event_id.starts_with("toolbar_") {
+            println!("🔧 全局菜单事件: {:?}", event.id());
+            toolbar::handle_toolbar_menu_event(&app_handle, event_id);
+        }
+    });
+}
+
+/// 异步启动代理服务器
+fn start_proxy_server_async() {
+    tauri::async_runtime::spawn(async {
+        // 获取 Sunshine URL 并配置代理目标
+        match sunshine::get_sunshine_url().await {
+            Ok(url) => {
+                println!("🎯 Sunshine URL: {}", url);
+                let base_url = url.trim_end_matches('/').to_string();
+                proxy_server::set_sunshine_target(base_url);
+            }
+            Err(e) => {
+                eprintln!("⚠️  无法获取 Sunshine URL，使用默认: {}", e);
+            }
+        }
+        
+        // 启动代理服务器
+        if let Err(e) = proxy_server::start_proxy_server().await {
+            eprintln!("❌ 代理服务器启动失败: {}", e);
+        }
+    });
+}
+
+/// 处理窗口事件
+fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
+    if let WindowEvent::CloseRequested { api, .. } = event {
+        match window.label() {
+            "main" => {
+                // 主窗口隐藏而不是关闭
+                api.prevent_close();
+                let _ = window.hide();
+            }
+            "toolbar" => {
+                // 工具栏窗口关闭前保存位置
+                if let Ok(position) = window.outer_position() {
+                    let app = window.app_handle();
+                    toolbar::save_toolbar_position_internal(&app, position.x as f64, position.y as f64);
+                }
+            }
+            _ => {
+                // 其他窗口正常关闭
+            }
+        }
+    }
 }

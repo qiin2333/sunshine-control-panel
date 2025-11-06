@@ -33,6 +33,7 @@ encoding_rs = "0.8"
 regex = "1.10"
 base64 = "0.21"
 chrono = { version = "0.4", features = ["serde"] }
+url = "2.5"
 
 [features]
 # by default Tauri runs in production mode

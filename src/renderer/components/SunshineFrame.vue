@@ -41,22 +41,34 @@ const sidebarMenuRef = ref(null)
 
 onMounted(async () => {
   try {
-    // 检查是否有 URL 参数（来自命令行参数）
-    const urlParams = new URLSearchParams(window.location.search)
-    const cmdLineUrl = urlParams.get('url')
+    // 检查是否有命令行传递的 URL 参数（来自 --url= 参数）
+    const cmdLineUrl = await sunshine.getCommandLineUrl()
     
     if (cmdLineUrl) {
       // 使用命令行参数指定的 URL（通过代理）
       console.log('✅ 使用命令行参数 URL:', cmdLineUrl)
-      // 保持使用代理，但告诉用户是从命令行来的
-      sunshineUrl.value = 'http://localhost:48081/'
+      
+      // 提取路径部分（如 /pin）
+      let targetPath = '/'
+      try {
+        const urlObj = new URL(cmdLineUrl)
+        targetPath = urlObj.pathname + urlObj.search + urlObj.hash
+        console.log('📍 提取的路径:', targetPath)
+      } catch (e) {
+        console.warn('⚠️  URL 解析失败，使用根路径:', e)
+      }
+      
+      // 设置代理 URL，包含路径
+      sunshineUrl.value = 'http://localhost:48081' + targetPath
       displayUrl.value = cmdLineUrl
-      console.log('📡 通过本地代理访问:', cmdLineUrl)
+      currentPath.value = targetPath
+      console.log('📡 通过本地代理访问:', sunshineUrl.value)
     } else {
       // 获取代理服务器 URL（支持主题同步）
       const proxyUrl = await sunshine.getUrl()
       sunshineUrl.value = 'http://localhost:48081/'
       displayUrl.value = proxyUrl // 显示实际的 Sunshine URL
+      currentPath.value = '/'
       console.log('✅ 使用本地代理服务器（支持主题同步）')
       console.log('📡 代理 URL:', sunshineUrl.value)
       console.log('🎯 目标 Sunshine:', proxyUrl)

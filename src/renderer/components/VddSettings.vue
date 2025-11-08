@@ -53,12 +53,7 @@
               placeholder="例如: 1920x1080"
               style="width: 140px"
             />
-            <el-button
-              v-else
-              size="small"
-              @click="showResolutionInput"
-              class="add-btn"
-            >
+            <el-button v-else size="small" @click="showResolutionInput" class="add-btn">
               <el-icon><Plus /></el-icon>
               新增分辨率
             </el-button>
@@ -113,12 +108,7 @@
               placeholder="30-240"
               style="width: 100px"
             />
-            <el-button
-              v-else
-              size="small"
-              @click="showRefreshRateInput"
-              class="add-btn"
-            >
+            <el-button v-else size="small" @click="showRefreshRateInput" class="add-btn">
               <el-icon><Plus /></el-icon>
               新增刷新率
             </el-button>
@@ -231,7 +221,7 @@ const loadSettings = async () => {
     }
 
     const { data } = result
-    
+
     // 确保 colour 和 logging 字段存在（它们在后端是 Option 类型）
     const mergedData = {
       ...initialSettings,
@@ -239,7 +229,7 @@ const loadSettings = async () => {
       colour: data.colour || initialSettings.colour,
       logging: data.logging || initialSettings.logging,
     }
-    
+
     Object.assign(settings, mergedData)
 
     // GPU数据处理 - 新结构：gpu 是单个对象
@@ -318,7 +308,7 @@ const saveSettings = async () => {
     const result = await vdd.saveSettings(payload)
 
     if (result?.success) {
-      ElMessage.success('设置已保存')
+      ElMessage.success('设置已保存, 若设置未生效, 请手动在设备管理器中重启 VDD 适配器')
     } else {
       throw new Error(result?.message || '未知错误')
     }
@@ -435,7 +425,7 @@ onMounted(() => {
 }
 
 // ========== 深色模式 ==========
-[data-bs-theme="dark"] {
+[data-bs-theme='dark'] {
   .vdd-header {
     border-bottom: 1px solid rgba(230, 213, 184, 0.15);
     background: linear-gradient(135deg, rgba(212, 165, 165, 0.1), rgba(230, 213, 184, 0.05));
@@ -450,13 +440,10 @@ onMounted(() => {
     }
   }
 
-
   .vdd-form {
     background: linear-gradient(135deg, rgba(61, 50, 53, 0.4), rgba(74, 63, 66, 0.3));
     border: 1px solid rgba(212, 165, 165, 0.2);
-    box-shadow: 
-      0 8px 32px rgba(0, 0, 0, 0.3),
-      0 2px 8px rgba(212, 165, 165, 0.1);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(212, 165, 165, 0.1);
 
     :deep(.el-form-item__label) {
       color: #e6d5b8;
@@ -538,7 +525,7 @@ onMounted(() => {
 }
 
 // ========== 浅色模式 ==========
-[data-bs-theme="light"] {
+[data-bs-theme='light'] {
   .vdd-header {
     border-bottom: 1px solid rgba(74, 158, 255, 0.2);
     background: linear-gradient(135deg, rgba(74, 158, 255, 0.1), rgba(122, 184, 255, 0.05));
@@ -553,13 +540,10 @@ onMounted(() => {
     }
   }
 
-
   .vdd-form {
     background: linear-gradient(135deg, rgba(240, 248, 255, 0.8), rgba(230, 242, 255, 0.6));
     border: 1px solid rgba(74, 158, 255, 0.2);
-    box-shadow: 
-      0 8px 32px rgba(74, 158, 255, 0.15),
-      0 2px 8px rgba(74, 158, 255, 0.1);
+    box-shadow: 0 8px 32px rgba(74, 158, 255, 0.15), 0 2px 8px rgba(74, 158, 255, 0.1);
 
     :deep(.el-form-item__label) {
       color: #3a7ed5;
@@ -670,7 +654,7 @@ onMounted(() => {
   padding: 32px;
   padding-bottom: 120px; // 为底部认证标识留出空间
   position: relative;
-  
+
   &::-webkit-scrollbar {
     width: 8px;
   }
@@ -701,11 +685,8 @@ onMounted(() => {
     padding: 6px;
     background: linear-gradient(135deg, #fff 0%, #f5f5f5 100%);
     position: relative;
-    box-shadow: 
-      0 3px 8px rgba(0, 0, 0, 0.25),
-      inset 0 1px 0 rgba(255, 255, 255, 0.8),
-      inset 0 -1px 0 rgba(0, 0, 0, 0.1);
-    
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.8), inset 0 -1px 0 rgba(0, 0, 0, 0.1);
+
     // 移除外层边框效果，使用单一专业边框
     &::after {
       content: '';
@@ -738,7 +719,7 @@ onMounted(() => {
 }
 
 // 深色模式下的标识调整
-[data-bs-theme="dark"] {
+[data-bs-theme='dark'] {
   .cert-badges {
     opacity: 0.5;
   }
@@ -747,10 +728,7 @@ onMounted(() => {
     // 保持黑白专业配色，稍微调暗以适应深色背景
     background: linear-gradient(135deg, #e8e8e8 0%, #d0d0d0 100%);
     border-color: #1a1a1a;
-    box-shadow: 
-      0 3px 8px rgba(0, 0, 0, 0.4),
-      inset 0 1px 0 rgba(255, 255, 255, 0.3),
-      inset 0 -1px 0 rgba(0, 0, 0, 0.2);
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.3), inset 0 -1px 0 rgba(0, 0, 0, 0.2);
 
     .cert-text {
       color: #1a1a1a;
@@ -767,7 +745,7 @@ onMounted(() => {
 }
 
 // 浅色模式下的标识调整
-[data-bs-theme="light"] {
+[data-bs-theme='light'] {
   .cert-badges {
     opacity: 0.65;
   }
@@ -776,10 +754,7 @@ onMounted(() => {
     // 浅色模式保持更亮的白色
     background: linear-gradient(135deg, #fff 0%, #fafafa 100%);
     border-color: #000;
-    box-shadow: 
-      0 3px 10px rgba(0, 0, 0, 0.15),
-      inset 0 1px 0 rgba(255, 255, 255, 1),
-      inset 0 -1px 0 rgba(0, 0, 0, 0.05);
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 1), inset 0 -1px 0 rgba(0, 0, 0, 0.05);
   }
 }
 
@@ -834,7 +809,7 @@ onMounted(() => {
 }
 
 // 主按钮在深浅模式下的样式
-[data-bs-theme="dark"] .form-actions .el-button.el-button--primary {
+[data-bs-theme='dark'] .form-actions .el-button.el-button--primary {
   background: linear-gradient(135deg, @morandi-red, @morandi-yellow);
   border: none;
   color: #2d2628;
@@ -846,7 +821,7 @@ onMounted(() => {
   }
 }
 
-[data-bs-theme="light"] .form-actions .el-button.el-button--primary {
+[data-bs-theme='light'] .form-actions .el-button.el-button--primary {
   background: linear-gradient(135deg, @gura-blue, @gura-light-blue);
   border: none;
   color: white;
@@ -869,4 +844,3 @@ onMounted(() => {
   }
 }
 </style>
-

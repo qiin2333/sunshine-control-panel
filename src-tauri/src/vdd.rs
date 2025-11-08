@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use quick_xml::de::from_str;
 use quick_xml::se::to_string;
 use crate::sunshine;
@@ -63,6 +63,31 @@ async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), Stri
     
     println!("  📝 目标文件: {:?}", vdd_xml_path);
     
+    // 先尝试使用 ShellExecuteW 触发 UAC 并复制
+    let mut shell_execute_success = false;
+    match elevated_copy_with_shell_execute(&temp_path, vdd_xml_path) {
+        Ok(()) => {
+            println!("  🔧 已请求使用 ShellExecuteW 提权复制");
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            match fs::read_to_string(vdd_xml_path) {
+                Ok(written) if written == content => {
+                    println!("  ✅ ShellExecuteW 提权复制成功");
+                    shell_execute_success = true;
+                }
+                Ok(_) => {
+                    println!("  ⚠️ ShellExecuteW 复制后内容不匹配，准备回退到 PowerShell");
+                }
+                Err(err) => {
+                    println!("  ⚠️ ShellExecuteW 复制后读取失败 ({}), 准备回退到 PowerShell", err);
+                }
+            }
+        }
+        Err(err) => {
+            println!("  ⚠️ ShellExecuteW 提权复制调用失败 ({}), 准备回退到 PowerShell", err);
+        }
+    }
+    
+    if !shell_execute_success {
     // 使用 Start-Process 以管理员权限运行 PowerShell 复制命令
     let inner_command = format!(
         "Copy-Item -Path '{}' -Destination '{}' -Force",
@@ -81,9 +106,17 @@ async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), Stri
     let output = Command::new("powershell")
         .args(&["-NoProfile", "-Command", &ps_script])
         .spawn()
-        .map_err(|e| format!("执行 PowerShell 命令失败: {}", e))?
+            .map_err(|e| {
+                // 清理临时文件
+                let _ = fs::remove_file(&temp_path);
+                format!("执行 PowerShell 命令失败: {}", e)
+            })?
         .wait()
-        .map_err(|e| format!("等待 PowerShell 命令完成失败: {}", e))?;
+            .map_err(|e| {
+                // 清理临时文件
+                let _ = fs::remove_file(&temp_path);
+                format!("等待 PowerShell 命令完成失败: {}", e)
+            })?;
     
     // 等待文件写入完成
     println!("  ⏳ 等待文件写入完成...");
@@ -94,7 +127,7 @@ async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), Stri
         println!("  ❌ PowerShell 提权复制失败");
         
         // 尝试直接写入（可能会因权限不足而失败）
-        println!("  ⚠️  尝试直接写入...");
+            println!("  ⚠️ 尝试直接写入...");
         fs::write(vdd_xml_path, content)
             .map_err(|e| {
                 // 清理临时文件
@@ -104,10 +137,58 @@ async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), Stri
         println!("  ✓ 直接写入成功");
     } else {
         println!("  ✅ PowerShell 提权复制成功");
+        }
     }
     
     // 清理临时文件
     let _ = fs::remove_file(&temp_path);
+    
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn elevated_copy_with_shell_execute(source: &Path, destination: &Path) -> Result<(), String> {
+    use std::path::PathBuf;
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
+    
+    fn to_wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0u16)).collect()
+    }
+    
+    let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+    let cmd_path: PathBuf = Path::new(&system_root).join("System32").join("cmd.exe");
+    
+    if !cmd_path.exists() {
+        return Err(format!("找不到 cmd.exe: {:?}", cmd_path));
+    }
+    
+    let parameters = format!(
+        r#"/C copy "{}" "{}" /Y"#,
+        source.to_string_lossy(),
+        destination.to_string_lossy()
+    );
+    
+    let operation_w = to_wide("runas");
+    let file_w = to_wide(&cmd_path.to_string_lossy());
+    let parameters_w = to_wide(&parameters);
+    
+    unsafe {
+        let result = ShellExecuteW(
+            HWND(0),
+            PCWSTR(operation_w.as_ptr()),
+            PCWSTR(file_w.as_ptr()),
+            PCWSTR(parameters_w.as_ptr()),
+            PCWSTR::null(),
+            SW_HIDE,
+        );
+        
+        if result.0 as isize <= 32 {
+            return Err(format!("ShellExecuteW 返回错误码 {}", result.0 as isize));
+        }
+    }
     
     Ok(())
 }

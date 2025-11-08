@@ -53,6 +53,7 @@ windows = { version = "0.51", features = [
     "Win32_Security",
     "Win32_Graphics_Gdi",
     "Win32_UI",
+    "Win32_UI_Shell",
     "Win32_UI_HiDpi",
     "Win32_UI_WindowsAndMessaging",
 ] }

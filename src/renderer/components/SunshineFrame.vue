@@ -28,7 +28,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { sunshine } from '@/tauri-adapter.js'
 import SidebarMenu from './SidebarMenu.vue'
 
@@ -38,16 +38,33 @@ const displayUrl = ref('') // 显示的实际 URL
 const currentPath = ref('/') // 当前页面路径
 const sunshineIframe = ref(null)
 const sidebarMenuRef = ref(null)
+const animationsPaused = ref(false)
+
+/**
+ * 切换页面动画暂停/恢复
+ * 通过在 body 上添加/移除类，统一暂停 CSS 动画与过渡
+ */
+const setAnimationsPaused = (paused) => {
+  console.log('🔄 切换页面动画暂停/恢复:', paused)
+  animationsPaused.value = paused
+  const root = document.body
+  if (!root) return
+  if (paused) {
+    root.classList.add('paused-animations')
+  } else {
+    root.classList.remove('paused-animations')
+  }
+}
 
 onMounted(async () => {
   try {
     // 检查是否有命令行传递的 URL 参数（来自 --url= 参数）
     const cmdLineUrl = await sunshine.getCommandLineUrl()
-    
+
     if (cmdLineUrl) {
       // 使用命令行参数指定的 URL（通过代理）
       console.log('✅ 使用命令行参数 URL:', cmdLineUrl)
-      
+
       // 提取路径部分（如 /pin）
       let targetPath = '/'
       try {
@@ -57,7 +74,7 @@ onMounted(async () => {
       } catch (e) {
         console.warn('⚠️  URL 解析失败，使用根路径:', e)
       }
-      
+
       // 设置代理 URL，包含路径
       sunshineUrl.value = 'http://localhost:48081' + targetPath
       displayUrl.value = cmdLineUrl
@@ -92,6 +109,50 @@ onMounted(async () => {
     })
 
     console.log('✅ Tauri 文件拖放监听器已启用')
+
+    // 监听窗口状态变化以暂停/恢复动画
+    let pollTimer = null
+    let lastMinimized = false
+    let lastHidden = false
+
+    // 轮询检测窗口状态（因为 WebView2 不可靠触发 visibilitychange）
+    const checkWindowState = async () => {
+      try {
+        const isMinimized = await currentWindow.isMinimized()
+        const isVisible = await currentWindow.isVisible()
+        const shouldPause = isMinimized || !isVisible
+
+        // 状态变化时才调用
+        if (isMinimized !== lastMinimized || !isVisible !== lastHidden) {
+          console.log('🔍 窗口状态变化: 最小化=', isMinimized, '可见=', isVisible)
+          lastMinimized = isMinimized
+          lastHidden = !isVisible
+          setAnimationsPaused(shouldPause)
+        }
+      } catch (e) {
+        console.warn('⚠️  检测窗口状态失败:', e)
+      }
+    }
+
+    // 启动轮询（每秒检测一次）
+    pollTimer = setInterval(checkWindowState, 3000)
+    // 立即检测一次
+    await checkWindowState()
+
+    // 文档可见性变更（辅助检测，浏览器级别）
+    const onVisibility = () => {
+      console.log('📄 visibilitychange 触发, document.hidden=', document.hidden)
+      setAnimationsPaused(document.hidden)
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
+    onUnmounted(() => {
+      if (pollTimer) {
+        clearInterval(pollTimer)
+        pollTimer = null
+      }
+      document.removeEventListener('visibilitychange', onVisibility)
+    })
 
     // 监听来自 iframe 的消息
     window.addEventListener('message', async (event) => {
@@ -450,5 +511,15 @@ body[data-bs-theme='light'] {
   .url-hint {
     color: @gura-light-blue;
   }
+}
+</style>
+
+<style>
+/* 全局：当 body 具有 paused-animations 类时，暂停所有动画与过渡 */
+.paused-animations *,
+.paused-animations *::before,
+.paused-animations *::after {
+  animation: none !important;
+  transition: none !important;
 }
 </style>

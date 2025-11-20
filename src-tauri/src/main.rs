@@ -8,15 +8,17 @@ mod utils;
 mod proxy_server;
 mod fs_utils;
 mod toolbar;
+mod update;
 
 use tauri::{
-    menu::{Menu, MenuItem},
+    menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{TrayIconBuilder, MouseButton},
     Manager, WindowEvent, AppHandle, Runtime, Emitter
 };
-use std::sync::Mutex;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use url::Url;
+use serde_json;
 
 struct AppState {
     #[allow(dead_code)]
@@ -148,17 +150,39 @@ async fn fetch_speech_phrases() -> Result<Vec<String>, String> {
 }
 
 fn create_system_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+    // === 导航类菜单 ===
     let open_website = MenuItem::with_id(app, "open_website", "打开官网", true, None::<&str>)?;
+    
+    // === 功能工具类菜单 ===
     let vdd_settings = MenuItem::with_id(app, "vdd_settings", "设置虚拟显示器（VDD）", true, None::<&str>)?;
     let show_toolbar = MenuItem::with_id(app, "show_toolbar", "显示工具栏", true, None::<&str>)?;
+    
+    // === 应用管理类菜单 ===
+    let check_update = MenuItem::with_id(app, "check_update", "检查更新", true, None::<&str>)?;
     let about = MenuItem::with_id(app, "about", "关于", true, None::<&str>)?;
+    
+    // === 退出类菜单 ===
     let quit = MenuItem::with_id(app, "quit", "退出程序", true, None::<&str>)?;
     
+    // === 分隔符 ===
+    let separator1 = PredefinedMenuItem::separator(app)?;
+    let separator2 = PredefinedMenuItem::separator(app)?;
+    let separator3 = PredefinedMenuItem::separator(app)?;
+    
+    // 构建菜单：按类别分组
     let menu = Menu::with_items(app, &[
+        // 导航类
         &open_website,
+        &separator1,
+        // 功能工具类
         &vdd_settings,
         &show_toolbar,
+        &separator2,
+        // 应用管理类
+        &check_update,
         &about,
+        &separator3,
+        // 退出类
         &quit,
     ])?;
     
@@ -300,6 +324,67 @@ fn handle_tray_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) {
                 eprintln!("❌ 创建工具栏失败: {}", e);
             }
         }
+        "check_update" => {
+            println!("🔄 托盘菜单：检查更新");
+            let app_handle = app.clone();
+            
+            // 首先确保主窗口可见
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            
+            // 异步检查更新（直接调用内部函数，避免类型转换问题）
+            tauri::async_runtime::spawn(async move {
+                use crate::update;
+                match update::check_for_updates_internal(false).await { // 改为 false，避免在已是最新时返回错误
+                    Ok(Some(update_info)) => {
+                        println!("🎉 发现新版本: {}", update_info.version);
+                        // 保存检查时间
+                        if let Some(prefs) = app_handle.try_state::<Arc<Mutex<update::UpdatePreferences>>>() {
+                            let mut prefs = prefs.lock().unwrap();
+                            prefs.last_check_time = SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs();
+                        }
+                        // 发送事件到前端显示更新对话框
+                        if let Some(window) = app_handle.get_webview_window("main") {
+                            let _ = window.emit("update-available", &update_info);
+                        }
+                    }
+                    Ok(None) => {
+                        println!("✅ 已是最新版本");
+                        // 保存检查时间
+                        if let Some(prefs) = app_handle.try_state::<Arc<Mutex<update::UpdatePreferences>>>() {
+                            let mut prefs = prefs.lock().unwrap();
+                            prefs.last_check_time = SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs();
+                        }
+                        // 可以发送消息到前端显示提示
+                        if let Some(window) = app_handle.get_webview_window("main") {
+                            let _ = window.emit("update-check-result", serde_json::json!({
+                                "is_latest": true,
+                                "message": "已是最新版本"
+                            }));
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("❌ 检查更新失败: {}", e);
+                        // 发送错误消息到前端
+                        if let Some(window) = app_handle.get_webview_window("main") {
+                            let _ = window.emit("update-check-result", serde_json::json!({
+                                "is_latest": false,
+                                "error": e
+                            }));
+                        }
+                    }
+                }
+            });
+        }
         "about" => {
             println!("ℹ️ 托盘菜单：显示关于对话框");
             
@@ -408,6 +493,9 @@ fn main() {
             fs_utils::read_image_as_data_url,
             fs_utils::copy_image_to_assets,
             fs_utils::cleanup_unused_covers,
+            update::check_for_updates,
+            update::download_update,
+            update::install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -521,6 +609,9 @@ fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
     
     // 设置全局菜单事件处理
     setup_menu_event_handler(app);
+    
+    // 初始化更新检查器
+    update::init_update_checker(app)?;
     
     // 启动代理服务器
     start_proxy_server_async();

@@ -1,0 +1,623 @@
+@import '../styles/theme.less';
+
+// ========== 主容器 ==========
+.sidebar-wrapper {
+  display: flex;
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+  background: linear-gradient(135deg, @morandi-dark-bg 0%, @morandi-mid-bg 50%, @morandi-light-bg 100%);
+  border-radius: @border-radius;
+}
+
+.gura-background {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 160px;
+  height: 160px;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.15;
+  transition: all 0.3s ease;
+  overflow: hidden;
+
+  .gura-bg-img {
+    width: 160px;
+    height: 160px;
+    object-fit: contain;
+    transform: rotate(-15deg);
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    position: absolute;
+    bottom: -40px;
+    right: -28px;
+  }
+}
+
+// ========== 侧边栏 ==========
+.sidebar {
+  width: @sidebar-width;
+  height: 100vh;
+  background: linear-gradient(180deg, @morandi-mid-bg 0%, @morandi-dark-bg 100%);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  transition: width @transition-smooth, box-shadow @transition-smooth;
+  .shadow-sidebar-dark();
+  z-index: 1000;
+  border-radius: @border-radius 0 0 @border-radius;
+
+  &.collapsed {
+    width: @sidebar-collapsed-width;
+    .shadow-sidebar-dark-collapsed();
+  }
+}
+
+// ========== Logo 区域 ==========
+.sidebar-header {
+  padding: 24px 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  margin-bottom: 20px;
+  position: relative;
+  z-index: 10; // 确保在 Gura 背景上方
+}
+
+.logo {
+  width: 40px;
+  height: 40px;
+  .morandi-gradient();
+  border-radius: @border-radius;
+  .flex-center();
+  color: white;
+  flex-shrink: 0;
+  overflow: hidden;
+  padding: 6px;
+  box-shadow: 0 2px 8px rgba(230, 213, 184, 0.2);
+}
+
+.logo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  animation: logoFloat 3s ease-in-out infinite;
+}
+
+@keyframes logoFloat {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-3px) scale(1.05);
+  }
+}
+
+.app-name {
+  color: @morandi-yellow;
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+  white-space: nowrap;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+// ========== 折叠按钮 ==========
+.collapse-btn {
+  position: absolute;
+  right: -10px;
+  top: 76px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  width: auto;
+  height: auto;
+  transform: none;
+  .flex-center();
+  cursor: pointer;
+  z-index: 20; // 确保在 Gura 背景上方
+  transition: none;
+  box-shadow: none;
+
+  &::before,
+  &::after {
+    content: none;
+    display: none;
+  }
+
+  .clip-icon {
+    width: 26px;
+    height: 26px;
+    transform: rotate(90deg);
+    transform-origin: 50% 50%;
+    transition: transform @transition-fast, filter @transition-fast;
+  }
+
+  &:hover,
+  &:active {
+    transform: none;
+    box-shadow: none;
+  }
+}
+
+// 发卡交互：悬停放大、按下压缩；根据收起状态切换方向
+.collapse-btn:hover .clip-icon {
+  transform: rotate(90deg) scale(1.06);
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.25));
+}
+
+.collapse-btn:active .clip-icon {
+  transform: rotate(90deg) scale(0.96);
+}
+
+.clip-icon.collapsed {
+  transform: rotate(-90deg);
+}
+
+// ========== 菜单区域 ==========
+.menu-scrollbar {
+  flex: 1;
+  padding: 0 12px;
+  position: relative;
+  z-index: 10; // 确保在 Gura 背景上方
+
+  :deep(.el-scrollbar__wrap) {
+    overflow-x: hidden;
+  }
+}
+
+.menu-section {
+  margin-bottom: 24px;
+}
+
+.section-title {
+  color: #d4c4a8;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin: 0 0 12px 12px;
+  transition: opacity @transition-smooth;
+}
+
+// ========== 菜单项 ==========
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  margin-bottom: 8px;
+  border-radius: @border-radius;
+  color: @morandi-yellow;
+  cursor: pointer;
+  transition: all @transition-smooth;
+  position: relative;
+  overflow: hidden;
+  user-select: none;
+
+  // 左侧装饰条
+  &::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 3px;
+    height: 100%;
+    background: linear-gradient(180deg, @morandi-red 0%, @morandi-yellow 100%);
+    opacity: 0;
+    transition: opacity @transition-smooth;
+  }
+
+  // 悬停效果
+  &:hover {
+    background: rgba(212, 165, 165, 0.15);
+    color: #f0e5cc;
+    transform: translateX(4px);
+    .shadow-menu-item-dark();
+
+    &::before {
+      opacity: 1;
+    }
+
+    .el-icon {
+      transform: scale(1.1);
+      filter: drop-shadow(0 2px 4px rgba(230, 213, 184, 0.3));
+    }
+  }
+
+  // 按下效果
+  &:active {
+    transform: translateX(2px) scale(0.98);
+  }
+
+  // 危险操作样式
+  &.danger:hover {
+    background: rgba(212, 165, 165, 0.25);
+    color: @morandi-red;
+  }
+
+  &.warning {
+    color: @gura-yellow;
+
+    &:hover {
+      background: rgba(255, 193, 7, 0.15);
+      color: #ff9800;
+    }
+  }
+
+  // 活动状态样式
+  &.active {
+    background: linear-gradient(90deg, rgba(212, 165, 165, 0.3), rgba(230, 213, 184, 0.2));
+    border-left: 3px solid @morandi-red;
+    color: @morandi-yellow;
+    font-weight: 600;
+    .shadow-menu-item-dark();
+
+    &::before {
+      opacity: 1;
+      background: linear-gradient(90deg, rgba(212, 165, 165, 0.3), transparent);
+    }
+
+    .el-icon {
+      color: @morandi-red;
+      transform: scale(1.15);
+      filter: drop-shadow(0 2px 6px rgba(212, 165, 165, 0.5));
+    }
+
+    &:hover {
+      background: linear-gradient(90deg, rgba(212, 165, 165, 0.4), rgba(230, 213, 184, 0.25));
+    }
+  }
+
+  // 图标
+  .el-icon {
+    flex-shrink: 0;
+    transition: all @transition-smooth;
+  }
+
+  // 文本
+  span {
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+}
+
+// ========== 底部区域 ==========
+.sidebar-footer {
+  padding: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  margin-top: auto;
+  position: relative;
+  z-index: 10; // 确保在 Gura 背景上方
+}
+
+// ========== 主内容区域 ==========
+.main-content {
+  flex: 1;
+  width: calc(100% - @sidebar-width);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  transition: width @transition-smooth, box-shadow @transition-smooth;
+  background: linear-gradient(135deg, @morandi-mid-bg 0%, @morandi-light-bg 100%);
+  overflow: hidden;
+  border-radius: 0 @border-radius @border-radius 0;
+  .shadow-content-dark();
+
+  &.expanded {
+    width: calc(100% - @sidebar-collapsed-width);
+  }
+}
+
+// ========== 顶部拖动区域 ==========
+.drag-region {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 80px; // 右侧留空给浮动按钮
+  height: 20px;
+  z-index: 100;
+  cursor: move;
+  pointer-events: auto;
+
+  // 调试模式可视化（可选，生产环境可移除）
+  &:hover {
+    background: rgba(230, 213, 184, 0.03);
+  }
+}
+
+// ========== Windows 经典窗口控制按钮 ==========
+.window-controls {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  z-index: 10000;
+  pointer-events: auto;
+}
+
+.control-btn {
+  width: 46px;
+  height: 32px;
+  .flex-center();
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: none;
+  background: transparent;
+
+  .el-icon,
+  .control-icon {
+    // 多重阴影让图标看起来更粗
+    filter: drop-shadow(0 0.5px 0 currentColor) drop-shadow(0.5px 0 0 currentColor) drop-shadow(0 -0.5px 0 currentColor)
+      drop-shadow(-0.5px 0 0 currentColor);
+    font-weight: bold;
+    transform: scale(1.05);
+    transition: transform 0.15s ease;
+  }
+
+  &.minimize {
+    color: @morandi-yellow;
+
+    &:hover {
+      background: rgba(230, 213, 184, 0.25);
+      color: #fff8e7;
+
+      .el-icon,
+      .control-icon {
+        transform: scale(1.15);
+      }
+    }
+
+    &:active {
+      background: rgba(230, 213, 184, 0.35);
+      color: #fff8e7;
+    }
+  }
+
+  &.maximize {
+    color: @morandi-yellow;
+
+    &:hover {
+      background: rgba(230, 213, 184, 0.25);
+      color: #fff8e7;
+
+      .el-icon,
+      .control-icon {
+        transform: scale(1.15);
+      }
+    }
+
+    &:active {
+      background: rgba(230, 213, 184, 0.35);
+      color: #fff8e7;
+    }
+  }
+
+  &.close {
+    color: @morandi-red;
+
+    &:hover {
+      background: #e81123;
+      color: white;
+
+      .el-icon,
+      .control-icon {
+        transform: scale(1.15);
+      }
+    }
+
+    &:active {
+      background: #c50f1f;
+      color: rgba(255, 255, 255, 0.8);
+    }
+  }
+}
+
+// ========== 页面内容 ==========
+.page-content {
+  flex: 1;
+  overflow: auto;
+}
+
+// ========== 动画 ==========
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+// ========== 浅色模式样式 ==========
+body[data-bs-theme='light'] {
+  .sidebar-wrapper {
+    background: linear-gradient(135deg, @gura-bg-light 0%, @gura-bg-mid 50%, #d4e8ff 100%);
+  }
+
+  .sidebar {
+    background: linear-gradient(180deg, @gura-bg-mid 0%, @gura-bg-light 100%);
+    .shadow-sidebar-light();
+
+    &.collapsed {
+      .shadow-sidebar-light-collapsed();
+    }
+
+    &-header,
+    &-footer {
+      border-color: rgba(74, 158, 255, 0.2);
+    }
+  }
+
+  .logo {
+    background: linear-gradient(135deg, @gura-blue 0%, @gura-light-blue 100%);
+    box-shadow: 0 2px 8px rgba(74, 158, 255, 0.3);
+  }
+
+  .app-name {
+    color: @gura-blue;
+    text-shadow: 0 2px 4px rgba(74, 158, 255, 0.2);
+  }
+
+  .collapse-btn {
+    background: transparent !important;
+    color: inherit;
+    box-shadow: none;
+
+    &::before,
+    &::after {
+      content: none;
+      display: none;
+    }
+
+    &:hover {
+      background: transparent;
+      box-shadow: none;
+    }
+  }
+
+  .section-title {
+    color: #5a8db8;
+  }
+
+  .menu-item {
+    color: @gura-accent;
+
+    &::before {
+      background: linear-gradient(180deg, @gura-blue 0%, @gura-light-blue 100%);
+    }
+
+    &:hover {
+      background: rgba(74, 158, 255, 0.15);
+      color: @gura-blue;
+      .shadow-menu-item-light();
+
+      .el-icon {
+        filter: drop-shadow(0 2px 4px rgba(74, 158, 255, 0.4));
+      }
+    }
+
+    &.danger:hover {
+      background: rgba(74, 158, 255, 0.25);
+      color: #3a7ed5;
+    }
+
+    // 活动状态样式（浅色模式）
+    &.active {
+      background: linear-gradient(90deg, rgba(74, 158, 255, 0.25), rgba(122, 184, 255, 0.15));
+      border-left: 3px solid @gura-blue;
+      color: @gura-text;
+      font-weight: 600;
+      .shadow-menu-item-light();
+
+      &::before {
+        opacity: 1;
+        background: linear-gradient(90deg, rgba(74, 158, 255, 0.25), transparent);
+      }
+
+      .el-icon {
+        color: @gura-blue;
+        transform: scale(1.15);
+        filter: drop-shadow(0 2px 6px rgba(74, 158, 255, 0.5));
+      }
+
+      &:hover {
+        background: linear-gradient(90deg, rgba(74, 158, 255, 0.3), rgba(122, 184, 255, 0.2));
+      }
+    }
+  }
+
+  .main-content {
+    background: linear-gradient(135deg, @gura-bg-mid 0%, #d4e8ff 100%);
+    .shadow-content-light();
+  }
+
+  .drag-region {
+    &:hover {
+      background: rgba(74, 158, 255, 0.03);
+    }
+  }
+
+  // Windows 控制按钮
+  .control-btn {
+    &.minimize {
+      color: @gura-text;
+
+      &:hover {
+        background: rgba(74, 158, 255, 0.3);
+        color: @gura-blue;
+
+        .el-icon {
+          transform: scale(1.15);
+        }
+      }
+
+      &:active {
+        background: rgba(74, 158, 255, 0.4);
+        color: @gura-blue;
+      }
+    }
+
+    &.maximize {
+      color: @gura-text;
+
+      &:hover {
+        background: rgba(74, 158, 255, 0.3);
+        color: @gura-blue;
+
+        .el-icon {
+          transform: scale(1.15);
+        }
+      }
+
+      &:active {
+        background: rgba(74, 158, 255, 0.4);
+        color: @gura-blue;
+      }
+    }
+
+    &.close {
+      color: @gura-text;
+
+      &:hover {
+        background: #e81123;
+        color: white;
+
+        .el-icon {
+          transform: scale(1.15);
+        }
+      }
+
+      &:active {
+        background: #c50f1f;
+        color: rgba(255, 255, 255, 0.8);
+      }
+    }
+  }
+}
+
+// ========== 响应式设计 ==========
+@media (max-width: 768px) {
+  .sidebar {
+    position: absolute;
+    left: 0;
+    top: 0;
+    z-index: 1000;
+
+    &.collapsed {
+      transform: translateX(-100%);
+    }
+  }
+
+  .main-content {
+    width: 100% !important;
+  }
+}
+
+

@@ -4,12 +4,15 @@ use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use tauri::{AppHandle, Manager, Emitter};
 
 // ========== 常量定义 ==========
-const GITHUB_API_URL: &str = "https://api.github.com/repos/qiin2333/sunshine/releases/latest";
+const GITHUB_API_URL: &str = "https://api.github.com/repos/qiin2333/sunshine/releases";
+const GITHUB_API_URL_LATEST: &str = "https://api.github.com/repos/qiin2333/sunshine/releases/latest";
 const UPDATE_CHECK_INTERVAL: u64 = 4 * 60 * 60; // 4小时（秒）
 const HTTP_TIMEOUT_SECS: u64 = 3;
 const DOWNLOAD_TIMEOUT_SECS: u64 = 300;
 const MAX_RETRY_ATTEMPTS: usize = 4;
-const PROGRESS_UPDATE_THRESHOLD: u32 = 1; // 进度更新阈值（百分比）
+#[allow(dead_code)]
+const PROGRESS_UPDATE_THRESHOLD: u32 = 1; // 进度更新阈值（百分比，当前未使用）
+const MAX_RELEASES_TO_CHECK: usize = 10; // 最多检查的发布数量
 
 // GitHub API 加速代理列表（按优先级排序）
 const API_PROXY_PREFIXES: &[&str] = &[
@@ -43,6 +46,11 @@ struct GitHubRelease {
     body: String,
     assets: Vec<GitHubAsset>,
     html_url: String,
+    #[serde(default)]
+    prerelease: bool, // 是否为预发布版本
+    #[serde(default)]
+    draft: bool, // 是否为草稿版本
+    published_at: Option<String>, // 发布时间
 }
 
 /// GitHub Release Asset 数据结构
@@ -58,7 +66,8 @@ pub struct UpdatePreferences {
     pub last_check_time: u64,
 }
 
-/// 下载进度信息
+/// 下载进度信息（当前未使用，保留用于未来扩展）
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 struct DownloadProgress {
     progress: u32,
@@ -203,14 +212,53 @@ async fn http_get_with_proxies(url: &str) -> Result<String, String> {
         .map_err(|e| format!("读取响应内容失败: {}", e))
 }
 
-/// 检查更新（内部函数）
-pub async fn check_for_updates_internal(show_notification: bool) -> Result<Option<UpdateInfo>, String> {
-    println!("🔍 开始检查更新...");
-    
+/// 获取所有发布版本（包括预发布）
+async fn fetch_all_releases() -> Result<Vec<GitHubRelease>, String> {
     let json = http_get_with_proxies(GITHUB_API_URL).await?;
+    
+    let releases: Vec<GitHubRelease> = serde_json::from_str(&json)
+        .map_err(|e| format!("解析GitHub API响应失败: {}", e))?;
+    
+    Ok(releases)
+}
+
+/// 获取最新稳定版本
+async fn fetch_latest_stable_release() -> Result<GitHubRelease, String> {
+    let json = http_get_with_proxies(GITHUB_API_URL_LATEST).await?;
     
     let release: GitHubRelease = serde_json::from_str(&json)
         .map_err(|e| format!("解析GitHub API响应失败: {}", e))?;
+    
+    Ok(release)
+}
+
+/// 查找最新的可用发布版本（包括预发布）
+fn find_latest_release(releases: &[GitHubRelease], include_prerelease: bool) -> Option<&GitHubRelease> {
+    for release in releases.iter().take(MAX_RELEASES_TO_CHECK) {
+        // 跳过草稿版本
+        if release.draft {
+            continue;
+        }
+        
+        // 如果包含预发布版本，返回第一个（已按时间排序）
+        if include_prerelease {
+            return Some(release);
+        }
+        
+        // 如果不包含预发布版本，只返回稳定版本
+        if !release.prerelease {
+            return Some(release);
+        }
+    }
+    
+    None
+}
+
+/// 检查更新（内部函数）
+/// 
+/// `include_prerelease`: 是否包含预发布版本
+pub async fn check_for_updates_internal(show_notification: bool) -> Result<Option<UpdateInfo>, String> {
+    println!("🔍 开始检查更新...");
     
     // 获取当前 Sunshine 版本
     let current_version = match get_current_sunshine_version().await {
@@ -220,9 +268,36 @@ pub async fn check_for_updates_internal(show_notification: bool) -> Result<Optio
             "0.0.0".to_string()
         }
     };
+    
+    // 尝试获取所有发布版本（包括预发布）
+    let releases = match fetch_all_releases().await {
+        Ok(releases) => releases,
+        Err(e) => {
+            eprintln!("⚠️ 获取所有发布版本失败: {}, 尝试获取最新稳定版本", e);
+            // 如果获取所有版本失败，回退到只获取稳定版本
+            let release = fetch_latest_stable_release().await?;
+            vec![release]
+        }
+    };
+    
+    if releases.is_empty() {
+        return Err("未找到任何发布版本".to_string());
+    }
+    
+    // 默认包含预发布版本（可以根据需要调整）
+    let include_prerelease = true;
+    
+    // 查找最新的可用发布版本
+    let release = find_latest_release(&releases, include_prerelease)
+        .ok_or_else(|| "未找到可用的发布版本".to_string())?;
+    
     let latest_version = normalize_version(&release.tag_name);
     
-    println!("📊 当前 Sunshine 版本: {}, 最新版本: {}", current_version, latest_version);
+    println!("📊 当前 Sunshine 版本: {}, 最新版本: {} ({})", 
+        current_version, 
+        latest_version,
+        if release.prerelease { "预发布" } else { "稳定版" }
+    );
     
     if !is_new_version_available(&current_version, &latest_version) {
         if show_notification {
@@ -256,6 +331,7 @@ fn get_current_timestamp() -> u64 {
 }
 
 /// 获取上次检查时间
+#[allow(dead_code)]
 fn get_last_check_time(app: &AppHandle) -> u64 {
     app.try_state::<Arc<Mutex<UpdatePreferences>>>()
         .map(|prefs| prefs.lock().unwrap().last_check_time)
@@ -291,6 +367,7 @@ pub async fn check_for_updates(app: AppHandle) -> Result<Option<UpdateInfo>, Str
 
 
 /// 启动时自动检查更新（如果距离上次检查超过4小时）
+#[allow(dead_code)]
 pub fn check_for_updates_on_startup(app: AppHandle) {
     let last_check_time = get_last_check_time(&app);
     let current_time = get_current_timestamp();
@@ -326,11 +403,40 @@ pub fn check_for_updates_on_startup(app: AppHandle) {
 // ========== 进程管理 ==========
 
 /// 停止 Windows 服务
+/// 
+/// 注意：停止 Windows 服务通常需要管理员权限
+/// 如果当前进程没有管理员权限，此函数会失败，但不影响后续的进程终止操作
 #[cfg(target_os = "windows")]
 fn stop_windows_service(service_name: &str) {
-    let _ = std::process::Command::new("net")
+    // 尝试使用 net stop 停止服务
+    let output = std::process::Command::new("net")
         .args(&["stop", service_name])
         .output();
+    
+    match output {
+        Ok(result) => {
+            if result.status.success() {
+                println!("✅ 成功停止服务: {}", service_name);
+            } else {
+                let error_msg = String::from_utf8_lossy(&result.stderr);
+                eprintln!("⚠️ 停止服务失败 {}: {} (可能需要管理员权限)", service_name, error_msg.trim());
+            }
+        }
+        Err(e) => {
+            eprintln!("⚠️ 执行 net stop 命令失败 {}: {} (可能需要管理员权限)", service_name, e);
+        }
+    }
+    
+    // 也尝试使用 sc stop 作为备选方案（有时权限要求较低）
+    let sc_output = std::process::Command::new("sc")
+        .args(&["stop", service_name])
+        .output();
+    
+    if let Ok(result) = sc_output {
+        if result.status.success() {
+            println!("✅ 使用 sc stop 成功停止服务: {}", service_name);
+        }
+    }
 }
 
 /// 强制结束进程
@@ -341,19 +447,71 @@ fn kill_process(process_name: &str) {
         .output();
 }
 
+/// 通过 HTTP API 关闭 Sunshine（不需要管理员权限）
+async fn stop_sunshine_via_api() -> Result<(), String> {
+    use crate::sunshine;
+    
+    // 获取 Sunshine URL
+    let sunshine_url = sunshine::get_sunshine_url().await?;
+    let boom_url = format!("{}/api/boom", sunshine_url.trim_end_matches('/'));
+    
+    println!("🌐 尝试通过 HTTP API 关闭 Sunshine: {}", boom_url);
+    
+    // 创建 HTTPS 客户端（接受自签名证书）
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+    
+    // 发送 GET 请求到 /api/boom 端点
+    match client.get(&boom_url).send().await {
+        Ok(response) => {
+            let status = response.status();
+            if status.is_success() || status.as_u16() == 200 {
+                println!("✅ 已通过 HTTP API 请求关闭 Sunshine");
+                Ok(())
+            } else if status.as_u16() == 401 {
+                // 需要身份验证，但这是从 localhost 发起的，通常不需要
+                // 如果确实需要认证，可以后续添加
+                Err("需要身份验证（401），但 localhost 请求通常不需要".to_string())
+            } else {
+                // 其他 HTTP 错误
+                Err(format!("HTTP API 返回错误状态码: {}", status))
+            }
+        }
+        Err(e) => {
+            // API 调用失败（可能是 Sunshine 未运行或无法连接）
+            Err(format!("通过 HTTP API 关闭失败: {} (Sunshine 可能未运行或无法连接)", e))
+        }
+    }
+}
+
 /// 关闭Sunshine和GUI进程
 #[cfg(target_os = "windows")]
-fn stop_sunshine_and_gui() -> Result<(), String> {
+async fn stop_sunshine_and_gui() -> Result<(), String> {
     println!("🛑 正在关闭Sunshine和GUI进程...");
     
-    // 停止Sunshine服务（新旧服务名都尝试）
-    stop_windows_service("SunshineService");
-    stop_windows_service("sunshineservice");
+    // 首先尝试通过 HTTP API 关闭（不需要管理员权限）
+    match stop_sunshine_via_api().await {
+        Ok(_) => {
+            // 等待 Sunshine 关闭
+            std::thread::sleep(Duration::from_secs(3));
+        }
+        Err(e) => {
+            println!("⚠️ {}", e);
+            println!("🔄 回退到使用服务管理器关闭...");
+            
+            // 如果 API 调用失败，尝试使用服务管理器（需要管理员权限）
+            stop_windows_service("SunshineService");
+            stop_windows_service("sunshineservice");
+            
+            // 等待服务停止
+            std::thread::sleep(Duration::from_secs(2));
+        }
+    }
     
-    // 等待服务停止
-    std::thread::sleep(Duration::from_secs(1));
-    
-    // 强制结束所有Sunshine进程
+    // 强制结束所有Sunshine进程（作为最后手段）
     kill_process("sunshine.exe");
     
     // 获取当前进程ID，避免关闭自己
@@ -377,7 +535,7 @@ fn stop_sunshine_and_gui() -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn stop_sunshine_and_gui() -> Result<(), String> {
+async fn stop_sunshine_and_gui() -> Result<(), String> {
     Err("此功能仅支持Windows".to_string())
 }
 
@@ -581,7 +739,7 @@ pub async fn install_update(file_path: String, app_handle: AppHandle) -> Result<
         println!("🔧 开始安装更新: {}", file_path);
         
         // 先关闭Sunshine和GUI
-        stop_sunshine_and_gui()?;
+        stop_sunshine_and_gui().await?;
         
         // 检查文件扩展名
         let path = std::path::Path::new(&file_path);
@@ -624,15 +782,13 @@ pub async fn install_update(file_path: String, app_handle: AppHandle) -> Result<
 
 // ========== 模块初始化 ==========
 
-/// 初始化更新检查模块
-pub fn init_update_checker(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+/// 初始化更新检查模块（接受 AppHandle，用于异步初始化）
+pub fn init_update_checker(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     // 初始化更新偏好设置
     let prefs = Arc::new(Mutex::new(UpdatePreferences::default()));
     app.manage(prefs);
-    
-    // 启动时自动检查更新
-    let app_handle = app.handle().clone();
-    // check_for_updates_on_startup(app_handle);
+
+    check_for_updates_on_startup(app.clone());
     
     Ok(())
 }

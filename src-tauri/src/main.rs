@@ -481,8 +481,9 @@ fn main() {
             sunshine::get_sunshine_version,
             sunshine::parse_sunshine_config,
             sunshine::get_sunshine_url,
-            sunshine::get_sunshine_proxy_url,
             sunshine::get_command_line_url,
+            sunshine::get_active_sessions,
+            sunshine::change_bitrate,
             utils::restart_graphics_driver,
             utils::restart_sunshine_service,
             utils::restart_as_admin,
@@ -609,12 +610,18 @@ fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
     
     // 设置全局菜单事件处理
     setup_menu_event_handler(app);
-    
-    // 初始化更新检查器
-    update::init_update_checker(app)?;
-    
+
     // 启动代理服务器
     start_proxy_server_async();
+    
+    // 推迟初始化更新检查器
+    let app_handle = app.handle().clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        if let Err(e) = update::init_update_checker(&app_handle) {
+            eprintln!("❌ 初始化更新检查器失败: {}", e);
+        }
+    });
     
     Ok(())
 }

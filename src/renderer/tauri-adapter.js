@@ -104,6 +104,28 @@ export const sunshine = {
       console.error('获取命令行 URL 失败:', error)
       return null
     }
+  },
+  
+  async getActiveSessions() {
+    try {
+      return await invoke('get_active_sessions')
+    } catch (error) {
+      console.error('获取活动会话失败:', error)
+      return []
+    }
+  },
+  
+  async changeBitrate(clientName, bitrate) {
+    try {
+      console.log('📡 调用 change_bitrate API:', { clientName, bitrate })
+      // Tauri 会自动将驼峰命名 clientName 转换为蛇形命名 client_name
+      const result = await invoke('change_bitrate', { clientName: clientName, bitrate: bitrate })
+      console.log('✅ change_bitrate API 调用成功:', result)
+      return result
+    } catch (error) {
+      console.error('❌ 调整码率失败:', error)
+      throw error
+    }
   }
 }
 

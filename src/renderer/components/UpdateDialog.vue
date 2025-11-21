@@ -12,9 +12,9 @@
       <div class="version-info">
         <div class="version-badge">
           <el-icon :size="24"><Download /></el-icon>
-          <span class="version-text">v{{ updateInfo?.version }}</span>
+          <span class="version-text">{{ updateInfo?.version }}</span>
         </div>
-        <p class="current-version">当前版本: v{{ currentVersion }}</p>
+        <p class="current-version">当前版本: {{ currentVersion }}</p>
       </div>
 
       <!-- 更新说明 -->

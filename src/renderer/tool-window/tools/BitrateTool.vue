@@ -6,21 +6,305 @@
     </div>
 
     <div class="tool-content">
-      <div class="dev-notice">
-        <div class="icon">🚧</div>
-        <h3>功能开发中</h3>
-        <p>码率调整功能即将推出</p>
-        <p class="subtitle">敬请期待！</p>
+      <!-- 客户端选择 -->
+      <div class="section">
+        <label class="section-label">选择客户端</label>
+        <select
+          v-model="selectedClient"
+          class="client-select"
+          :disabled="(loading && !refreshing) || applying"
+          @change="onClientChange"
+        >
+          <option value="">-- 请选择客户端 --</option>
+          <option v-for="session in activeSessions" :key="session.client_name" :value="session.client_name">
+            {{ session.client_name }} ({{ session.width }}x{{ session.height }}@{{ session.fps }}fps)
+          </option>
+        </select>
+        <button
+          class="refresh-btn"
+          :class="{ refreshing: refreshing }"
+          @click="() => loadSessions(true)"
+          :disabled="(loading && !refreshing) || applying"
+          title="刷新会话列表"
+        >
+          <span v-if="refreshing" class="spinner">⟳</span>
+          <span v-else>🔄</span>
+        </button>
       </div>
+
+      <!-- 加载状态（仅首次加载时显示） -->
+      <div v-if="loading && !refreshing" class="loading-state">
+        <p>加载中...</p>
+      </div>
+
+      <!-- 无会话提示 -->
+      <div v-else-if="!loading && activeSessions.length === 0" class="empty-state">
+        <div class="icon">📡</div>
+        <p>当前没有活动的流媒体会话</p>
+        <p class="subtitle">请先启动一个流媒体连接</p>
+        <p v-if="allSessions.length > 0" class="subtitle warning-text">
+          检测到 {{ allSessions.length }} 个会话，但状态不是活动状态
+        </p>
+      </div>
+
+      <!-- 码率调整界面 -->
+      <div v-else-if="selectedClient" class="bitrate-controls">
+        <!-- 当前码率显示 -->
+        <div class="bitrate-display">
+          <span class="bitrate-value">{{ formatBitrate(bitrateValue) }}</span>
+          <span class="bitrate-label">目标码率</span>
+          <div v-if="currentBitrate" class="current-bitrate">
+            <span class="current-bitrate-label">当前码率:</span>
+            <span class="current-bitrate-value">{{ formatBitrate(currentBitrate) }}</span>
+          </div>
+        </div>
+
+        <!-- 码率滑块 -->
+        <div class="slider-container">
+          <input
+            type="range"
+            v-model.number="bitrateValue"
+            :min="BITRATE_LIMITS.MIN"
+            :max="BITRATE_LIMITS.MAX"
+            :step="BITRATE_LIMITS.STEP"
+            class="bitrate-slider"
+            :disabled="applying"
+          />
+          <div class="slider-labels">
+            <span>{{ formatBitrate(BITRATE_LIMITS.MIN) }}</span>
+            <span>{{ formatBitrate(BITRATE_LIMITS.MAX) }}</span>
+          </div>
+        </div>
+
+        <!-- 预设按钮 -->
+        <div class="presets">
+          <button
+            v-for="preset in BITRATE_PRESETS"
+            :key="preset"
+            @click="bitrateValue = preset"
+            :class="{ active: bitrateValue === preset }"
+            class="preset-btn"
+            :disabled="applying"
+          >
+            {{ formatBitrate(preset) }}
+          </button>
+        </div>
+
+        <!-- 自定义输入 -->
+        <div class="custom-input">
+          <input
+            type="number"
+            v-model.number="bitrateValue"
+            :min="BITRATE_LIMITS.MIN"
+            :max="BITRATE_LIMITS.MAX"
+            :step="BITRATE_LIMITS.STEP"
+            class="bitrate-input"
+            :disabled="applying"
+            placeholder="输入码率 (Kbps)"
+          />
+          <span class="input-label">Kbps</span>
+        </div>
+
+        <!-- 应用按钮 -->
+        <div class="actions">
+          <button @click="applyBitrate" class="apply-btn" :disabled="applying || !selectedClient">
+            {{ applying ? '调整中...' : '应用码率' }}
+          </button>
+        </div>
+      </div>
+
+      <!-- 未选择客户端提示 -->
+      <div v-else class="empty-state">
+        <div class="icon">👆</div>
+        <p>请先选择一个客户端</p>
+      </div>
+
+      <!-- 消息提示 -->
+      <transition name="message-fade">
+        <div v-if="message" :class="['message', messageType]">
+          {{ message }}
+        </div>
+      </transition>
     </div>
   </div>
 </template>
 
 <script setup>
-defineEmits(['close']);
+import { ref, computed, onMounted } from 'vue'
+import { sunshine } from '../../tauri-adapter.js'
+
+// 常量定义
+const BITRATE_LIMITS = {
+  MIN: 1000,
+  MAX: 800000,
+  STEP: 1000,
+}
+
+const BITRATE_PRESETS = [5000, 10000, 20000, 50000, 100000, 200000]
+const DEFAULT_BITRATE = 20000
+const MESSAGE_TIMEOUT = 5000
+const REFRESH_DELAY = 1000
+
+defineEmits(['close'])
+
+// 响应式状态
+const activeSessions = ref([])
+const allSessions = ref([])
+const selectedClient = ref('')
+const bitrateValue = ref(DEFAULT_BITRATE)
+const loading = ref(true)
+const refreshing = ref(false)
+const applying = ref(false)
+const message = ref('')
+const messageType = ref('')
+
+// 工具函数
+const formatBitrate = (kbps) => {
+  return kbps >= 1000 ? `${(kbps / 1000).toFixed(0)} Mbps` : `${kbps} Kbps`
+}
+
+const showMessage = (msg, type = 'info', timeout = MESSAGE_TIMEOUT) => {
+  message.value = msg
+  messageType.value = type
+  setTimeout(() => {
+    message.value = ''
+  }, timeout)
+}
+
+const isValidBitrate = (value) => {
+  return value >= BITRATE_LIMITS.MIN && value <= BITRATE_LIMITS.MAX
+}
+
+// 计算当前选中会话的码率
+const selectedSession = computed(() => {
+  if (!selectedClient.value) return null
+  return activeSessions.value.find((s) => s.client_name === selectedClient.value)
+})
+
+const currentBitrate = computed(() => {
+  return selectedSession.value?.bitrate || null
+})
+
+// 会话管理
+const loadSessions = async (isRefresh = false) => {
+  // 如果是刷新，使用 refreshing 状态，避免布局抖动
+  if (isRefresh) {
+    refreshing.value = true
+  } else {
+    loading.value = true
+  }
+  message.value = ''
+
+  // 保存当前选择的客户端，以便刷新后恢复
+  const previousClient = selectedClient.value
+
+  try {
+    const sessions = await sunshine.getActiveSessions()
+    console.log('获取到的所有会话:', sessions)
+
+    allSessions.value = sessions
+    activeSessions.value = sessions.filter((s) => s.state !== 'STOPPED' && s.state !== 'STOPPING')
+
+    console.log(`原始会话数: ${sessions.length}, 过滤后会话数: ${activeSessions.value.length}`)
+    sessions.forEach((s) => {
+      console.log(`会话: ${s.client_name}, 状态: ${s.state}`)
+    })
+
+    if (activeSessions.value.length === 0) {
+      console.log('没有活动的流媒体会话')
+      if (sessions.length > 0) {
+        console.log('注意：有会话但状态不是活动状态')
+      }
+      selectedClient.value = ''
+      return
+    }
+
+    console.log(`找到 ${activeSessions.value.length} 个活动会话`)
+
+    // 恢复或选择客户端
+    const clientExists = activeSessions.value.some((s) => s.client_name === previousClient)
+    if (previousClient && clientExists) {
+      // 保持之前的选择
+      selectedClient.value = previousClient
+    } else if (!selectedClient.value || !clientExists) {
+      // 自动选择第一个客户端
+      selectedClient.value = activeSessions.value[0].client_name
+      console.log(`自动选择客户端: ${selectedClient.value}`)
+    }
+
+    // 记录当前客户端码率
+    if (selectedClient.value) {
+      const session = activeSessions.value.find((s) => s.client_name === selectedClient.value)
+      if (session?.bitrate) {
+        console.log(`当前客户端码率: ${session.bitrate} Kbps`)
+      }
+    }
+  } catch (error) {
+    console.error('获取活动会话失败:', error)
+    showMessage(`❌ 获取会话列表失败: ${error}`, 'error')
+  } finally {
+    loading.value = false
+    refreshing.value = false
+  }
+}
+
+const onClientChange = () => {
+  if (selectedClient.value) {
+    // 重置为默认码率
+    bitrateValue.value = DEFAULT_BITRATE
+  }
+}
+
+// 码率调整
+const applyBitrate = async () => {
+  if (!selectedClient.value) {
+    showMessage('❌ 请先选择客户端', 'error', 3000)
+    return
+  }
+
+  if (!isValidBitrate(bitrateValue.value)) {
+    showMessage(
+      `❌ 码率值必须在 ${formatBitrate(BITRATE_LIMITS.MIN)}-${formatBitrate(BITRATE_LIMITS.MAX)} 之间`,
+      'error',
+      3000
+    )
+    return
+  }
+
+  applying.value = true
+  message.value = ''
+
+  console.log('📡 开始调整码率:', {
+    client: selectedClient.value,
+    bitrate: bitrateValue.value,
+  })
+
+  try {
+    const result = await sunshine.changeBitrate(selectedClient.value, bitrateValue.value)
+    console.log('✅ 码率调整成功:', result)
+    showMessage(`✅ ${result}`, 'success')
+
+    // 延迟静默刷新会话列表（不显示加载状态）
+    setTimeout(() => loadSessions(true), REFRESH_DELAY)
+  } catch (error) {
+    console.error('码率调整错误:', error)
+
+    // 处理特定错误类型
+    const errorMessage = error.toString()
+    if (errorMessage.includes('身份验证') || errorMessage.includes('401')) {
+      showMessage('❌ 身份验证失败，请检查 Sunshine Web UI 的用户名和密码设置', 'error')
+    } else {
+      showMessage(`❌ 调整失败: ${error}`, 'error')
+    }
+  } finally {
+    applying.value = false
+  }
+}
+
+onMounted(loadSessions)
 </script>
 
-<style scoped>
+<style scoped lang="less">
 .tool-container {
   width: 420px;
   color: white;
@@ -31,13 +315,13 @@ defineEmits(['close']);
   background: rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(10px);
   position: relative;
-}
 
-.tool-header h2 {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 600;
-  text-align: center;
+  h2 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    text-align: center;
+  }
 }
 
 .close-btn {
@@ -57,52 +341,354 @@ defineEmits(['close']);
   display: flex;
   align-items: center;
   justify-content: center;
-}
 
-.close-btn:hover {
-  background: rgba(255, 255, 255, 0.3);
-  transform: rotate(90deg);
+  &:hover {
+    background: rgba(255, 255, 255, 0.3);
+    transform: rotate(90deg);
+  }
 }
 
 .tool-content {
-  padding: 40px 30px;
+  padding: 20px 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
-.dev-notice {
+.section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.section-label {
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.client-select {
+  flex: 1;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  color: white;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+
+  &:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.3);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  option {
+    background: #2a2a2a;
+    color: white;
+  }
+}
+
+.refresh-btn {
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+  font-size: 18px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  &.refreshing .spinner {
+    animation: spin 1s linear infinite;
+  }
+
+  &:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.2);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.loading-state,
+.empty-state {
   text-align: center;
   padding: 40px 20px;
 }
 
-.dev-notice .icon {
-  font-size: 64px;
-  margin-bottom: 20px;
-  animation: bounce 2s ease-in-out infinite;
+.empty-state {
+  .icon {
+    font-size: 48px;
+    margin-bottom: 16px;
+  }
+
+  p {
+    font-size: 16px;
+    opacity: 0.9;
+    margin-bottom: 8px;
+  }
+
+  .subtitle {
+    font-size: 14px;
+    opacity: 0.7;
+  }
+
+  .warning-text {
+    margin-top: 8px;
+    color: rgba(255, 152, 0, 0.9);
+  }
 }
 
-@keyframes bounce {
-  0%, 100% {
-    transform: translateY(0);
+.bitrate-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.bitrate-display {
+  text-align: center;
+  padding: 20px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+}
+
+.bitrate-value {
+  font-size: 48px;
+  font-weight: 700;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  display: block;
+  margin-bottom: 8px;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.bitrate-label {
+  font-size: 14px;
+  opacity: 0.8;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    transform: scale(1);
   }
   50% {
-    transform: translateY(-10px);
+    transform: scale(1.02);
   }
 }
 
-.dev-notice h3 {
-  font-size: 24px;
-  margin-bottom: 12px;
-  font-weight: 600;
+.slider-container {
+  padding: 0 5px;
 }
 
-.dev-notice p {
-  font-size: 16px;
-  opacity: 0.9;
-  margin-bottom: 8px;
+.bitrate-slider {
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.3);
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+
+  &::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: white;
+    cursor: pointer;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+    transition: transform 0.2s;
+
+    &:hover {
+      transform: scale(1.15);
+    }
+  }
+
+  &::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: white;
+    cursor: pointer;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+    border: none;
+    transition: transform 0.2s;
+
+    &:hover {
+      transform: scale(1.15);
+    }
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
 }
 
-.dev-notice .subtitle {
-  font-size: 14px;
+.slider-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-size: 12px;
   opacity: 0.7;
 }
-</style>
 
+.presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+}
+
+.preset-btn {
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+  border-radius: 15px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.2s;
+
+  &:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.2);
+    border-color: rgba(255, 255, 255, 0.5);
+  }
+
+  &.active {
+    background: white;
+    color: #4a9eff;
+    border-color: white;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+}
+
+.custom-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+}
+
+.bitrate-input {
+  flex: 1;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  padding: 6px 10px;
+  color: white;
+  font-size: 14px;
+  outline: none;
+  transition: all 0.2s;
+
+  &:focus {
+    border-color: rgba(255, 255, 255, 0.4);
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+}
+
+.input-label {
+  font-size: 14px;
+  opacity: 0.8;
+}
+
+.actions {
+  text-align: center;
+}
+
+.apply-btn {
+  padding: 10px 32px;
+  background: white;
+  color: #4a9eff;
+  border: none;
+  border-radius: 25px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.2);
+
+  &:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  }
+
+  &:active:not(:disabled) {
+    transform: translateY(0);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+}
+
+.message {
+  text-align: center;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 12px;
+
+  &.success {
+    background: rgba(76, 175, 80, 0.9);
+  }
+
+  &.warning {
+    background: rgba(255, 152, 0, 0.9);
+  }
+
+  &.error {
+    background: rgba(244, 67, 54, 0.9);
+  }
+}
+
+.message-fade-enter-active,
+.message-fade-leave-active {
+  transition: all 0.3s ease;
+}
+
+.message-fade-enter-from {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+.message-fade-leave-to {
+  opacity: 0;
+  transform: translateY(10px);
+}
+</style>

@@ -25,10 +25,11 @@
           :class="{ refreshing: refreshing }"
           @click="() => loadSessions(true)"
           :disabled="(loading && !refreshing) || applying"
-          title="刷新会话列表"
+          title="刷新一下"
         >
-          <span v-if="refreshing" class="spinner">⟳</span>
-          <span v-else>🔄</span>
+          <el-icon :size="18" :class="{ spinning: refreshing }">
+            <RefreshRight />
+          </el-icon>
         </button>
       </div>
 
@@ -40,10 +41,10 @@
       <!-- 无会话提示 -->
       <div v-else-if="!loading && activeSessions.length === 0" class="empty-state">
         <div class="icon">📡</div>
-        <p>当前没有活动的流媒体会话</p>
-        <p class="subtitle">请先启动一个流媒体连接</p>
+        <p>杂鱼~ 没有开始串流还在调码率呢</p>
+        <p class="subtitle">串流进来再说嘛</p>
         <p v-if="allSessions.length > 0" class="subtitle warning-text">
-          检测到 {{ allSessions.length }} 个会话，但状态不是活动状态
+          检测到 {{ allSessions.length }} 个会话，但是它们好像都在摸鱼呢
         </p>
       </div>
 
@@ -132,6 +133,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { sunshine } from '../../tauri-adapter.js'
+import { RefreshRight } from '@element-plus/icons-vue'
 
 // 常量定义
 const BITRATE_LIMITS = {
@@ -359,16 +361,19 @@ onMounted(loadSessions)
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0; /* 允许 flex 子元素收缩 */
 }
 
 .section-label {
   font-size: 14px;
   font-weight: 500;
   white-space: nowrap;
+  flex-shrink: 0; /* 标签不收缩 */
 }
 
 .client-select {
   flex: 1;
+  min-width: 0; /* 允许选择框收缩 */
   padding: 8px 12px;
   background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.2);
@@ -377,6 +382,8 @@ onMounted(loadSessions)
   font-size: 14px;
   cursor: pointer;
   transition: all 0.2s;
+  overflow: hidden;
+  text-overflow: ellipsis;
 
   &:hover:not(:disabled) {
     background: rgba(255, 255, 255, 0.15);
@@ -397,20 +404,16 @@ onMounted(loadSessions)
 .refresh-btn {
   width: 36px;
   height: 36px;
+  flex-shrink: 0; /* 按钮不收缩 */
   border: none;
   background: rgba(255, 255, 255, 0.1);
   color: white;
-  font-size: 18px;
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.2s;
   display: flex;
   align-items: center;
   justify-content: center;
-
-  &.refreshing .spinner {
-    animation: spin 1s linear infinite;
-  }
 
   &:hover:not(:disabled) {
     background: rgba(255, 255, 255, 0.2);
@@ -419,6 +422,10 @@ onMounted(loadSessions)
   &:disabled {
     opacity: 0.6;
     cursor: not-allowed;
+  }
+
+  .spinning {
+    animation: spin 1s linear infinite;
   }
 }
 

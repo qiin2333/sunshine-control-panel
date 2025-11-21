@@ -12,10 +12,10 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
+import { shallowRef, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 
-const currentTool = ref(null)
+const currentTool = shallowRef(null)
 
 const closeWindow = async () => {
   try {

@@ -110,6 +110,7 @@ pub fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &s
             #[cfg(debug_assertions)]
             {
                 window.open_devtools();
+                let _ = window.set_always_on_top(false);
                 println!("🔧 [开发模式] 工具窗口已自动打开 DevTools");
             }
             

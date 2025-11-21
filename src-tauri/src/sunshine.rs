@@ -305,15 +305,29 @@ pub async fn get_active_sessions() -> Result<Vec<SessionInfo>, String> {
     let status = response.status();
     println!("📡 HTTP 状态码: {}", status);
     
-    if !status.is_success() {
-        let error_body = response.text().await.unwrap_or_default();
-        println!("❌ 错误响应: {}", error_body);
-        return Err(format!("获取会话信息失败 (状态: {}): {}", status, error_body));
-    }
+    // 检查 Content-Type
+    let content_type = response.headers()
+        .get("content-type")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("")
+        .to_lowercase();
     
     let response_text = response.text().await
         .map_err(|e| format!("读取响应失败: {}", e))?;
     
+    // 如果是 404 或 XML 响应，返回空数组（没有会话是正常情况）
+    if status == 404 || content_type.contains("xml") || response_text.trim_start().starts_with("<?xml") {
+        println!("⚠️ 没有活动会话 (404 或 XML 响应)");
+        return Ok(Vec::new());
+    }
+    
+    // 如果状态码不是成功，但也不是 404，返回错误
+    if !status.is_success() {
+        println!("❌ 错误响应: {}", response_text);
+        return Err(format!("获取会话信息失败 (状态: {}): {}", status, response_text));
+    }
+    
+    // 尝试解析 JSON
     let json: serde_json::Value = serde_json::from_str(&response_text)
         .map_err(|e| format!("解析 JSON 失败: {}，响应内容: {}", e, response_text))?;
     
@@ -397,7 +411,7 @@ pub async fn change_bitrate(client_name: String, bitrate: u32) -> Result<String,
             403 => "访问被拒绝，仅允许 localhost 访问".to_string(),
             _ => format!("HTTP 错误 (状态码: {}): {}", status, response_text),
         });
-    }
+        }
     
     // 解析 JSON 响应
     let json: serde_json::Value = serde_json::from_str(&response_text)

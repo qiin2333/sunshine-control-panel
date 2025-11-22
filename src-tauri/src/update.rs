@@ -717,11 +717,15 @@ fn build_install_command(file_path: &str, extension: &str) -> Result<String, Str
             ))
         }
         "exe" => {
-            // 移除 /S 和 /silent 参数，让安装程序显示界面
-            // 如果安装程序支持，可以使用 /SILENT 但显示进度条
-            // 这里先尝试不静默，如果安装程序支持静默但显示进度，可以后续调整
+            // EXE 安装程序通常支持以下静默参数（同时显示进度条）：
+            // /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- (Inno Setup)
+            // /S (NSIS - 完全静默，不显示进度条)
+            // /quiet (某些安装程序 - 静默但可能显示进度)
+            // 
+            // 这里使用 Inno Setup 的参数组合，它会静默安装但显示进度条
+            // 如果不起作用，安装程序会忽略这些参数并显示完整界面
             Ok(format!(
-                "Start-Process '{}' -Verb RunAs -Wait",
+                "Start-Process '{}' -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-' -Verb RunAs -Wait",
                 escaped_path
             ))
         }

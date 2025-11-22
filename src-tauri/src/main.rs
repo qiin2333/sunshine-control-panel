@@ -38,31 +38,6 @@ async fn toggle_dark_mode(_window: tauri::Window) -> Result<bool, String> {
     Ok(true)
 }
 
-#[tauri::command]
-async fn open_external_url(url: String) -> Result<bool, String> {
-    if url.starts_with("http") {
-        // Tauri 1.5 的 shell::open API 不需要 Scope
-        #[cfg(target_os = "windows")]
-        {
-            std::process::Command::new("cmd")
-                .args(&["/c", "start", &url])
-                .spawn()
-                .map_err(|e| e.to_string())?;
-        }
-        
-        #[cfg(not(target_os = "windows"))]
-        {
-            std::process::Command::new("xdg-open")
-                .arg(&url)
-                .spawn()
-                .map_err(|e| e.to_string())?;
-        }
-        
-        Ok(true)
-    } else {
-        Ok(false)
-    }
-}
 
 #[tauri::command]
 async fn open_tool_window(app: AppHandle, tool_name: String) -> Result<(), String> {
@@ -70,7 +45,6 @@ async fn open_tool_window(app: AppHandle, tool_name: String) -> Result<(), Strin
     
     match tool_name.as_str() {
         "main" => {
-            // 打开主窗口
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
                 let _ = window.show();
@@ -78,7 +52,6 @@ async fn open_tool_window(app: AppHandle, tool_name: String) -> Result<(), Strin
             }
         }
         "vdd" => {
-            // 打开 VDD 设置窗口
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
                 let _ = window.show();
@@ -87,32 +60,7 @@ async fn open_tool_window(app: AppHandle, tool_name: String) -> Result<(), Strin
             }
         }
         "about" => {
-            // 打开关于窗口
-            const ABOUT_WINDOW_ID: &str = "about";
-            
-            if let Some(window) = app.get_webview_window(ABOUT_WINDOW_ID) {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-            } else {
-                match tauri::WebviewWindowBuilder::new(
-                    &app,
-                    ABOUT_WINDOW_ID,
-                    tauri::WebviewUrl::App("about/index.html".into())
-                )
-                .title("关于 Sunshine Control Panel")
-                .inner_size(540.0, 620.0)
-                .resizable(false)
-                .maximizable(false)
-                .minimizable(true)
-                .decorations(true)
-                .center()
-                .build()
-                {
-                    Ok(_) => println!("✅ 关于窗口创建成功"),
-                    Err(e) => eprintln!("❌ 创建关于窗口失败: {}", e),
-                }
-            }
+            open_about_window(&app)?;
         }
         _ => {
             return Err(format!("未知的工具名称: {}", tool_name));
@@ -122,6 +70,35 @@ async fn open_tool_window(app: AppHandle, tool_name: String) -> Result<(), Strin
     Ok(())
 }
 
+/// 打开关于窗口（单例模式）
+fn open_about_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    const ABOUT_WINDOW_ID: &str = "about";
+    
+    if let Some(window) = app.get_webview_window(ABOUT_WINDOW_ID) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    } else {
+        tauri::WebviewWindowBuilder::new(
+            app,
+            ABOUT_WINDOW_ID,
+            tauri::WebviewUrl::App("about/index.html".into())
+        )
+        .title("关于 Sunshine Control Panel")
+        .inner_size(540.0, 620.0)
+        .resizable(false)
+        .maximizable(false)
+        .minimizable(true)
+        .decorations(true)
+        .center()
+        .build()
+        .map_err(|e| format!("创建关于窗口失败: {}", e))?;
+        
+        println!("✅ 关于窗口创建成功");
+    }
+    
+    Ok(())
+}
 
 #[tauri::command]
 async fn fetch_speech_phrases() -> Result<Vec<String>, String> {
@@ -129,24 +106,14 @@ async fn fetch_speech_phrases() -> Result<Vec<String>, String> {
     
     let url = "https://raw.githubusercontent.com/qiin2333/qiin.github.io/assets/speech-phrases.json";
     
-    match reqwest::get(url).await {
-        Ok(response) => {
-            match response.json::<Vec<String>>().await {
-                Ok(phrases) => {
-                    println!("✅ 话术加载成功，共 {} 条", phrases.len());
-                    Ok(phrases)
-                }
-                Err(e) => {
-                    eprintln!("❌ 话术解析失败: {}", e);
-                    Err(format!("解析失败: {}", e))
-                }
-            }
-        }
-        Err(e) => {
-            eprintln!("❌ 话术请求失败: {}", e);
-            Err(format!("请求失败: {}", e))
-        }
-    }
+    let response = reqwest::get(url).await
+        .map_err(|e| format!("请求失败: {}", e))?;
+    
+    let phrases = response.json::<Vec<String>>().await
+        .map_err(|e| format!("解析失败: {}", e))?;
+    
+    println!("✅ 话术加载成功，共 {} 条", phrases.len());
+    Ok(phrases)
 }
 
 fn create_system_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
@@ -171,42 +138,32 @@ fn create_system_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     
     // 构建菜单：按类别分组
     let menu = Menu::with_items(app, &[
-        // 导航类
         &open_website,
         &separator1,
-        // 功能工具类
         &vdd_settings,
         &show_toolbar,
         &separator2,
-        // 应用管理类
         &check_update,
         &about,
         &separator3,
-        // 退出类
         &quit,
     ])?;
     
     let _tray = TrayIconBuilder::new()
         .menu(&menu)
         .icon(app.default_window_icon().unwrap().clone())
-        .show_menu_on_left_click(false)  // 左键点击不显示菜单
+        .show_menu_on_left_click(false)
         .on_menu_event(move |app, event| {
             handle_tray_menu_event(app, event.id().as_ref());
         })
         .on_tray_icon_event(|tray, event| {
             use tauri::tray::TrayIconEvent;
             match event {
-                // 单击托盘图标 - 显示/隐藏窗口
                 TrayIconEvent::Click { button: MouseButton::Left, .. } => {
                     handle_tray_click(tray.app_handle());
                 }
-                // 双击托盘图标 - 确保显示窗口
                 TrayIconEvent::DoubleClick { button: MouseButton::Left, .. } => {
                     handle_tray_double_click(tray.app_handle());
-                }
-                // 右键点击托盘图标 - 显示菜单
-                TrayIconEvent::Click { button: MouseButton::Right, .. } => {
-                    // 右键点击显示菜单（默认行为）
                 }
                 _ => {}
             }
@@ -217,14 +174,11 @@ fn create_system_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 }
 
 fn handle_tray_click<R: Runtime>(app: &AppHandle<R>) {
-    // 使用 tokio 延迟处理，避免与双击冲突
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        // 延迟 200ms，如果在此期间发生双击，则会被双击事件覆盖
         tokio::time::sleep(Duration::from_millis(200)).await;
         
         if let Some(window) = app.get_webview_window("main") {
-            // 获取窗口的实际状态
             let is_visible = window.is_visible().unwrap_or(false);
             let is_minimized = window.is_minimized().unwrap_or(false);
             let is_focused = window.is_focused().unwrap_or(false);
@@ -232,11 +186,9 @@ fn handle_tray_click<R: Runtime>(app: &AppHandle<R>) {
             println!("📊 窗口状态: visible={}, minimized={}, focused={}", is_visible, is_minimized, is_focused);
             
             if is_visible && !is_minimized && is_focused {
-                // 窗口当前可见、未最小化且有焦点 -> 隐藏
                 println!("🔽 单击：隐藏窗口");
                 let _ = window.hide();
             } else {
-                // 其他情况 -> 显示并聚焦
                 println!("🔼 单击：显示窗口");
                 if is_minimized {
                     let _ = window.unminimize();
@@ -249,7 +201,6 @@ fn handle_tray_click<R: Runtime>(app: &AppHandle<R>) {
 }
 
 fn handle_tray_double_click<R: Runtime>(app: &AppHandle<R>) {
-    // 双击始终立即显示窗口（不等待延迟）
     if let Some(window) = app.get_webview_window("main") {
         println!("🔼🔼 双击托盘：强制显示窗口");
         let _ = window.unminimize();
@@ -261,168 +212,21 @@ fn handle_tray_double_click<R: Runtime>(app: &AppHandle<R>) {
 fn handle_tray_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) {
     match menu_id {
         "open_website" => {
-            // 使用外部浏览器打开官网
             println!("🌐 托盘菜单：打开官网");
-            
-            // 使用系统命令直接打开外部浏览器
-            let website_url = "https://sunshine-foundation.vercel.app/";
-            
-            tauri::async_runtime::spawn(async move {
-                println!("🌐 正在打开外部浏览器...");
-                
-                #[cfg(target_os = "windows")]
-                {
-                    match std::process::Command::new("cmd")
-                        .args(&["/c", "start", "", website_url])
-                        .spawn() 
-                    {
-                        Ok(_) => {
-                            println!("✅ 已在外部浏览器中打开官网: {}", website_url);
-                        }
-                        Err(e) => {
-                            eprintln!("❌ 打开官网失败: {}", e);
-                        }
-                    }
-                }
-                
-                #[cfg(not(target_os = "windows"))]
-                {
-                    match std::process::Command::new("xdg-open")
-                        .arg(website_url)
-                        .spawn()
-                    {
-                        Ok(_) => {
-                            println!("✅ 已在外部浏览器中打开官网: {}", website_url);
-                        }
-                        Err(e) => {
-                            eprintln!("❌ 打开官网失败: {}", e);
-                        }
-                    }
-                }
-            });
+            utils::open_url_in_browser("https://sunshine-foundation.vercel.app/");
         }
         "vdd_settings" => {
-            // 首先确保主窗口可见并聚焦
-            if let Some(window) = app.get_webview_window("main") {
-                println!("📱 托盘菜单：打开VDD设置");
-                
-                // 显示并聚焦主窗口
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-                
-                // 发送事件到前端，让它在主窗口中打开VDD设置
-                let _ = window.emit("open-vdd-settings", ());
-            }
+            open_vdd_settings(app);
         }
         "show_toolbar" => {
-            println!("🔧 托盘菜单：切换工具栏显示/隐藏");
-            if let Some(toolbar_window) = app.get_webview_window("toolbar") {
-                // 已存在则关闭（达到隐藏效果）
-                let _ = toolbar_window.close();
-            } else if let Err(e) = toolbar::create_toolbar_window_internal(app) {
-                eprintln!("❌ 创建工具栏失败: {}", e);
-            }
+            toggle_toolbar(app);
         }
         "check_update" => {
-            println!("🔄 托盘菜单：检查更新");
-            let app_handle = app.clone();
-            
-            // 首先确保主窗口可见
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
-            
-            // 异步检查更新（直接调用内部函数，避免类型转换问题）
-            tauri::async_runtime::spawn(async move {
-                use crate::update;
-                match update::check_for_updates_internal(false).await { // 改为 false，避免在已是最新时返回错误
-                    Ok(Some(update_info)) => {
-                        println!("🎉 发现新版本: {}", update_info.version);
-                        // 保存检查时间
-                        if let Some(prefs) = app_handle.try_state::<Arc<Mutex<update::UpdatePreferences>>>() {
-                            let mut prefs = prefs.lock().unwrap();
-                            prefs.last_check_time = SystemTime::now()
-                                .duration_since(UNIX_EPOCH)
-                                .unwrap()
-                                .as_secs();
-                        }
-                        // 发送事件到前端显示更新对话框
-                        if let Some(window) = app_handle.get_webview_window("main") {
-                            let _ = window.emit("update-available", &update_info);
-                        }
-                    }
-                    Ok(None) => {
-                        println!("✅ 已是最新版本");
-                        // 保存检查时间
-                        if let Some(prefs) = app_handle.try_state::<Arc<Mutex<update::UpdatePreferences>>>() {
-                            let mut prefs = prefs.lock().unwrap();
-                            prefs.last_check_time = SystemTime::now()
-                                .duration_since(UNIX_EPOCH)
-                                .unwrap()
-                                .as_secs();
-                        }
-                        // 可以发送消息到前端显示提示
-                        if let Some(window) = app_handle.get_webview_window("main") {
-                            let _ = window.emit("update-check-result", serde_json::json!({
-                                "is_latest": true,
-                                "message": "已是最新版本"
-                            }));
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("❌ 检查更新失败: {}", e);
-                        // 发送错误消息到前端
-                        if let Some(window) = app_handle.get_webview_window("main") {
-                            let _ = window.emit("update-check-result", serde_json::json!({
-                                "is_latest": false,
-                                "error": e
-                            }));
-                        }
-                    }
-                }
-            });
+            check_for_updates(app);
         }
         "about" => {
             println!("ℹ️ 托盘菜单：显示关于对话框");
-            
-            // 使用单例窗口
-            let app_handle = app.clone();
-            const ABOUT_WINDOW_ID: &str = "about";
-            
-            // 检查窗口是否已存在
-            if let Some(window) = app_handle.get_webview_window(ABOUT_WINDOW_ID) {
-                // 窗口已存在，聚焦并显示
-                println!("📱 关于窗口已存在，激活窗口");
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-            } else {
-                // 窗口不存在，创建新窗口
-                match tauri::WebviewWindowBuilder::new(
-                    &app_handle,
-                    ABOUT_WINDOW_ID,
-                    tauri::WebviewUrl::App("about/index.html".into())
-                )
-                .title("关于 Sunshine Control Panel")
-                .inner_size(540.0, 620.0)
-                .resizable(false)
-                .maximizable(false)
-                .minimizable(true)
-                .decorations(true)
-                .center()
-                .build()
-                {
-                    Ok(_window) => {
-                        println!("✅ 关于窗口创建成功");
-                    }
-                    Err(e) => {
-                        eprintln!("❌ 创建关于窗口失败: {}", e);
-                    }
-                }
-            }
+            let _ = open_about_window(app);
         }
         "quit" => {
             println!("🚪 托盘菜单：退出应用");
@@ -431,6 +235,83 @@ fn handle_tray_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) {
         _ => {
             println!("⚠️ 未知的托盘菜单事件: {}", menu_id);
         }
+    }
+}
+
+/// 打开 VDD 设置
+fn open_vdd_settings<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(window) = app.get_webview_window("main") {
+        println!("📱 托盘菜单：打开VDD设置");
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        let _ = window.emit("open-vdd-settings", ());
+    }
+}
+
+/// 切换工具栏显示/隐藏
+fn toggle_toolbar<R: Runtime>(app: &AppHandle<R>) {
+    println!("🔧 托盘菜单：切换工具栏显示/隐藏");
+    if let Some(toolbar_window) = app.get_webview_window("toolbar") {
+        let _ = toolbar_window.close();
+    } else if let Err(e) = toolbar::create_toolbar_window_internal(app) {
+        eprintln!("❌ 创建工具栏失败: {}", e);
+    }
+}
+
+/// 检查更新
+fn check_for_updates<R: Runtime>(app: &AppHandle<R>) {
+    println!("🔄 托盘菜单：检查更新");
+    let app_handle = app.clone();
+    
+    // 确保主窗口可见
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+    
+    tauri::async_runtime::spawn(async move {
+        use crate::update;
+        match update::check_for_updates_internal(false).await {
+            Ok(Some(update_info)) => {
+                println!("🎉 发现新版本: {}", update_info.version);
+                save_update_check_time(&app_handle);
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.emit("update-available", &update_info);
+                }
+            }
+            Ok(None) => {
+                println!("✅ 已是最新版本");
+                save_update_check_time(&app_handle);
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.emit("update-check-result", serde_json::json!({
+                        "is_latest": true,
+                        "message": "已是最新版本"
+                    }));
+                }
+            }
+            Err(e) => {
+                eprintln!("❌ 检查更新失败: {}", e);
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.emit("update-check-result", serde_json::json!({
+                        "is_latest": false,
+                        "error": e
+                    }));
+                }
+            }
+        }
+    });
+}
+
+/// 保存更新检查时间
+fn save_update_check_time<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(prefs) = app.try_state::<Arc<Mutex<update::UpdatePreferences>>>() {
+        let mut prefs = prefs.lock().unwrap();
+        prefs.last_check_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
     }
 }
 
@@ -461,7 +342,6 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             toggle_dark_mode,
-            open_external_url,
             show_toolbar_menu,
             toolbar::handle_toolbar_menu_action,
             toolbar::save_toolbar_position,
@@ -484,6 +364,7 @@ fn main() {
             sunshine::get_command_line_url,
             sunshine::get_active_sessions,
             sunshine::change_bitrate,
+            utils::open_external_url,
             utils::restart_graphics_driver,
             utils::restart_sunshine_service,
             utils::restart_as_admin,
@@ -508,6 +389,18 @@ fn handle_single_instance(app: &tauri::AppHandle, args: Vec<String>) {
     
     if !args.is_empty() {
         println!("   启动参数: {:?}", args);
+    }
+    
+    // 检查是否要打开工具栏
+    if args.iter().any(|arg| arg == "--toolbar" || arg == "-t") {
+        println!("🔧 检测到 --toolbar 参数，打开工具栏");
+        let app_clone = app.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = toolbar::create_toolbar_window_internal(&app_clone) {
+                eprintln!("❌ 创建工具栏失败: {}", e);
+            }
+        });
+        return;
     }
     
     // 提取 URL 参数
@@ -602,6 +495,10 @@ fn navigate_to_url(window: &tauri::WebviewWindow, url: &str) {
 
 /// 应用程序初始化设置
 fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    // 检查命令行参数（首次启动时）
+    let args: Vec<String> = std::env::args().collect();
+    let show_toolbar = args.iter().any(|arg| arg == "--toolbar" || arg == "-t");
+    
     // 创建系统托盘
     create_system_tray(&app.handle())?;
     
@@ -613,6 +510,18 @@ fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
 
     // 启动代理服务器
     start_proxy_server_async();
+    
+    // 如果指定了 --toolbar 参数，延迟打开工具栏（等待应用完全初始化）
+    if show_toolbar {
+        println!("🔧 检测到 --toolbar 参数，将在应用启动后打开工具栏");
+        let app_handle = app.handle().clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+            if let Err(e) = toolbar::create_toolbar_window_internal(&app_handle) {
+                eprintln!("❌ 创建工具栏失败: {}", e);
+            }
+        });
+    }
     
     // 推迟初始化更新检查器
     let app_handle = app.handle().clone();

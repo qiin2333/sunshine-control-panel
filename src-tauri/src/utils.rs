@@ -214,3 +214,62 @@ pub fn is_running_as_admin() -> Result<bool, String> {
         Ok(unsafe { libc::geteuid() == 0 })
     }
 }
+
+/// 在外部浏览器中打开 URL
+pub fn open_url_in_browser(url: &str) {
+    let url = url.to_string();
+    
+    tauri::async_runtime::spawn(async move {
+        println!("🌐 正在打开外部浏览器...");
+        
+        #[cfg(target_os = "windows")]
+        {
+            if let Err(e) = Command::new("cmd")
+                .args(&["/c", "start", "", &url])
+                .spawn()
+            {
+                eprintln!("❌ 打开 URL 失败: {}", e);
+            } else {
+                println!("✅ 已在外部浏览器中打开: {}", url);
+            }
+        }
+        
+        #[cfg(not(target_os = "windows"))]
+        {
+            if let Err(e) = Command::new("xdg-open")
+                .arg(&url)
+                .spawn()
+            {
+                eprintln!("❌ 打开 URL 失败: {}", e);
+            } else {
+                println!("✅ 已在外部浏览器中打开: {}", url);
+            }
+        }
+    });
+}
+
+/// Tauri 命令：在外部浏览器中打开 URL
+#[tauri::command]
+pub async fn open_external_url(url: String) -> Result<bool, String> {
+    if !url.starts_with("http") {
+        return Ok(false);
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd")
+            .args(&["/c", "start", &url])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    
+    Ok(true)
+}

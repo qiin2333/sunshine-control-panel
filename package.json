@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tauri dev",
+    "dev:toolbar": "npm run build:renderer && cargo build --manifest-path src-tauri/Cargo.toml && src-tauri\\target\\debug\\sunshine-gui.exe --toolbar",
     "dev:renderer": "vite --config vite.config.js",
     "build": "tauri build",
     "build:renderer": "vite build --config vite.config.js",

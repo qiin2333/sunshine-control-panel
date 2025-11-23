@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use crate::sunshine;
+use log::{info, warn, error, debug};
 
 /// 获取 ICC 颜色配置文件列表
 #[tauri::command]
@@ -66,7 +67,7 @@ pub async fn read_image_as_data_url(path: String) -> Result<String, String> {
     let file_bytes = fs::read(&path)
         .map_err(|e| format!("读取文件失败: {}", e))?;
     
-    println!("📖 读取文件成功: {}, 大小: {} bytes", path, file_bytes.len());
+    debug!("📖 读取文件成功: {}, 大小: {} bytes", path, file_bytes.len());
     
     // 根据扩展名确定 MIME 类型
     let path_obj = Path::new(&path);
@@ -90,7 +91,7 @@ pub async fn read_image_as_data_url(path: String) -> Result<String, String> {
     // 构造 Data URL
     let data_url = format!("data:{};base64,{}", mime_type, base64);
     
-    println!("✅ Data URL 生成成功, MIME: {}, Base64 长度: {}", mime_type, base64.len());
+    debug!("✅ Data URL 生成成功, MIME: {}, Base64 长度: {}", mime_type, base64.len());
     
     Ok(data_url)
 }
@@ -139,7 +140,7 @@ pub async fn copy_image_to_assets(source_path: String) -> Result<String, String>
     fs::copy(source, &dest_path)
         .map_err(|e| format!("复制文件失败: {}", e))?;
     
-    println!("✅ 图片已复制到: {:?}", dest_path);
+    info!("✅ 图片已复制到: {:?}", dest_path);
     
     // 返回相对于 Sunshine Web 根目录的 URL 路径
     let web_url = format!("/boxart/{}", unique_name);
@@ -154,15 +155,15 @@ pub async fn cleanup_unused_covers() -> Result<serde_json::Value, String> {
     use std::collections::HashSet;
     use serde_json::json;
     
-    println!("🧹 开始清理无用封面...");
+    info!("🧹 开始清理无用封面...");
     
     // 获取 Sunshine config 目录
     let sunshine_path = PathBuf::from(sunshine::get_sunshine_install_path()).join("config");
     let covers_dir = sunshine_path.join("covers");
     let apps_json_path = sunshine_path.join("apps.json");
     
-    println!("📂 使用 covers 目录: {:?}", covers_dir);
-    println!("📄 使用 apps.json 路径: {:?}", apps_json_path);
+    debug!("📂 使用 covers 目录: {:?}", covers_dir);
+    debug!("📄 使用 apps.json 路径: {:?}", apps_json_path);
     
     // 读取 apps.json 获取所有正在使用的图片
     let used_images: HashSet<String> = if apps_json_path.exists() {
@@ -171,7 +172,7 @@ pub async fn cleanup_unused_covers() -> Result<serde_json::Value, String> {
                 // 检查文件内容是否为空或只包含空白字符
                 let trimmed_content = content.trim();
                 if trimmed_content.is_empty() {
-                    println!("⚠️  apps.json 文件为空，跳过解析");
+                    warn!("⚠️  apps.json 文件为空，跳过解析");
                     HashSet::new()
                 } else {
                     // 尝试解析 JSON
@@ -199,9 +200,9 @@ pub async fn cleanup_unused_covers() -> Result<serde_json::Value, String> {
                                             // 如果路径包含分隔符，也保存完整路径
                                             if image_path.contains('/') || image_path.contains('\\') {
                                                 images.insert(image_path.to_string());
-                                                println!("  📌 使用中: {} (完整路径: {})", filename, image_path);
+                                                debug!("  📌 使用中: {} (完整路径: {})", filename, image_path);
                                             } else {
-                                                println!("  📌 使用中: {}", filename);
+                                                debug!("  📌 使用中: {}", filename);
                                             }
                                         }
                                     }
@@ -210,23 +211,23 @@ pub async fn cleanup_unused_covers() -> Result<serde_json::Value, String> {
                             images
                         }
                         Err(e) => {
-                            println!("⚠️  解析 apps.json 失败: {}，跳过解析", e);
+                            warn!("⚠️  解析 apps.json 失败: {}，跳过解析", e);
                             HashSet::new()
                         }
                     }
                 }
             }
             Err(e) => {
-                println!("⚠️  读取 apps.json 失败: {}，跳过解析", e);
+                warn!("⚠️  读取 apps.json 失败: {}，跳过解析", e);
                 HashSet::new()
             }
         }
     } else {
-        println!("📄 apps.json 不存在，跳过解析");
+        debug!("📄 apps.json 不存在，跳过解析");
         HashSet::new()
     };
     
-    println!("  正在使用的封面数: {}", used_images.len());
+    debug!("  正在使用的封面数: {}", used_images.len());
     
     let mut deleted_count = 0;
     let mut freed_space: u64 = 0;
@@ -234,7 +235,7 @@ pub async fn cleanup_unused_covers() -> Result<serde_json::Value, String> {
     
     // === 1. 清理 covers 目录中未使用的封面 ===
     if covers_dir.exists() {
-        println!("\n📂 扫描 covers 目录...");
+        debug!("\n📂 扫描 covers 目录...");
         let entries = fs::read_dir(&covers_dir)
             .map_err(|e| format!("读取 covers 目录失败: {}", e))?;
         
@@ -265,18 +266,18 @@ pub async fn cleanup_unused_covers() -> Result<serde_json::Value, String> {
                             // 删除文件
                             match fs::remove_file(&path) {
                                 Ok(_) => {
-                                    println!("  🗑️  [封面] {}", filename);
+                                    debug!("  🗑️  [封面] {}", filename);
                                     deleted_count += 1;
                                     freed_space += size;
                                 }
                                 Err(e) => {
                                     let error_msg = format!("删除封面 {} 失败: {}", filename, e);
-                                    println!("  ❌ {}", error_msg);
+                                    error!("  ❌ {}", error_msg);
                                     errors.push(error_msg);
                                 }
                             }
                         } else {
-                            println!("  ✅ [保护] {} (正在使用中)", filename);
+                            debug!("  ✅ [保护] {} (正在使用中)", filename);
                         }
                     }
                 }
@@ -285,7 +286,7 @@ pub async fn cleanup_unused_covers() -> Result<serde_json::Value, String> {
     }
     
     // === 2. 清理 config 目录中的 temp_ 临时文件 ===
-    println!("\n📂 扫描 config 目录中的临时文件...");
+    debug!("\n📂 扫描 config 目录中的临时文件...");
     if sunshine_path.exists() {
         match fs::read_dir(&sunshine_path) {
             Ok(entries) => {
@@ -303,13 +304,13 @@ pub async fn cleanup_unused_covers() -> Result<serde_json::Value, String> {
                                     
                                     match fs::remove_file(&path) {
                                         Ok(_) => {
-                                            println!("  🗑️  [临时] {}", filename);
+                                            debug!("  🗑️  [临时] {}", filename);
                                             deleted_count += 1;
                                             freed_space += size;
                                         }
                                         Err(e) => {
                                             let error_msg = format!("删除临时文件 {} 失败: {}", filename, e);
-                                            println!("  ❌ {}", error_msg);
+                                            error!("  ❌ {}", error_msg);
                                             errors.push(error_msg);
                                         }
                                     }
@@ -321,7 +322,7 @@ pub async fn cleanup_unused_covers() -> Result<serde_json::Value, String> {
             }
             Err(e) => {
                 let error_msg = format!("读取 config 目录失败: {}", e);
-                println!("  ⚠️  {}", error_msg);
+                warn!("  ⚠️  {}", error_msg);
                 // 不返回错误，继续执行
             }
         }
@@ -333,7 +334,7 @@ pub async fn cleanup_unused_covers() -> Result<serde_json::Value, String> {
         "没有发现需要清理的文件".to_string()
     };
     
-    println!("\n✅ 清理完成: {}", message);
+    info!("\n✅ 清理完成: {}", message);
     
     Ok(json!({
         "success": true,

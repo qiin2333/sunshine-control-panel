@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use log::{info, warn, error, debug};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[allow(dead_code)]
@@ -75,7 +76,7 @@ pub async fn get_system_info() -> Result<SystemInfo, String> {
         let (os_version, memory_total, cpu_model) = match get_windows_system_info().await {
             Ok((os_ver, mem, cpu)) => (os_ver, Some(mem), Some(cpu)),
             Err(e) => {
-                eprintln!("获取 Windows 系统信息失败: {}", e);
+                error!("获取 Windows 系统信息失败: {}", e);
                 (format!("Windows {}", env::consts::OS), None, None)
             }
         };
@@ -179,17 +180,17 @@ pub async fn get_current_dpi() -> Result<u32, String> {
                 Ok(_) => {
                     // 转换为百分比（96 DPI = 100%）
                     let percentage = (dpi_x as f32 / 96.0 * 100.0).round() as u32;
-                    println!("🖥️ 主显示器实时 DPI: {} x {} -> {}%", dpi_x, dpi_y, percentage);
+                    debug!("🖥️ 主显示器实时 DPI: {} x {} -> {}%", dpi_x, dpi_y, percentage);
                     Ok(percentage)
                 }
                 Err(e) => {
-                    eprintln!("❌ 获取显示器 DPI 失败: {:?}", e);
+                    error!("❌ 获取显示器 DPI 失败: {:?}", e);
                     
                     // 回退方案：使用系统 DPI
                     use windows::Win32::UI::HiDpi::GetDpiForSystem;
                     let dpi = GetDpiForSystem();
                     let percentage = (dpi as f32 / 96.0 * 100.0).round() as u32;
-                    println!("🖥️ 回退：使用系统 DPI: {} ({}%)", dpi, percentage);
+                    debug!("🖥️ 回退：使用系统 DPI: {} ({}%)", dpi, percentage);
                     Ok(percentage)
                 }
             }
@@ -204,7 +205,7 @@ pub async fn get_current_dpi() -> Result<u32, String> {
 
 #[tauri::command]
 pub async fn set_desktop_dpi(dpi: u32) -> Result<(), String> {
-    println!("🖥️ 设置桌面 DPI: {}%", dpi);
+    info!("🖥️ 设置桌面 DPI: {}%", dpi);
     
     #[cfg(target_os = "windows")]
     {
@@ -215,7 +216,7 @@ pub async fn set_desktop_dpi(dpi: u32) -> Result<(), String> {
         let install_path = sunshine::get_sunshine_install_path();
         let setdpi_path = PathBuf::from(&install_path).join("tools").join("SetDpi.exe");
         
-        println!("🔍 SetDpi.exe 路径: {:?}", setdpi_path);
+        debug!("🔍 SetDpi.exe 路径: {:?}", setdpi_path);
         
         if setdpi_path.exists() {
             match std::process::Command::new(setdpi_path)
@@ -223,11 +224,11 @@ pub async fn set_desktop_dpi(dpi: u32) -> Result<(), String> {
                 .spawn()
             {
                 Ok(_) => {
-                    println!("✅ DPI 已设置为 {}%", dpi);
+                    info!("✅ DPI 已设置为 {}%", dpi);
                     Ok(())
                 }
                 Err(e) => {
-                    eprintln!("❌ 执行 SetDpi.exe 失败: {}", e);
+                    error!("❌ 执行 SetDpi.exe 失败: {}", e);
                     Err(format!("执行失败: {}", e))
                 }
             }

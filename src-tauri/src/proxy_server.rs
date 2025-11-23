@@ -8,6 +8,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use log::{info, warn, error, debug};
 
 /// 全局 Sunshine 目标 URL（动态配置）
 static SUNSHINE_TARGET: Lazy<Arc<RwLock<String>>> = 
@@ -20,7 +21,7 @@ static LAST_CHECK_TIME: AtomicU64 = AtomicU64::new(0);
 /// 设置 Sunshine 目标 URL
 pub fn set_sunshine_target(url: String) {
     if let Ok(mut target) = SUNSHINE_TARGET.write() {
-        println!("🎯 代理目标已更新: {}", url);
+        info!("🎯 代理目标已更新: {}", url);
         *target = url;
     }
 }
@@ -79,23 +80,23 @@ pub async fn start_proxy_server() -> Result<(), Box<dyn std::error::Error + Send
         .layer(CorsLayer::permissive());
     
     let addr = SocketAddr::from(([127, 0, 0, 1], 48081));
-    println!("🚀 准备启动 Sunshine 代理服务器: http://{}", addr);
+    info!("🚀 准备启动 Sunshine 代理服务器: http://{}", addr);
     
     match tokio::net::TcpListener::bind(addr).await {
         Ok(listener) => {
-            println!("✅ 代理服务器成功绑定到 http://{}", addr);
-            println!("   开始监听请求...");
+            info!("✅ 代理服务器成功绑定到 http://{}", addr);
+            info!("   开始监听请求...");
             
             if let Err(e) = axum::serve(listener, app).await {
-                eprintln!("❌ 代理服务器运行失败: {}", e);
+                error!("❌ 代理服务器运行失败: {}", e);
                 return Err(e.into());
             }
             
             Ok(())
         }
         Err(e) => {
-            eprintln!("❌ 代理服务器绑定端口失败: {}", e);
-            eprintln!("   端口 48081 可能被占用或权限不足");
+            error!("❌ 代理服务器绑定端口失败: {}", e);
+            error!("   端口 48081 可能被占用或权限不足");
             Err(e.into())
         }
     }
@@ -112,7 +113,7 @@ async fn proxy_handler(req: Request) -> Response {
     let body = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
         Ok(bytes) => bytes.to_vec(),
         Err(e) => {
-            eprintln!("❌ 读取请求体失败: {}", e);
+            error!("❌ 读取请求体失败: {}", e);
             return (
                 axum::http::StatusCode::BAD_REQUEST,
                 "读取请求体失败"
@@ -134,7 +135,7 @@ async fn proxy_handler(req: Request) -> Response {
     // 只在调试模式下打印主要请求
     #[cfg(debug_assertions)]
     if path == "/" || path.ends_with(".html") || path.starts_with("/api/") {
-        println!("📡 代理请求: {} {}", method, &path);
+        debug!("📡 代理请求: {} {}", method, &path);
     }
     
     // 快速失败检查：如果最近3秒内检测到 Sunshine 不可用，直接返回 404
@@ -161,9 +162,9 @@ async fn proxy_handler(req: Request) -> Response {
             response
         }
         Err(e) => {
-            eprintln!("❌ 代理错误 [{}]: {}", path, e);
-            eprintln!("   目标 URL: {}", target_url);
-            eprintln!("   错误详情: {:?}", e);
+            error!("❌ 代理错误 [{}]: {}", path, e);
+            error!("   目标 URL: {}", target_url);
+            error!("   错误详情: {:?}", e);
             
             // 检查是否是连接错误
             let error_str = e.to_string().to_lowercase();
@@ -274,7 +275,7 @@ async fn fetch_and_proxy(
             }
             // 其他 HTTPS 错误（如证书问题），尝试 HTTP
             let http_url = url_to_use.replace("https://", "http://");
-            eprintln!("⚠️  HTTPS 连接失败，尝试 HTTP: {}", http_url);
+            warn!("⚠️  HTTPS 连接失败，尝试 HTTP: {}", http_url);
             send_request(client, &http_url, method, headers, &body).await?
         }
         Err(e) => return Err(e),

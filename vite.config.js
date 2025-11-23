@@ -34,6 +34,7 @@ export default defineConfig(() => ({
         placeholder: resolve(rendererSrcPath, 'placeholder.html'),
         sunshineFrame: resolve(rendererSrcPath, 'sunshine-frame.html'),
         vdd: resolve(rendererSrcPath, 'vdd/index.html'),
+        console: resolve(rendererSrcPath, 'console/index.html'),
         clock: resolve(rendererSrcPath, 'stop-clock-canvas/index.html'),
         home: resolve(rendererSrcPath, 'home/index.html'),
         about: resolve(rendererSrcPath, 'about/index.html'),

@@ -3,6 +3,7 @@
 use tauri::{AppHandle, Manager, Runtime, Emitter};
 use std::path::PathBuf;
 use std::fs;
+use log::{info, warn, error, debug};
 
 // 获取工具栏配置文件路径
 fn get_toolbar_config_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
@@ -27,9 +28,9 @@ pub fn save_toolbar_position_internal<R: Runtime>(app: &AppHandle<R>, x: f64, y:
         });
         
         if let Err(e) = fs::write(&config_path, config.to_string()) {
-            eprintln!("❌ 保存工具栏位置失败: {}", e);
+            error!("❌ 保存工具栏位置失败: {}", e);
         } else {
-            println!("💾 工具栏位置已保存: ({}, {})", x, y);
+            debug!("💾 工具栏位置已保存: ({}, {})", x, y);
         }
     }
 }
@@ -46,7 +47,7 @@ fn load_toolbar_position<R: Runtime>(app: &AppHandle<R>) -> Option<(f64, f64)> {
     let config_path = match get_toolbar_config_path(app) {
         Ok(path) => path,
         Err(e) => {
-            eprintln!("❌ 获取配置路径失败: {}", e);
+            error!("❌ 获取配置路径失败: {}", e);
             return None;
         }
     };
@@ -61,17 +62,17 @@ fn load_toolbar_position<R: Runtime>(app: &AppHandle<R>) -> Option<(f64, f64)> {
                 Ok(config) => {
                     let x = config["x"].as_f64()?;
                     let y = config["y"].as_f64()?;
-                    println!("📂 加载工具栏位置: ({}, {})", x, y);
+                    debug!("📂 加载工具栏位置: ({}, {})", x, y);
                     Some((x, y))
                 }
                 Err(e) => {
-                    eprintln!("❌ 解析工具栏配置失败: {}", e);
+                    error!("❌ 解析工具栏配置失败: {}", e);
                     None
                 }
             }
         }
         Err(e) => {
-            eprintln!("❌ 读取工具栏配置失败: {}", e);
+            error!("❌ 读取工具栏配置失败: {}", e);
             None
         }
     }
@@ -89,7 +90,7 @@ pub fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &s
     // 创建工具窗口，通过 URL 参数传递工具类型
     let url = format!("tool-window/index.html?tool={}", tool_type);
     let title = format!("ZakoToolsWindow - {}", tool_type);
-    println!("🔧 创建工具窗口 URL: {}", url);
+    debug!("🔧 创建工具窗口 URL: {}", url);
     
     match tauri::WebviewWindowBuilder::new(
         app,
@@ -111,7 +112,7 @@ pub fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &s
             {
                 window.open_devtools();
                 let _ = window.set_always_on_top(false);
-                println!("🔧 [开发模式] 工具窗口已自动打开 DevTools");
+                debug!("🔧 [开发模式] 工具窗口已自动打开 DevTools");
             }
             
             // 等待一小段时间让内容加载，然后显示窗口
@@ -121,7 +122,7 @@ pub fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &s
             });
         }
         Err(e) => {
-            eprintln!("❌ 创建工具窗口失败: {}", e);
+            error!("❌ 创建工具窗口失败: {}", e);
         }
     }
 }
@@ -168,11 +169,11 @@ pub fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<
     
     // 检查工具栏窗口是否已存在
     if app.get_webview_window(TOOLBAR_WINDOW_ID).is_some() {
-        println!("🔧 工具栏窗口已存在");
+        debug!("🔧 工具栏窗口已存在");
         return Ok(());
     }
     
-    println!("🔧 创建工具栏窗口");
+    debug!("🔧 创建工具栏窗口");
     
     // 窗口大小和边距配置
     let toolbar_size = 280.0;  // 窗口大小（正方形，包含气泡菜单空间）
@@ -202,12 +203,12 @@ pub fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<
             #[cfg(debug_assertions)]
             {
                 win.open_devtools();
-                println!("🔧 [开发模式] 已自动打开 DevTools");
+                debug!("🔧 [开发模式] 已自动打开 DevTools");
             }
             win
         }
         Err(e) => {
-            eprintln!("❌ 创建工具栏窗口失败: {}", e);
+            error!("❌ 创建工具栏窗口失败: {}", e);
             return Err(format!("创建工具栏窗口失败: {}", e));
         }
     };
@@ -215,7 +216,7 @@ pub fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<
     // 尝试加载保存的位置，如果没有则使用默认位置（右下角）
     if let Some((saved_x, saved_y)) = load_toolbar_position(app) {
         // 保存的坐标已经是物理像素，需要验证是否在屏幕范围内
-        println!("📂 读取保存的工具栏位置: ({}, {})", saved_x, saved_y);
+        debug!("📂 读取保存的工具栏位置: ({}, {})", saved_x, saved_y);
         
         // 获取当前显示器信息进行边界检查
         if let Ok(monitor) = window.current_monitor() {
@@ -244,8 +245,8 @@ pub fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<
                     logical_y > max_y;
                 
                 if is_out_of_bounds {
-                    println!("⚠️  保存的位置越界，使用默认位置");
-                    println!("   屏幕尺寸: {}x{}, 保存位置(逻辑): ({}, {})", 
+                    warn!("⚠️  保存的位置越界，使用默认位置");
+                    debug!("   屏幕尺寸: {}x{}, 保存位置(逻辑): ({}, {})", 
                              screen_width, screen_height, logical_x, logical_y);
                     // 使用默认位置（右下角）
                     let x = screen_width - toolbar_size - margin - 60.0;
@@ -255,36 +256,36 @@ pub fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<
                         (x * scale_factor) as i32,
                         (y * scale_factor) as i32
                     )) {
-                        eprintln!("❌ 设置默认位置失败: {}", e);
+                        error!("❌ 设置默认位置失败: {}", e);
                     }
                 } else {
                     // 位置有效，直接使用
-                    println!("✅ 位置有效，应用保存的位置");
+                    debug!("✅ 位置有效，应用保存的位置");
                     if let Err(e) = window.set_position(tauri::PhysicalPosition::new(
                         saved_x as i32,
                         saved_y as i32
                     )) {
-                        eprintln!("❌ 设置工具栏位置失败: {}", e);
+                        error!("❌ 设置工具栏位置失败: {}", e);
                     }
                 }
             } else {
                 // 无法获取显示器信息，直接使用保存的位置
-                println!("⚠️  无法获取显示器信息，直接使用保存的位置");
+                warn!("⚠️  无法获取显示器信息，直接使用保存的位置");
                 if let Err(e) = window.set_position(tauri::PhysicalPosition::new(
                     saved_x as i32,
                     saved_y as i32
                 )) {
-                    eprintln!("❌ 设置工具栏位置失败: {}", e);
+                        error!("❌ 设置工具栏位置失败: {}", e);
                 }
             }
         } else {
             // 无法获取显示器，直接使用保存的位置
-            println!("⚠️  无法获取当前显示器，直接使用保存的位置");
+            warn!("⚠️  无法获取当前显示器，直接使用保存的位置");
             if let Err(e) = window.set_position(tauri::PhysicalPosition::new(
                 saved_x as i32,
                 saved_y as i32
             )) {
-                eprintln!("❌ 设置工具栏位置失败: {}", e);
+                        error!("❌ 设置工具栏位置失败: {}", e);
             }
         }
     } else {
@@ -302,7 +303,7 @@ pub fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<
                 let x = screen_width - toolbar_size - margin - 60.0;
                 let y = screen_height - toolbar_size - margin - 80.0;
                 
-                println!("📍 屏幕尺寸: {}x{}, 缩放: {}, 默认工具栏位置: ({}, {})", 
+                debug!("📍 屏幕尺寸: {}x{}, 缩放: {}, 默认工具栏位置: ({}, {})", 
                          screen_width, screen_height, scale_factor, x, y);
                 
                 // 转换为物理坐标
@@ -310,7 +311,7 @@ pub fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<
                     (x * scale_factor) as i32,
                     (y * scale_factor) as i32
                 )) {
-                    eprintln!("❌ 设置工具栏位置失败: {}", e);
+                        error!("❌ 设置工具栏位置失败: {}", e);
                 }
             }
         }
@@ -318,10 +319,10 @@ pub fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<
     
     // 显示窗口
     if let Err(e) = window.show() {
-        eprintln!("❌ 显示工具栏窗口失败: {}", e);
+        error!("❌ 显示工具栏窗口失败: {}", e);
     }
     
-    println!("✅ 工具栏窗口创建成功");
+    info!("✅ 工具栏窗口创建成功");
     Ok(())
 }
 
@@ -334,7 +335,7 @@ pub async fn create_toolbar_window(app: AppHandle) -> Result<(), String> {
 // Tauri 命令：处理工具栏菜单操作
 #[tauri::command]
 pub async fn handle_toolbar_menu_action(app: AppHandle, action: String) -> Result<(), String> {
-    println!("🔧 处理菜单操作: {}", action);
+    debug!("🔧 处理菜单操作: {}", action);
     handle_toolbar_menu_event(&app, &action);
     Ok(())
 }

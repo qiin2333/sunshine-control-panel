@@ -4,6 +4,7 @@ use std::process::Command;
 use crate::sunshine;
 use std::env;
 use tauri::Manager;
+use log::{info, warn, error, debug};
 
 #[allow(dead_code)]
 pub async fn send_http_request(
@@ -85,7 +86,7 @@ pub async fn restart_sunshine_service() -> Result<String, String> {
     {
         use std::os::windows::process::CommandExt;
         
-        println!("🔄 开始重启 Sunshine 服务...");
+        info!("🔄 开始重启 Sunshine 服务...");
         
         // 从注册表动态获取 Sunshine 安装路径
         let sunshine_path = std::path::PathBuf::from(sunshine::get_sunshine_install_path());
@@ -126,11 +127,11 @@ pub async fn restart_sunshine_service() -> Result<String, String> {
             .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| {
-                eprintln!("❌ 启动重启命令失败: {}", e);
+                error!("❌ 启动重启命令失败: {}", e);
                 format!("启动重启命令失败: {}", e)
             })?;
         
-        println!("✅ 重启命令已启动，正在后台执行...");
+        info!("✅ 重启命令已启动，正在后台执行...");
         
         Ok("success".to_string())
     }
@@ -152,8 +153,8 @@ pub async fn restart_as_admin(app_handle: tauri::AppHandle) -> Result<String, St
         let current_exe = env::current_exe()
             .map_err(|e| format!("获取当前程序路径失败: {}", e))?;
         
-        println!("🔄 准备以管理员权限重启 GUI");
-        println!("   当前程序: {:?}", current_exe);
+        info!("🔄 准备以管理员权限重启 GUI");
+        debug!("   当前程序: {:?}", current_exe);
         
         // 使用 PowerShell 的 Start-Process -Verb RunAs 来提升权限
         let exe_path = current_exe.to_string_lossy().to_string();
@@ -164,7 +165,7 @@ pub async fn restart_as_admin(app_handle: tauri::AppHandle) -> Result<String, St
             exe_path.replace("'", "''")  // 转义单引号
         );
         
-        println!("   PowerShell 命令: {}", ps_command);
+        debug!("   PowerShell 命令: {}", ps_command);
         
         // CREATE_NO_WINDOW = 0x08000000
         const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -176,21 +177,21 @@ pub async fn restart_as_admin(app_handle: tauri::AppHandle) -> Result<String, St
             .spawn()
             .map_err(|e| format!("启动管理员实例失败: {}", e))?;
         
-        println!("✅ 已请求以管理员权限启动新实例（500ms 后）");
+        info!("✅ 已请求以管理员权限启动新实例（500ms 后）");
         
         // 立即退出当前实例，让新实例可以绑定端口
         tokio::spawn(async move {
-            println!("🚪 准备退出当前实例...");
+            info!("🚪 准备退出当前实例...");
             
             // 先关闭主窗口
             if let Some(window) = app_handle.get_webview_window("main") {
                 let _ = window.close();
-                println!("   关闭主窗口");
+                debug!("   关闭主窗口");
             }
             
             // 短暂延迟后退出，让窗口关闭并释放端口 48081
             tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-            println!("🚪 退出当前实例，释放端口 48081");
+            info!("🚪 退出当前实例，释放端口 48081");
             app_handle.exit(0);
         });
         
@@ -255,7 +256,7 @@ pub fn open_url_in_browser(url: &str) {
     let url = url.to_string();
     
     tauri::async_runtime::spawn(async move {
-        println!("🌐 正在打开外部浏览器...");
+        info!("🌐 正在打开外部浏览器...");
         
         #[cfg(target_os = "windows")]
         {
@@ -263,9 +264,9 @@ pub fn open_url_in_browser(url: &str) {
                 .args(&["/c", "start", "", &url])
                 .spawn()
             {
-                eprintln!("❌ 打开 URL 失败: {}", e);
+                error!("❌ 打开 URL 失败: {}", e);
             } else {
-                println!("✅ 已在外部浏览器中打开: {}", url);
+                info!("✅ 已在外部浏览器中打开: {}", url);
             }
         }
         
@@ -275,9 +276,9 @@ pub fn open_url_in_browser(url: &str) {
                 .arg(&url)
                 .spawn()
             {
-                eprintln!("❌ 打开 URL 失败: {}", e);
+                error!("❌ 打开 URL 失败: {}", e);
             } else {
-                println!("✅ 已在外部浏览器中打开: {}", url);
+                info!("✅ 已在外部浏览器中打开: {}", url);
             }
         }
     });

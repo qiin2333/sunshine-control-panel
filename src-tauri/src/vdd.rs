@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use quick_xml::de::from_str;
 use quick_xml::se::to_string;
 use crate::sunshine;
+use log::{info, warn, error, debug};
 
 /// 更新 VDD XML 文件中的 colour 和 logging 节点
 /// C++ 的 saveVddSettings 会保留这些字段，所以我们需要先写入
@@ -19,19 +20,19 @@ async fn update_vdd_xml_extra_fields(settings: &VddSettings) -> Result<(), Strin
             .map_err(|e| format!("解析 VDD XML 失败: {}", e))?
     } else {
         // 如果文件不存在，使用默认配置
-        println!("  📄 VDD 配置文件不存在，使用默认配置");
+        debug!("  📄 VDD 配置文件不存在，使用默认配置");
         get_default_settings()
     };
     
     // 只更新 colour 和 logging 字段（其他字段会被 C++ 更新）
     if let Some(ref colour) = settings.colour {
         vdd_settings.colour = Some(colour.clone());
-        println!("  ✓ 更新 colour 配置");
+        debug!("  ✓ 更新 colour 配置");
     }
     
     if let Some(ref logging) = settings.logging {
         vdd_settings.logging = Some(logging.clone());
-        println!("  ✓ 更新 logging 配置");
+        debug!("  ✓ 更新 logging 配置");
     }
     
     // 序列化回 XML
@@ -57,33 +58,33 @@ async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), Stri
     
     // 写入临时文件
     let temp_path = std::env::temp_dir().join(format!("vdd_extra_{}.xml", std::process::id()));
-    println!("  📝 写入临时文件: {:?}", temp_path);
+    debug!("  📝 写入临时文件: {:?}", temp_path);
     fs::write(&temp_path, content)
         .map_err(|e| format!("写入临时文件失败: {}", e))?;
     
-    println!("  📝 目标文件: {:?}", vdd_xml_path);
+    debug!("  📝 目标文件: {:?}", vdd_xml_path);
     
     // 先尝试使用 ShellExecuteW 触发 UAC 并复制
     let mut shell_execute_success = false;
     match elevated_copy_with_shell_execute(&temp_path, vdd_xml_path) {
         Ok(()) => {
-            println!("  🔧 已请求使用 ShellExecuteW 提权复制");
+            debug!("  🔧 已请求使用 ShellExecuteW 提权复制");
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
             match fs::read_to_string(vdd_xml_path) {
                 Ok(written) if written == content => {
-                    println!("  ✅ ShellExecuteW 提权复制成功");
+                    info!("  ✅ ShellExecuteW 提权复制成功");
                     shell_execute_success = true;
                 }
                 Ok(_) => {
-                    println!("  ⚠️ ShellExecuteW 复制后内容不匹配，准备回退到 PowerShell");
+                    warn!("  ⚠️ ShellExecuteW 复制后内容不匹配，准备回退到 PowerShell");
                 }
                 Err(err) => {
-                    println!("  ⚠️ ShellExecuteW 复制后读取失败 ({}), 准备回退到 PowerShell", err);
+                    warn!("  ⚠️ ShellExecuteW 复制后读取失败 ({}), 准备回退到 PowerShell", err);
                 }
             }
         }
         Err(err) => {
-            println!("  ⚠️ ShellExecuteW 提权复制调用失败 ({}), 准备回退到 PowerShell", err);
+            warn!("  ⚠️ ShellExecuteW 提权复制调用失败 ({}), 准备回退到 PowerShell", err);
         }
     }
     
@@ -101,7 +102,7 @@ async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), Stri
         inner_command.replace("'", "''") // PowerShell 中单引号需要双写转义
     );
     
-    println!("  🔧 执行 PowerShell 提权命令...");
+    debug!("  🔧 执行 PowerShell 提权命令...");
     
     let output = Command::new("powershell")
         .args(&["-NoProfile", "-Command", &ps_script])
@@ -119,24 +120,24 @@ async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), Stri
             })?;
     
     // 等待文件写入完成
-    println!("  ⏳ 等待文件写入完成...");
+    debug!("  ⏳ 等待文件写入完成...");
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     
     // 验证文件是否成功写入
     if !output.success() {
-        println!("  ❌ PowerShell 提权复制失败");
+        error!("  ❌ PowerShell 提权复制失败");
         
         // 尝试直接写入（可能会因权限不足而失败）
-            println!("  ⚠️ 尝试直接写入...");
+            warn!("  ⚠️ 尝试直接写入...");
         fs::write(vdd_xml_path, content)
             .map_err(|e| {
                 // 清理临时文件
                 let _ = fs::remove_file(&temp_path);
                 format!("写入失败，需要管理员权限: {}", e)
             })?;
-        println!("  ✓ 直接写入成功");
+        info!("  ✓ 直接写入成功");
     } else {
-        println!("  ✅ PowerShell 提权复制成功");
+        info!("  ✅ PowerShell 提权复制成功");
         }
     }
     
@@ -205,7 +206,7 @@ async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), Stri
     fs::write(vdd_xml_path, content)
         .map_err(|e| format!("写入 VDD XML 失败: {}", e))?;
     
-    println!("  ✓ 已写入 colour 和 logging 到 XML");
+    debug!("  ✓ 已写入 colour 和 logging 到 XML");
     
     Ok(())
 }
@@ -220,9 +221,9 @@ fn verify_vdd_xml(vdd_xml_path: &PathBuf) -> Result<(), String> {
         .map_err(|e| format!("验证文件失败: {}", e))?;
     
     if verify_content.contains("<colour>") || verify_content.contains("<logging>") {
-        println!("  ✅ 验证: colour/logging 字段已写入");
+        debug!("  ✅ 验证: colour/logging 字段已写入");
     } else {
-        println!("  ⚠️  警告: 未在文件中找到 colour/logging 字段");
+        warn!("  ⚠️  警告: 未在文件中找到 colour/logging 字段");
     }
     
     Ok(())
@@ -237,7 +238,7 @@ async fn read_full_sunshine_config() -> Result<serde_json::Map<String, serde_jso
     let mut config_map = serde_json::Map::new();
     
     if !config_path.exists() {
-        println!("⚠️  配置文件不存在: {:?}", config_path);
+        warn!("⚠️  配置文件不存在: {:?}", config_path);
         return Ok(config_map);
     }
     
@@ -283,7 +284,7 @@ async fn read_full_sunshine_config() -> Result<serde_json::Map<String, serde_jso
         i += 1;
     }
     
-    println!("📄 读取到 {} 个配置项", config_map.len());
+    debug!("📄 读取到 {} 个配置项", config_map.len());
     Ok(config_map)
 }
 
@@ -298,7 +299,7 @@ async fn sync_vdd_config_to_sunshine(settings: &VddSettings) -> Result<(), Strin
     // 这样可以避免丢失其他配置
     let mut config_data = read_full_sunshine_config().await?;
     
-    println!("🔄 合并 VDD 配置到现有配置中");
+    debug!("🔄 合并 VDD 配置到现有配置中");
     
     // 更新分辨率配置 - 格式: [1920x1080,2560x1440] (不带引号)
     if !settings.resolutions.resolution.is_empty() {
@@ -313,7 +314,7 @@ async fn sync_vdd_config_to_sunshine(settings: &VddSettings) -> Result<(), Strin
         
         // 更新或插入到配置中
         config_data.insert("resolutions".to_string(), serde_json::json!(resolutions_json));
-        println!("  ✓ 分辨率: {}", resolutions_json);
+        debug!("  ✓ 分辨率: {}", resolutions_json);
     }
     
     // 更新刷新率配置（作为 fps） - 格式: [60,120,240]
@@ -324,20 +325,20 @@ async fn sync_vdd_config_to_sunshine(settings: &VddSettings) -> Result<(), Strin
         
         // 更新或插入到配置中
         config_data.insert("fps".to_string(), serde_json::json!(fps_json));
-        println!("  ✓ 刷新率: {}", fps_json);
+        debug!("  ✓ 刷新率: {}", fps_json);
     }
     
     // 更新 GPU 名称 - 格式: 普通字符串
     if !settings.gpu.friendlyname.is_empty() {
         config_data.insert("adapter_name".to_string(), serde_json::json!(settings.gpu.friendlyname));
-        println!("  ✓ GPU: {}", settings.gpu.friendlyname);
+        debug!("  ✓ GPU: {}", settings.gpu.friendlyname);
     }
     
     // 调用 Sunshine Config API
     let config_url = format!("{}/api/config", sunshine_url.trim_end_matches('/'));
     
-    println!("📡 调用 Sunshine Config API: {}", config_url);
-    println!("📝 配置数据: {:?}", config_data);
+    debug!("📡 调用 Sunshine Config API: {}", config_url);
+    debug!("📝 配置数据: {:?}", config_data);
     
     // 使用 reqwest 发送 POST 请求
     let client = reqwest::Client::builder()
@@ -353,7 +354,7 @@ async fn sync_vdd_config_to_sunshine(settings: &VddSettings) -> Result<(), Strin
         .map_err(|e| format!("调用 Sunshine Config API 失败: {}", e))?;
     
     if response.status().is_success() {
-        println!("✅ VDD 配置已通过 Sunshine API 保存 (状态: {})", response.status());
+        info!("✅ VDD 配置已通过 Sunshine API 保存 (状态: {})", response.status());
         Ok(())
     } else {
         let status = response.status();
@@ -484,50 +485,50 @@ pub async fn load_vdd_settings() -> Result<VddSettings, String> {
     let content = fs::read_to_string(&path)
         .map_err(|e| format!("读取配置文件失败: {}", e))?;
     
-    println!("📄 读取到的 XML 内容:\n{}", content);
+    debug!("📄 读取到的 XML 内容:\n{}", content);
     
     // 解析 XML
     let settings: VddSettings = from_str(&content)
         .map_err(|e| {
-            eprintln!("❌ XML 解析失败: {}", e);
-            eprintln!("📄 XML 内容:\n{}", content);
+            error!("❌ XML 解析失败: {}", e);
+            error!("📄 XML 内容:\n{}", content);
             format!("XML 解析失败: {}", e)
         })?;
 
-    println!("✅ XML 解析成功！");
-    println!("🔍 解析后的 VDD 设置: {:?}", settings);
-    println!("🔍 解析后的 GPU 名称: {}", settings.gpu.friendlyname);
-    println!("🔍 解析后的分辨率数量: {}", settings.resolutions.resolution.len());
-    println!("🔍 解析后的全局刷新率: {:?}", settings.global.g_refresh_rate);
+    info!("✅ XML 解析成功！");
+    debug!("🔍 解析后的 VDD 设置: {:?}", settings);
+    debug!("🔍 解析后的 GPU 名称: {}", settings.gpu.friendlyname);
+    debug!("🔍 解析后的分辨率数量: {}", settings.resolutions.resolution.len());
+    debug!("🔍 解析后的全局刷新率: {:?}", settings.global.g_refresh_rate);
     
     Ok(settings)
 }
 
 #[tauri::command]
 pub async fn save_vdd_settings(settings: VddSettings) -> Result<String, String> {
-    println!("💾 开始保存 VDD 配置...");
+    info!("💾 开始保存 VDD 配置...");
     
     // 步骤1: 调用 Sunshine Config API 保存主要配置（resolutions, fps, adapter_name）
     // C++ 会写入 monitors, gpu, global, resolutions 字段
     sync_vdd_config_to_sunshine(&settings).await?;
     
     // 步骤2: 等待 C++ 完成文件写入
-    println!("⏳ 等待 Sunshine API 完成文件写入...");
+    debug!("⏳ 等待 Sunshine API 完成文件写入...");
     tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
     
     // 步骤3: 写入 colour 和 logging 到 XML
     // 读取 C++ 刚写入的 XML，添加 colour 和 logging，然后写回
-    println!("📝 写入 colour 和 logging 字段...");
+    debug!("📝 写入 colour 和 logging 字段...");
     update_vdd_xml_extra_fields(&settings).await?;
     
     // 步骤4: 通知 VDD 驱动重新加载配置
     #[cfg(target_os = "windows")]
     {
-        println!("🔄 通知 VDD 驱动重新加载...");
+        debug!("🔄 通知 VDD 驱动重新加载...");
         let _ = exec_pipe_cmd("RELOAD_DRIVER".to_string()).await;
     }
     
-    println!("✅ VDD 配置保存完成");
+    info!("✅ VDD 配置保存完成");
     Ok("保存成功".to_string())
 }
 

@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::process::Command;
 use url::Url;
+use log::{info, warn, error, debug};
+use once_cell::sync::Lazy;
+use std::sync::Mutex;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SunshineConfig {
@@ -11,7 +14,31 @@ pub struct SunshineConfig {
     pub fps: Option<String>,
 }
 
+// 缓存 Sunshine 路径，避免重复查找和记录日志
+static SUNSHINE_PATH_CACHE: Lazy<Mutex<Option<PathBuf>>> = Lazy::new(|| Mutex::new(None));
+
 fn get_sunshine_path() -> PathBuf {
+    // 先检查缓存
+    {
+        let cache = SUNSHINE_PATH_CACHE.lock().unwrap();
+        if let Some(ref cached_path) = *cache {
+            return cached_path.clone();
+        }
+    }
+    
+    // 缓存未命中，查找路径
+    let path = get_sunshine_path_internal();
+    
+    // 更新缓存
+    {
+        let mut cache = SUNSHINE_PATH_CACHE.lock().unwrap();
+        *cache = Some(path.clone());
+    }
+    
+    path
+}
+
+fn get_sunshine_path_internal() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
         use winreg::enums::*;
@@ -33,7 +60,7 @@ fn get_sunshine_path() -> PathBuf {
                     if let Ok(path) = sunshine_key.get_value::<String, _>(key_name) {
                         let install_path = PathBuf::from(path);
                         if install_path.exists() {
-                            println!("✅ 从注册表读取到 Sunshine 路径: {:?}", install_path);
+                            info!("✅ 从注册表读取到 Sunshine 路径: {:?}", install_path);
                             return install_path;
                         }
                     }
@@ -49,12 +76,12 @@ fn get_sunshine_path() -> PathBuf {
         
         for path in &default_paths {
             if path.exists() {
-                println!("✅ 使用默认 Sunshine 路径: {:?}", path);
+                info!("✅ 使用默认 Sunshine 路径: {:?}", path);
                 return path.clone();
             }
         }
         
-        eprintln!("⚠️  无法找到 Sunshine 安装路径，使用默认路径");
+        warn!("⚠️  无法找到 Sunshine 安装路径，使用默认路径");
         PathBuf::from(r"C:\Program Files\Sunshine")
     }
 
@@ -115,7 +142,7 @@ pub async fn get_sunshine_version() -> Result<String, String> {
             if let Some(cap) = pattern.captures(&combined) {
                 if let Some(version) = cap.get(1) {
                     let version_str = version.as_str().to_string();
-                    println!("✅ 解析到版本号: {}", version_str);
+                    debug!("✅ 解析到版本号: {}", version_str);
                     return Ok(version_str);
                 }
             }
@@ -292,7 +319,7 @@ pub async fn get_active_sessions() -> Result<Vec<SessionInfo>, String> {
     let sunshine_url = get_sunshine_url().await?;
     let sessions_url = format!("{}/api/runtime/sessions", sunshine_url.trim_end_matches('/'));
     
-    println!("📡 获取活动会话: {}", sessions_url);
+    debug!("📡 获取活动会话: {}", sessions_url);
     
     let client = create_https_client()?;
     
@@ -303,7 +330,8 @@ pub async fn get_active_sessions() -> Result<Vec<SessionInfo>, String> {
         .map_err(|e| format!("请求会话信息失败: {}", e))?;
     
     let status = response.status();
-    println!("📡 HTTP 状态码: {}", status);
+
+    debug!("📡 获取 sessions 响应状态码: {}", status);
     
     // 检查 Content-Type
     let content_type = response.headers()
@@ -314,16 +342,18 @@ pub async fn get_active_sessions() -> Result<Vec<SessionInfo>, String> {
     
     let response_text = response.text().await
         .map_err(|e| format!("读取响应失败: {}", e))?;
+
+    debug!("📡 获取 sessions 响应内容: {}", response_text);
     
     // 如果是 404 或 XML 响应，返回空数组（没有会话是正常情况）
     if status == 404 || content_type.contains("xml") || response_text.trim_start().starts_with("<?xml") {
-        println!("⚠️ 没有活动会话 (404 或 XML 响应)");
+        debug!("⚠️ 没有活动会话 (404 或 XML 响应)");
         return Ok(Vec::new());
     }
     
     // 如果状态码不是成功，但也不是 404，返回错误
     if !status.is_success() {
-        println!("❌ 错误响应: {}", response_text);
+        error!("❌ 错误响应: {}", response_text);
         return Err(format!("获取会话信息失败 (状态: {}): {}", status, response_text));
     }
     
@@ -331,7 +361,7 @@ pub async fn get_active_sessions() -> Result<Vec<SessionInfo>, String> {
     let json: serde_json::Value = serde_json::from_str(&response_text)
         .map_err(|e| format!("解析 JSON 失败: {}，响应内容: {}", e, response_text))?;
     
-    println!("📡 解析后的 JSON: {:#}", json);
+    debug!("📡 解析后的 JSON: {:#}", json);
     
     // 检查 API 响应状态
     if let Some(success) = json.get("success").and_then(|v| v.as_bool()) {
@@ -348,19 +378,19 @@ pub async fn get_active_sessions() -> Result<Vec<SessionInfo>, String> {
         .get("sessions")
         .and_then(|v| v.as_array())
         .map(|sessions_array| {
-            println!("📡 找到 {} 个会话", sessions_array.len());
+            debug!("📡 找到 {} 个会话", sessions_array.len());
             sessions_array
                 .iter()
                 .map(SessionInfo::from_json)
                 .collect::<Vec<_>>()
         })
         .unwrap_or_else(|| {
-            println!("⚠️ 响应中没有 'sessions' 字段或不是数组");
-            println!("📡 JSON 结构: {:#}", json);
+            warn!("⚠️ 响应中没有 'sessions' 字段或不是数组");
+            debug!("📡 JSON 结构: {:#}", json);
             Vec::new()
         });
     
-    println!("✅ 获取到 {} 个活动会话", sessions.len());
+    info!("✅ 获取到 {} 个活动会话", sessions.len());
     Ok(sessions)
 }
 
@@ -384,8 +414,8 @@ pub async fn change_bitrate(client_name: String, bitrate: u32) -> Result<String,
         .append_pair("bitrate", &bitrate.to_string())
         .append_pair("clientname", &client_name);
     
-    println!("📡 调整码率: {} -> {} Kbps", client_name, bitrate);
-    println!("📡 请求 URL: {}", change_bitrate_url);
+    info!("📡 调整码率: {} -> {} Kbps", client_name, bitrate);
+    debug!("📡 请求 URL: {}", change_bitrate_url);
     
     // 发送请求
     let client = create_https_client()?;
@@ -396,7 +426,7 @@ pub async fn change_bitrate(client_name: String, bitrate: u32) -> Result<String,
         .map_err(|e| format!("请求调整码率失败: {}", e))?;
     
     let status = response.status();
-    println!("📡 HTTP 状态码: {}", status);
+    debug!("📡 HTTP 状态码: {}", status);
     
     // 读取响应内容
     let response_text = response
@@ -417,12 +447,12 @@ pub async fn change_bitrate(client_name: String, bitrate: u32) -> Result<String,
     let json: serde_json::Value = serde_json::from_str(&response_text)
         .map_err(|e| format!("解析 JSON 失败: {}，响应内容: {}", e, response_text))?;
     
-    println!("📡 解析后的 JSON: {:#}", json);
+    debug!("📡 解析后的 JSON: {:#}", json);
     
     // 检查响应状态
     match json.get("success").and_then(|v| v.as_bool()) {
         Some(true) => {
-            println!("✅ 码率调整成功");
+            info!("✅ 码率调整成功");
             Ok(format!("码率已调整为 {} Kbps", bitrate))
         }
         Some(false) => {
@@ -433,7 +463,7 @@ pub async fn change_bitrate(client_name: String, bitrate: u32) -> Result<String,
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
             
-            println!("❌ 码率调整失败: {} (状态码: {})", error_msg, status_code);
+            error!("❌ 码率调整失败: {} (状态码: {})", error_msg, status_code);
             
             // 根据状态码提供详细提示
             let error_message = if status_code == 404 {
@@ -445,7 +475,7 @@ pub async fn change_bitrate(client_name: String, bitrate: u32) -> Result<String,
             Err(error_message)
         }
         None => {
-            println!("⚠️ 响应格式无效，无法解析 success 字段");
+            warn!("⚠️ 响应格式无效，无法解析 success 字段");
             Err("无效的响应格式".to_string())
         }
     }

@@ -408,9 +408,15 @@ pub fn check_for_updates_on_startup(app: AppHandle) {
 /// 如果当前进程没有管理员权限，此函数会失败，但不影响后续的进程终止操作
 #[cfg(target_os = "windows")]
 fn stop_windows_service(service_name: &str) {
+    use std::os::windows::process::CommandExt;
+    
+    // CREATE_NO_WINDOW = 0x08000000，用于隐藏命令窗口
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    
     // 尝试使用 net stop 停止服务
     let output = std::process::Command::new("net")
         .args(&["stop", service_name])
+        .creation_flags(CREATE_NO_WINDOW)
         .output();
     
     match output {
@@ -430,6 +436,7 @@ fn stop_windows_service(service_name: &str) {
     // 也尝试使用 sc stop 作为备选方案（有时权限要求较低）
     let sc_output = std::process::Command::new("sc")
         .args(&["stop", service_name])
+        .creation_flags(CREATE_NO_WINDOW)
         .output();
     
     if let Ok(result) = sc_output {
@@ -717,15 +724,17 @@ fn build_install_command(file_path: &str, extension: &str) -> Result<String, Str
             ))
         }
         "exe" => {
-            // EXE 安装程序通常支持以下静默参数（同时显示进度条）：
-            // /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- (Inno Setup)
-            // /S (NSIS - 完全静默，不显示进度条)
-            // /quiet (某些安装程序 - 静默但可能显示进度)
+            // EXE 安装程序使用完全静默参数：
+            // /VERYSILENT: 完全静默安装，不显示任何界面（Inno Setup）
+            // /SILENT: 静默安装（某些安装程序）
+            // /S: 静默安装（NSIS）
+            // /SUPPRESSMSGBOXES: 禁止显示消息框
+            // /NORESTART: 安装完成后不自动重启
+            // /SP-: 禁用启动提示
             // 
-            // 这里使用 Inno Setup 的参数组合，它会静默安装但显示进度条
-            // 如果不起作用，安装程序会忽略这些参数并显示完整界面
+            // 使用 Inno Setup 的完全静默参数组合
             Ok(format!(
-                "Start-Process '{}' -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-' -Verb RunAs -Wait",
+                "Start-Process '{}' -ArgumentList '/VERYSILENT', '/SILENT', '/S', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-' -Verb RunAs -Wait",
                 escaped_path
             ))
         }

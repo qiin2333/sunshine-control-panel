@@ -57,7 +57,7 @@ export function useTools() {
    */
   const restartSunshine = async () => {
     await confirmAction(
-      '确定要重启 Sunshine 服务吗？这将断开当前所有连接。',
+      '确定要重启 Sunshine 服务吗？这将断开当前所有连接。\n\n如果弹出 UAC 提示，请点击"是"以确认。\nSunshine 服务将在几秒钟内重启。',
       '确认重启',
       tools.restartSunshineService,
       '重启请求已发送'

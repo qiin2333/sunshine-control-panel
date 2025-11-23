@@ -45,6 +45,8 @@ pub async fn send_http_request(
 pub async fn restart_graphics_driver() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+        
         // 从注册表动态获取 Sunshine 安装路径
         let sunshine_path = std::path::PathBuf::from(sunshine::get_sunshine_install_path());
         let restart_exe = sunshine_path.join("tools").join("restart64.exe");
@@ -59,8 +61,12 @@ pub async fn restart_graphics_driver() -> Result<String, String> {
             restart_exe.display()
         );
         
+        // CREATE_NO_WINDOW = 0x08000000，用于隐藏 PowerShell 窗口
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        
         Command::new("powershell")
             .args(&["-Command", &ps_command])
+            .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| e.to_string())?;
         
@@ -77,27 +83,56 @@ pub async fn restart_graphics_driver() -> Result<String, String> {
 pub async fn restart_sunshine_service() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+        
+        println!("🔄 开始重启 Sunshine 服务...");
+        
         // 从注册表动态获取 Sunshine 安装路径
         let sunshine_path = std::path::PathBuf::from(sunshine::get_sunshine_install_path());
         
         // 构建重启命令
+        // 1. 停止旧的服务（SunshineService 和 sunshineservice）
+        // 2. 强制结束进程（忽略错误）
+        // 3. 等待1秒确保进程完全退出
+        // 4. 尝试启动服务，如果服务不存在则直接启动 sunshine.exe
         let command = format!(
-            "net stop sunshineservice; taskkill /IM sunshine.exe /F; cd '{}'; .\\sunshine.exe",
+            "net stop SunshineService 2>$null; \
+             net stop sunshineservice 2>$null; \
+             taskkill /IM sunshine.exe /F 2>$null; \
+             Start-Sleep -Seconds 1; \
+             $serviceExists = Get-Service -Name 'SunshineService' -ErrorAction SilentlyContinue; \
+             if ($serviceExists) {{ \
+                 net start SunshineService \
+             }} else {{ \
+                 Set-Location '{}'; \
+                 Start-Process -FilePath '.\\sunshine.exe' -WindowStyle Hidden \
+             }}",
             sunshine_path.display()
         );
         
-        // 使用正确的引号转义
+        // 使用 PowerShell 以管理员权限执行命令
+        // 单引号需要双写转义
         let ps_command = format!(
-            "Start-Process powershell -ArgumentList '-NoProfile', '-Command', '{}' -Verb RunAs -WindowStyle Hidden -Wait",
-            command.replace("'", "''")  // PowerShell 中单引号需要双写转义
+            "Start-Process powershell -ArgumentList '-NoProfile', '-Command', '{}' -Verb RunAs -WindowStyle Hidden",
+            command.replace("'", "''")
         );
         
+        // CREATE_NO_WINDOW = 0x08000000，用于隐藏 PowerShell 窗口
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        
+        // 启动进程（不等待完成）
         Command::new("powershell")
             .args(&["-NoProfile", "-Command", &ps_command])
+            .creation_flags(CREATE_NO_WINDOW)
             .spawn()
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| {
+                eprintln!("❌ 启动重启命令失败: {}", e);
+                format!("启动重启命令失败: {}", e)
+            })?;
         
-        Ok("已请求重启 Sunshine 服务".to_string())
+        println!("✅ 重启命令已启动，正在后台执行...");
+        
+        Ok("success".to_string())
     }
     
     #[cfg(not(target_os = "windows"))]

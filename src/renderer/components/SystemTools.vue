@@ -64,8 +64,17 @@ defineExpose({
         }
       )
       
-      const result = await tools.restartSunshineService()
-      ElMessage.success(result)
+      await tools.restartSunshineService()
+      
+      // 显示详细的成功提示
+      await ElMessageBox.alert(
+        '重启命令已发送！\n\n如果弹出 UAC 提示，请点击"是"以确认。\nSunshine 服务将在几秒钟内重启。',
+        '重启成功',
+        {
+          confirmButtonText: '确定',
+          type: 'success',
+        }
+      )
       
       // 3秒后关闭窗口
       setTimeout(() => {

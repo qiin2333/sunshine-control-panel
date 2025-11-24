@@ -14,7 +14,7 @@ export const darkMode = {
   async system() {
     // Tauri 使用系统主题
     return true
-  }
+  },
 }
 
 // 外部 URL
@@ -38,7 +38,7 @@ export const vdd = {
       return { success: false, message: error }
     }
   },
-  
+
   async loadSettings() {
     try {
       const settings = await invoke('load_vdd_settings')
@@ -47,7 +47,7 @@ export const vdd = {
       return { success: false, data: null, message: error }
     }
   },
-  
+
   async saveSettings(settings) {
     try {
       await invoke('save_vdd_settings', { settings })
@@ -56,7 +56,7 @@ export const vdd = {
       return { success: false, message: error }
     }
   },
-  
+
   async execPipeCmd(command) {
     try {
       await invoke('exec_pipe_cmd', { command })
@@ -65,7 +65,43 @@ export const vdd = {
       console.error('执行管道命令失败:', error)
       return false
     }
-  }
+  },
+
+  async getEdidFilePath() {
+    try {
+      const path = await invoke('get_vdd_edid_file_path')
+      return { success: true, data: path }
+    } catch (error) {
+      return { success: false, message: error }
+    }
+  },
+
+  async uploadEdidFile(fileData) {
+    try {
+      const result = await invoke('upload_edid_file', { fileData })
+      return { success: true, data: result }
+    } catch (error) {
+      return { success: false, message: error }
+    }
+  },
+
+  async readEdidFile() {
+    try {
+      const data = await invoke('read_edid_file')
+      return { success: true, data }
+    } catch (error) {
+      return { success: false, message: error }
+    }
+  },
+
+  async deleteEdidFile() {
+    try {
+      const result = await invoke('delete_edid_file')
+      return { success: true, data: result }
+    } catch (error) {
+      return { success: false, message: error }
+    }
+  },
 }
 
 // Sunshine 配置相关
@@ -78,7 +114,7 @@ export const sunshine = {
       return 'Unknown'
     }
   },
-  
+
   async parseConfig() {
     try {
       return await invoke('parse_sunshine_config')
@@ -87,7 +123,7 @@ export const sunshine = {
       return {}
     }
   },
-  
+
   async getUrl() {
     try {
       return await invoke('get_sunshine_url')
@@ -96,7 +132,7 @@ export const sunshine = {
       return 'https://localhost:47990/'
     }
   },
-  
+
   async getCommandLineUrl() {
     try {
       return await invoke('get_command_line_url')
@@ -105,7 +141,7 @@ export const sunshine = {
       return null
     }
   },
-  
+
   async getActiveSessions() {
     try {
       return await invoke('get_active_sessions')
@@ -114,7 +150,7 @@ export const sunshine = {
       return []
     }
   },
-  
+
   async changeBitrate(clientName, bitrate) {
     try {
       console.log('📡 调用 change_bitrate API:', { clientName, bitrate })
@@ -126,7 +162,7 @@ export const sunshine = {
       console.error('❌ 调整码率失败:', error)
       throw error
     }
-  }
+  },
 }
 
 // 系统工具相关
@@ -139,7 +175,7 @@ export const tools = {
       throw error
     }
   },
-  
+
   async restartSunshineService() {
     try {
       return await invoke('restart_sunshine_service')
@@ -148,7 +184,7 @@ export const tools = {
       throw error
     }
   },
-  
+
   async uninstallVddDriver() {
     try {
       return await invoke('uninstall_vdd_driver')
@@ -156,7 +192,7 @@ export const tools = {
       console.error('卸载 VDD 驱动失败:', error)
       throw error
     }
-  }
+  },
 }
 
 // 文件系统相关（如果需要）
@@ -172,7 +208,5 @@ export default {
   vdd,
   sunshine,
   tools,
-  readDirectory
+  readDirectory,
 }
-
-

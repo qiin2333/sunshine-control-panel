@@ -135,6 +135,41 @@ fn open_log_console<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
+/// 打开调试页面窗口（单例模式，仅开发环境）
+#[cfg(debug_assertions)]
+fn open_debug_page<R: Runtime>(app: &AppHandle<R>) {
+    const DEBUG_PAGE_WINDOW_ID: &str = "debug_page";
+    
+    if let Some(window) = app.get_webview_window(DEBUG_PAGE_WINDOW_ID) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    } else {
+        match tauri::WebviewWindowBuilder::new(
+            app,
+            DEBUG_PAGE_WINDOW_ID,
+            tauri::WebviewUrl::App("console/drag-drop-demo.html".into())
+        )
+        .title("调试页面 - 拖拽测试")
+        .inner_size(1200.0, 800.0)
+        .resizable(true)
+        .maximizable(true)
+        .minimizable(true)
+        .decorations(true)
+        .disable_drag_drop_handler() // allow HTML5 drag/drop APIs inside the webview
+        .center()
+        .build()
+        {
+            Ok(_) => {
+                info!("✅ 调试页面窗口创建成功");
+            }
+            Err(e) => {
+                error!("❌ 创建调试页面窗口失败: {}", e);
+            }
+        }
+    }
+}
+
 #[tauri::command]
 async fn fetch_speech_phrases() -> Result<Vec<String>, String> {
     debug!("💬 开始获取话术配置");
@@ -160,6 +195,10 @@ fn create_system_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let show_toolbar = MenuItem::with_id(app, "show_toolbar", "显示工具栏", true, None::<&str>)?;
     let log_console = MenuItem::with_id(app, "log_console", "打开日志控制台", true, None::<&str>)?;
     
+    // === 开发环境调试菜单 ===
+    #[cfg(debug_assertions)]
+    let debug_page = MenuItem::with_id(app, "debug_page", "🐛 打开调试页面", true, None::<&str>)?;
+    
     // === 应用管理类菜单 ===
     let check_update = MenuItem::with_id(app, "check_update", "检查更新", true, None::<&str>)?;
     let about = MenuItem::with_id(app, "about", "关于", true, None::<&str>)?;
@@ -171,8 +210,27 @@ fn create_system_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let separator1 = PredefinedMenuItem::separator(app)?;
     let separator2 = PredefinedMenuItem::separator(app)?;
     let separator3 = PredefinedMenuItem::separator(app)?;
+    #[cfg(debug_assertions)]
+    let separator_debug = PredefinedMenuItem::separator(app)?;
     
     // 构建菜单：按类别分组
+    #[cfg(debug_assertions)]
+    let menu = Menu::with_items(app, &[
+        &open_website,
+        &separator1,
+        &vdd_settings,
+        &show_toolbar,
+        &log_console,
+        &separator_debug,
+        &debug_page,
+        &separator2,
+        &check_update,
+        &about,
+        &separator3,
+        &quit,
+    ])?;
+    
+    #[cfg(not(debug_assertions))]
     let menu = Menu::with_items(app, &[
         &open_website,
         &separator1,
@@ -260,6 +318,11 @@ fn handle_tray_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) {
         }
         "log_console" => {
             open_log_console(app);
+        }
+        #[cfg(debug_assertions)]
+        "debug_page" => {
+            info!("🐛 托盘菜单：打开调试页面");
+            open_debug_page(app);
         }
         "check_update" => {
             check_for_updates(app);
@@ -546,6 +609,8 @@ fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
     let args: Vec<String> = std::env::args().collect();
     let show_toolbar = args.iter().any(|arg| arg == "--toolbar" || arg == "-t");
     
+    create_main_window(&app.handle())?;
+    
     // 创建系统托盘
     create_system_tray(&app.handle())?;
     
@@ -578,6 +643,34 @@ fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
             error!("❌ 初始化更新检查器失败: {}", e);
         }
     });
+    
+    Ok(())
+}
+
+/// 创建主窗口
+fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::error::Error>> {
+    const MAIN_WINDOW_ID: &str = "main";
+    
+    info!("🪟 创建主窗口...");
+    
+    tauri::WebviewWindowBuilder::new(
+        app,
+        MAIN_WINDOW_ID,
+        tauri::WebviewUrl::App("placeholder.html".into())
+    )
+    .title("Sunshine Control Panel")
+    .inner_size(1280.0, 800.0)
+    .min_inner_size(900.0, 600.0)
+    .center()
+    .decorations(false)
+    .transparent(true)
+    .shadow(false)
+    .visible(true)
+    .disable_drag_drop_handler() // 禁用原生拖拽，允许 HTML5 drag/drop API
+    .build()
+    .map_err(|e| format!("创建主窗口失败: {}", e))?;
+    
+    info!("✅ 主窗口创建成功（已禁用原生拖拽）");
     
     Ok(())
 }

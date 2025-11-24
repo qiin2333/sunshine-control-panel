@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>拖拽 Demo - Tauri Webview 测试</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+      color: #333;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      text-align: center;
+      color: white;
+      margin-bottom: 30px;
+      text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+    }
+
+    .demo-section {
+      background: white;
+      border-radius: 12px;
+      padding: 25px;
+      margin-bottom: 25px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    }
+
+    .demo-section h2 {
+      color: #667eea;
+      margin-bottom: 20px;
+      font-size: 1.5em;
+      border-bottom: 2px solid #667eea;
+      padding-bottom: 10px;
+    }
+
+    /* 基础拖拽区域 */
+    .drag-zone {
+      display: flex;
+      gap: 15px;
+      flex-wrap: wrap;
+      margin-top: 20px;
+    }
+
+    .draggable-item {
+      width: 120px;
+      height: 120px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: bold;
+      cursor: move;
+      transition: all 0.3s ease;
+      user-select: none;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+    }
+
+    .draggable-item:hover {
+      transform: scale(1.05);
+      box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+    }
+
+    .draggable-item.dragging {
+      opacity: 0.5;
+      transform: scale(0.95);
+    }
+
+    .drop-zone {
+      min-height: 200px;
+      border: 3px dashed #667eea;
+      border-radius: 10px;
+      padding: 20px;
+      background: #f8f9fa;
+      transition: all 0.3s ease;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 15px;
+      align-items: flex-start;
+      align-content: flex-start;
+    }
+
+    .drop-zone.drag-over {
+      background: #e3f2fd;
+      border-color: #764ba2;
+      border-style: solid;
+      transform: scale(1.02);
+    }
+
+    .drop-zone.empty::before {
+      content: '拖拽元素到这里';
+      color: #999;
+      font-size: 1.2em;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      height: 100%;
+      min-height: 150px;
+    }
+
+    /* 文件拖拽区域 */
+    .file-drop-zone {
+      min-height: 250px;
+      border: 3px dashed #667eea;
+      border-radius: 10px;
+      padding: 30px;
+      background: #f8f9fa;
+      text-align: center;
+      transition: all 0.3s ease;
+      position: relative;
+    }
+
+    .file-drop-zone.drag-over {
+      background: #e3f2fd;
+      border-color: #764ba2;
+      border-style: solid;
+      transform: scale(1.02);
+    }
+
+    .file-drop-zone::before {
+      content: '📁 拖拽文件到这里';
+      color: #667eea;
+      font-size: 2em;
+      display: block;
+      margin-bottom: 15px;
+    }
+
+    .file-list {
+      margin-top: 20px;
+      text-align: left;
+    }
+
+    .file-item {
+      background: white;
+      padding: 10px 15px;
+      margin: 8px 0;
+      border-radius: 6px;
+      border-left: 4px solid #667eea;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+
+    .file-item strong {
+      color: #667eea;
+      display: block;
+      margin-bottom: 5px;
+    }
+
+    .file-item span {
+      color: #666;
+      font-size: 0.9em;
+    }
+
+    /* 排序列表 */
+    .sortable-list {
+      list-style: none;
+      margin-top: 20px;
+    }
+
+    .sortable-item {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 15px 20px;
+      margin: 10px 0;
+      border-radius: 8px;
+      cursor: move;
+      transition: all 0.3s ease;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+      user-select: none;
+    }
+
+    .sortable-item:hover {
+      transform: translateX(10px);
+      box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+    }
+
+    .sortable-item.dragging {
+      opacity: 0.5;
+      transform: scale(0.95);
+    }
+
+    .sortable-item .drag-handle {
+      font-size: 1.5em;
+      margin-right: 15px;
+    }
+
+    /* 状态显示 */
+    .status {
+      margin-top: 15px;
+      padding: 10px;
+      background: #e3f2fd;
+      border-radius: 6px;
+      border-left: 4px solid #667eea;
+      font-size: 0.9em;
+      color: #333;
+    }
+
+    .status.success {
+      background: #e8f5e9;
+      border-left-color: #4caf50;
+    }
+
+    .status.error {
+      background: #ffebee;
+      border-left-color: #f44336;
+    }
+
+    .clear-btn {
+      background: #f44336;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      margin-top: 10px;
+      transition: background 0.3s ease;
+    }
+
+    .clear-btn:hover {
+      background: #d32f2f;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎯 Tauri Webview 拖拽功能测试</h1>
+
+    <!-- 基础拖拽 Demo -->
+    <div class="demo-section">
+      <h2>1. 基础元素拖拽</h2>
+      <p>拖拽下面的元素到右侧的放置区域</p>
+      <div class="drag-zone">
+        <div class="draggable-item" draggable="true" data-id="1">元素 1</div>
+        <div class="draggable-item" draggable="true" data-id="2">元素 2</div>
+        <div class="draggable-item" draggable="true" data-id="3">元素 3</div>
+        <div class="draggable-item" draggable="true" data-id="4">元素 4</div>
+        <div class="draggable-item" draggable="true" data-id="5">元素 5</div>
+      </div>
+      <div class="drop-zone empty" id="basicDropZone"></div>
+      <div class="status" id="basicStatus">准备就绪</div>
+    </div>
+
+    <!-- 文件拖拽 Demo -->
+    <div class="demo-section">
+      <h2>2. 文件拖拽</h2>
+      <p>从文件管理器拖拽文件到这里（测试 Tauri 文件系统访问）</p>
+      <div class="file-drop-zone" id="fileDropZone">
+        <div class="file-list" id="fileList"></div>
+      </div>
+      <div class="status" id="fileStatus">等待文件拖入...</div>
+      <button class="clear-btn" onclick="clearFiles()">清空文件列表</button>
+    </div>
+
+    <!-- 列表排序 Demo -->
+    <div class="demo-section">
+      <h2>3. 列表拖拽排序</h2>
+      <p>拖拽列表项来重新排序</p>
+      <ul class="sortable-list" id="sortableList">
+        <li class="sortable-item" draggable="true" data-index="0">
+          <span><span class="drag-handle">☰</span> 项目 A</span>
+        </li>
+        <li class="sortable-item" draggable="true" data-index="1">
+          <span><span class="drag-handle">☰</span> 项目 B</span>
+        </li>
+        <li class="sortable-item" draggable="true" data-index="2">
+          <span><span class="drag-handle">☰</span> 项目 C</span>
+        </li>
+        <li class="sortable-item" draggable="true" data-index="3">
+          <span><span class="drag-handle">☰</span> 项目 D</span>
+        </li>
+        <li class="sortable-item" draggable="true" data-index="4">
+          <span><span class="drag-handle">☰</span> 项目 E</span>
+        </li>
+      </ul>
+      <div class="status" id="sortStatus">准备就绪</div>
+    </div>
+  </div>
+
+  <script>
+    // 基础拖拽功能
+    const draggableItems = document.querySelectorAll('.draggable-item');
+    const basicDropZone = document.getElementById('basicDropZone');
+    const basicStatus = document.getElementById('basicStatus');
+
+    let draggedElement = null;
+
+    draggableItems.forEach(item => {
+      item.addEventListener('dragstart', (e) => {
+        draggedElement = item;
+        item.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/html', item.outerHTML);
+        basicStatus.textContent = `正在拖拽: ${item.textContent}`;
+        basicStatus.className = 'status';
+      });
+
+      item.addEventListener('dragend', (e) => {
+        item.classList.remove('dragging');
+        if (!basicDropZone.contains(item)) {
+          basicStatus.textContent = '拖拽取消';
+        }
+      });
+    });
+
+    basicDropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      basicDropZone.classList.add('drag-over');
+    });
+
+    basicDropZone.addEventListener('dragleave', (e) => {
+      basicDropZone.classList.remove('drag-over');
+    });
+
+    basicDropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      basicDropZone.classList.remove('drag-over');
+      basicDropZone.classList.remove('empty');
+
+      if (draggedElement && !basicDropZone.contains(draggedElement)) {
+        const clone = draggedElement.cloneNode(true);
+        clone.classList.remove('dragging');
+        clone.style.cursor = 'default';
+        clone.draggable = false;
+        basicDropZone.appendChild(clone);
+        basicStatus.textContent = `✅ 成功放置: ${draggedElement.textContent}`;
+        basicStatus.className = 'status success';
+      }
+    });
+
+    // 文件拖拽功能
+    const fileDropZone = document.getElementById('fileDropZone');
+    const fileList = document.getElementById('fileList');
+    const fileStatus = document.getElementById('fileStatus');
+    let fileCount = 0;
+
+    fileDropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      fileDropZone.classList.add('drag-over');
+    });
+
+    fileDropZone.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      fileDropZone.classList.remove('drag-over');
+    });
+
+    fileDropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      fileDropZone.classList.remove('drag-over');
+
+      const files = e.dataTransfer.files;
+      if (files.length > 0) {
+        Array.from(files).forEach(file => {
+          fileCount++;
+          const fileItem = document.createElement('div');
+          fileItem.className = 'file-item';
+          fileItem.innerHTML = `
+            <strong>📄 ${file.name}</strong>
+            <span>大小: ${formatFileSize(file.size)} | 类型: ${file.type || '未知'}</span>
+          `;
+          fileList.appendChild(fileItem);
+        });
+
+        fileStatus.textContent = `✅ 成功接收 ${files.length} 个文件`;
+        fileStatus.className = 'status success';
+
+        // 尝试使用 Tauri API 读取文件（如果可用）
+        if (window.__TAURI__) {
+          console.log('Tauri 环境检测到，可以访问文件系统 API');
+        }
+      }
+    });
+
+    function formatFileSize(bytes) {
+      if (bytes === 0) return '0 Bytes';
+      const k = 1024;
+      const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+    }
+
+    function clearFiles() {
+      fileList.innerHTML = '';
+      fileCount = 0;
+      fileStatus.textContent = '文件列表已清空';
+      fileStatus.className = 'status';
+    }
+
+    // 列表排序功能
+    const sortableList = document.getElementById('sortableList');
+    const sortStatus = document.getElementById('sortStatus');
+    let draggedListItem = null;
+    let draggedIndex = null;
+
+    const sortableItems = sortableList.querySelectorAll('.sortable-item');
+    sortableItems.forEach((item, index) => {
+      item.setAttribute('data-index', index);
+
+      item.addEventListener('dragstart', (e) => {
+        draggedListItem = item;
+        draggedIndex = index;
+        item.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/html', item.innerHTML);
+        sortStatus.textContent = `正在移动: ${item.textContent.trim()}`;
+        sortStatus.className = 'status';
+      });
+
+      item.addEventListener('dragend', (e) => {
+        item.classList.remove('dragging');
+        sortableItems.forEach(i => i.classList.remove('drag-over'));
+      });
+
+      item.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        const afterElement = getDragAfterElement(sortableList, e.clientY);
+        const currentItem = e.currentTarget;
+        if (afterElement == null) {
+          sortableList.appendChild(currentItem);
+        } else {
+          sortableList.insertBefore(currentItem, afterElement);
+        }
+      });
+
+      item.addEventListener('dragenter', (e) => {
+        e.preventDefault();
+        if (item !== draggedListItem) {
+          item.classList.add('drag-over');
+        }
+      });
+
+      item.addEventListener('dragleave', (e) => {
+        item.classList.remove('drag-over');
+      });
+
+      item.addEventListener('drop', (e) => {
+        e.preventDefault();
+        item.classList.remove('drag-over');
+        if (draggedListItem && item !== draggedListItem) {
+          const allItems = Array.from(sortableList.querySelectorAll('.sortable-item'));
+          const draggedIndex = allItems.indexOf(draggedListItem);
+          const targetIndex = allItems.indexOf(item);
+
+          if (draggedIndex < targetIndex) {
+            sortableList.insertBefore(draggedListItem, item.nextSibling);
+          } else {
+            sortableList.insertBefore(draggedListItem, item);
+          }
+
+          // 更新索引
+          allItems.forEach((item, index) => {
+            item.setAttribute('data-index', index);
+          });
+
+          sortStatus.textContent = '✅ 列表已重新排序';
+          sortStatus.className = 'status success';
+        }
+      });
+    });
+
+    function getDragAfterElement(container, y) {
+      const draggableElements = [...container.querySelectorAll('.sortable-item:not(.dragging)')];
+      
+      return draggableElements.reduce((closest, child) => {
+        const box = child.getBoundingClientRect();
+        const offset = y - box.top - box.height / 2;
+        
+        if (offset < 0 && offset > closest.offset) {
+          return { offset: offset, element: child };
+        } else {
+          return closest;
+        }
+      }, { offset: Number.NEGATIVE_INFINITY }).element;
+    }
+
+    // 初始化状态
+    console.log('🎯 拖拽 Demo 已加载');
+    console.log('Tauri 环境:', window.__TAURI__ ? '已检测到' : '未检测到');
+  </script>
+</body>
+</html>
+

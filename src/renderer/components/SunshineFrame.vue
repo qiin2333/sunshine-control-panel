@@ -40,6 +40,12 @@ const sunshineIframe = ref(null)
 const sidebarMenuRef = ref(null)
 const animationsPaused = ref(false)
 
+// 用于存储需要清理的资源
+let pollTimer = null
+let unlistenVddSettings = null
+let unlistenDragDrop = null
+let onVisibilityHandler = null
+
 /**
  * 切换页面动画暂停/恢复
  * 通过在 body 上添加/移除类，统一暂停 CSS 动画与过渡
@@ -55,6 +61,33 @@ const setAnimationsPaused = (paused) => {
     root.classList.remove('paused-animations')
   }
 }
+
+onUnmounted(() => {
+  console.log('🧹 组件卸载，清理资源')
+  
+  // 清理轮询定时器
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+  
+  // 清理 visibilitychange 监听器
+  if (onVisibilityHandler) {
+    document.removeEventListener('visibilitychange', onVisibilityHandler)
+    onVisibilityHandler = null
+  }
+  
+  // 清理 Tauri 事件监听器
+  if (unlistenVddSettings) {
+    unlistenVddSettings()
+    unlistenVddSettings = null
+  }
+  
+  if (unlistenDragDrop) {
+    unlistenDragDrop()
+    unlistenDragDrop = null
+  }
+})
 
 onMounted(async () => {
   try {
@@ -97,7 +130,7 @@ onMounted(async () => {
     const currentWindow = getCurrentWebviewWindow()
 
     // 监听文件拖放事件
-    const unlisten = await currentWindow.onDragDropEvent((event) => {
+    unlistenDragDrop = await currentWindow.onDragDropEvent((event) => {
       console.log('🎯 Tauri 拖放事件:', event)
 
       if (event.payload.type === 'drop') {
@@ -111,7 +144,6 @@ onMounted(async () => {
     console.log('✅ Tauri 文件拖放监听器已启用')
 
     // 监听窗口状态变化以暂停/恢复动画
-    let pollTimer = null
     let lastMinimized = false
     let lastHidden = false
 
@@ -140,19 +172,11 @@ onMounted(async () => {
     await checkWindowState()
 
     // 文档可见性变更（辅助检测，浏览器级别）
-    const onVisibility = () => {
+    onVisibilityHandler = () => {
       console.log('📄 visibilitychange 触发, document.hidden=', document.hidden)
       setAnimationsPaused(document.hidden)
     }
-    document.addEventListener('visibilitychange', onVisibility)
-
-    onUnmounted(() => {
-      if (pollTimer) {
-        clearInterval(pollTimer)
-        pollTimer = null
-      }
-      document.removeEventListener('visibilitychange', onVisibility)
-    })
+    document.addEventListener('visibilitychange', onVisibilityHandler)
 
     // 监听来自 iframe 的消息
     window.addEventListener('message', async (event) => {
@@ -246,7 +270,7 @@ onMounted(async () => {
     })
 
     // 监听来自托盘的VDD设置打开事件
-    const unlistenVddSettings = await currentWindow.listen('open-vdd-settings', () => {
+    unlistenVddSettings = await currentWindow.listen('open-vdd-settings', () => {
       console.log('📱 收到托盘VDD设置事件')
       // 通过ref调用SidebarMenu的方法打开VDD设置
       if (sidebarMenuRef.value && sidebarMenuRef.value.openVddSettings) {

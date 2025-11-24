@@ -1,4 +1,4 @@
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 
 /**
@@ -14,6 +14,11 @@ export function useSidebarState() {
   const showUpdateDialog = ref(false)
   const updateInfo = ref(null)
   const currentVersion = ref('0.0.0')
+  
+  // 存储需要清理的监听器
+  let unlistenUpdateAvailable = null
+  let unlistenUpdateCheckResult = null
+  let messageEventListener = null
 
   /**
    * 切换主题
@@ -110,7 +115,7 @@ export function useSidebarState() {
     }
 
     // 监听来自 iframe 的主题请求
-    window.addEventListener('message', (event) => {
+    messageEventListener = (event) => {
       // 安全检查：只接受来自 localhost 的消息
       if (event.origin.includes('localhost') || event.origin.includes('127.0.0.1')) {
         if (event.data.type === 'request-theme') {
@@ -127,7 +132,8 @@ export function useSidebarState() {
           }
         }
       }
-    })
+    }
+    window.addEventListener('message', messageEventListener)
 
     // 获取当前 Sunshine 版本
     try {
@@ -141,14 +147,14 @@ export function useSidebarState() {
 
     // 监听自动更新检查事件
     const { listen } = await import('@tauri-apps/api/event')
-    listen('update-available', (event) => {
+    unlistenUpdateAvailable = await listen('update-available', (event) => {
       console.log('收到更新可用事件:', event.payload)
       updateInfo.value = event.payload
       showUpdateDialog.value = true
     })
 
     // 监听更新检查结果事件（来自托盘菜单）
-    listen('update-check-result', (event) => {
+    unlistenUpdateCheckResult = await listen('update-check-result', (event) => {
       const data = event.payload
       if (data.is_latest) {
         ElMessage.success(data.message || '已是最新版本')
@@ -160,6 +166,28 @@ export function useSidebarState() {
 
   // 初始化
   onMounted(initState)
+  
+  // 清理资源
+  onUnmounted(() => {
+    console.log('🧹 useSidebarState 清理资源')
+    
+    // 清理消息监听器
+    if (messageEventListener) {
+      window.removeEventListener('message', messageEventListener)
+      messageEventListener = null
+    }
+    
+    // 清理 Tauri 事件监听器
+    if (unlistenUpdateAvailable) {
+      unlistenUpdateAvailable()
+      unlistenUpdateAvailable = null
+    }
+    
+    if (unlistenUpdateCheckResult) {
+      unlistenUpdateCheckResult()
+      unlistenUpdateCheckResult = null
+    }
+  })
 
   return {
     // 状态

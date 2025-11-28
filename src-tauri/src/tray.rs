@@ -9,6 +9,7 @@ use crate::utils;
 use crate::toolbar;
 use crate::update;
 use crate::windows;
+use crate::sunshine;
 
 /// 创建系统托盘
 pub fn create_system_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
@@ -72,6 +73,7 @@ pub fn create_system_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let _tray = TrayIconBuilder::new()
         .menu(&menu)
         .icon(app.default_window_icon().unwrap().clone())
+        .tooltip("Sunshine GUI")
         .show_menu_on_left_click(false)
         .on_menu_event(move |app, event| {
             handle_tray_menu_event(app, event.id().as_ref());
@@ -88,6 +90,9 @@ pub fn create_system_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
             }
         })
         .build(app)?;
+    
+    // 启动状态更新任务
+    start_status_update_task(app);
     
     Ok(())
 }
@@ -237,3 +242,46 @@ fn save_update_check_time<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
+/// 启动状态更新任务
+fn start_status_update_task<R: Runtime>(app: &AppHandle<R>) {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        update_tray_tooltip(&app_handle).await;
+        
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            update_tray_tooltip(&app_handle).await;
+        }
+    });
+}
+
+/// 更新托盘图标 tooltip 以显示当前状态
+async fn update_tray_tooltip<R: Runtime>(app: &AppHandle<R>) {
+    let tooltip_text = match sunshine::get_active_sessions().await {
+        Ok(sessions) => {
+            let running: Vec<_> = sessions.iter().filter(|s| s.state == "RUNNING").collect();
+            match running.len() {
+                0 if sessions.is_empty() => "Sunshine GUI - 空闲".to_string(),
+                0 => format!("Sunshine GUI - {} 个会话", sessions.len()),
+                1 => {
+                    let s = &running[0];
+                    let name = if s.app_name.is_empty() { &s.client_name } else { &s.app_name };
+                    format!("Sunshine GUI - 正在流式传输: {}", name)
+                }
+                n => format!("Sunshine GUI - 正在流式传输 ({} 个会话)", n),
+            }
+        }
+        Err(e) => {
+            debug!("无法获取会话信息: {}", e);
+            "Sunshine GUI - 无法连接到服务".to_string()
+        }
+    };
+    
+    if let Some(tray) = app.tray_by_id("main") {
+        if let Err(e) = tray.set_tooltip(Some(&tooltip_text)) {
+            debug!("更新托盘 tooltip 失败: {}", e);
+        }
+    }
+}

@@ -19,33 +19,21 @@
 
       <!-- 更新说明 -->
       <div v-if="updateInfo?.release_notes" class="release-notes">
-        <h4>更新内容：</h4>
-        <div class="notes-content">{{ formatReleaseNotes(updateInfo.release_notes) }}</div>
+        <!-- <h4>更新内容：</h4> -->
+        <div class="notes-content" v-html="parsedReleaseNotes"></div>
       </div>
 
       <!-- 下载进度 -->
       <div v-if="downloadProgress > 0 && downloadProgress < 100" class="download-progress">
-        <el-progress
-          :percentage="downloadProgress"
-          :status="downloadError ? 'exception' : undefined"
-          :stroke-width="8"
-        />
-        <p class="progress-text">{{ downloadStatusText }}</p>
+        <el-progress :percentage="downloadProgress" :stroke-width="8" />
+        <p class="progress-text">正在下载... {{ downloadProgress }}%</p>
       </div>
 
       <!-- 安装提示 -->
       <div v-if="isInstalling" class="install-notice">
-        <el-alert
-          type="warning"
-          :closable="false"
-          show-icon
-        >
+        <el-alert type="warning" :closable="false" show-icon>
           <template #title>
-            <div class="install-alert-content">
-              <p>正在准备安装更新...</p>
-              <p class="install-tip">系统将自动关闭 Sunshine 服务和 GUI 窗口，然后启动安装程序</p>
-              <p class="install-tip">安装完成后，请重新启动应用</p>
-            </div>
+            <p>正在准备安装更新，系统将自动关闭服务并启动安装程序</p>
           </template>
         </el-alert>
       </div>
@@ -53,35 +41,18 @@
 
     <template #footer>
       <div class="dialog-footer">
-        <el-button
-          v-if="!isInstalling && downloadProgress === 0"
-          @click="handleDownload"
-          type="primary"
-          :loading="isDownloading"
-        >
-          <el-icon><Download /></el-icon>
-          下载并安装
-        </el-button>
-        <el-button
-          v-if="!isInstalling && downloadProgress === 0"
-          @click="handleOpenBrowser"
-        >
-          <el-icon><Link /></el-icon>
-          在浏览器中打开
-        </el-button>
-        <el-button
-          v-if="!isInstalling"
-          @click="handleCancel"
-        >
-          稍后提醒
-        </el-button>
-        <el-button
-          v-if="isInstalling"
-          type="primary"
-          disabled
-        >
-          正在安装...
-        </el-button>
+        <template v-if="!isInstalling && downloadProgress === 0">
+          <el-button type="primary" :loading="isDownloading" @click="handleDownload">
+            <el-icon><Download /></el-icon>
+            下载并安装
+          </el-button>
+          <el-button @click="handleOpenBrowser">
+            <el-icon><Link /></el-icon>
+            在浏览器中打开
+          </el-button>
+        </template>
+        <el-button v-if="!isInstalling" @click="handleCancel">稍后提醒</el-button>
+        <el-button v-if="isInstalling" type="primary" disabled>正在安装...</el-button>
       </div>
     </template>
   </el-dialog>
@@ -91,20 +62,12 @@
 import { ref, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Download, Link } from '@element-plus/icons-vue'
+import MarkdownIt from 'markdown-it'
 
 const props = defineProps({
-  modelValue: {
-    type: Boolean,
-    default: false
-  },
-  updateInfo: {
-    type: Object,
-    default: null
-  },
-  currentVersion: {
-    type: String,
-    default: '0.0.0'
-  }
+  modelValue: { type: Boolean, default: false },
+  updateInfo: { type: Object, default: null },
+  currentVersion: { type: String, default: '0.0.0' }
 })
 
 const emit = defineEmits(['update:modelValue', 'close'])
@@ -116,30 +79,13 @@ const visible = computed({
 
 const isDownloading = ref(false)
 const downloadProgress = ref(0)
-const downloadError = ref(false)
 const isInstalling = ref(false)
 
-const downloadStatusText = computed(() => {
-  if (downloadError.value) {
-    return '下载失败，请重试'
-  }
-  if (downloadProgress.value === 0) {
-    return ''
-  }
-  if (downloadProgress.value === 100) {
-    return '下载完成，准备安装...'
-  }
-  return `正在下载... ${downloadProgress.value}%`
-})
+const md = new MarkdownIt({ html: true, breaks: true, linkify: true })
 
-const formatReleaseNotes = (notes) => {
-  if (!notes) return ''
-  // 限制显示长度，避免对话框过大
-  if (notes.length > 500) {
-    return notes.substring(0, 500) + '...'
-  }
-  return notes
-}
+const parsedReleaseNotes = computed(() => {
+  return props.updateInfo?.release_notes ? md.render(props.updateInfo.release_notes) : ''
+})
 
 const handleDownload = async () => {
   if (!props.updateInfo?.download_url) {
@@ -147,55 +93,35 @@ const handleDownload = async () => {
     return
   }
 
-  try {
-    isDownloading.value = true
-    downloadProgress.value = 0
-    downloadError.value = false
+  isDownloading.value = true
+  downloadProgress.value = 0
 
+  try {
     const { invoke } = await import('@tauri-apps/api/core')
     const { listen } = await import('@tauri-apps/api/event')
     
-    // 监听下载进度事件
     const progressUnlisten = await listen('download-progress', (event) => {
-      const data = event.payload
-      if (data.progress !== undefined) {
-        downloadProgress.value = data.progress
-        console.log(`📊 下载进度: ${data.progress}% (${data.downloaded}/${data.total})`)
+      if (event.payload.progress !== undefined) {
+        downloadProgress.value = event.payload.progress
       }
     })
     
-    try {
-      // 调用后端下载更新（会实时发送进度事件）
-      const result = await invoke('download_update', {
-        url: props.updateInfo.download_url,
-        filename: props.updateInfo.download_name || `sunshine-update-${props.updateInfo.version}.msi`
-      })
+    const result = await invoke('download_update', {
+      url: props.updateInfo.download_url,
+      filename: props.updateInfo.download_name || `sunshine-update-${props.updateInfo.version}.msi`
+    })
 
-      // 取消监听进度事件
-      await progressUnlisten()
+    await progressUnlisten()
 
-      if (result.success) {
-        downloadProgress.value = 100
-        ElMessage.success('下载完成，准备安装...')
-        
-        // 等待一下让用户看到下载完成
-        await new Promise(resolve => setTimeout(resolve, 1000))
-        
-        // 开始安装流程
-        await handleInstall(result.file_path)
-      } else {
-        downloadError.value = true
-        ElMessage.error(result.message || '下载失败')
-      }
-    } catch (error) {
-      // 确保取消监听
-      await progressUnlisten()
-      downloadError.value = true
-      ElMessage.error('下载失败: ' + error)
+    if (result.success) {
+      downloadProgress.value = 100
+      ElMessage.success('下载完成，准备安装...')
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      await handleInstall(result.file_path)
+    } else {
+      ElMessage.error(result.message || '下载失败')
     }
   } catch (error) {
-    console.error('下载更新失败:', error)
-    downloadError.value = true
     ElMessage.error('下载失败: ' + error)
   } finally {
     isDownloading.value = false
@@ -204,41 +130,20 @@ const handleDownload = async () => {
 
 const handleInstall = async (filePath) => {
   try {
-    // 确认安装更新
     await ElMessageBox.confirm(
-      '安装更新将执行以下操作：\n\n' +
-      '1. 自动关闭 Sunshine 服务\n' +
-      '2. 关闭 GUI 窗口\n' +
-      '3. 启动安装程序\n\n' +
-      '安装完成后，请重新启动应用。\n\n是否继续？',
+      '安装更新将关闭 Sunshine 服务和 GUI 窗口，然后启动安装程序。\n安装完成后请重新启动应用。是否继续？',
       '准备安装更新',
-      {
-        confirmButtonText: '确定安装',
-        cancelButtonText: '取消',
-        type: 'warning',
-      }
+      { confirmButtonText: '确定安装', cancelButtonText: '取消', type: 'warning' }
     )
 
     isInstalling.value = true
-
     const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('install_update', { filePath })
     
-    // 调用后端安装更新（会自动关闭Sunshine和GUI）
-    await invoke('install_update', {
-      filePath: filePath
-    })
-
-    // 如果到这里说明安装程序已启动，关闭对话框
-    // 注意：GUI会在3秒后自动退出
-    ElMessage.success('安装程序已启动，GUI窗口将在几秒后自动关闭')
-    
-    // 延迟关闭对话框，让用户看到提示
-    setTimeout(() => {
-    visible.value = false
-    }, 2000)
+    ElMessage.success('安装程序已启动')
+    setTimeout(() => { visible.value = false }, 2000)
   } catch (error) {
     if (error !== 'cancel') {
-      console.error('安装更新失败:', error)
       ElMessage.error('安装失败: ' + error)
       isInstalling.value = false
     }
@@ -250,12 +155,10 @@ const handleOpenBrowser = async () => {
     ElMessage.warning('未找到发布页面链接')
     return
   }
-
   try {
     const { invoke } = await import('@tauri-apps/api/core')
     await invoke('open_external_url', { url: props.updateInfo.release_page })
   } catch (error) {
-    console.error('打开浏览器失败:', error)
     ElMessage.error('打开浏览器失败: ' + error)
   }
 }
@@ -265,12 +168,9 @@ const handleCancel = () => {
   emit('close')
 }
 
-// 监听下载进度事件
 watch(() => props.modelValue, (newVal) => {
   if (newVal) {
-    // 重置状态
     downloadProgress.value = 0
-    downloadError.value = false
     isInstalling.value = false
     isDownloading.value = false
   }
@@ -310,8 +210,6 @@ watch(() => props.modelValue, (newVal) => {
 }
 
 .release-notes {
-  margin-bottom: 24px;
-  
   h4 {
     color: #303133;
     font-size: 16px;
@@ -327,8 +225,32 @@ watch(() => props.modelValue, (newVal) => {
     color: #606266;
     font-size: 14px;
     line-height: 1.6;
-    white-space: pre-wrap;
-    word-break: break-word;
+    
+    &::-webkit-scrollbar {
+      width: 6px;
+    }
+    
+    &::-webkit-scrollbar-track {
+      background: transparent;
+      border-radius: 3px;
+    }
+    
+    &::-webkit-scrollbar-thumb {
+      background: #c0c4cc;
+      border-radius: 3px;
+    }
+    
+    &::-webkit-scrollbar-thumb:hover {
+      background: #909399;
+    }
+    
+    :deep(h2), :deep(h3) { margin: 12px 0 8px; font-weight: 600; color: #303133; }
+    :deep(p) { margin: 8px 0; }
+    :deep(ul), :deep(ol) { margin: 8px 0; padding-left: 24px; }
+    :deep(li) { margin: 4px 0; }
+    :deep(code) { padding: 2px 6px; background: #e4e7ed; border-radius: 3px; }
+    :deep(a) { color: #409eff; text-decoration: none; }
+    :deep(a:hover) { text-decoration: underline; }
   }
 }
 
@@ -345,18 +267,6 @@ watch(() => props.modelValue, (newVal) => {
 
 .install-notice {
   margin-bottom: 24px;
-  
-  .install-alert-content {
-    p {
-      margin: 4px 0;
-      
-      &.install-tip {
-        font-size: 12px;
-        color: #909399;
-        margin-top: 8px;
-      }
-    }
-  }
 }
 
 .dialog-footer {
@@ -365,4 +275,3 @@ watch(() => props.modelValue, (newVal) => {
   gap: 12px;
 }
 </style>
-

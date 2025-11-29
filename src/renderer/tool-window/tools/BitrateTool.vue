@@ -12,7 +12,7 @@
         <select
           v-model="selectedClient"
           class="client-select"
-          :disabled="(loading && !refreshing) || applying"
+          :disabled="isLoading || applying"
           @change="onClientChange"
         >
           <option value="">-- 请选择客户端 --</option>
@@ -22,9 +22,9 @@
         </select>
         <button
           class="refresh-btn"
-          :class="{ refreshing: refreshing }"
-          @click="() => loadSessions(true)"
-          :disabled="(loading && !refreshing) || applying"
+          :class="{ refreshing }"
+          @click="loadSessions(true)"
+          :disabled="isLoading || applying"
           title="刷新一下"
         >
           <el-icon :size="18" :class="{ spinning: refreshing }">
@@ -34,85 +34,89 @@
       </div>
 
       <!-- 加载状态（仅首次加载时显示） -->
-      <div v-if="loading && !refreshing" class="loading-state">
+      <div v-if="isLoading" class="loading-state">
         <p>加载中...</p>
       </div>
 
       <!-- 无会话提示 -->
-      <div v-else-if="!loading && activeSessions.length === 0" class="empty-state">
-        <div class="icon">📡</div>
-        <p>杂鱼~ 没有开始串流还在调码率呢</p>
-        <p class="subtitle">串流进来再说嘛</p>
-        <p v-if="allSessions.length > 0" class="subtitle warning-text">
-          检测到 {{ allSessions.length }} 个会话，但是它们好像都在摸鱼呢
-        </p>
-      </div>
+      <template v-else-if="activeSessions.length === 0">
+        <div class="empty-state">
+          <div class="icon">📡</div>
+          <p>杂鱼~ 没有开始串流还在调码率呢</p>
+          <p class="subtitle">串流进来再说嘛</p>
+          <p v-if="allSessions.length > 0" class="subtitle warning-text">
+            检测到 {{ allSessions.length }} 个会话，但是它们好像都在摸鱼呢
+          </p>
+        </div>
+      </template>
 
       <!-- 码率调整界面 -->
-      <div v-else-if="selectedClient" class="bitrate-controls">
-        <!-- 当前码率显示 -->
-        <div class="bitrate-display">
-          <span class="bitrate-value">{{ formatBitrate(bitrateValue) }}</span>
-          <span class="bitrate-label">目标码率</span>
-          <div v-if="currentBitrate" class="current-bitrate">
-            <span class="current-bitrate-label">当前码率:</span>
-            <span class="current-bitrate-value">{{ formatBitrate(currentBitrate) }}</span>
+      <template v-else-if="selectedClient">
+        <div class="bitrate-controls">
+          <!-- 当前码率显示 -->
+          <div class="bitrate-display">
+            <span class="bitrate-value">{{ formatBitrate(bitrateValue) }}</span>
+            <span class="bitrate-label">目标码率</span>
+            <div v-if="currentBitrate" class="current-bitrate">
+              <span class="current-bitrate-label">当前码率:</span>
+              <span class="current-bitrate-value">{{ formatBitrate(currentBitrate) }}</span>
+            </div>
+          </div>
+
+          <!-- 码率滑块 -->
+          <div class="slider-container">
+            <input
+              type="range"
+              v-model.number="bitrateValue"
+              :min="BITRATE_LIMITS.MIN"
+              :max="BITRATE_LIMITS.MAX"
+              :step="BITRATE_LIMITS.STEP"
+              class="bitrate-slider"
+              :disabled="applying"
+            />
+            <div class="slider-labels">
+              <span>{{ formatBitrate(BITRATE_LIMITS.MIN) }}</span>
+              <span>{{ formatBitrate(BITRATE_LIMITS.MAX) }}</span>
+            </div>
+          </div>
+
+          <!-- 预设按钮 -->
+          <div class="presets">
+            <button
+              v-for="preset in BITRATE_PRESETS"
+              :key="preset"
+              @click="bitrateValue = preset"
+              :class="{ active: bitrateValue === preset }"
+              class="preset-btn"
+              :disabled="applying"
+            >
+              {{ formatBitrate(preset) }}
+            </button>
+          </div>
+
+          <!-- 自定义输入 -->
+          <div class="custom-input">
+            <input
+              type="number"
+              v-model.number="bitrateValue"
+              :min="BITRATE_LIMITS.MIN"
+              :max="BITRATE_LIMITS.MAX"
+              :step="BITRATE_LIMITS.STEP"
+              class="bitrate-input"
+              :disabled="applying"
+              placeholder="输入码率 (Kbps)"
+            />
+            <span class="input-label">Kbps</span>
+          </div>
+
+          <!-- 应用按钮 -->
+          <div class="actions">
+            <button @click="applyBitrate" class="apply-btn" :disabled="applying || !selectedClient">
+              {{ applying ? '调整中...' : '应用码率' }}
+            </button>
           </div>
         </div>
-
-        <!-- 码率滑块 -->
-        <div class="slider-container">
-          <input
-            type="range"
-            v-model.number="bitrateValue"
-            :min="BITRATE_LIMITS.MIN"
-            :max="BITRATE_LIMITS.MAX"
-            :step="BITRATE_LIMITS.STEP"
-            class="bitrate-slider"
-            :disabled="applying"
-          />
-          <div class="slider-labels">
-            <span>{{ formatBitrate(BITRATE_LIMITS.MIN) }}</span>
-            <span>{{ formatBitrate(BITRATE_LIMITS.MAX) }}</span>
-          </div>
-        </div>
-
-        <!-- 预设按钮 -->
-        <div class="presets">
-          <button
-            v-for="preset in BITRATE_PRESETS"
-            :key="preset"
-            @click="bitrateValue = preset"
-            :class="{ active: bitrateValue === preset }"
-            class="preset-btn"
-            :disabled="applying"
-          >
-            {{ formatBitrate(preset) }}
-          </button>
-        </div>
-
-        <!-- 自定义输入 -->
-        <div class="custom-input">
-          <input
-            type="number"
-            v-model.number="bitrateValue"
-            :min="BITRATE_LIMITS.MIN"
-            :max="BITRATE_LIMITS.MAX"
-            :step="BITRATE_LIMITS.STEP"
-            class="bitrate-input"
-            :disabled="applying"
-            placeholder="输入码率 (Kbps)"
-          />
-          <span class="input-label">Kbps</span>
-        </div>
-
-        <!-- 应用按钮 -->
-        <div class="actions">
-          <button @click="applyBitrate" class="apply-btn" :disabled="applying || !selectedClient">
-            {{ applying ? '调整中...' : '应用码率' }}
-          </button>
-        </div>
-      </div>
+      </template>
 
       <!-- 未选择客户端提示 -->
       <div v-else class="empty-state">
@@ -136,13 +140,13 @@ import { sunshine } from '../../tauri-adapter.js'
 import { RefreshRight } from '@element-plus/icons-vue'
 
 // 常量定义
-const BITRATE_LIMITS = {
+const BITRATE_LIMITS = Object.freeze({
   MIN: 1000,
   MAX: 800000,
   STEP: 1000,
-}
+})
 
-const BITRATE_PRESETS = [5000, 10000, 20000, 50000, 100000, 200000]
+const BITRATE_PRESETS = Object.freeze([5000, 10000, 20000, 50000, 100000, 200000])
 const DEFAULT_BITRATE = 20000
 const MESSAGE_TIMEOUT = 5000
 const REFRESH_DELAY = 1000
@@ -160,36 +164,39 @@ const applying = ref(false)
 const message = ref('')
 const messageType = ref('')
 
-// 工具函数
-const formatBitrate = (kbps) => {
-  return kbps >= 1000 ? `${(kbps / 1000).toFixed(0)} Mbps` : `${kbps} Kbps`
-}
+// 计算属性
+const isLoading = computed(() => loading.value && !refreshing.value)
 
+const selectedSession = computed(() => {
+  if (!selectedClient.value) return null
+  return activeSessions.value.find((s) => s.client_name === selectedClient.value) ?? null
+})
+
+const currentBitrate = computed(() => selectedSession.value?.bitrate ?? null)
+
+// 工具函数
+const formatBitrate = (kbps) => (kbps >= 1000 ? `${(kbps / 1000).toFixed(0)} Mbps` : `${kbps} Kbps`)
+
+const isValidBitrate = (value) => value >= BITRATE_LIMITS.MIN && value <= BITRATE_LIMITS.MAX
+
+let messageTimer = null
 const showMessage = (msg, type = 'info', timeout = MESSAGE_TIMEOUT) => {
+  if (messageTimer) clearTimeout(messageTimer)
   message.value = msg
   messageType.value = type
-  setTimeout(() => {
+  messageTimer = setTimeout(() => {
     message.value = ''
+    messageTimer = null
   }, timeout)
 }
 
-const isValidBitrate = (value) => {
-  return value >= BITRATE_LIMITS.MIN && value <= BITRATE_LIMITS.MAX
+const getSessionBitrate = (clientName) => {
+  const session = activeSessions.value.find((s) => s.client_name === clientName)
+  return session?.bitrate ?? DEFAULT_BITRATE
 }
-
-// 计算当前选中会话的码率
-const selectedSession = computed(() => {
-  if (!selectedClient.value) return null
-  return activeSessions.value.find((s) => s.client_name === selectedClient.value)
-})
-
-const currentBitrate = computed(() => {
-  return selectedSession.value?.bitrate || null
-})
 
 // 会话管理
 const loadSessions = async (isRefresh = false) => {
-  // 如果是刷新，使用 refreshing 状态，避免布局抖动
   if (isRefresh) {
     refreshing.value = true
   } else {
@@ -197,50 +204,24 @@ const loadSessions = async (isRefresh = false) => {
   }
   message.value = ''
 
-  // 保存当前选择的客户端，以便刷新后恢复
   const previousClient = selectedClient.value
 
   try {
     const sessions = await sunshine.getActiveSessions()
-    console.log('获取到的所有会话:', sessions)
-
     allSessions.value = sessions
     activeSessions.value = sessions.filter((s) => s.state !== 'STOPPED' && s.state !== 'STOPPING')
 
-    console.log(`原始会话数: ${sessions.length}, 过滤后会话数: ${activeSessions.value.length}`)
-    sessions.forEach((s) => {
-      console.log(`会话: ${s.client_name}, 状态: ${s.state}`)
-    })
-
     if (activeSessions.value.length === 0) {
-      console.log('没有活动的流媒体会话')
-      if (sessions.length > 0) {
-        console.log('注意：有会话但状态不是活动状态')
-      }
       selectedClient.value = ''
       return
     }
 
-    console.log(`找到 ${activeSessions.value.length} 个活动会话`)
-
     // 恢复或选择客户端
     const clientExists = activeSessions.value.some((s) => s.client_name === previousClient)
-    if (previousClient && clientExists) {
-      // 保持之前的选择
-      selectedClient.value = previousClient
-    } else if (!selectedClient.value || !clientExists) {
-      // 自动选择第一个客户端
-      selectedClient.value = activeSessions.value[0].client_name
-      console.log(`自动选择客户端: ${selectedClient.value}`)
-    }
+    selectedClient.value = previousClient && clientExists ? previousClient : activeSessions.value[0].client_name
 
-    // 记录当前客户端码率
-    if (selectedClient.value) {
-      const session = activeSessions.value.find((s) => s.client_name === selectedClient.value)
-      if (session?.bitrate) {
-        console.log(`当前客户端码率: ${session.bitrate} Kbps`)
-      }
-    }
+    // 设置当前客户端码率到滑块
+    bitrateValue.value = getSessionBitrate(selectedClient.value)
   } catch (error) {
     console.error('获取活动会话失败:', error)
     showMessage(`❌ 获取会话列表失败: ${error}`, 'error')
@@ -252,8 +233,7 @@ const loadSessions = async (isRefresh = false) => {
 
 const onClientChange = () => {
   if (selectedClient.value) {
-    // 重置为默认码率
-    bitrateValue.value = DEFAULT_BITRATE
+    bitrateValue.value = getSessionBitrate(selectedClient.value)
   }
 }
 
@@ -276,22 +256,12 @@ const applyBitrate = async () => {
   applying.value = true
   message.value = ''
 
-  console.log('📡 开始调整码率:', {
-    client: selectedClient.value,
-    bitrate: bitrateValue.value,
-  })
-
   try {
     const result = await sunshine.changeBitrate(selectedClient.value, bitrateValue.value)
-    console.log('✅ 码率调整成功:', result)
     showMessage(`✅ ${result}`, 'success')
-
-    // 延迟静默刷新会话列表（不显示加载状态）
     setTimeout(() => loadSessions(true), REFRESH_DELAY)
   } catch (error) {
     console.error('码率调整错误:', error)
-
-    // 处理特定错误类型
     const errorMessage = error.toString()
     if (errorMessage.includes('身份验证') || errorMessage.includes('401')) {
       showMessage('❌ 身份验证失败，请检查 Sunshine Web UI 的用户名和密码设置', 'error')
@@ -361,19 +331,19 @@ onMounted(loadSessions)
   display: flex;
   align-items: center;
   gap: 8px;
-  min-width: 0; /* 允许 flex 子元素收缩 */
+  min-width: 0;
 }
 
 .section-label {
   font-size: 14px;
   font-weight: 500;
   white-space: nowrap;
-  flex-shrink: 0; /* 标签不收缩 */
+  flex-shrink: 0;
 }
 
 .client-select {
   flex: 1;
-  min-width: 0; /* 允许选择框收缩 */
+  min-width: 0;
   padding: 8px 12px;
   background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.2);
@@ -404,7 +374,7 @@ onMounted(loadSessions)
 .refresh-btn {
   width: 36px;
   height: 36px;
-  flex-shrink: 0; /* 按钮不收缩 */
+  flex-shrink: 0;
   border: none;
   background: rgba(255, 255, 255, 0.1);
   color: white;

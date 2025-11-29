@@ -1,9 +1,10 @@
 use tauri::{
-    menu::{Menu, MenuItem, PredefinedMenuItem},
+    menu::{Menu, MenuItem, PredefinedMenuItem, CheckMenuItem},
     tray::{TrayIconBuilder, MouseButton, TrayIconEvent},
     Manager, AppHandle, Runtime, Emitter
 };
 use std::time::Duration;
+use std::sync::Mutex;
 use log::{info, warn, error, debug};
 use crate::utils;
 use crate::toolbar;
@@ -11,64 +12,61 @@ use crate::update;
 use crate::windows;
 use crate::sunshine;
 
+// 防止睡眠状态管理
+static PREVENT_SLEEP_STATE: Mutex<bool> = Mutex::new(false);
+
 /// 创建系统托盘
 pub fn create_system_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
-    // === 导航类菜单 ===
+    // 创建菜单项
     let open_website = MenuItem::with_id(app, "open_website", "打开官网", true, None::<&str>)?;
-    
-    // === 功能工具类菜单 ===
     let vdd_settings = MenuItem::with_id(app, "vdd_settings", "设置虚拟显示器（VDD）", true, None::<&str>)?;
     let show_toolbar = MenuItem::with_id(app, "show_toolbar", "显示工具栏", true, None::<&str>)?;
     let log_console = MenuItem::with_id(app, "log_console", "打开日志控制台", true, None::<&str>)?;
-    
-    // === 开发环境调试菜单 ===
-    #[cfg(debug_assertions)]
-    let debug_page = MenuItem::with_id(app, "debug_page", "🐛 打开调试页面", true, None::<&str>)?;
-    
-    // === 应用管理类菜单 ===
     let check_update = MenuItem::with_id(app, "check_update", "检查更新", true, None::<&str>)?;
     let about = MenuItem::with_id(app, "about", "关于", true, None::<&str>)?;
-    
-    // === 退出类菜单 ===
     let quit = MenuItem::with_id(app, "quit", "退出程序", true, None::<&str>)?;
     
-    // === 分隔符 ===
+    // 分隔符
     let separator1 = PredefinedMenuItem::separator(app)?;
     let separator2 = PredefinedMenuItem::separator(app)?;
     let separator3 = PredefinedMenuItem::separator(app)?;
+    
+    // 构建基础菜单项列表
+    let mut items: Vec<&dyn tauri::menu::IsMenuItem<R>> = vec![
+        &open_website,
+        &separator1,
+        &vdd_settings,
+        &show_toolbar,
+    ];
+    
+    // Windows 平台添加防止睡眠选项
+    #[cfg(target_os = "windows")]
+    let prevent_sleep = CheckMenuItem::with_id(app, "prevent_sleep", "不许睡", true, false, None::<&str>)?;
+    #[cfg(target_os = "windows")]
+    items.push(&prevent_sleep);
+    
+    items.push(&log_console);
+    
+    // 调试模式添加调试页面
     #[cfg(debug_assertions)]
     let separator_debug = PredefinedMenuItem::separator(app)?;
-    
-    // 构建菜单：按类别分组
     #[cfg(debug_assertions)]
-    let menu = Menu::with_items(app, &[
-        &open_website,
-        &separator1,
-        &vdd_settings,
-        &show_toolbar,
-        &log_console,
-        &separator_debug,
-        &debug_page,
-        &separator2,
-        &check_update,
-        &about,
-        &separator3,
-        &quit,
-    ])?;
+    let debug_page = MenuItem::with_id(app, "debug_page", "🐛 打开调试页面", true, None::<&str>)?;
+    #[cfg(debug_assertions)]
+    {
+        items.push(&separator_debug);
+        items.push(&debug_page);
+    }
     
-    #[cfg(not(debug_assertions))]
-    let menu = Menu::with_items(app, &[
-        &open_website,
-        &separator1,
-        &vdd_settings,
-        &show_toolbar,
-        &log_console,
-        &separator2,
+    items.extend([
+        &separator2 as &dyn tauri::menu::IsMenuItem<R>,
         &check_update,
         &about,
         &separator3,
         &quit,
-    ])?;
+    ]);
+    
+    let menu = Menu::with_items(app, &items)?;
     
     let _tray = TrayIconBuilder::new()
         .menu(&menu)
@@ -145,6 +143,10 @@ pub fn handle_tray_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) {
         "log_console" => {
             windows::open_log_console(app);
         }
+        #[cfg(target_os = "windows")]
+        "prevent_sleep" => {
+            toggle_prevent_sleep(app);
+        }
         #[cfg(debug_assertions)]
         "debug_page" => {
             info!("🐛 托盘菜单：打开调试页面");
@@ -159,6 +161,8 @@ pub fn handle_tray_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) {
         }
         "quit" => {
             info!("🚪 托盘菜单：退出应用");
+            #[cfg(target_os = "windows")]
+            cleanup_prevent_sleep();
             std::process::exit(0);
         }
         _ => {
@@ -282,6 +286,100 @@ async fn update_tray_tooltip<R: Runtime>(app: &AppHandle<R>) {
     if let Some(tray) = app.tray_by_id("main") {
         if let Err(e) = tray.set_tooltip(Some(&tooltip_text)) {
             debug!("更新托盘 tooltip 失败: {}", e);
+        }
+    }
+}
+
+/// 切换防止睡眠功能
+#[cfg(target_os = "windows")]
+fn toggle_prevent_sleep<R: Runtime>(_app: &AppHandle<R>) {
+    let mut state = PREVENT_SLEEP_STATE.lock().unwrap();
+    let new_state = !*state;
+    
+    if new_state {
+        info!("🌙 托盘菜单：启用防止睡眠");
+        match enable_prevent_sleep() {
+            Ok(()) => {
+                *state = true;
+            }
+            Err(e) => {
+                error!("❌ 启用防止睡眠失败: {}", e);
+                // 如果启用失败，保持原状态
+            }
+        }
+    } else {
+        info!("💤 托盘菜单：禁用防止睡眠");
+        match disable_prevent_sleep() {
+            Ok(()) => {
+                *state = false;
+            }
+            Err(e) => {
+                error!("❌ 禁用防止睡眠失败: {}", e);
+            }
+        }
+    }
+}
+
+/// 启用防止睡眠（Windows）
+#[cfg(target_os = "windows")]
+fn enable_prevent_sleep() -> Result<(), String> {
+    // 使用 FFI 直接调用 Windows API
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn SetThreadExecutionState(es_flags: u32) -> u32;
+    }
+    
+    // ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED
+    // ES_CONTINUOUS: 持续有效直到调用 SetThreadExecutionState(ES_CONTINUOUS) 来清除
+    // ES_SYSTEM_REQUIRED: 防止系统进入睡眠状态
+    // ES_AWAYMODE_REQUIRED: 允许系统进入离开模式（如果支持）
+    const ES_CONTINUOUS: u32 = 0x80000000;
+    const ES_SYSTEM_REQUIRED: u32 = 0x00000001;
+    const ES_AWAYMODE_REQUIRED: u32 = 0x00000040;
+    
+    let flags = ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED;
+    
+    unsafe {
+        let result = SetThreadExecutionState(flags);
+        if result == 0 {
+            return Err("SetThreadExecutionState 调用失败".to_string());
+        }
+    }
+    
+    Ok(())
+}
+
+/// 禁用防止睡眠（Windows）
+#[cfg(target_os = "windows")]
+fn disable_prevent_sleep() -> Result<(), String> {
+    // 使用 FFI 直接调用 Windows API
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn SetThreadExecutionState(es_flags: u32) -> u32;
+    }
+    
+    // ES_CONTINUOUS: 清除所有执行状态标志
+    const ES_CONTINUOUS: u32 = 0x80000000;
+    
+    unsafe {
+        let result = SetThreadExecutionState(ES_CONTINUOUS);
+        if result == 0 {
+            return Err("SetThreadExecutionState 调用失败".to_string());
+        }
+    }
+    
+    Ok(())
+}
+
+/// 清理防止睡眠状态（在应用退出时调用）
+#[cfg(target_os = "windows")]
+pub fn cleanup_prevent_sleep() {
+    let state = PREVENT_SLEEP_STATE.lock().unwrap();
+    if *state {
+        if let Err(e) = disable_prevent_sleep() {
+            error!("❌ 清理防止睡眠状态失败: {}", e);
+        } else {
+            info!("✅ 已清理防止睡眠状态");
         }
     }
 }

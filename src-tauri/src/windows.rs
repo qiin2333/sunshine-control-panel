@@ -1,5 +1,6 @@
 use tauri::{Manager, AppHandle, Runtime, WebviewWindow};
 use log::{info, error, debug};
+use crate::proxy_server;
 
 /// 显示并激活窗口（解决权限隔离问题）
 pub fn show_and_activate_window<R: Runtime>(window: &WebviewWindow<R>) {
@@ -244,17 +245,20 @@ fn navigate_to_url(window: &WebviewWindow, url: &str) {
         parsed_url.query().map(|q| format!("?{}", q)).unwrap_or_default()
     );
     
+    // 获取动态代理 URL
+    let proxy_url = proxy_server::get_proxy_url();
+    
     let script = format!(
         r#"
         (function() {{
             const iframe = document.querySelector('.sunshine-iframe');
             if (iframe && iframe.contentWindow) {{
-                iframe.src = 'http://localhost:48081{}';
+                iframe.src = '{}{}';
                 console.log('📍 导航到:', '{}');
             }}
         }})();
         "#,
-        path, path
+        proxy_url, path, path
     );
     
     let _ = window.eval(&script);

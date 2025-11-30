@@ -10,7 +10,6 @@ use crate::utils;
 use crate::toolbar;
 use crate::update;
 use crate::windows;
-use crate::sunshine;
 
 // 防止睡眠状态管理
 static PREVENT_SLEEP_STATE: Mutex<bool> = Mutex::new(false);
@@ -25,72 +24,49 @@ pub fn create_system_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let check_update = MenuItem::with_id(app, "check_update", "检查更新", true, None::<&str>)?;
     let about = MenuItem::with_id(app, "about", "关于", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出程序", true, None::<&str>)?;
-    
-    // 分隔符
     let separator1 = PredefinedMenuItem::separator(app)?;
     let separator2 = PredefinedMenuItem::separator(app)?;
     let separator3 = PredefinedMenuItem::separator(app)?;
     
-    // 构建基础菜单项列表
-    let mut items: Vec<&dyn tauri::menu::IsMenuItem<R>> = vec![
-        &open_website,
-        &separator1,
-        &vdd_settings,
-        &show_toolbar,
-    ];
-    
-    // Windows 平台添加防止睡眠选项
     #[cfg(target_os = "windows")]
     let prevent_sleep = CheckMenuItem::with_id(app, "prevent_sleep", "不许睡", true, false, None::<&str>)?;
+    
+    #[cfg(debug_assertions)]
+    let debug_page = MenuItem::with_id(app, "debug_page", "🐛 打开调试页面", true, None::<&str>)?;
+    #[cfg(debug_assertions)]
+    let separator_debug = PredefinedMenuItem::separator(app)?;
+    
+    // 构建菜单
+    let mut items: Vec<&dyn tauri::menu::IsMenuItem<R>> = vec![
+        &open_website, &separator1, &vdd_settings, &show_toolbar,
+    ];
+    
     #[cfg(target_os = "windows")]
     items.push(&prevent_sleep);
     
     items.push(&log_console);
     
-    // 调试模式添加调试页面
     #[cfg(debug_assertions)]
-    let separator_debug = PredefinedMenuItem::separator(app)?;
-    #[cfg(debug_assertions)]
-    let debug_page = MenuItem::with_id(app, "debug_page", "🐛 打开调试页面", true, None::<&str>)?;
-    #[cfg(debug_assertions)]
-    {
-        items.push(&separator_debug);
-        items.push(&debug_page);
-    }
+    items.extend([&separator_debug as &dyn tauri::menu::IsMenuItem<R>, &debug_page]);
     
-    items.extend([
-        &separator2 as &dyn tauri::menu::IsMenuItem<R>,
-        &check_update,
-        &about,
-        &separator3,
-        &quit,
-    ]);
+    items.extend([&separator2 as &dyn tauri::menu::IsMenuItem<R>, &check_update, &about, &separator3, &quit]);
     
     let menu = Menu::with_items(app, &items)?;
+    let is_admin = utils::is_running_as_admin().unwrap_or(false);
+    let tooltip = if is_admin { "Sunshine GUI (管理员)" } else { "Sunshine GUI" };
     
-    let _tray = TrayIconBuilder::new()
+    TrayIconBuilder::new()
         .menu(&menu)
         .icon(app.default_window_icon().unwrap().clone())
-        .tooltip("Sunshine GUI")
+        .tooltip(tooltip)
         .show_menu_on_left_click(false)
-        .on_menu_event(move |app, event| {
-            handle_tray_menu_event(app, event.id().as_ref());
-        })
-        .on_tray_icon_event(|tray, event| {
-            match event {
-                TrayIconEvent::Click { button: MouseButton::Left, .. } => {
-                    handle_tray_click(tray.app_handle());
-                }
-                TrayIconEvent::DoubleClick { button: MouseButton::Left, .. } => {
-                    handle_tray_double_click(tray.app_handle());
-                }
-                _ => {}
-            }
+        .on_menu_event(|app, event| handle_tray_menu_event(app, event.id().as_ref()))
+        .on_tray_icon_event(|tray, event| match event {
+            TrayIconEvent::Click { button: MouseButton::Left, .. } => handle_tray_click(tray.app_handle()),
+            TrayIconEvent::DoubleClick { button: MouseButton::Left, .. } => handle_tray_double_click(tray.app_handle()),
+            _ => {}
         })
         .build(app)?;
-    
-    // 启动状态更新任务
-    start_status_update_task(app);
     
     Ok(())
 }
@@ -243,50 +219,6 @@ fn save_update_check_time<R: Runtime>(app: &AppHandle<R>) {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-    }
-}
-
-/// 启动状态更新任务
-fn start_status_update_task<R: Runtime>(app: &AppHandle<R>) {
-    let app_handle = app.clone();
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        update_tray_tooltip(&app_handle).await;
-        
-        let mut interval = tokio::time::interval(Duration::from_secs(5));
-        loop {
-            interval.tick().await;
-            update_tray_tooltip(&app_handle).await;
-        }
-    });
-}
-
-/// 更新托盘图标 tooltip 以显示当前状态
-async fn update_tray_tooltip<R: Runtime>(app: &AppHandle<R>) {
-    let tooltip_text = match sunshine::get_active_sessions().await {
-        Ok(sessions) => {
-            let running: Vec<_> = sessions.iter().filter(|s| s.state == "RUNNING").collect();
-            match running.len() {
-                0 if sessions.is_empty() => "Sunshine GUI - 空闲".to_string(),
-                0 => format!("Sunshine GUI - {} 个会话", sessions.len()),
-                1 => {
-                    let s = &running[0];
-                    let name = if s.app_name.is_empty() { &s.client_name } else { &s.app_name };
-                    format!("Sunshine GUI - 正在流式传输: {}", name)
-                }
-                n => format!("Sunshine GUI - 正在流式传输 ({} 个会话)", n),
-            }
-        }
-        Err(e) => {
-            debug!("无法获取会话信息: {}", e);
-            "Sunshine GUI - 无法连接到服务".to_string()
-        }
-    };
-    
-    if let Some(tray) = app.tray_by_id("main") {
-        if let Err(e) = tray.set_tooltip(Some(&tooltip_text)) {
-            debug!("更新托盘 tooltip 失败: {}", e);
-        }
     }
 }
 

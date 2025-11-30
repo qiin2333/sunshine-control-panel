@@ -34,11 +34,8 @@ pub async fn open_tool_window(app: AppHandle, tool_name: String) -> Result<(), S
         "about" => {
             windows::open_about_window(&app)?;
         }
-        _ => {
-            return Err(format!("未知的工具名称: {}", tool_name));
-        }
+        _ => return Err(format!("未知的工具名称: {}", tool_name)),
     }
-    
     Ok(())
 }
 
@@ -51,10 +48,9 @@ pub async fn fetch_speech_phrases() -> Result<Vec<String>, String> {
     let response = reqwest::get(url).await
         .map_err(|e| format!("请求失败: {}", e))?;
     
-    let phrases = response.json::<Vec<String>>().await
+    let phrases: Vec<String> = response.json().await
         .map_err(|e| format!("解析失败: {}", e))?;
     
     info!("✅ 话术加载成功，共 {} 条", phrases.len());
     Ok(phrases)
 }
-

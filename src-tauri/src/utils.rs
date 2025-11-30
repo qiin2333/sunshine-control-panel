@@ -189,9 +189,9 @@ pub async fn restart_as_admin(app_handle: tauri::AppHandle) -> Result<String, St
                 debug!("   关闭主窗口");
             }
             
-            // 短暂延迟后退出，让窗口关闭并释放端口 48081
+            // 短暂延迟后退出，让窗口关闭并释放资源
             tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-            info!("🚪 退出当前实例，释放端口 48081");
+            info!("🚪 退出当前实例，释放资源");
             app_handle.exit(0);
         });
         

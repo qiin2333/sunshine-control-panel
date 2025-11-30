@@ -7,7 +7,7 @@ use tower_http::cors::CorsLayer;
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 use once_cell::sync::Lazy;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU16, Ordering};
 use log::{info, warn, error, debug};
 
 /// 全局 Sunshine 目标 URL（动态配置）
@@ -18,6 +18,32 @@ static SUNSHINE_TARGET: Lazy<Arc<RwLock<String>>> =
 static SUNSHINE_AVAILABLE: AtomicBool = AtomicBool::new(true);
 static LAST_CHECK_TIME: AtomicU64 = AtomicU64::new(0);
 
+/// 代理服务器实际使用的端口
+static PROXY_PORT: AtomicU16 = AtomicU16::new(48081);
+
+/// 快速失败超时时间（秒）
+const FAST_FAIL_TIMEOUT_SECS: u64 = 3;
+
+/// 代理服务器端口范围
+const PROXY_PORT_START: u16 = 48081;
+const PROXY_PORT_END: u16 = 48090;
+
+/// 获取代理服务器实际使用的端口
+pub fn get_proxy_port() -> u16 {
+    PROXY_PORT.load(Ordering::Relaxed)
+}
+
+/// 获取代理服务器的完整 URL
+pub fn get_proxy_url() -> String {
+    format!("http://127.0.0.1:{}", get_proxy_port())
+}
+
+/// Tauri command: 获取代理服务器 URL
+#[tauri::command]
+pub fn get_proxy_url_command() -> String {
+    get_proxy_url()
+}
+
 /// 设置 Sunshine 目标 URL
 pub fn set_sunshine_target(url: String) {
     if let Ok(mut target) = SUNSHINE_TARGET.write() {
@@ -26,46 +52,8 @@ pub fn set_sunshine_target(url: String) {
     }
 }
 
-/// 注入到 Sunshine 页面的 CSS 样式
-const INJECT_STYLES: &str = r#"
-<!-- Tauri 样式优化 -->
-<style id="tauri-scrollbar-theme">
-/* 完全隐藏滚动条 */
-::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-  display: none;
-}
-
-/* Firefox */
-* {
-  scrollbar-width: none;
-}
-
-/* IE/Edge */
-body {
-  -ms-overflow-style: none;
-}
-body {
-  padding-top: 72px;
-}
-.navbar {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    z-index: 1000;
-    margin-bottom: 72px;
-}
-.navbar-brand {
-  margin-left: -48px;
-  visibility: hidden;
-}
-#bd-theme {
-  display: none;
-}
-</style>
-"#;
+/// 注入到 Sunshine 页面的 CSS 样式（编译时从文件读取）
+const INJECT_STYLES: &str = include_str!("../inject-styles.css");
 
 /// 注入的 JavaScript 脚本（编译时从文件读取）
 const INJECT_SCRIPT: &str = include_str!("../inject-script.js");
@@ -79,122 +67,151 @@ pub async fn start_proxy_server() -> Result<(), Box<dyn std::error::Error + Send
         .fallback(proxy_handler)
         .layer(CorsLayer::permissive());
     
-    let addr = SocketAddr::from(([127, 0, 0, 1], 48081));
-    info!("🚀 准备启动 Sunshine 代理服务器: http://{}", addr);
+    // 尝试在端口范围内找到可用端口
+    let mut listener = None;
+    let mut bound_port = PROXY_PORT_START;
     
-    match tokio::net::TcpListener::bind(addr).await {
-        Ok(listener) => {
-            info!("✅ 代理服务器成功绑定到 http://{}", addr);
-            info!("   开始监听请求...");
-            
-            if let Err(e) = axum::serve(listener, app).await {
-                error!("❌ 代理服务器运行失败: {}", e);
-                return Err(e.into());
+    for port in PROXY_PORT_START..=PROXY_PORT_END {
+        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        match tokio::net::TcpListener::bind(addr).await {
+            Ok(l) => {
+                info!("✅ 代理服务器成功绑定到 http://{}", addr);
+                bound_port = port;
+                listener = Some(l);
+                break;
             }
-            
-            Ok(())
-        }
-        Err(e) => {
-            error!("❌ 代理服务器绑定端口失败: {}", e);
-            error!("   端口 48081 可能被占用或权限不足");
-            Err(e.into())
+            Err(e) => {
+                if port == PROXY_PORT_START {
+                    warn!("⚠️  端口 {} 被占用，尝试其他端口...", port);
+                }
+                debug!("   端口 {} 不可用: {}", port, e);
+            }
         }
     }
+    
+    let listener = match listener {
+        Some(l) => l,
+        None => {
+            error!("❌ 代理服务器绑定端口失败: 端口 {}-{} 均被占用", PROXY_PORT_START, PROXY_PORT_END);
+            return Err(format!("无法绑定端口 {}-{}", PROXY_PORT_START, PROXY_PORT_END).into());
+        }
+    };
+    
+    // 保存实际使用的端口
+    PROXY_PORT.store(bound_port, Ordering::Relaxed);
+    info!("🚀 Sunshine 代理服务器已启动: http://127.0.0.1:{}", bound_port);
+    info!("   开始监听请求...");
+    
+    axum::serve(listener, app).await.map_err(|e| {
+        error!("❌ 代理服务器运行失败: {}", e);
+        e.into()
+    })
+}
+
+/// 获取当前时间戳（秒）
+#[inline]
+fn current_timestamp() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// 检查是否应该快速失败
+#[inline]
+fn should_fast_fail() -> bool {
+    if SUNSHINE_AVAILABLE.load(Ordering::Relaxed) {
+        return false;
+    }
+    let last_check = LAST_CHECK_TIME.load(Ordering::Relaxed);
+    current_timestamp().saturating_sub(last_check) < FAST_FAIL_TIMEOUT_SECS
+}
+
+/// 标记 Sunshine 为不可用
+#[inline]
+fn mark_unavailable() {
+    SUNSHINE_AVAILABLE.store(false, Ordering::Relaxed);
+    LAST_CHECK_TIME.store(current_timestamp(), Ordering::Relaxed);
+}
+
+/// 标记 Sunshine 为可用
+#[inline]
+fn mark_available() {
+    SUNSHINE_AVAILABLE.store(true, Ordering::Relaxed);
+}
+
+/// 检查是否是连接错误
+fn is_connection_error(error: &str) -> bool {
+    const CONNECTION_ERROR_PATTERNS: &[&str] = &[
+        "connection", "refused", "timed out", "timeout",
+        "unreachable", "error sending request", "network", "dns"
+    ];
+    let error_lower = error.to_lowercase();
+    CONNECTION_ERROR_PATTERNS.iter().any(|p| error_lower.contains(p))
+}
+
+/// 创建服务不可用响应
+fn service_unavailable_response() -> Response {
+    (
+        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        ERROR_404_PAGE
+    ).into_response()
 }
 
 /// 代理处理器
 async fn proxy_handler(req: Request) -> Response {
     let method = req.method().clone();
-    let path = req.uri().path().to_string();
-    let query = req.uri().query().unwrap_or("").to_string();
+    let uri = req.uri().clone();
+    let path = uri.path().to_string();
+    let query = uri.query().unwrap_or("").to_string();
     let headers = req.headers().clone();
     
-    // 获取请求体（消耗 req）
+    // 获取请求体
     let body = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
         Ok(bytes) => bytes.to_vec(),
         Err(e) => {
             error!("❌ 读取请求体失败: {}", e);
-            return (
-                axum::http::StatusCode::BAD_REQUEST,
-                "读取请求体失败"
-            ).into_response();
+            return (axum::http::StatusCode::BAD_REQUEST, "读取请求体失败").into_response();
         }
     };
     
-    // 构建目标 URL（从动态配置读取）
+    // 构建目标 URL
     let sunshine_base = SUNSHINE_TARGET.read()
         .map(|url| url.clone())
         .unwrap_or_else(|_| "https://localhost:47990".to_string());
     
     let target_url = if query.is_empty() {
-        format!("{}{}", &sunshine_base, &path)
+        format!("{}{}", sunshine_base, path)
     } else {
-        format!("{}{}?{}", &sunshine_base, &path, &query)
+        format!("{}{}?{}", sunshine_base, path, query)
     };
     
-    // 只在调试模式下打印主要请求
     #[cfg(debug_assertions)]
     if path == "/" || path.ends_with(".html") || path.starts_with("/api/") {
-        debug!("📡 代理请求: {} {}", method, &path);
+        debug!("📡 代理请求: {} {}", method, path);
     }
     
-    // 快速失败检查：如果最近3秒内检测到 Sunshine 不可用，直接返回 404
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let last_check = LAST_CHECK_TIME.load(Ordering::Relaxed);
-    
-    if !SUNSHINE_AVAILABLE.load(Ordering::Relaxed) && (now - last_check) < 3 {
-        // 3秒内检测过不可用，直接返回 404
-        return (
-            axum::http::StatusCode::SERVICE_UNAVAILABLE,
-            [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
-            ERROR_404_PAGE
-        ).into_response();
+    // 快速失败检查
+    if should_fast_fail() {
+        return service_unavailable_response();
     }
     
     // 请求 Sunshine
     match fetch_and_proxy(&target_url, &method, &headers, body).await {
         Ok(response) => {
-            // 连接成功，标记为可用
-            SUNSHINE_AVAILABLE.store(true, Ordering::Relaxed);
+            mark_available();
             response
         }
         Err(e) => {
-            error!("❌ 代理错误 [{}]: {}", path, e);
-            error!("   目标 URL: {}", target_url);
-            error!("   错误详情: {:?}", e);
+            let error_str = e.to_string();
+            error!("❌ 代理错误 [{}]: {}", path, error_str);
             
-            // 检查是否是连接错误
-            let error_str = e.to_string().to_lowercase();
-            let is_connection_error = error_str.contains("connection") 
-                || error_str.contains("refused")
-                || error_str.contains("timed out")
-                || error_str.contains("timeout")
-                || error_str.contains("unreachable")
-                || error_str.contains("error sending request")
-                || error_str.contains("network")
-                || error_str.contains("dns");
-            
-            if is_connection_error {
-                // 标记为不可用，记录检查时间
-                SUNSHINE_AVAILABLE.store(false, Ordering::Relaxed);
-                LAST_CHECK_TIME.store(now, Ordering::Relaxed);
-                
-                // 返回调皮的404页面
-                (
-                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
-                    [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
-                    ERROR_404_PAGE
-                ).into_response()
+            if is_connection_error(&error_str) {
+                mark_unavailable();
+                service_unavailable_response()
             } else {
-                // 其他错误返回简单的错误信息
-                let error_msg = format!("代理错误: {}", e);
-            (
-                axum::http::StatusCode::BAD_GATEWAY,
-                error_msg
-            ).into_response()
+                (axum::http::StatusCode::BAD_GATEWAY, format!("代理错误: {}", e)).into_response()
             }
         }
     }
@@ -207,9 +224,9 @@ fn get_http_client() -> &'static reqwest::Client {
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
             .danger_accept_invalid_certs(true)
-            .pool_max_idle_per_host(20)  // 增加连接池
-            .timeout(std::time::Duration::from_secs(5))  // 总超时
-            .connect_timeout(std::time::Duration::from_millis(500))  // 500ms 快速检测
+            .pool_max_idle_per_host(20)
+            .timeout(std::time::Duration::from_secs(5))
+            .connect_timeout(std::time::Duration::from_millis(500))
             .build()
             .expect("Failed to create HTTP client")
     })
@@ -222,8 +239,7 @@ async fn send_request(
     method: &axum::http::Method,
     headers: &axum::http::HeaderMap,
     body: &[u8]
-) -> Result<reqwest::Response, Box<dyn std::error::Error + Send + Sync>> {
-    // 构建请求
+) -> Result<reqwest::Response, reqwest::Error> {
     let mut req_builder = match method.as_str() {
         "GET" => client.get(url),
         "POST" => client.post(url),
@@ -231,10 +247,10 @@ async fn send_request(
         "DELETE" => client.delete(url),
         "PATCH" => client.patch(url),
         "HEAD" => client.head(url),
-        _ => client.get(url),  // 默认使用 GET
+        _ => client.get(url),
     };
     
-    // 复制请求头（排除一些特殊头部）
+    // 复制请求头（排除特殊头部）
     for (key, value) in headers.iter() {
         let key_str = key.as_str();
         if !matches!(key_str, "host" | "connection" | "content-length" | "transfer-encoding") {
@@ -244,12 +260,11 @@ async fn send_request(
         }
     }
     
-    // 如果有请求体，添加它
     if !body.is_empty() {
         req_builder = req_builder.body(body.to_vec());
     }
     
-    Ok(req_builder.send().await?)
+    req_builder.send().await
 }
 
 /// 获取并代理内容
@@ -261,71 +276,38 @@ async fn fetch_and_proxy(
 ) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
     let client = get_http_client();
     
-    // 尝试 HTTPS，失败则降级到 HTTP
-    let url_to_use = url.to_string();
-    let response_result = send_request(client, &url_to_use, method, headers, &body).await;
-    
-    let response = match response_result {
+    // 尝试请求，HTTPS 失败时降级到 HTTP（仅限非连接错误）
+    let response = match send_request(client, url, method, headers, &body).await {
         Ok(resp) => resp,
-        Err(e) if url_to_use.starts_with("https://") => {
-            let error_str = e.to_string().to_lowercase();
-            // 如果是连接拒绝错误，直接返回，不要再尝试 HTTP
-            if error_str.contains("refused") || error_str.contains("connection") {
-                return Err(e);
-            }
-            // 其他 HTTPS 错误（如证书问题），尝试 HTTP
-            let http_url = url_to_use.replace("https://", "http://");
+        Err(e) if url.starts_with("https://") && !is_connection_error(&e.to_string()) => {
+            let http_url = url.replace("https://", "http://");
             warn!("⚠️  HTTPS 连接失败，尝试 HTTP: {}", http_url);
             send_request(client, &http_url, method, headers, &body).await?
         }
-        Err(e) => return Err(e),
+        Err(e) => return Err(e.into()),
     };
-    let status = response.status();
-    let headers = response.headers().clone();
     
-    let content_type = headers
+    let status = response.status();
+    let resp_headers = response.headers().clone();
+    let content_type = resp_headers
         .get("content-type")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("text/html");
     
-    let body = response.bytes().await?.to_vec();
+    let body_bytes = response.bytes().await?.to_vec();
     
-    // 只对主 HTML 页面注入脚本
-    // 排除 API 响应、JSON、以及已经包含脚本的页面
-    let is_main_page = matches!(
-        url.rsplit('/').next().unwrap_or(""),
-        "" | "apps" | "config" | "password" | "pin" | "troubleshooting" | "welcome"
-    ) || url.ends_with(".html") || url.ends_with(".htm")
-        && content_type.contains("text/html");
-    
-    let final_body = if is_main_page {
-        match String::from_utf8(body.clone()) {
-            Ok(html) => {
-                // 检查是否已经包含主题脚本（避免重复注入）
-                if html.contains("主题同步脚本已加载") {
-                    body  // 已注入，直接返回原始数据
-                } else if html.contains("<html") || html.contains("<!DOCTYPE") {
-                    // 只在完整的 HTML 文档中注入
-                    let modified = inject_theme_script(html);
-                    modified.into_bytes()
-                } else {
-                    body  // 不是完整 HTML，返回原始数据
-                }
-            }
-            Err(_) => body  // 无效 UTF-8，返回原始数据
-        }
+    // 判断是否需要注入脚本
+    let final_body = if should_inject_script(url, content_type) {
+        inject_if_needed(body_bytes)
     } else {
-        body
+        body_bytes
     };
     
     // 构建响应
-    let mut res = axum::http::Response::builder()
-        .status(status.as_u16());
+    let mut res = axum::http::Response::builder().status(status.as_u16());
     
-    // 复制头部（排除一些可能导致问题的头部）
-    for (key, value) in headers.iter() {
-        let key_str = key.as_str();
-        if !matches!(key_str, "content-length" | "transfer-encoding" | "content-encoding") {
+    for (key, value) in resp_headers.iter() {
+        if !matches!(key.as_str(), "content-length" | "transfer-encoding" | "content-encoding") {
             res = res.header(key, value);
         }
     }
@@ -333,28 +315,46 @@ async fn fetch_and_proxy(
     Ok(res.body(axum::body::Body::from(final_body))?)
 }
 
-/// 注入主题同步脚本到 HTML（优化版 - 减少字符串操作）
-fn inject_theme_script(html: String) -> String {
-    // 快速检查：如果没有 </head> 标签，直接返回
-    if let Some(pos) = html.find("</head>") {
-        let inject_content_size = INJECT_STYLES.len() + INJECT_SCRIPT.len() + 100;
-        let mut result = String::with_capacity(html.len() + inject_content_size);
-        
-        result.push_str(&html[..pos]);
-        
-        // 注入 CSS 样式
-        result.push_str("\n<!-- Tauri 样式优化 -->\n");
-        result.push_str(INJECT_STYLES);
-        
-        // 注入 JavaScript 脚本
-        result.push_str("\n<!-- Tauri 功能脚本 -->\n<script>\n");
-        result.push_str(INJECT_SCRIPT);
-        result.push_str("\n</script>\n");
-        
-        result.push_str(&html[pos..]);
-        result
-    } else {
-        html  // 没有 </head>，不注入
+/// 判断是否应该注入脚本
+fn should_inject_script(url: &str, content_type: &str) -> bool {
+    if !content_type.contains("text/html") {
+        return false;
+    }
+    
+    let path = url.rsplit('/').next().unwrap_or("");
+    matches!(path, "" | "apps" | "config" | "password" | "pin" | "troubleshooting" | "welcome")
+        || url.ends_with(".html")
+        || url.ends_with(".htm")
+}
+
+/// 如果需要则注入脚本
+fn inject_if_needed(body: Vec<u8>) -> Vec<u8> {
+    match String::from_utf8(body) {
+        Ok(html) if !html.contains("主题同步脚本已加载") 
+            && (html.contains("<html") || html.contains("<!DOCTYPE")) => {
+            inject_theme_script(html).into_bytes()
+        }
+        Ok(html) => html.into_bytes(),
+        Err(e) => e.into_bytes(),
     }
 }
 
+/// 注入主题同步脚本到 HTML
+fn inject_theme_script(html: String) -> String {
+    let Some(pos) = html.find("</head>") else {
+        return html;
+    };
+    
+    let inject_size = INJECT_STYLES.len() + INJECT_SCRIPT.len() + 150;
+    let mut result = String::with_capacity(html.len() + inject_size);
+    
+    result.push_str(&html[..pos]);
+    result.push_str("\n<!-- Tauri 样式优化 -->\n<style id=\"tauri-scrollbar-theme\">\n");
+    result.push_str(INJECT_STYLES);
+    result.push_str("\n</style>\n<!-- Tauri 功能脚本 -->\n<script>\n");
+    result.push_str(INJECT_SCRIPT);
+    result.push_str("\n</script>\n");
+    result.push_str(&html[pos..]);
+    
+    result
+}

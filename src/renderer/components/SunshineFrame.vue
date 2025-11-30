@@ -91,6 +91,10 @@ onUnmounted(() => {
 
 onMounted(async () => {
   try {
+    // 获取代理服务器 URL（动态端口）
+    const proxyBaseUrl = await sunshine.getProxyUrl()
+    console.log('📡 代理服务器 URL:', proxyBaseUrl)
+
     // 检查是否有命令行传递的 URL 参数（来自 --url= 参数）
     const cmdLineUrl = await sunshine.getCommandLineUrl()
 
@@ -109,14 +113,14 @@ onMounted(async () => {
       }
 
       // 设置代理 URL，包含路径
-      sunshineUrl.value = 'http://localhost:48081' + targetPath
+      sunshineUrl.value = proxyBaseUrl + targetPath
       displayUrl.value = cmdLineUrl
       currentPath.value = targetPath
       console.log('📡 通过本地代理访问:', sunshineUrl.value)
     } else {
       // 获取代理服务器 URL（支持主题同步）
       const proxyUrl = await sunshine.getUrl()
-      sunshineUrl.value = 'http://localhost:48081/'
+      sunshineUrl.value = proxyBaseUrl + '/'
       displayUrl.value = proxyUrl // 显示实际的 Sunshine URL
       currentPath.value = '/'
       console.log('✅ 使用本地代理服务器（支持主题同步）')
@@ -283,7 +287,13 @@ onMounted(async () => {
     console.log('✅ Tauri VDD设置事件监听器已启用')
   } catch (error) {
     console.error('获取配置失败:', error)
-    sunshineUrl.value = 'http://localhost:48081/'
+    // 尝试获取代理 URL，失败则使用默认端口
+    try {
+      const proxyBaseUrl = await sunshine.getProxyUrl()
+      sunshineUrl.value = proxyBaseUrl + '/'
+    } catch (e) {
+      sunshineUrl.value = 'http://localhost:48081/' // 降级到默认端口
+    }
   }
 })
 

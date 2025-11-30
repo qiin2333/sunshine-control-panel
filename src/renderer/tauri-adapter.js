@@ -142,6 +142,15 @@ export const sunshine = {
     }
   },
 
+  async getProxyUrl() {
+    try {
+      return await invoke('get_proxy_url_command')
+    } catch (error) {
+      console.error('获取代理 URL 失败:', error)
+      return 'http://localhost:48081' // 降级到默认端口
+    }
+  },
+
   async getActiveSessions() {
     try {
       return await invoke('get_active_sessions')

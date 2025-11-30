@@ -74,6 +74,7 @@ fn main() {
             sunshine::get_command_line_url,
             sunshine::get_active_sessions,
             sunshine::change_bitrate,
+            proxy_server::get_proxy_url_command,
             utils::open_external_url,
             utils::restart_graphics_driver,
             utils::restart_sunshine_service,
@@ -95,4 +96,3 @@ fn main() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-

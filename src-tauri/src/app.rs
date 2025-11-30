@@ -15,39 +15,25 @@ pub struct AppState {
 
 /// 应用程序初始化设置
 pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
-    // 检查命令行参数（首次启动时）
-    let args: Vec<String> = std::env::args().collect();
-    let show_toolbar = args.iter().any(|arg| arg == "--toolbar" || arg == "-t");
+    let show_toolbar = std::env::args().any(|arg| arg == "--toolbar" || arg == "-t");
+    let app_handle = app.handle().clone();
     
-    windows::create_main_window(&app.handle())?;
-    
-    // 创建系统托盘
-    tray::create_system_tray(&app.handle())?;
-    
-    // 注册全局快捷键
+    windows::create_main_window(&app_handle)?;
+    tray::create_system_tray(&app_handle)?;
     register_global_shortcuts(app)?;
-    
-    // 设置全局菜单事件处理
     setup_menu_event_handler(app);
-
-    // 启动代理服务器
     start_proxy_server_async();
     
-    // 如果指定了 --toolbar 参数，延迟打开工具栏（等待应用完全初始化）
-    if show_toolbar {
-        info!("🔧 检测到 --toolbar 参数，将在应用启动后打开工具栏");
-        let app_handle = app.handle().clone();
-        tauri::async_runtime::spawn(async move {
+    // 延迟任务：工具栏和更新检查
+    tauri::async_runtime::spawn(async move {
+        if show_toolbar {
+            info!("🔧 检测到 --toolbar 参数，将在应用启动后打开工具栏");
             tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
             if let Err(e) = toolbar::create_toolbar_window_internal(&app_handle) {
                 error!("❌ 创建工具栏失败: {}", e);
             }
-        });
-    }
-    
-    // 推迟初始化更新检查器
-    let app_handle = app.handle().clone();
-    tauri::async_runtime::spawn(async move {
+        }
+        
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
         if let Err(e) = update::init_update_checker(&app_handle) {
             error!("❌ 初始化更新检查器失败: {}", e);
@@ -127,24 +113,16 @@ fn start_proxy_server_async() {
 /// 处理单实例逻辑
 pub fn handle_single_instance(app: &AppHandle, args: Vec<String>) {
     info!("🔔 检测到第二个实例启动，激活现有窗口");
-    
-    if !args.is_empty() {
-        debug!("   启动参数: {:?}", args);
-    }
+    debug!("   启动参数: {:?}", args);
     
     // 检查是否要打开工具栏
     if args.iter().any(|arg| arg == "--toolbar" || arg == "-t") {
         info!("🔧 检测到 --toolbar 参数，打开工具栏");
-        let app_clone = app.clone();
-        tauri::async_runtime::spawn(async move {
-            if let Err(e) = toolbar::create_toolbar_window_internal(&app_clone) {
-                error!("❌ 创建工具栏失败: {}", e);
-            }
-        });
+        toggle_toolbar_window(app);
         return;
     }
     
-    // 提取 URL 参数
+    // 提取 URL 参数并激活主窗口
     let target_url = args.iter()
         .find(|arg| arg.starts_with("--url="))
         .map(|arg| arg.trim_start_matches("--url=").to_string());
@@ -153,7 +131,5 @@ pub fn handle_single_instance(app: &AppHandle, args: Vec<String>) {
         info!("📍 检测到 URL 参数: {}", url);
     }
     
-    // 激活主窗口
     windows::activate_main_window(app, target_url);
 }
-

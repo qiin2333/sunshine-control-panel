@@ -17,6 +17,11 @@
       </div>
     </transition>
 
+    <!-- 话术气泡 -->
+    <div v-if="speechVisible" class="speech-bubble" role="status" aria-live="polite">
+      {{ speechText }}
+    </div>
+
     <!-- 中心工具栏图标 -->
     <div
       class="toolbar-icon"
@@ -27,11 +32,6 @@
     >
       <!-- PixiJS Canvas 容器 -->
       <canvas ref="pixiCanvas" class="icon-canvas"></canvas>
-      <transition name="speech">
-        <div v-if="speechVisible" class="speech-bubble" role="status" aria-live="polite">
-          {{ speechText }}
-        </div>
-      </transition>
     </div>
   </div>
 </template>
@@ -420,9 +420,40 @@ onUnmounted(() => {
 </script>
 
 <style scoped lang="less">
+// 变量定义
+@pink-light: rgba(255, 182, 193, 0.95);
+@pink-dark: rgba(255, 192, 203, 0.95);
+@blue-light: rgba(173, 216, 230, 0.95);
+@blue-dark: rgba(135, 206, 250, 0.95);
+@purple-light: rgba(221, 160, 221, 0.95);
+@purple-dark: rgba(218, 112, 214, 0.95);
+@orange-light: rgba(255, 193, 7, 0.95);
+@orange-dark: rgba(255, 152, 0, 0.95);
+@danger-light: rgba(255, 182, 193, 0.95);
+@danger-dark: rgba(255, 150, 150, 0.95);
+
 @halo-default: drop-shadow(0 0 8px rgba(255, 182, 193, 0.4)) drop-shadow(0 0 16px rgba(221, 160, 221, 0.2));
 @halo-hover: drop-shadow(0 0 12px rgba(255, 182, 193, 0.6)) drop-shadow(0 0 24px rgba(221, 160, 221, 0.3));
 @halo-active: drop-shadow(0 0 16px rgba(123, 80, 87, 0.8)) drop-shadow(0 0 32px rgba(221, 160, 221, 0.4));
+
+@transition-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+// Mixins
+.gpu-accelerate() {
+  will-change: transform;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+.bubble-shadow(@color) {
+  box-shadow: 0 4px 20px fade(@color, 60%), 0 0 0 3px rgba(255, 255, 255, 0.4), inset 0 2px 8px rgba(255, 255, 255, 0.3);
+}
+
+.bubble-shadow-hover(@color) {
+  box-shadow: 0 8px 35px fade(@color, 90%), 0 0 0 4px rgba(255, 255, 255, 0.6),
+    inset 0 3px 10px rgba(255, 255, 255, 0.5);
+}
+
 #toolbar-container {
   width: 100%;
   height: 100%;
@@ -431,110 +462,87 @@ onUnmounted(() => {
   justify-content: center;
   position: relative;
   box-sizing: border-box;
-  transform: translateZ(0);
+  .gpu-accelerate();
   -webkit-font-smoothing: antialiased;
 }
 
-/* 气泡菜单容器 */
 .bubble-menu {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
+  inset: 0;
   pointer-events: none;
   z-index: 50;
-  will-change: transform;
-  transform: translateZ(0);
+  .gpu-accelerate();
 }
 
-/* 气泡包裹层（负责定位） */
 .bubble-wrapper {
   position: absolute;
   top: 50%;
   left: 50%;
   width: 48px;
   height: 48px;
-  margin-left: -24px;
-  margin-top: -24px;
+  margin: -24px 0 0 -24px;
   pointer-events: all;
   will-change: transform, margin-top;
-  transform: translateZ(0);
-  backface-visibility: hidden;
+  .gpu-accelerate();
 }
 
-/* 气泡项（负责入场动画和样式） */
 .bubble-item {
   width: 100%;
   height: 100%;
   border-radius: 50%;
-  background: linear-gradient(
-    135deg,
-    rgba(255, 182, 193, 0.95) 0%,
-    /* 粉色 */ rgba(255, 160, 220, 0.95) 50%,
-    /* 淡紫粉 */ rgba(186, 148, 255, 0.95) 100% /* 淡紫色 */
-  );
+  background: linear-gradient(135deg, @pink-light 0%, rgba(255, 160, 220, 0.95) 50%, rgba(186, 148, 255, 0.95) 100%);
   backdrop-filter: blur(15px);
-  box-shadow: 0 4px 20px rgba(255, 182, 193, 0.6), 0 0 0 3px rgba(255, 255, 255, 0.4),
-    inset 0 2px 8px rgba(255, 255, 255, 0.3);
+  .bubble-shadow(rgb(255, 182, 193));
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-  animation: bubbleIn 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  transition: all 0.3s @transition-bounce;
+  animation: bubbleIn 0.6s @transition-bounce both;
   position: relative;
   will-change: transform, opacity, box-shadow;
-  transform: translateZ(0);
-  backface-visibility: hidden;
+  .gpu-accelerate();
   -webkit-font-smoothing: antialiased;
+
+  &:hover {
+    .bubble-shadow-hover(rgb(255, 182, 193));
+    z-index: 10;
+    transform: scale(1.1) translateZ(0);
+
+    .bubble-icon {
+      transform: scale(1.2) rotate(15deg);
+    }
+  }
+
+  &.danger {
+    background: linear-gradient(135deg, @danger-light 0%, @danger-dark 100%);
+    .bubble-shadow(rgb(255, 150, 150));
+
+    &:hover {
+      .bubble-shadow-hover(rgb(255, 150, 150));
+    }
+  }
 }
 
-/* 为每个气泡添加不同的可爱颜色 */
+// 气泡颜色变体
 .bubble-wrapper:nth-child(1) .bubble-item {
-  background: linear-gradient(135deg, rgba(255, 182, 193, 0.95) 0%, rgba(255, 192, 203, 0.95) 100%);
-  box-shadow: 0 4px 20px rgba(255, 182, 193, 0.6), 0 0 0 3px rgba(255, 255, 255, 0.4),
-    inset 0 2px 8px rgba(255, 255, 255, 0.3);
+  background: linear-gradient(135deg, @pink-light 0%, @pink-dark 100%);
+  .bubble-shadow(rgb(255, 182, 193));
 }
 
 .bubble-wrapper:nth-child(2) .bubble-item {
-  background: linear-gradient(135deg, rgba(173, 216, 230, 0.95) 0%, rgba(135, 206, 250, 0.95) 100%);
-  box-shadow: 0 4px 20px rgba(173, 216, 230, 0.6), 0 0 0 3px rgba(255, 255, 255, 0.4),
-    inset 0 2px 8px rgba(255, 255, 255, 0.3);
+  background: linear-gradient(135deg, @blue-light 0%, @blue-dark 100%);
+  .bubble-shadow(rgb(173, 216, 230));
 }
 
 .bubble-wrapper:nth-child(3) .bubble-item {
-  background: linear-gradient(135deg, rgba(221, 160, 221, 0.95) 0%, rgba(218, 112, 214, 0.95) 100%);
-  box-shadow: 0 4px 20px rgba(221, 160, 221, 0.6), 0 0 0 3px rgba(255, 255, 255, 0.4),
-    inset 0 2px 8px rgba(255, 255, 255, 0.3);
+  background: linear-gradient(135deg, @purple-light 0%, @purple-dark 100%);
+  .bubble-shadow(rgb(221, 160, 221));
 }
 
 .bubble-wrapper:nth-child(4) .bubble-item {
-  background: linear-gradient(135deg, rgba(255, 193, 7, 0.95) 0%, rgba(255, 152, 0, 0.95) 100%);
-  box-shadow: 0 4px 20px rgba(255, 193, 7, 0.6), 0 0 0 3px rgba(255, 255, 255, 0.4),
-    inset 0 2px 8px rgba(255, 255, 255, 0.3);
-}
-
-.bubble-item:hover {
-  box-shadow: 0 8px 35px rgba(255, 182, 193, 0.9), 0 0 0 4px rgba(255, 255, 255, 0.6),
-    inset 0 3px 10px rgba(255, 255, 255, 0.5);
-  z-index: 10;
-  transform: scale(1.1) translateZ(0);
-}
-
-.bubble-item:hover .bubble-icon {
-  transform: scale(1.2) rotate(15deg);
-}
-
-.bubble-item.danger {
-  background: linear-gradient(135deg, rgba(255, 182, 193, 0.95) 0%, rgba(255, 150, 150, 0.95) 100%);
-  box-shadow: 0 4px 20px rgba(255, 150, 150, 0.6), 0 0 0 3px rgba(255, 255, 255, 0.4),
-    inset 0 2px 8px rgba(255, 255, 255, 0.3);
-}
-
-.bubble-item.danger:hover {
-  box-shadow: 0 8px 35px rgba(255, 150, 150, 0.9), 0 0 0 4px rgba(255, 255, 255, 0.6),
-    inset 0 3px 10px rgba(255, 255, 255, 0.5);
+  background: linear-gradient(135deg, @orange-light 0%, @orange-dark 100%);
+  .bubble-shadow(rgb(255, 193, 7));
 }
 
 .bubble-icon {
@@ -543,17 +551,18 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: transform 0.3s @transition-bounce;
   will-change: transform;
   backface-visibility: hidden;
+  animation: iconScale 0.5s @transition-bounce both;
+  animation-delay: inherit;
+
+  svg {
+    width: 100%;
+    height: 100%;
+  }
 }
 
-.bubble-icon svg {
-  width: 100%;
-  height: 100%;
-}
-
-/* 中心工具栏图标 */
 .toolbar-icon {
   width: 80px;
   height: 80px;
@@ -568,12 +577,10 @@ onUnmounted(() => {
   border-radius: 50%;
   animation: float 3s ease-in-out infinite;
   filter: @halo-default;
-  transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: all 0.4s @transition-bounce;
   position: relative;
   z-index: 100;
-  will-change: transform;
-  transform: translateZ(0);
-  backface-visibility: hidden;
+  .gpu-accelerate();
   -webkit-font-smoothing: antialiased;
 
   &:hover {
@@ -587,17 +594,7 @@ onUnmounted(() => {
   }
 }
 
-.icon-image {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  pointer-events: none;
-  display: block;
-  will-change: transform;
-  transform: translateZ(0);
-  backface-visibility: hidden;
-}
-
+.icon-image,
 .icon-canvas {
   width: 100%;
   height: 100%;
@@ -605,10 +602,14 @@ onUnmounted(() => {
   display: block;
 }
 
-/* 说话气泡样式 */
+.icon-image {
+  object-fit: contain;
+  .gpu-accelerate();
+}
+
 .speech-bubble {
   position: absolute;
-  bottom: 100px;
+  bottom: calc(50% + 60px);
   left: 50%;
   transform: translateX(-50%);
   max-width: 280px;
@@ -618,72 +619,23 @@ onUnmounted(() => {
   line-height: 1.4;
   background: rgba(255, 248, 252, 0.95);
   border-radius: 12px;
-  box-shadow: 0 6px 18px rgba(255, 182, 193, 0.45), 0 0 0 2px rgba(255, 255, 255, 0.7) inset;
   pointer-events: none;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
+  z-index: 150;
 
-.speech-bubble::after {
-  content: '';
-  position: absolute;
-  top: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  border-width: 6px;
-  border-style: solid;
-  border-color: rgba(255, 248, 252, 0.95) transparent transparent transparent;
-}
-
-/* 说话出现/消失动画 */
-.speech-enter-active,
-.speech-leave-active {
-  transition: opacity 0.22s ease, transform 0.22s ease;
-}
-
-.speech-enter-from,
-.speech-leave-to {
-  opacity: 0;
-  transform: translateX(-50%) translateY(6px);
-}
-
-/* 气泡入场动画（带旋转，使用 3D 加速） */
-@keyframes bubbleIn {
-  0% {
-    opacity: 0;
-    transform: scale(0) rotate(-180deg) translate3d(0, 0, 0);
-  }
-  70% {
-    transform: scale(1.1) rotate(10deg) translate3d(0, 0, 0);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1) rotate(0deg) translate3d(0, 0, 0);
+  &::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 6px solid transparent;
+    border-top-color: rgba(255, 248, 252, 0.95);
   }
 }
 
-.bubble-item .bubble-icon {
-  animation: iconScale 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
-  animation-delay: inherit; /* 继承父元素的动画延迟 */
-  will-change: transform;
-  transform: translateZ(0);
-  backface-visibility: hidden;
-}
-
-@keyframes iconScale {
-  0% {
-    transform: scale(0) rotate(-90deg) translateZ(0);
-  }
-  60% {
-    transform: scale(1.2) rotate(10deg) translateZ(0);
-  }
-  100% {
-    transform: scale(1) rotate(0deg) translateZ(0);
-  }
-}
-
-/* 气泡过渡动画 */
 .bubble-enter-active {
   transition: opacity 0.3s;
 }
@@ -701,7 +653,33 @@ onUnmounted(() => {
   transform: scale(0);
 }
 
-/* 浮动跳动动画（使用 translate3d 硬件加速） */
+// 关键帧动画
+@keyframes bubbleIn {
+  0% {
+    opacity: 0;
+    transform: scale(0) rotate(-180deg) translate3d(0, 0, 0);
+  }
+  70% {
+    transform: scale(1.1) rotate(10deg) translate3d(0, 0, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(0deg) translate3d(0, 0, 0);
+  }
+}
+
+@keyframes iconScale {
+  0% {
+    transform: scale(0) rotate(-90deg) translateZ(0);
+  }
+  60% {
+    transform: scale(1.2) rotate(10deg) translateZ(0);
+  }
+  100% {
+    transform: scale(1) rotate(0deg) translateZ(0);
+  }
+}
+
 @keyframes float {
   0%,
   100% {
@@ -712,7 +690,6 @@ onUnmounted(() => {
   }
 }
 
-/* 脉冲光晕动画（使用 translate3d 硬件加速） */
 @keyframes pulse {
   0%,
   100% {

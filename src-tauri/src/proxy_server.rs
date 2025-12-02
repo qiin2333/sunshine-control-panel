@@ -150,13 +150,29 @@ fn is_connection_error(error: &str) -> bool {
     CONNECTION_ERROR_PATTERNS.iter().any(|p| error_lower.contains(p))
 }
 
-/// 创建服务不可用响应
-fn service_unavailable_response() -> Response {
-    (
-        axum::http::StatusCode::SERVICE_UNAVAILABLE,
-        [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
-        ERROR_404_PAGE
-    ).into_response()
+/// 检查是否是 API 请求
+#[inline]
+fn is_api_request(path: &str) -> bool {
+    path.starts_with("/api/")
+}
+
+/// 创建服务不可用响应（根据请求类型返回不同格式）
+fn service_unavailable_response(is_api: bool) -> Response {
+    if is_api {
+        // API 请求返回 JSON 格式错误
+        (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            [(axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8")],
+            r#"{"success":false,"error":"Sunshine service is unavailable"}"#
+        ).into_response()
+    } else {
+        // 页面请求返回 HTML 错误页面
+        (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            ERROR_404_PAGE
+        ).into_response()
+    }
 }
 
 /// 代理处理器
@@ -166,6 +182,9 @@ async fn proxy_handler(req: Request) -> Response {
     let path = uri.path().to_string();
     let query = uri.query().unwrap_or("").to_string();
     let headers = req.headers().clone();
+    
+    // 判断是否是 API 请求
+    let is_api = is_api_request(&path);
     
     // 获取请求体
     let body = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
@@ -194,7 +213,7 @@ async fn proxy_handler(req: Request) -> Response {
     
     // 快速失败检查
     if should_fast_fail() {
-        return service_unavailable_response();
+        return service_unavailable_response(is_api);
     }
     
     // 请求 Sunshine
@@ -209,9 +228,17 @@ async fn proxy_handler(req: Request) -> Response {
             
             if is_connection_error(&error_str) {
                 mark_unavailable();
-                service_unavailable_response()
+                service_unavailable_response(is_api)
             } else {
-                (axum::http::StatusCode::BAD_GATEWAY, format!("代理错误: {}", e)).into_response()
+                if is_api {
+                    (
+                        axum::http::StatusCode::BAD_GATEWAY,
+                        [(axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8")],
+                        format!(r#"{{"success":false,"error":"Proxy error: {}"}}"#, e)
+                    ).into_response()
+                } else {
+                    (axum::http::StatusCode::BAD_GATEWAY, format!("代理错误: {}", e)).into_response()
+                }
             }
         }
     }

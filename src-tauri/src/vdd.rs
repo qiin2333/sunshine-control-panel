@@ -187,7 +187,7 @@ fn elevated_copy_with_shell_execute(source: &Path, destination: &Path) -> Result
     
     unsafe {
         let result = ShellExecuteW(
-            HWND(0),
+            Some(HWND(std::ptr::null_mut())),
             PCWSTR(operation_w.as_ptr()),
             PCWSTR(file_w.as_ptr()),
             PCWSTR(parameters_w.as_ptr()),
@@ -620,7 +620,7 @@ pub async fn exec_pipe_cmd(command: String) -> Result<bool, String> {
                     None,
                     OPEN_EXISTING,
                     FILE_ATTRIBUTE_NORMAL,
-                    HANDLE::default(),
+                    Some(HANDLE::default()),
                 );
                 
                 if handle.is_err() || handle.as_ref().unwrap().is_invalid() {

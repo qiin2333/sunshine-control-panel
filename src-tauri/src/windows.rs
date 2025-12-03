@@ -28,24 +28,26 @@ fn force_activate_window_win32<R: Runtime>(window: &WebviewWindow<R>) {
         // 获取窗口标题并查找窗口句柄
         let title = window.title().unwrap_or_default();
         let title_wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
-        let hwnd = FindWindowW(
+        let hwnd_result = FindWindowW(
             PCWSTR::null(),
             PCWSTR::from_raw(title_wide.as_ptr())
         );
         
-        if hwnd.0 != 0 {
-            // 允许设置前台窗口（解决权限隔离问题）
-            let _ = AllowSetForegroundWindow(ASFW_ANY);
-            
-            // 恢复并显示窗口
-            let _ = ShowWindow(hwnd, SW_RESTORE);
-            let _ = ShowWindow(hwnd, SW_SHOW);
-            
-            // 激活窗口
-            let _ = BringWindowToTop(hwnd);
-            let _ = SetForegroundWindow(hwnd);
-            
-            debug!("✅ 已使用 Windows API 强制激活窗口");
+        if let Ok(hwnd) = hwnd_result {
+            if hwnd.0 != std::ptr::null_mut() {
+                // 允许设置前台窗口（解决权限隔离问题）
+                let _ = AllowSetForegroundWindow(ASFW_ANY);
+                
+                // 恢复并显示窗口
+                let _ = ShowWindow(hwnd, SW_RESTORE);
+                let _ = ShowWindow(hwnd, SW_SHOW);
+                
+                // 激活窗口
+                let _ = BringWindowToTop(hwnd);
+                let _ = SetForegroundWindow(hwnd);
+                
+                debug!("✅ 已使用 Windows API 强制激活窗口");
+            }
         }
     }
 }

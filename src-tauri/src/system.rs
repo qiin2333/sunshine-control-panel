@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use log::{info, warn, error, debug};
+use log::{info, error, debug};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[allow(dead_code)]
@@ -24,7 +24,7 @@ pub struct SystemInfo {
 pub async fn get_gpus() -> Result<Vec<String>, String> {
     #[cfg(target_os = "windows")]
     {
-        use wmi::{COMLibrary, WMIConnection};
+        use wmi::WMIConnection;
         use serde::Deserialize;
 
         #[derive(Deserialize)]
@@ -35,8 +35,7 @@ pub async fn get_gpus() -> Result<Vec<String>, String> {
             adapter_ram: Option<u64>,
         }
 
-        let com_con = COMLibrary::new().map_err(|e| e.to_string())?;
-        let wmi_con = WMIConnection::new(com_con).map_err(|e| e.to_string())?;
+        let wmi_con = WMIConnection::new().map_err(|e| e.to_string())?;
         
         let results: Vec<VideoController> = wmi_con
             .raw_query("SELECT Name, AdapterRAM FROM Win32_VideoController")
@@ -111,7 +110,7 @@ pub async fn get_system_info() -> Result<SystemInfo, String> {
 
 #[cfg(target_os = "windows")]
 async fn get_windows_system_info() -> Result<(String, u64, String), String> {
-    use wmi::{COMLibrary, WMIConnection};
+    use wmi::WMIConnection;
     
     #[derive(Deserialize)]
     #[serde(rename = "Win32_OperatingSystem")]
@@ -128,8 +127,7 @@ async fn get_windows_system_info() -> Result<(String, u64, String), String> {
         name: String,
     }
     
-    let com_con = COMLibrary::new().map_err(|e| e.to_string())?;
-    let wmi_con = WMIConnection::new(com_con).map_err(|e| e.to_string())?;
+    let wmi_con = WMIConnection::new().map_err(|e| e.to_string())?;
     
     // 获取操作系统信息
     let os_results: Vec<OperatingSystem> = wmi_con

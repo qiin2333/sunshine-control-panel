@@ -4,7 +4,7 @@ use std::process::Command;
 use crate::sunshine;
 use std::env;
 use tauri::Manager;
-use log::{info, warn, error, debug};
+use log::{info, error, debug};
 
 #[allow(dead_code)]
 pub async fn send_http_request(

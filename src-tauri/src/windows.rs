@@ -178,6 +178,51 @@ pub fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn 
     Ok(())
 }
 
+/// 创建桌面 UI 窗口（全屏/最大化模式）
+pub fn create_desktop_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::error::Error>> {
+    const DESKTOP_WINDOW_ID: &str = "desktop";
+    
+    info!("🖥️ 创建桌面 UI 窗口...");
+    
+    let _window = tauri::WebviewWindowBuilder::new(
+        app,
+        DESKTOP_WINDOW_ID,
+        tauri::WebviewUrl::App("desktop/index.html".into())
+    )
+    .title("Sunshine Desktop")
+    .inner_size(1600.0, 900.0)
+    .min_inner_size(1024.0, 600.0)
+    .center()
+    .decorations(false)  // 自定义标题栏
+    .transparent(false)
+    .shadow(true)
+    .visible(true)
+    .maximized(true)     // 默认最大化
+    .disable_drag_drop_handler()
+    .build()
+    .map_err(|e| format!("创建桌面窗口失败: {}", e))?;
+    
+    info!("✅ 桌面 UI 窗口创建成功");
+    
+    Ok(())
+}
+
+/// 打开桌面 UI 窗口（单例模式）
+pub fn open_desktop_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    const DESKTOP_WINDOW_ID: &str = "desktop";
+    
+    if let Some(window) = app.get_webview_window(DESKTOP_WINDOW_ID) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        info!("✅ 桌面 UI 窗口已激活");
+    } else {
+        create_desktop_window(app).map_err(|e| e.to_string())?;
+    }
+    
+    Ok(())
+}
+
 /// 激活主窗口
 pub fn activate_main_window(app: &tauri::AppHandle, target_url: Option<String>) {
     let Some(window) = app.get_webview_window("main") else {
@@ -291,4 +336,3 @@ pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
         }
     }
 }
-

@@ -1,6 +1,6 @@
 <template>
-  <div class="tool-container">
-    <div class="tool-header">
+  <div class="tool-container" :class="{ 'embedded': embedded }">
+    <div v-if="!embedded" class="tool-header">
       <h2>Moonlight 串流快捷键手册</h2>
       <button class="close-btn" @click="$emit('close')">×</button>
     </div>
@@ -13,6 +13,13 @@
 import { ref, onMounted } from 'vue'
 import MarkdownIt from 'markdown-it'
 import shortcutsMd from './shortcuts.md?raw'
+
+defineProps({
+  embedded: {
+    type: Boolean,
+    default: false
+  }
+})
 
 defineEmits(['close'])
 
@@ -48,11 +55,25 @@ onMounted(() => {
 })
 </script>
 
-<style scoped>
+<style lang="less" scoped>
 .tool-container {
-  width: 680px;
+  width: 100%;
   max-height: 85vh;
   color: white;
+  
+  &.embedded {
+    width: 100%;
+    max-height: 600px;
+    
+    .tool-header {
+      display: none;
+    }
+    
+    .tool-content {
+      padding: 0;
+      max-height: 600px;
+    }
+  }
 }
 
 .tool-header {

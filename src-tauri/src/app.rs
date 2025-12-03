@@ -16,9 +16,17 @@ pub struct AppState {
 /// 应用程序初始化设置
 pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     let show_toolbar = std::env::args().any(|arg| arg == "--toolbar" || arg == "-t");
+    let show_desktop = std::env::args().any(|arg| arg == "--desktop" || arg == "-d");
     let app_handle = app.handle().clone();
     
-    windows::create_main_window(&app_handle)?;
+    // 根据启动参数选择窗口模式
+    if show_desktop {
+        info!("🖥️ 检测到 --desktop 参数，启动桌面 UI 模式");
+        windows::create_desktop_window(&app_handle)?;
+    } else {
+        windows::create_main_window(&app_handle)?;
+    }
+    
     tray::create_system_tray(&app_handle)?;
     register_global_shortcuts(app)?;
     setup_menu_event_handler(app);
@@ -26,7 +34,7 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
     
     // 延迟任务：工具栏和更新检查
     tauri::async_runtime::spawn(async move {
-        if show_toolbar {
+        if show_toolbar && !show_desktop {
             info!("🔧 检测到 --toolbar 参数，将在应用启动后打开工具栏");
             tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
             if let Err(e) = toolbar::create_toolbar_window_internal(&app_handle) {
@@ -114,6 +122,15 @@ fn start_proxy_server_async() {
 pub fn handle_single_instance(app: &AppHandle, args: Vec<String>) {
     info!("🔔 检测到第二个实例启动，激活现有窗口");
     debug!("   启动参数: {:?}", args);
+    
+    // 检查是否要打开桌面 UI
+    if args.iter().any(|arg| arg == "--desktop" || arg == "-d") {
+        info!("🖥️ 检测到 --desktop 参数，打开桌面 UI");
+        if let Err(e) = windows::open_desktop_window(app) {
+            error!("❌ 打开桌面 UI 失败: {}", e);
+        }
+        return;
+    }
     
     // 检查是否要打开工具栏
     if args.iter().any(|arg| arg == "--toolbar" || arg == "-t") {

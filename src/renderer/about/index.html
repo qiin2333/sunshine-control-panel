@@ -42,9 +42,6 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 32px;
-        color: white;
-        font-weight: bold;
         overflow: hidden;
       }
 
@@ -78,21 +75,13 @@
 
       .info-grid {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: repeat(2, 1fr);
         gap: 20px;
         margin-bottom: 30px;
       }
 
-      /* 当有超过4个项目时，使用3列布局 */
-      .info-grid:has(.info-item:nth-child(5)) {
-        grid-template-columns: 1fr 1fr 1fr;
-      }
-
-      /* 为了避免兼容性问题，使用备用方案 */
-      @supports not (selector(:has(*))) {
-        .info-grid.multi-row {
-          grid-template-columns: 1fr 1fr 1fr;
-        }
+      .info-grid.multi-row {
+        grid-template-columns: repeat(3, 1fr);
       }
 
       .info-item {
@@ -156,7 +145,7 @@
       <div class="version" id="app-version">版本 Loading...</div>
       <div class="description">Sunshine 控制面板 - 为游戏流媒体提供强大的 GUI 管理工具</div>
 
-      <div class="info-grid">
+      <div class="info-grid" id="info-grid">
         <div class="info-item">
           <div class="info-label">构建时间</div>
           <div class="info-value" id="build-time">Loading...</div>
@@ -180,63 +169,77 @@
     </div>
 
     <script type="module">
-      // 获取系统信息并显示
-      document.addEventListener('DOMContentLoaded', async () => {
-        try {
-          // 动态导入 Tauri API
-          const { invoke } = await import('@tauri-apps/api/core')
+      const DEFAULT_VALUES = {
+        appVersion: 'unknown',
+        tauriVersion: 'unknown',
+      }
 
-          // 调用后端获取真实系统信息
+      const $ = (id) => document.getElementById(id)
+
+      const createInfoItem = (label, value, fontSize = '14px') => {
+        const element = document.createElement('div')
+        element.className = 'info-item'
+        element.innerHTML = `
+          <div class="info-label">${label}</div>
+          <div class="info-value" style="font-size: ${fontSize};">${value}</div>
+        `
+        return element
+      }
+
+      const formatMemory = (bytes) => `${(bytes / (1024 ** 3)).toFixed(1)} GB`
+
+      const updateUI = (data) => {
+        $('app-version').textContent = `版本 ${data.appVersion}`
+        $('build-time').textContent = data.buildTime
+        $('arch').textContent = data.arch
+        $('tauri-version').textContent = data.tauriVersion
+
+        const infoGrid = $('info-grid')
+
+        if (data.osVersion) {
+          infoGrid.appendChild(createInfoItem('操作系统', data.osVersion))
+        }
+
+        if (data.memoryTotal) {
+          infoGrid.appendChild(createInfoItem('总内存', formatMemory(data.memoryTotal)))
+        }
+
+        if (data.cpuModel) {
+          infoGrid.appendChild(createInfoItem('处理器', data.cpuModel, '12px'))
+        }
+
+        if (infoGrid.children.length > 3) {
+          infoGrid.classList.add('multi-row')
+        }
+      }
+
+      const loadSystemInfo = async () => {
+        try {
+          const { invoke } = await import('@tauri-apps/api/core')
           const systemInfo = await invoke('get_system_info')
 
-          // 更新页面显示
-          document.getElementById('app-version').textContent = `版本 ${systemInfo.app_version || '0.2.0'}`
-          document.getElementById('build-time').textContent = systemInfo.build_time || new Date().toLocaleDateString()
-          document.getElementById('arch').textContent = systemInfo.arch || 'Unknown'
-          document.getElementById('tauri-version').textContent = systemInfo.tauri_version || '2.8.5'
-
-          const infoGrid = document.querySelector('.info-grid')
-
-          // 创建信息项的辅助函数
-          const createInfoItem = (label, value, fontSize = '14px') => {
-            const element = document.createElement('div')
-            element.className = 'info-item'
-            element.innerHTML = `
-                        <div class="info-label">${label}</div>
-                        <div class="info-value" style="font-size: ${fontSize};">${value}</div>
-                    `
-            return element
-          }
-
-          // 显示操作系统版本
-          if (systemInfo.os_version) {
-            infoGrid.appendChild(createInfoItem('操作系统', systemInfo.os_version))
-          }
-
-          // 如果有内存信息，显示
-          if (systemInfo.memory_total) {
-            const memoryGB = (systemInfo.memory_total / (1024 * 1024 * 1024)).toFixed(1)
-            infoGrid.appendChild(createInfoItem('总内存', `${memoryGB} GB`))
-          }
-
-          // 如果有CPU信息，显示
-          if (systemInfo.cpu_model) {
-            infoGrid.appendChild(createInfoItem('处理器', systemInfo.cpu_model, '12px'))
-          }
-
-          // 添加额外的信息项后，调整网格布局
-          if (infoGrid.children.length > 3) {
-            infoGrid.classList.add('multi-row')
-          }
+          updateUI({
+            appVersion: systemInfo.app_version || DEFAULT_VALUES.appVersion,
+            buildTime: systemInfo.build_time || new Date().toLocaleDateString(),
+            arch: systemInfo.arch || 'Unknown',
+            tauriVersion: systemInfo.tauri_version || DEFAULT_VALUES.tauriVersion,
+            osVersion: systemInfo.os_version,
+            memoryTotal: systemInfo.memory_total,
+            cpuModel: systemInfo.cpu_model,
+          })
         } catch (error) {
           console.error('获取系统信息失败，使用默认值:', error)
-          // 降级到默认显示
-          document.getElementById('app-version').textContent = '版本 0.2.0'
-          document.getElementById('build-time').textContent = new Date().toLocaleDateString()
-          document.getElementById('arch').textContent = navigator.platform.includes('64') ? 'x64' : 'x86'
-          document.getElementById('tauri-version').textContent = '2.8.5'
+
+          updateUI({
+            appVersion: DEFAULT_VALUES.appVersion,
+            buildTime: new Date().toLocaleDateString(),
+            arch: navigator.platform.includes('64') ? 'x64' : 'x86',
+            tauriVersion: DEFAULT_VALUES.tauriVersion,
+          })
         }
-      })
+      }
+
+      document.addEventListener('DOMContentLoaded', loadSystemInfo)
     </script>
   </body>
 </html>

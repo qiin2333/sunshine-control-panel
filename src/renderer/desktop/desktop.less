@@ -1,0 +1,416 @@
+// Desktop UI 专用样式
+// 深色赛博朋克风格主题
+
+// 主题色彩 - 赛博朋克风格
+@desktop-bg-primary: #0f0f23;
+@desktop-bg-secondary: #1a1a2e;
+@desktop-bg-tertiary: #16213e;
+@desktop-bg-card: rgba(26, 26, 46, 0.8);
+
+@desktop-accent-cyan: #00fff5;
+@desktop-accent-magenta: #ff00ff;
+@desktop-accent-yellow: #ffd700;
+@desktop-accent-green: #00ff88;
+@desktop-accent-orange: #ff6b35;
+
+@desktop-text-primary: #ffffff;
+@desktop-text-secondary: rgba(255, 255, 255, 0.7);
+@desktop-text-muted: rgba(255, 255, 255, 0.4);
+
+@desktop-border-color: rgba(0, 255, 245, 0.2);
+@desktop-border-glow: rgba(0, 255, 245, 0.5);
+
+// 渐变
+@desktop-gradient-bg: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #16213e 100%);
+@desktop-gradient-accent: linear-gradient(135deg, @desktop-accent-cyan 0%, @desktop-accent-magenta 100%);
+@desktop-gradient-card: linear-gradient(145deg, rgba(26, 26, 46, 0.9) 0%, rgba(22, 33, 62, 0.9) 100%);
+
+// 发光效果
+@desktop-glow-cyan: 0 0 20px rgba(0, 255, 245, 0.3), 0 0 40px rgba(0, 255, 245, 0.1);
+@desktop-glow-magenta: 0 0 20px rgba(255, 0, 255, 0.3), 0 0 40px rgba(255, 0, 255, 0.1);
+
+// 全局样式
+.desktop-app {
+  width: 100vw;
+  height: 100vh;
+  background: @desktop-gradient-bg;
+  color: @desktop-text-primary;
+  font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
+  overflow: hidden;
+  position: relative;
+
+  // 背景网格效果
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-image: 
+      linear-gradient(rgba(0, 255, 245, 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 255, 245, 0.03) 1px, transparent 1px);
+    background-size: 50px 50px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  // 扫描线效果
+  &::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0, 0, 0, 0.03) 2px,
+      rgba(0, 0, 0, 0.03) 4px
+    );
+    pointer-events: none;
+    z-index: 1;
+  }
+}
+
+// 标题栏（自定义窗口装饰）
+.desktop-titlebar {
+  height: 32px;
+  background: rgba(15, 15, 35, 0.95);
+  border-bottom: 1px solid @desktop-border-color;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+  -webkit-app-region: drag;
+  position: relative;
+  z-index: 100;
+
+  .titlebar-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    .app-icon {
+      width: 16px;
+      height: 16px;
+    }
+
+    .app-title {
+      font-size: 12px;
+      font-weight: 500;
+      color: @desktop-text-secondary;
+      letter-spacing: 0.5px;
+    }
+  }
+
+  .titlebar-controls {
+    display: flex;
+    -webkit-app-region: no-drag;
+
+    .control-btn {
+      width: 46px;
+      height: 32px;
+      border: none;
+      background: transparent;
+      color: @desktop-text-secondary;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+
+      &:hover {
+        background: rgba(255, 255, 255, 0.1);
+        color: @desktop-text-primary;
+      }
+
+      &.close-btn:hover {
+        background: #e81123;
+        color: white;
+      }
+
+      svg {
+        width: 10px;
+        height: 10px;
+      }
+    }
+  }
+}
+
+// 主内容区域
+.desktop-content {
+  flex: 1;
+  display: flex;
+  position: relative;
+  z-index: 2;
+  height: calc(100vh - 32px);
+}
+
+// 侧边导航
+.desktop-sidebar {
+  width: 72px;
+  background: rgba(15, 15, 35, 0.8);
+  border-right: 1px solid @desktop-border-color;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 16px 0;
+  gap: 8px;
+  backdrop-filter: blur(10px);
+
+  .nav-item {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    position: relative;
+    color: @desktop-text-secondary;
+
+    &:hover {
+      background: rgba(0, 255, 245, 0.1);
+      color: @desktop-accent-cyan;
+    }
+
+    &.active {
+      background: rgba(0, 255, 245, 0.15);
+      color: @desktop-accent-cyan;
+      box-shadow: @desktop-glow-cyan;
+
+      &::before {
+        content: '';
+        position: absolute;
+        left: -12px;
+        width: 4px;
+        height: 24px;
+        background: @desktop-accent-cyan;
+        border-radius: 0 4px 4px 0;
+        box-shadow: @desktop-glow-cyan;
+      }
+    }
+
+    svg {
+      width: 24px;
+      height: 24px;
+    }
+  }
+
+  .nav-divider {
+    width: 32px;
+    height: 1px;
+    background: @desktop-border-color;
+    margin: 8px 0;
+  }
+}
+
+// 主面板
+.desktop-main {
+  flex: 1;
+  padding: 24px;
+  overflow-y: auto;
+  overflow-x: hidden;
+
+  &::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: rgba(0, 255, 245, 0.2);
+    border-radius: 4px;
+
+    &:hover {
+      background: rgba(0, 255, 245, 0.3);
+    }
+  }
+}
+
+// 卡片组件
+.desktop-card {
+  background: @desktop-gradient-card;
+  border: 1px solid @desktop-border-color;
+  border-radius: 16px;
+  padding: 24px;
+  backdrop-filter: blur(10px);
+  transition: all 0.3s ease;
+
+  &:hover {
+    border-color: @desktop-border-glow;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), @desktop-glow-cyan;
+  }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+
+    .card-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: @desktop-text-primary;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+
+      .title-icon {
+        color: @desktop-accent-cyan;
+      }
+    }
+
+    .card-actions {
+      display: flex;
+      gap: 8px;
+    }
+  }
+
+  .card-content {
+    color: @desktop-text-secondary;
+  }
+}
+
+// 按钮样式
+.desktop-btn {
+  padding: 10px 20px;
+  border-radius: 8px;
+  border: 1px solid @desktop-border-color;
+  background: transparent;
+  color: @desktop-text-primary;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+
+  &:hover {
+    border-color: @desktop-accent-cyan;
+    background: rgba(0, 255, 245, 0.1);
+    color: @desktop-accent-cyan;
+  }
+
+  &.primary {
+    background: @desktop-gradient-accent;
+    border: none;
+    color: @desktop-bg-primary;
+
+    &:hover {
+      opacity: 0.9;
+      box-shadow: @desktop-glow-cyan;
+    }
+  }
+
+  &.danger {
+    border-color: @desktop-accent-orange;
+    color: @desktop-accent-orange;
+
+    &:hover {
+      background: rgba(255, 107, 53, 0.1);
+    }
+  }
+}
+
+// 状态指示器
+.status-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+
+  &.online {
+    background: @desktop-accent-green;
+    box-shadow: 0 0 8px @desktop-accent-green;
+  }
+
+  &.offline {
+    background: @desktop-accent-orange;
+    box-shadow: 0 0 8px @desktop-accent-orange;
+  }
+
+  &.connecting {
+    background: @desktop-accent-yellow;
+    box-shadow: 0 0 8px @desktop-accent-yellow;
+    animation: pulse 1.5s infinite;
+  }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+// 统计数字
+.stat-value {
+  font-size: 32px;
+  font-weight: 700;
+  background: @desktop-gradient-accent;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+// 网格布局
+.desktop-grid {
+  display: grid;
+  gap: 24px;
+
+  &.cols-2 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  &.cols-3 {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  &.cols-4 {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  @media (max-width: 1200px) {
+    &.cols-4 {
+      grid-template-columns: repeat(2, 1fr);
+    }
+    &.cols-3 {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
+  @media (max-width: 800px) {
+    &.cols-2, &.cols-3, &.cols-4 {
+      grid-template-columns: 1fr;
+    }
+  }
+}
+
+// 动画入场效果
+.fade-in {
+  animation: fadeIn 0.5s ease forwards;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+// 延迟动画
+.delay-1 { animation-delay: 0.1s; }
+.delay-2 { animation-delay: 0.2s; }
+.delay-3 { animation-delay: 0.3s; }
+.delay-4 { animation-delay: 0.4s; }
+

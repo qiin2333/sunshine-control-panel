@@ -17,20 +17,22 @@ static PREVENT_SLEEP_STATE: Mutex<bool> = Mutex::new(false);
 /// 创建系统托盘
 pub fn create_system_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     // 创建菜单项
-    let open_website = MenuItem::with_id(app, "open_website", "打开官网", true, None::<&str>)?;
-    let vdd_settings = MenuItem::with_id(app, "vdd_settings", "设置虚拟显示器（VDD）", true, None::<&str>)?;
-    let show_toolbar = MenuItem::with_id(app, "show_toolbar", "显示工具栏", true, None::<&str>)?;
-    let log_console = MenuItem::with_id(app, "log_console", "打开日志控制台", true, None::<&str>)?;
-    let check_update = MenuItem::with_id(app, "check_update", "检查更新", true, None::<&str>)?;
-    let about = MenuItem::with_id(app, "about", "关于", true, None::<&str>)?;
+    let open_website = MenuItem::with_id(app, "open_website", "🌐 打开官网", true, None::<&str>)?;
+    let vdd_settings = MenuItem::with_id(app, "vdd_settings", "📱 设置虚拟显示器（VDD）", true, None::<&str>)?;
+    let show_toolbar = MenuItem::with_id(app, "show_toolbar", "🐾 显示工具栏", true, None::<&str>)?;
+    let log_console = MenuItem::with_id(app, "log_console", "🔍 打开日志控制台", true, None::<&str>)?;
+    let check_update = MenuItem::with_id(app, "check_update", "🔄 检查更新", true, None::<&str>)?;
+    let about = MenuItem::with_id(app, "about", "ℹ️ 关于", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出程序", true, None::<&str>)?;
     let separator1 = PredefinedMenuItem::separator(app)?;
     let separator2 = PredefinedMenuItem::separator(app)?;
     let separator3 = PredefinedMenuItem::separator(app)?;
     
     #[cfg(target_os = "windows")]
-    let prevent_sleep = CheckMenuItem::with_id(app, "prevent_sleep", "不许睡", true, false, None::<&str>)?;
+    let prevent_sleep = CheckMenuItem::with_id(app, "prevent_sleep", "💤 不许睡", true, false, None::<&str>)?;
     
+    #[cfg(debug_assertions)]
+    let open_desktop = MenuItem::with_id(app, "open_desktop", "🖥️ 打开桌面 UI", true, None::<&str>)?;
     #[cfg(debug_assertions)]
     let debug_page = MenuItem::with_id(app, "debug_page", "🐛 打开调试页面", true, None::<&str>)?;
     #[cfg(debug_assertions)]
@@ -45,9 +47,12 @@ pub fn create_system_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     items.push(&prevent_sleep);
     
     items.push(&log_console);
-    
+
     #[cfg(debug_assertions)]
     items.extend([&separator_debug as &dyn tauri::menu::IsMenuItem<R>, &debug_page]);
+
+    #[cfg(debug_assertions)]
+    items.push(&open_desktop);
     
     items.extend([&separator2 as &dyn tauri::menu::IsMenuItem<R>, &check_update, &about, &separator3, &quit]);
     
@@ -109,6 +114,12 @@ pub fn handle_tray_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) {
         "open_website" => {
             info!("🌐 托盘菜单：打开官网");
             utils::open_url_in_browser("https://sunshine-foundation.vercel.app/");
+        }
+        "open_desktop" => {
+            info!("🖥️ 托盘菜单：打开桌面 UI");
+            if let Err(e) = windows::open_desktop_window(app) {
+                error!("❌ 打开桌面 UI 失败: {}", e);
+            }
         }
         "vdd_settings" => {
             open_vdd_settings(app);
@@ -210,7 +221,7 @@ fn check_for_updates<R: Runtime>(app: &AppHandle<R>) {
 
 /// 保存更新检查时间
 fn save_update_check_time<R: Runtime>(app: &AppHandle<R>) {
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
     
     if let Some(prefs) = app.try_state::<Arc<Mutex<update::UpdatePreferences>>>() {

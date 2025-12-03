@@ -40,6 +40,7 @@ export default defineConfig(() => ({
         about: resolve(rendererSrcPath, 'about/index.html'),
         toolbar: resolve(rendererSrcPath, 'toolbar/index.html'),
         toolWindow: resolve(rendererSrcPath, 'tool-window/index.html'),
+        desktop: resolve(rendererSrcPath, 'desktop/index.html'),
       },
     },
   },

@@ -1,6 +1,6 @@
 <template>
-  <div class="tool-container">
-    <div class="tool-header">
+  <div class="tool-container" :class="{ 'embedded': embedded }">
+    <div v-if="!embedded" class="tool-header">
       <h2>码率调整</h2>
       <button class="close-btn" @click="$emit('close')">×</button>
     </div>
@@ -151,6 +151,13 @@ const DEFAULT_BITRATE = 20000
 const MESSAGE_TIMEOUT = 5000
 const REFRESH_DELAY = 1000
 
+defineProps({
+  embedded: {
+    type: Boolean,
+    default: false
+  }
+})
+
 defineEmits(['close'])
 
 // 响应式状态
@@ -276,10 +283,22 @@ const applyBitrate = async () => {
 onMounted(loadSessions)
 </script>
 
-<style scoped lang="less">
+<style lang="less" scoped>
 .tool-container {
-  width: 420px;
+  width: 100%;
   color: white;
+  
+  &.embedded {
+    width: 100%;
+    
+    .tool-header {
+      display: none;
+    }
+    
+    .tool-content {
+      padding: 0;
+    }
+  }
 }
 
 .tool-header {

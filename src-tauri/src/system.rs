@@ -67,7 +67,7 @@ pub async fn get_system_info() -> Result<SystemInfo, String> {
         // 基础信息
         let arch = env::consts::ARCH.to_string();
         let platform = env::consts::OS.to_string();
-        let tauri_version = "2.8.5".to_string();
+        let tauri_version = tauri::VERSION.to_string();
         let app_version = env!("CARGO_PKG_VERSION").to_string(); // 从 Cargo.toml 获取真实版本号
         let build_time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
         
@@ -99,7 +99,7 @@ pub async fn get_system_info() -> Result<SystemInfo, String> {
             arch: env::consts::ARCH.to_string(),
             platform: env::consts::OS.to_string(),
             os_version: "Unknown".to_string(),
-            tauri_version: "2.8.5".to_string(),
+            tauri_version: tauri::VERSION.to_string(), // 获取真实的 Tauri 版本
             app_version: env!("CARGO_PKG_VERSION").to_string(), // 从 Cargo.toml 获取真实版本号
             build_time: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
             memory_total: None,

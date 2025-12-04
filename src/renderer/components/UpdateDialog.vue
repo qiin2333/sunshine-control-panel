@@ -50,6 +50,7 @@
             在浏览器中打开
           </el-button>
         </template>
+        <el-button v-if="!isInstalling" @click="handleSkipVersion">忽略此版本</el-button>
         <el-button v-if="!isInstalling" @click="handleCancel">稍后提醒</el-button>
         <el-button v-if="isInstalling" type="primary" disabled>正在安装...</el-button>
       </div>
@@ -69,7 +70,7 @@ const props = defineProps({
   currentVersion: { type: String, default: '0.0.0' },
 })
 
-const emit = defineEmits(['update:modelValue', 'close'])
+const emit = defineEmits(['update:modelValue', 'close', 'skip-version'])
 
 const visible = computed({
   get: () => props.modelValue,
@@ -174,6 +175,15 @@ const handleOpenBrowser = async () => {
 }
 
 const handleCancel = () => {
+  visible.value = false
+  emit('close')
+}
+
+const handleSkipVersion = () => {
+  const version = props.updateInfo?.version
+  if (version) {
+    emit('skip-version', version)
+  }
   visible.value = false
   emit('close')
 }

@@ -210,6 +210,7 @@
           :update-info="updateInfo"
           :current-version="currentVersion"
           @close="showUpdateDialog = false"
+          @skip-version="handleSkipVersion"
         />
         <slot v-if="!showVddSettings && !showUpdateDialog"></slot>
       </div>
@@ -258,6 +259,7 @@ const {
   toggleTheme,
   toggleCollapse,
   openVddSettings,
+  skipVersion,
 } = useSidebarState()
 
 const { minimizeWindow, toggleMaximize, closeWindow } = useWindowControls(isMaximized)
@@ -280,6 +282,11 @@ const handleCheckForUpdates = async () => {
     updateInfo.value = result
     showUpdateDialog.value = true
   }
+}
+
+// 处理忽略版本
+const handleSkipVersion = (version) => {
+  skipVersion(version)
 }
 
 // 暴露方法供父组件调用

@@ -2,6 +2,63 @@ use tauri::{Manager, AppHandle, Runtime, WebviewWindow};
 use log::{info, error, debug};
 use crate::proxy_server;
 
+/// 禁用窗口的右键菜单（仅在生产环境）
+/// 通过注入 JavaScript 来阻止默认的上下文菜单
+#[cfg(not(debug_assertions))]
+pub fn disable_context_menu<R: Runtime>(window: &WebviewWindow<R>) {
+    let script = r#"
+        (function() {
+            // 禁用右键菜单
+            document.addEventListener('contextmenu', function(e) {
+                e.preventDefault();
+                return false;
+            }, true);
+            
+            // 禁用开发者工具快捷键（可选，根据需要启用）
+            document.addEventListener('keydown', function(e) {
+                // F12
+                if (e.keyCode === 123) {
+                    e.preventDefault();
+                    return false;
+                }
+                // Ctrl+Shift+I
+                if (e.ctrlKey && e.shiftKey && e.keyCode === 73) {
+                    e.preventDefault();
+                    return false;
+                }
+                // Ctrl+Shift+J
+                if (e.ctrlKey && e.shiftKey && e.keyCode === 74) {
+                    e.preventDefault();
+                    return false;
+                }
+                // Ctrl+U (查看源代码)
+                if (e.ctrlKey && e.keyCode === 85) {
+                    e.preventDefault();
+                    return false;
+                }
+            }, true);
+        })();
+    "#;
+    
+    // 延迟执行，确保 DOM 已加载
+    let window_clone = window.clone();
+    tauri::async_runtime::spawn(async move {
+        use std::time::Duration;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        if let Err(e) = window_clone.eval(script) {
+            debug!("⚠️ 禁用右键菜单脚本注入失败: {}", e);
+        } else {
+            debug!("✅ 已禁用右键菜单（生产环境）");
+        }
+    });
+}
+
+/// 开发环境不执行任何操作
+#[cfg(debug_assertions)]
+pub fn disable_context_menu<R: Runtime>(_window: &WebviewWindow<R>) {
+    // 开发环境允许右键菜单
+}
+
 /// 显示并激活窗口（解决权限隔离问题）
 pub fn show_and_activate_window<R: Runtime>(window: &WebviewWindow<R>) {
     let _ = window.unminimize();
@@ -61,7 +118,7 @@ pub fn open_about_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
         let _ = window.show();
         let _ = window.set_focus();
     } else {
-        tauri::WebviewWindowBuilder::new(
+        let window = tauri::WebviewWindowBuilder::new(
             app,
             ABOUT_WINDOW_ID,
             tauri::WebviewUrl::App("about/index.html".into())
@@ -75,6 +132,9 @@ pub fn open_about_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
         .center()
         .build()
         .map_err(|e| format!("创建关于窗口失败: {}", e))?;
+        
+        // 在生产环境禁用右键菜单
+        disable_context_menu(&window);
         
         info!("✅ 关于窗口创建成功");
     }
@@ -105,7 +165,9 @@ pub fn open_log_console<R: Runtime>(app: &AppHandle<R>) {
         .center()
         .build()
         {
-            Ok(_) => {
+            Ok(window) => {
+                // 在生产环境禁用右键菜单
+                disable_context_menu(&window);
                 info!("✅ 日志控制台窗口创建成功");
             }
             Err(e) => {
@@ -140,7 +202,8 @@ pub fn open_debug_page<R: Runtime>(app: &AppHandle<R>) {
         .center()
         .build()
         {
-            Ok(_) => {
+            Ok(_window) => {
+                // 调试页面窗口不需要禁用右键菜单（开发环境）
                 info!("✅ 调试页面窗口创建成功");
             }
             Err(e) => {
@@ -156,7 +219,7 @@ pub fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn 
     
     info!("🪟 创建主窗口...");
     
-    tauri::WebviewWindowBuilder::new(
+    let window = tauri::WebviewWindowBuilder::new(
         app,
         MAIN_WINDOW_ID,
         tauri::WebviewUrl::App("placeholder.html".into())
@@ -173,6 +236,9 @@ pub fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn 
     .build()
     .map_err(|e| format!("创建主窗口失败: {}", e))?;
     
+    // 在生产环境禁用右键菜单
+    disable_context_menu(&window);
+    
     info!("✅ 主窗口创建成功（已禁用原生拖拽）");
     
     Ok(())
@@ -184,7 +250,7 @@ pub fn create_desktop_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<d
     
     info!("🖥️ 创建桌面 UI 窗口...");
     
-    let _window = tauri::WebviewWindowBuilder::new(
+    let window = tauri::WebviewWindowBuilder::new(
         app,
         DESKTOP_WINDOW_ID,
         tauri::WebviewUrl::App("desktop/index.html".into())
@@ -201,6 +267,9 @@ pub fn create_desktop_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<d
     .disable_drag_drop_handler()
     .build()
     .map_err(|e| format!("创建桌面窗口失败: {}", e))?;
+    
+    // 在生产环境禁用右键菜单
+    disable_context_menu(&window);
     
     info!("✅ 桌面 UI 窗口创建成功");
     

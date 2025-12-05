@@ -46,7 +46,7 @@
   transition: width @transition-smooth;
   z-index: 1000;
   border-radius: @border-radius 0 0 @border-radius;
-  
+
   // 优雅的分隔线 - 使用渐变边框
   &::after {
     content: '';
@@ -69,7 +69,7 @@
 
   &.collapsed {
     width: @sidebar-collapsed-width;
-    
+
     &::after {
       opacity: 0.6;
     }
@@ -138,11 +138,10 @@
   width: auto;
   height: auto;
   transform: none;
+  box-shadow: none;
   .flex-center();
   cursor: pointer;
   z-index: 20; // 确保在 Gura 背景上方
-  transition: none;
-  box-shadow: none;
 
   &::before,
   &::after {
@@ -455,7 +454,7 @@ body[data-bs-theme='light'] {
 
   .sidebar {
     background: linear-gradient(180deg, @gura-bg-mid 0%, @gura-bg-light 100%);
-    
+
     // 浅色模式的分隔线
     &::after {
       background: linear-gradient(
@@ -543,7 +542,7 @@ body[data-bs-theme='light'] {
         opacity: 1;
       }
 
-    .el-icon {
+      .el-icon {
         color: @gura-blue;
       }
 
@@ -638,5 +637,3 @@ body[data-bs-theme='light'] {
     width: 100% !important;
   }
 }
-
-

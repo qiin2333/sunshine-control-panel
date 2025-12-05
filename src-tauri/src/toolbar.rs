@@ -4,6 +4,7 @@ use tauri::{AppHandle, Manager, Runtime, Emitter};
 use std::path::PathBuf;
 use std::fs;
 use log::{info, warn, error, debug};
+use crate::windows;
 
 // 获取工具栏配置文件路径
 fn get_toolbar_config_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
@@ -107,6 +108,9 @@ pub fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &s
     .build()
     {
         Ok(window) => {
+            // 在生产环境禁用右键菜单
+            windows::disable_context_menu(&window);
+            
             // 开发模式下自动打开 DevTools
             #[cfg(debug_assertions)]
             {
@@ -199,6 +203,9 @@ pub fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<
     .build()
     {
         Ok(win) => {
+            // 在生产环境禁用右键菜单
+            windows::disable_context_menu(&win);
+            
             // 开发模式下自动打开 DevTools
             #[cfg(debug_assertions)]
             {

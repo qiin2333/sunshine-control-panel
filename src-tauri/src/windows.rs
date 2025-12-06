@@ -226,7 +226,7 @@ pub fn create_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn 
     )
     .title("Sunshine Control Panel")
     .inner_size(1280.0, 800.0)
-    .min_inner_size(900.0, 600.0)
+    .min_inner_size(1024.0, 600.0)
     .center()
     .decorations(false)
     .transparent(true)

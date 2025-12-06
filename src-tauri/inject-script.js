@@ -2,8 +2,6 @@
 // 用于主题同步、导航检测和拖放功能
 
 ;(function () {
-  'use strict'
-
   window.isTauri = true
   window.electron = window.electron || {}
 

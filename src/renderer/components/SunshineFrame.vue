@@ -64,25 +64,25 @@ const setAnimationsPaused = (paused) => {
 
 onUnmounted(() => {
   console.log('🧹 组件卸载，清理资源')
-  
+
   // 清理轮询定时器
   if (pollTimer) {
     clearInterval(pollTimer)
     pollTimer = null
   }
-  
+
   // 清理 visibilitychange 监听器
   if (onVisibilityHandler) {
     document.removeEventListener('visibilitychange', onVisibilityHandler)
     onVisibilityHandler = null
   }
-  
+
   // 清理 Tauri 事件监听器
   if (unlistenVddSettings) {
     unlistenVddSettings()
     unlistenVddSettings = null
   }
-  
+
   if (unlistenDragDrop) {
     unlistenDragDrop()
     unlistenDragDrop = null

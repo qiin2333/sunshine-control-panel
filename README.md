@@ -14,12 +14,31 @@
 # 安装依赖
 npm install
 
-# 启动开发服务器
+# 启动开发服务器（代理到 Sunshine 服务）
 npm run dev
 
 # 仅启动前端开发服务器
 npm run dev:renderer
 ```
+
+### WebUI 联调开发模式
+
+当需要同时开发 WebUI 和 Tauri GUI 时，可以使用 `dev-webui` 模式让 Tauri 代理服务器转发请求到 WebUI 开发服务器：
+
+```bash
+# 终端 1：在项目根目录启动 WebUI 开发服务器（端口 3000）
+cd ../../../..  # 回到 Sunshine 根目录
+npm run dev-server
+
+# 终端 2：在 sunshine-control-panel 目录启动 Tauri（代理到 WebUI 开发服务器）
+npm run dev-webui
+```
+
+这种模式下：
+- WebUI 开发服务器运行在 `https://localhost:3000`
+- Tauri 代理服务器会将请求转发到 WebUI 开发服务器
+- 支持 HMR（热模块替换），修改 WebUI 代码会实时生效
+- API 请求仍会被 WebUI 开发服务器代理到 Sunshine 服务（`https://localhost:47990`）
 
 ## 构建
 

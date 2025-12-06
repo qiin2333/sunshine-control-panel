@@ -1,6 +1,6 @@
 [package]
 name = "sunshine-gui"
-version = "0.2.5"
+version = "0.2.6"
 description = "A GUI for sunshine"
 authors = ["qiin2333"]
 license = ""
@@ -57,11 +57,16 @@ windows = { version = "0.62", features = [
     "Win32_System_Pipes",
     "Win32_System_Threading",
     "Win32_System_Power",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
     "Win32_Security",
     "Win32_Graphics_Gdi",
+    "Win32_Graphics_Imaging",
     "Win32_UI",
     "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
     "Win32_UI_HiDpi",
     "Win32_UI_WindowsAndMessaging",
 ] }
 winreg = "0.55"
+image = "0.25"

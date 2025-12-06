@@ -86,6 +86,8 @@ fn main() {
             fs_utils::read_image_as_data_url,
             fs_utils::copy_image_to_assets,
             fs_utils::cleanup_unused_covers,
+            fs_utils::resolve_lnk_target,
+            fs_utils::scan_directory_for_apps,
             update::check_for_updates,
             update::download_update,
             update::install_update,

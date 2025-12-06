@@ -1,10 +1,11 @@
 {
   "name": "sunshine-gui",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "A GUI for sunshine",
   "type": "module",
   "scripts": {
     "dev": "tauri dev",
+    "dev-webui": "cross-env WEBUI_DEV_TARGET=https://localhost:3000 tauri dev",
     "dev:toolbar": "npm run build:renderer && cargo build --manifest-path src-tauri/Cargo.toml && src-tauri\\target\\debug\\sunshine-gui.exe --toolbar",
     "dev:renderer": "vite --config vite.config.js",
     "build": "tauri build",
@@ -22,6 +23,7 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2.8.4",
     "@vitejs/plugin-vue": "^4.5.1",
+    "cross-env": "^7.0.3",
     "less": "^4.2.2",
     "less-loader": "^12.2.0",
     "rollup": "^4.22.4",

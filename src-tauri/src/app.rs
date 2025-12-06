@@ -99,15 +99,22 @@ fn setup_menu_event_handler(app: &mut App) {
 /// 异步启动代理服务器
 fn start_proxy_server_async() {
     tauri::async_runtime::spawn(async {
-        // 获取 Sunshine URL 并配置代理目标
-        match sunshine::get_sunshine_url().await {
-            Ok(url) => {
-                info!("🎯 Sunshine URL: {}", url);
-                let base_url = url.trim_end_matches('/').to_string();
-                proxy_server::set_sunshine_target(base_url);
-            }
-            Err(e) => {
-                log::warn!("⚠️  无法获取 Sunshine URL，使用默认: {}", e);
+        // 检查是否设置了 WEBUI_DEV_TARGET 环境变量（用于开发模式）
+        if let Ok(dev_target) = std::env::var("WEBUI_DEV_TARGET") {
+            info!("🛠️ [开发模式] 检测到 WEBUI_DEV_TARGET 环境变量");
+            info!("🎯 代理目标: {}", dev_target);
+            proxy_server::set_sunshine_target(dev_target);
+        } else {
+            // 获取 Sunshine URL 并配置代理目标
+            match sunshine::get_sunshine_url().await {
+                Ok(url) => {
+                    info!("🎯 Sunshine URL: {}", url);
+                    let base_url = url.trim_end_matches('/').to_string();
+                    proxy_server::set_sunshine_target(base_url);
+                }
+                Err(e) => {
+                    log::warn!("⚠️  无法获取 Sunshine URL，使用默认: {}", e);
+                }
             }
         }
         

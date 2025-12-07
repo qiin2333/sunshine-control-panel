@@ -156,6 +156,65 @@ fn is_api_request(path: &str) -> bool {
     path.starts_with("/api/")
 }
 
+/// 检查是否是外部代理请求
+#[inline]
+fn is_external_proxy_request(path: &str) -> bool {
+    path.starts_with("/_proxy/")
+}
+
+/// 检查是否是 Steam API 请求
+#[inline]
+fn is_steam_api_request(path: &str) -> bool {
+    path.starts_with("/steam-store/") || path.starts_with("/steamgriddb/")
+}
+
+/// 解析外部代理 URL
+fn parse_external_proxy_url(path: &str, query: &str) -> Option<String> {
+    use url::form_urlencoded;
+    
+    // 路径格式: /_proxy/{encoded_url}
+    // 或者: /_proxy/?url={encoded_url}
+    if let Some(encoded_url) = path.strip_prefix("/_proxy/") {
+        if !encoded_url.is_empty() {
+            // URL 编码在路径中，使用 percent_decode 解码
+            return percent_decode_str(encoded_url);
+        }
+    }
+    
+    // 检查查询参数
+    if !query.is_empty() {
+        for (key, value) in form_urlencoded::parse(query.as_bytes()) {
+            if key == "url" {
+                return Some(value.into_owned());
+            }
+        }
+    }
+    
+    None
+}
+
+/// 解码 URL 编码的字符串
+fn percent_decode_str(s: &str) -> Option<String> {
+    let mut result = Vec::new();
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(byte) = u8::from_str_radix(
+                std::str::from_utf8(&bytes[i+1..i+3]).unwrap_or(""),
+                16
+            ) {
+                result.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+        result.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(result).ok()
+}
+
 /// 创建服务不可用响应（根据请求类型返回不同格式）
 fn service_unavailable_response(is_api: bool) -> Response {
     if is_api {
@@ -182,6 +241,16 @@ async fn proxy_handler(req: Request) -> Response {
     let path = uri.path().to_string();
     let query = uri.query().unwrap_or("").to_string();
     let headers = req.headers().clone();
+    
+    // 检查是否是外部代理请求（用于绕过 CORS）
+    if is_external_proxy_request(&path) {
+        return handle_external_proxy(&path, &query, &method, &headers, req).await;
+    }
+    
+    // 检查是否是 Steam API 请求（需要特殊处理）
+    if is_steam_api_request(&path) {
+        return handle_steam_api(&path, &query, &method, &headers, req).await;
+    }
     
     // 判断是否是 API 请求
     let is_api = is_api_request(&path);
@@ -240,6 +309,202 @@ async fn proxy_handler(req: Request) -> Response {
                     (axum::http::StatusCode::BAD_GATEWAY, format!("代理错误: {}", e)).into_response()
                 }
             }
+        }
+    }
+}
+
+/// 处理 Steam API 请求（直接转发到 Steam API）
+async fn handle_steam_api(
+    path: &str,
+    query: &str,
+    method: &axum::http::Method,
+    headers: &axum::http::HeaderMap,
+    req: Request,
+) -> Response {
+    // 获取请求体
+    let body = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
+        Ok(bytes) => bytes.to_vec(),
+        Err(e) => {
+            error!("❌ 读取请求体失败: {}", e);
+            return (axum::http::StatusCode::BAD_REQUEST, "读取请求体失败").into_response();
+        }
+    };
+    
+    // 构建目标 URL
+    let target_url = if path.starts_with("/steam-store/") {
+        let api_path = path.strip_prefix("/steam-store").unwrap_or(path);
+        let params = if query.is_empty() { "l=schinese&cc=CN" } else { query };
+        format!("https://store.steampowered.com{}?{}", api_path, params)
+    } else if path.starts_with("/steamgriddb/") {
+        let api_path = path.strip_prefix("/steamgriddb").unwrap_or(path);
+        format!("https://www.steamgriddb.com/api/v2{}?{}", api_path, query)
+    } else {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            [(axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8")],
+            r#"{"success":false,"error":"Unknown Steam API path"}"#
+        ).into_response();
+    };
+    
+    debug!("🎮 Steam API 代理请求: {} -> {}", path, target_url);
+    
+    // 发送请求并构建响应
+    let client = get_http_client();
+    match send_request(client, &target_url, method, headers, &body).await {
+        Ok(response) => build_cors_response(response).await,
+        Err(e) => {
+            error!("❌ Steam API 请求失败: {}", e);
+            (
+                axum::http::StatusCode::BAD_GATEWAY,
+                [(axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8")],
+                format!(r#"{{"success":false,"error":"Steam API request failed: {}"}}"#, e)
+            ).into_response()
+        }
+    }
+}
+
+/// 构建带 CORS 头的响应
+async fn build_cors_response(response: reqwest::Response) -> Response {
+    let status = response.status();
+    let resp_headers = response.headers().clone();
+    
+    match response.bytes().await {
+        Ok(body_bytes) => {
+            let mut builder = axum::http::Response::builder().status(status.as_u16());
+            
+            // 复制响应头（排除 CORS 和 transfer-encoding）
+            for (key, value) in resp_headers.iter() {
+                let key_str = key.as_str().to_lowercase();
+                if !key_str.starts_with("access-control-") && key_str != "transfer-encoding" {
+                    builder = builder.header(key.as_str(), value);
+                }
+            }
+            
+            // 添加 CORS 头部
+            builder
+                .header("Access-Control-Allow-Origin", "*")
+                .header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+                .header("Access-Control-Allow-Headers", "*")
+                .body(axum::body::Body::from(body_bytes.to_vec()))
+                .unwrap_or_else(|_| {
+                    (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "构建响应失败").into_response()
+                })
+        }
+        Err(e) => {
+            error!("❌ 读取响应失败: {}", e);
+            (
+                axum::http::StatusCode::BAD_GATEWAY,
+                [(axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8")],
+                format!(r#"{{"success":false,"error":"Failed to read response: {}"}}"#, e)
+            ).into_response()
+        }
+    }
+}
+
+/// 处理外部代理请求（绕过 CORS 限制）
+async fn handle_external_proxy(
+    path: &str,
+    query: &str,
+    method: &axum::http::Method,
+    headers: &axum::http::HeaderMap,
+    req: Request,
+) -> Response {
+    // 解析目标 URL
+    let target_url = match parse_external_proxy_url(path, query) {
+        Some(url) => url,
+        None => {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                [(axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8")],
+                r#"{"success":false,"error":"Missing or invalid URL parameter"}"#
+            ).into_response();
+        }
+    };
+    
+    // 安全检查：只允许 HTTPS 请求到白名单域名
+    let allowed_domains = [
+        "github.io",
+        "raw.githubusercontent.com",
+        "github.com",
+        "api.github.com",
+    ];
+    
+    let is_allowed = url::Url::parse(&target_url)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_string()))
+        .map(|host| allowed_domains.iter().any(|d| host == *d || host.ends_with(&format!(".{}", d))))
+        .unwrap_or(false);
+    
+    if !is_allowed {
+        warn!("⚠️ 外部代理请求被拒绝（域名不在白名单）: {}", target_url);
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            [(axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8")],
+            r#"{"success":false,"error":"Domain not allowed"}"#
+        ).into_response();
+    }
+    
+    debug!("🌐 外部代理请求: {}", target_url);
+    
+    // 获取请求体
+    let body = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
+        Ok(bytes) => bytes.to_vec(),
+        Err(e) => {
+            error!("❌ 读取请求体失败: {}", e);
+            return (axum::http::StatusCode::BAD_REQUEST, "读取请求体失败").into_response();
+        }
+    };
+    
+    // 发送请求
+    let client = get_http_client();
+    match send_request(client, &target_url, method, headers, &body).await {
+        Ok(response) => {
+            let status = response.status();
+            let resp_headers = response.headers().clone();
+            
+            match response.bytes().await {
+                Ok(body) => {
+                    let mut builder = axum::http::Response::builder()
+                        .status(status.as_u16());
+                    
+                    // 复制响应头（排除 CORS 相关头部，我们会添加自己的）
+                    for (key, value) in resp_headers.iter() {
+                        let key_str = key.as_str().to_lowercase();
+                        if !key_str.starts_with("access-control-") 
+                            && key_str != "transfer-encoding" 
+                        {
+                            builder = builder.header(key.as_str(), value);
+                        }
+                    }
+                    
+                    // 添加 CORS 头部
+                    builder = builder
+                        .header("Access-Control-Allow-Origin", "*")
+                        .header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+                        .header("Access-Control-Allow-Headers", "*");
+                    
+                    builder.body(axum::body::Body::from(body.to_vec()))
+                        .unwrap_or_else(|_| {
+                            (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "构建响应失败").into_response()
+                        })
+                }
+                Err(e) => {
+                    error!("❌ 读取外部响应失败: {}", e);
+                    (
+                        axum::http::StatusCode::BAD_GATEWAY,
+                        [(axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8")],
+                        format!(r#"{{"success":false,"error":"Failed to read response: {}"}}"#, e)
+                    ).into_response()
+                }
+            }
+        }
+        Err(e) => {
+            error!("❌ 外部代理请求失败: {}", e);
+            (
+                axum::http::StatusCode::BAD_GATEWAY,
+                [(axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8")],
+                format!(r#"{{"success":false,"error":"External request failed: {}"}}"#, e)
+            ).into_response()
         }
     }
 }
@@ -372,13 +637,23 @@ fn inject_theme_script(html: String) -> String {
         return html;
     };
     
-    let inject_size = INJECT_STYLES.len() + INJECT_SCRIPT.len() + 150;
+    // 根据编译配置决定是否是生产环境
+    let is_production = cfg!(not(debug_assertions));
+    let production_flag = if is_production {
+        "window.TAURI_PRODUCTION = true;"
+    } else {
+        "window.TAURI_PRODUCTION = false;"
+    };
+    
+    let inject_size = INJECT_STYLES.len() + INJECT_SCRIPT.len() + production_flag.len() + 150;
     let mut result = String::with_capacity(html.len() + inject_size);
     
     result.push_str(&html[..pos]);
     result.push_str("\n<!-- Tauri 样式优化 -->\n<style id=\"tauri-scrollbar-theme\">\n");
     result.push_str(INJECT_STYLES);
     result.push_str("\n</style>\n<!-- Tauri 功能脚本 -->\n<script>\n");
+    result.push_str(production_flag);
+    result.push_str("\n");
     result.push_str(INJECT_SCRIPT);
     result.push_str("\n</script>\n");
     result.push_str(&html[pos..]);

@@ -7,13 +7,13 @@ import { darkMode, openExternalUrl, vdd, sunshine, tools } from './tauri-adapter
 
 // IPC 通道映射表
 const IPC_HANDLERS = {
-  'vdd:loadSettings': () => vdd.loadSettings(),
-  'vdd:saveSettings': (data) => vdd.saveSettings(data),
-  'vdd:getGPUs': () => vdd.getGPUs(),
-  'vdd:execPipeCmd': (data) => vdd.execPipeCmd(data),
-  'dark-mode:toggle': () => darkMode.toggle(),
-  'dark-mode:system': () => darkMode.system(),
-  openExternalUrl: (data) => openExternalUrl(data),
+  'vdd:loadSettings': vdd.loadSettings,
+  'vdd:saveSettings': vdd.saveSettings,
+  'vdd:getGPUs': vdd.getGPUs,
+  'vdd:execPipeCmd': vdd.execPipeCmd,
+  'dark-mode:toggle': darkMode.toggle,
+  'dark-mode:system': darkMode.system,
+  openExternalUrl,
 }
 
 /**
@@ -68,6 +68,64 @@ if (typeof window !== 'undefined') {
   window.darkMode = darkMode
 }
 
+// 检测是否为生产环境
+const isProductionEnv = () => {
+  if (typeof __PROD__ !== 'undefined') return __PROD__ === true
+  if (typeof __DEV__ !== 'undefined') return __DEV__ === false
+  try {
+    return import.meta.env?.PROD === true
+  } catch {
+    return false
+  }
+}
+
+// 检测是否为 Tauri 环境
+const isTauriEnv = () => 
+  typeof window !== 'undefined' && (window.__TAURI__ || window.isTauri)
+
+// 禁用右键菜单的函数（仅在生产环境）
+let contextMenuHandler = null
+let keydownHandler = null
+
+const disableContextMenu = () => {
+  if (typeof document === 'undefined' || !isProductionEnv() || !isTauriEnv()) {
+    return
+  }
+  
+  // 移除旧的事件监听器
+  if (contextMenuHandler) {
+    document.removeEventListener('contextmenu', contextMenuHandler, true)
+  }
+  if (keydownHandler) {
+    document.removeEventListener('keydown', keydownHandler, true)
+  }
+  
+  // 禁用右键菜单
+  contextMenuHandler = (e) => {
+    e.preventDefault()
+    return false
+  }
+  
+  // 禁用开发者工具快捷键
+  const blockedKeys = new Set([
+    123,  // F12
+  ])
+  const blockedCtrlShiftKeys = new Set([73, 74])  // I, J
+  const blockedCtrlKeys = new Set([85])  // U
+  
+  keydownHandler = (e) => {
+    if (blockedKeys.has(e.keyCode) ||
+        (e.ctrlKey && e.shiftKey && blockedCtrlShiftKeys.has(e.keyCode)) ||
+        (e.ctrlKey && !e.shiftKey && blockedCtrlKeys.has(e.keyCode))) {
+      e.preventDefault()
+      return false
+    }
+  }
+  
+  document.addEventListener('contextmenu', contextMenuHandler, true)
+  document.addEventListener('keydown', keydownHandler, true)
+}
+
 // 主题切换功能
 export function initTheme() {
   if (typeof document === 'undefined') return
@@ -83,17 +141,35 @@ export function initTheme() {
   mediaQuery.addEventListener('change', (e) => updateTheme(e.matches))
 }
 
+// 监听导航事件（SPA 应用）
+const initNavigationListener = () => {
+  if (typeof window === 'undefined' || !window.navigation) return
+  
+  window.navigation.addEventListener('navigate', (e) => {
+    if (!e.canIntercept || e.hashChange || e.downloadRequest) return
+    setTimeout(disableContextMenu, 200)
+  })
+}
+
 // 自动初始化
 if (typeof document !== 'undefined') {
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initTheme)
-  } else {
+  const init = () => {
     initTheme()
+    disableContextMenu()
+    initNavigationListener()
+  }
+  
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init)
+    window.addEventListener('load', disableContextMenu)
+  } else {
+    init()
   }
 }
 
 export default {
   initTheme,
+  disableContextMenu,
   darkMode,
   vdd,
   sunshine,

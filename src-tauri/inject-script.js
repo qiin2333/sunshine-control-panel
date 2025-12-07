@@ -8,28 +8,28 @@
   const TIMEOUT_MS = 10000
   let messageId = 0
   const pendingMessages = new Map()
+  let lastSelectedFilePath = null
 
   // 消息处理器映射
   const messageHandlers = {
     'api-response': ({ id, error, result }) => {
       const pending = pendingMessages.get(id)
       if (!pending) return
-      error ? pending.reject(new Error(error)) : pending.resolve(result)
       pendingMessages.delete(id)
+      error ? pending.reject(new Error(error)) : pending.resolve(result)
     },
     'theme-sync': ({ theme }) => {
       document.body.setAttribute('data-bs-theme', theme)
     },
     'set-background': ({ dataUrl, filePath }) => {
       document.body.style.backgroundImage = `url("${dataUrl}")`
-      if (filePath) localStorage.setItem('WEBUI-BGSRC-PATH', filePath)
+      filePath && localStorage.setItem('WEBUI-BGSRC-PATH', filePath)
     },
   }
 
   // 消息监听器
   window.addEventListener('message', ({ data }) => {
-    if (!data?.type) return
-    messageHandlers[data.type]?.(data)
+    data?.type && messageHandlers[data.type]?.(data)
   })
 
   // 发送消息到父窗口
@@ -41,17 +41,16 @@
   const callParentApi = (command, args = {}) =>
     new Promise((resolve, reject) => {
       const id = messageId++
-      pendingMessages.set(id, { resolve, reject })
-      postToParent('tauri-invoke', { id, command, args })
-      setTimeout(() => {
-        if (pendingMessages.delete(id)) {
-          reject(new Error(`API call timeout: ${command}`))
-        }
+      const timeoutId = setTimeout(() => {
+        pendingMessages.delete(id) && reject(new Error(`API call timeout: ${command}`))
       }, TIMEOUT_MS)
+      
+      pendingMessages.set(id, {
+        resolve: (result) => { clearTimeout(timeoutId); resolve(result) },
+        reject: (error) => { clearTimeout(timeoutId); reject(error) },
+      })
+      postToParent('tauri-invoke', { id, command, args })
     })
-
-  // 文件路径缓存
-  let lastSelectedFilePath = null
 
   // Electron 兼容 API
   window.electron.webUtils = {
@@ -96,43 +95,66 @@
 
   // 注入 __TAURI__ 兼容对象
   window.__TAURI__ = window.__TAURI__ || {
-    core: {
-      invoke: callParentApi,
-    },
-    event: {
-      TauriEvent: { FileDrop: null },
-    },
+    core: { invoke: callParentApi },
+    event: { TauriEvent: { FileDrop: null } },
+  }
+
+  // 环境检测
+  const isProductionEnv = () => window.TAURI_PRODUCTION === true
+  const isTauriEnv = () => window.isTauri === true
+
+  // 禁用右键菜单和开发者工具快捷键（仅在生产环境）
+  const disableContextMenu = () => {
+    if (!isProductionEnv() || !isTauriEnv()) return
+
+    const preventDefault = (e) => { e.preventDefault(); return false }
+    
+    // 禁用开发者工具快捷键
+    const blockedKeys = new Set([123]) // F12
+    const blockedCtrlShiftKeys = new Set([73, 74]) // I, J
+    const blockedCtrlKeys = new Set([85]) // U
+
+    const keydownHandler = (e) => {
+      if (blockedKeys.has(e.keyCode) ||
+          (e.ctrlKey && e.shiftKey && blockedCtrlShiftKeys.has(e.keyCode)) ||
+          (e.ctrlKey && !e.shiftKey && blockedCtrlKeys.has(e.keyCode))) {
+        return preventDefault(e)
+      }
+    }
+
+    document.addEventListener('contextmenu', preventDefault, true)
+    document.addEventListener('keydown', keydownHandler, true)
   }
 
   // 导航检测
   const initNavigation = () => {
-    const getPathWithQuery = () => window.location.pathname + window.location.search
-    let lastPathname = getPathWithQuery()
+    const getFullPath = () => location.pathname + location.search + location.hash
+    let lastPath = location.pathname + location.search
 
-    postToParent('path-update', { path: lastPathname + window.location.hash })
+    postToParent('path-update', { path: getFullPath() })
 
     window.navigation?.addEventListener('navigate', (e) => {
       if (!e.canIntercept || e.hashChange || e.downloadRequest) return
 
       const url = new URL(e.destination.url)
-      const newPathname = url.pathname + url.search
+      const newPath = url.pathname + url.search
 
-      if (newPathname !== lastPathname) {
-        postToParent('navigation-start', { path: newPathname + url.hash })
-        lastPathname = newPathname
+      if (newPath !== lastPath) {
+        postToParent('navigation-start', { path: newPath + url.hash })
+        lastPath = newPath
+        setTimeout(disableContextMenu, 200)
       }
     })
   }
 
   // 初始化
   const init = () => {
+    disableContextMenu()
     initNavigation()
     postToParent('request-theme')
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init)
-  } else {
-    init()
-  }
+  document.readyState === 'loading'
+    ? document.addEventListener('DOMContentLoaded', init)
+    : init()
 })()

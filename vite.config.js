@@ -19,6 +19,12 @@ export default defineConfig(() => ({
     port: 8080,
     strictPort: true,
     host: '127.0.0.1',
+    // HMR 配置：确保 WebSocket 直接连接到 Vite 服务器
+    hmr: {
+      protocol: 'ws',
+      host: '127.0.0.1',
+      port: 8080,
+    },
   },
   envPrefix: ['VITE_', 'TAURI_'],
   open: false,
@@ -49,6 +55,11 @@ export default defineConfig(() => ({
     alias: {
       '@': rendererSrcPath,
     },
+  },
+  define: {
+    // 根据构建模式设置环境变量
+    __PROD__: JSON.stringify(process.env.NODE_ENV === 'production'),
+    __DEV__: JSON.stringify(process.env.NODE_ENV === 'development'),
   },
   css: {
     preprocessorOptions: {

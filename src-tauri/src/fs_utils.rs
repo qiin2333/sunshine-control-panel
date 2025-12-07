@@ -16,6 +16,10 @@ pub struct ScannedApp {
     #[serde(rename = "working-dir")]
     pub working_dir: String,
     pub source_path: String,
+    #[serde(rename = "app-type")]
+    pub app_type: String,
+    #[serde(rename = "is-game", skip_serializing_if = "Option::is_none")]
+    pub is_game: Option<bool>,
 }
 
 /// 快捷方式解析结果
@@ -521,6 +525,103 @@ pub async fn scan_directory_for_apps(directory: String) -> Result<Vec<ScannedApp
     Ok(apps)
 }
 
+/// 检测应用是否是游戏
+/// 基于路径、文件名和常见游戏平台目录
+fn detect_if_game(file_path: &str, name: &str, target_path: Option<&str>) -> bool {    
+    let path_lower = file_path.to_lowercase();
+    let name_lower = name.to_lowercase();
+    let target_lower = target_path.map(|s| s.to_lowercase()).unwrap_or_default();
+    
+    // 不是 .exe 文件肯定不是游戏
+    // 检查文件路径或目标路径是否以 .exe 结尾
+    let is_exe = path_lower.ends_with(".exe") || 
+                 target_lower.ends_with(".exe") ||
+                 // 对于 .lnk 快捷方式，检查其目标是否是 .exe
+                 (path_lower.ends_with(".lnk") && target_lower.ends_with(".exe"));
+    
+    if !is_exe && !path_lower.ends_with(".lnk") {
+        return false;
+    }
+    
+    // 对于 .lnk 文件，如果目标不是 .exe，也不是游戏
+    if path_lower.ends_with(".lnk") && !target_lower.is_empty() && !target_lower.ends_with(".exe") {
+        return false;
+    }
+    
+    // 首先排除明显不是游戏的应用
+    let exclude_keywords = [
+        "uninstall", "卸载", "setup", "安装", "installer",
+        "update", "更新", "updater", "patch",
+        "config", "配置", "settings", "设置",
+        "crash", "崩溃", "reporter", "report",
+        "helper", "service", "daemon",
+        "redist", "redistributable", "vcredist", "directx",
+        "launcher_helper", "bootstrapper",
+        "ue4prereqsetup", "dxsetup", "dotnet",
+    ];
+    
+    for keyword in &exclude_keywords {
+        if name_lower.contains(keyword) || path_lower.ends_with(&format!("\\{}.exe", keyword)) {
+            return false;
+        }
+    }
+    
+    // 游戏平台相关路径关键词（高置信度）
+    let high_confidence_paths = [
+        "\\steamapps\\common\\",
+        "\\steam\\steamapps\\common\\",
+        "\\epic games\\",
+        "\\gog galaxy\\games\\",
+        "\\gog games\\",
+        "\\ubisoft\\ubisoft game launcher\\games\\",
+        "\\origin games\\",
+        "\\ea games\\",
+        "\\battle.net\\",
+        "\\riot games\\",
+        "\\xbox games\\",
+        "\\playnite\\",
+    ];
+    
+    // 检查路径中是否包含高置信度的游戏平台路径
+    for keyword in &high_confidence_paths {
+        if path_lower.contains(keyword) || target_lower.contains(keyword) {
+            return true;
+        }
+    }
+    
+    // 中等置信度：检查是否在 Program Files 下的 games 目录
+    let medium_confidence_paths = [
+        "\\program files\\games\\",
+        "\\program files\\game\\",
+        "\\program files (x86)\\games\\",
+        "\\program files (x86)\\game\\",
+        "\\games\\",
+        "\\game\\",
+    ];
+    
+    for keyword in &medium_confidence_paths {
+        if path_lower.contains(keyword) || target_lower.contains(keyword) {
+            // 额外检查：确保不是工具类应用
+            let tool_indicators = ["tool", "editor", "sdk", "dev", "debug"];
+            let is_tool = tool_indicators.iter().any(|t| name_lower.contains(t));
+            if !is_tool {
+                return true;
+            }
+        }
+    }
+    
+    // 检查快捷方式来源目录（如果是从开始菜单的游戏文件夹扫描的）
+    if path_lower.contains("\\start menu\\programs\\games\\") ||
+       path_lower.contains("\\开始菜单\\程序\\游戏\\") {
+        return true;
+    }
+    
+    // 低置信度：仅基于文件名判断（需要更严格的条件）
+    // 不再仅凭 "game" 关键词判断，因为误报率太高
+    
+    false
+}
+
 /// 递归扫描目录
 fn scan_directory_recursive(
     dir_path: &std::path::Path,
@@ -604,7 +705,24 @@ fn scan_directory_recursive(
             _ => None,
         };
         
-        if let Some(app) = scanned_app {
+        if let Some(mut app) = scanned_app {
+            // 检测是否是游戏
+            let target_path = if app.app_type == "shortcut" {
+                #[cfg(target_os = "windows")]
+                {
+                    resolve_lnk_windows(&file_path).ok()
+                        .map(|lnk| lnk.target_path)
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    None
+                }
+            } else {
+                None
+            };
+            
+            let is_game = detect_if_game(&file_path, &app.name, target_path.as_deref());
+            app.is_game = Some(is_game);
             apps.push(app);
         }
     }
@@ -623,6 +741,8 @@ fn process_lnk_file(file_path: &str) -> Option<ScannedApp> {
         cmd,
         working_dir: String::new(),
         source_path: file_path.to_string(),
+        app_type: "shortcut".to_string(),
+        is_game: None, // 将在扫描时检测
     })
 }
 
@@ -639,6 +759,8 @@ fn process_exe_file(file_path: &str) -> Option<ScannedApp> {
         cmd,
         working_dir,
         source_path: file_path.to_string(),
+        app_type: "executable".to_string(),
+        is_game: None, // 将在扫描时检测
     })
 }
 
@@ -649,12 +771,16 @@ fn process_batch_file(file_path: &str) -> Option<ScannedApp> {
     let name = path.file_stem()?.to_str()?.to_string();
     let working_dir = path.parent()?.to_string_lossy().to_string();
     let cmd = format!("cmd /c \"{}\"", file_path);
+    let ext = path.extension()?.to_str()?.to_lowercase();
+    let app_type = if ext == "bat" { "batch" } else { "command" };
     
     Some(ScannedApp {
         name,
         cmd,
         working_dir,
         source_path: file_path.to_string(),
+        app_type: app_type.to_string(),
+        is_game: None, // 批处理和命令脚本通常不是游戏
     })
 }
 
@@ -670,5 +796,7 @@ fn process_url_file(file_path: &str) -> Option<ScannedApp> {
         cmd,
         working_dir: String::new(),
         source_path: file_path.to_string(),
+        app_type: "url".to_string(),
+        is_game: None, // URL 文件通常不是游戏
     })
 }

@@ -21,8 +21,8 @@ static LAST_CHECK_TIME: AtomicU64 = AtomicU64::new(0);
 /// 代理服务器实际使用的端口
 static PROXY_PORT: AtomicU16 = AtomicU16::new(48081);
 
-/// 快速失败超时时间（秒）
-const FAST_FAIL_TIMEOUT_SECS: u64 = 3;
+/// 快速失败冷却时间（秒）- 在此时间内不重试，超过后会重新尝试连接
+const FAST_FAIL_COOLDOWN_SECS: u64 = 3;
 
 /// 代理服务器端口范围
 const PROXY_PORT_START: u16 = 48081;
@@ -117,14 +117,28 @@ fn current_timestamp() -> u64 {
         .unwrap_or(0)
 }
 
-/// 检查是否应该快速失败
+/// 检查是否应该快速失败（在冷却时间内跳过请求）
+/// 返回 true 表示应该快速失败，false 表示应该尝试请求
 #[inline]
 fn should_fast_fail() -> bool {
+    // 如果 Sunshine 标记为可用，不需要快速失败
     if SUNSHINE_AVAILABLE.load(Ordering::Relaxed) {
         return false;
     }
+    
+    // Sunshine 标记为不可用，检查是否已过冷却时间
     let last_check = LAST_CHECK_TIME.load(Ordering::Relaxed);
-    current_timestamp().saturating_sub(last_check) < FAST_FAIL_TIMEOUT_SECS
+    let elapsed = current_timestamp().saturating_sub(last_check);
+    
+    if elapsed >= FAST_FAIL_COOLDOWN_SECS {
+        // 冷却时间已过，允许重试（重置状态为可用，让请求尝试连接）
+        debug!("⏰ 快速失败冷却时间已过 ({}秒)，允许重试", elapsed);
+        mark_available();
+        false
+    } else {
+        // 仍在冷却时间内，快速失败
+        true
+    }
 }
 
 /// 标记 Sunshine 为不可用
@@ -280,7 +294,7 @@ async fn proxy_handler(req: Request) -> Response {
         debug!("📡 代理请求: {} {}", method, path);
     }
     
-    // 快速失败检查
+    // 快速失败检查：在冷却时间内直接返回错误，避免大量无效请求
     if should_fast_fail() {
         return service_unavailable_response(is_api);
     }

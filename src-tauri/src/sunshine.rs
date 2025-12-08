@@ -198,11 +198,14 @@ pub async fn parse_sunshine_config() -> Result<SunshineConfig, String> {
     Ok(config)
 }
 
+const DEFAULT_SUNSHINE_PORT: u16 = 47989;
+const DEFAULT_WEB_UI_PORT: u16 = 47990;
+
 #[tauri::command]
 pub async fn get_sunshine_url() -> Result<String, String> {
     // 优先检查命令行参数
     if let Some(url) = get_command_line_url() {
-        return Ok(url);
+        return parse_url_to_base(&url).ok_or_else(|| url);
     }
     
     // 从配置文件读取端口
@@ -210,20 +213,24 @@ pub async fn get_sunshine_url() -> Result<String, String> {
     
     let port = config.port
         .and_then(|p| p.parse::<u16>().ok())
-        .unwrap_or(47989);
+        .unwrap_or(DEFAULT_SUNSHINE_PORT);
     
     // Sunshine Web UI 端口 = 配置端口 + 1
-    let web_port = port + 1;
-    
-    // 使用 127.0.0.1 避免 IPv6 解析问题
-    Ok(format!("https://127.0.0.1:{}", web_port))
+    Ok(format!("https://127.0.0.1:{}", port + 1))
+}
+
+fn parse_url_to_base(url: &str) -> Option<String> {
+    url::Url::parse(url).ok().map(|parsed| {
+        let host = parsed.host_str().unwrap_or("127.0.0.1");
+        let port = parsed.port().unwrap_or(DEFAULT_WEB_UI_PORT);
+        format!("{}://{}:{}", parsed.scheme(), host, port)
+    })
 }
 
 #[tauri::command]
 pub fn get_command_line_url() -> Option<String> {
     std::env::args()
-        .find(|arg| arg.starts_with("--url="))
-        .map(|arg| arg.trim_start_matches("--url=").to_string())
+        .find_map(|arg| arg.strip_prefix("--url=").map(String::from))
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

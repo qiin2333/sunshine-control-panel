@@ -15,36 +15,59 @@ pub struct AppState {
 
 /// 应用程序初始化设置
 pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
-    let show_toolbar = std::env::args().any(|arg| arg == "--toolbar" || arg == "-t");
-    let show_desktop = std::env::args().any(|arg| arg == "--desktop" || arg == "-d");
+    let args: Vec<String> = std::env::args().collect();
+    let show_toolbar = args.iter().any(|arg| arg == "--toolbar" || arg == "-t");
+    let show_desktop = args.iter().any(|arg| arg == "--desktop" || arg == "-d");
+    let url_contains_pin = args.iter()
+        .find(|arg| arg.starts_with("--url="))
+        .map_or(false, |arg| arg.contains("/pin"));
+    
     let app_handle = app.handle().clone();
     
-    // 根据启动参数选择窗口模式
-    if show_desktop {
+    // 创建窗口：桌面模式或工具栏模式时不创建主窗口
+    let main_window_created = if show_desktop {
         info!("🖥️ 检测到 --desktop 参数，启动桌面 UI 模式");
         windows::create_desktop_window(&app_handle)?;
-    } else {
+        windows::create_main_window_hidden(&app_handle)?;
+        false
+    } else if !show_toolbar && !url_contains_pin {
         windows::create_main_window(&app_handle)?;
-    }
+        true
+    } else {
+        false
+    };
     
     tray::create_system_tray(&app_handle)?;
     register_global_shortcuts(app)?;
     setup_menu_event_handler(app);
     start_proxy_server_async();
     
-    // 延迟任务：工具栏和更新检查
+    // 延迟任务
     tauri::async_runtime::spawn(async move {
+        // PIN 配对窗口
+        if url_contains_pin {
+            info!("🔐 将在应用启动后打开 PIN 配对窗口");
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            if let Err(e) = windows::open_pin_window(&app_handle) {
+                error!("❌ 创建 PIN 配对窗口失败: {}", e);
+            }
+        }
+        
+        // 工具栏窗口（非桌面模式下）
         if show_toolbar && !show_desktop {
-            info!("🔧 检测到 --toolbar 参数，将在应用启动后打开工具栏");
+            info!("🔧 将在应用启动后打开工具栏");
             tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
             if let Err(e) = toolbar::create_toolbar_window_internal(&app_handle) {
                 error!("❌ 创建工具栏失败: {}", e);
             }
         }
         
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-        if let Err(e) = update::init_update_checker(&app_handle) {
-            error!("❌ 初始化更新检查器失败: {}", e);
+        // 更新检查（仅在主窗口启动时检查）
+        if main_window_created {
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            if let Err(e) = update::init_update_checker(&app_handle) {
+                error!("❌ 初始化更新检查器失败: {}", e);
+            }
         }
     });
     
@@ -153,6 +176,15 @@ pub fn handle_single_instance(app: &AppHandle, args: Vec<String>) {
     
     if let Some(url) = &target_url {
         info!("📍 检测到 URL 参数: {}", url);
+        
+        // 检测 URL 中是否包含 /pin 路径
+        if url.contains("/pin") {
+            info!("🔐 检测到 /pin 路径，打开 PIN 配对窗口");
+            if let Err(e) = windows::open_pin_window(app) {
+                error!("❌ 打开 PIN 窗口失败: {}", e);
+            }
+            return;
+        }
     }
     
     windows::activate_main_window(app, target_url);

@@ -133,19 +133,31 @@ pub fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &s
 
 // 处理工具栏菜单事件
 pub fn handle_toolbar_menu_event<R: Runtime>(app: &AppHandle<R>, event_id: &str) {
+    fn show_main_window<R: Runtime>(window: &tauri::WebviewWindow<R>) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+
+    fn ensure_main_window<R: Runtime>(app: &AppHandle<R>) -> Option<tauri::WebviewWindow<R>> {
+        if let Some(window) = app.get_webview_window("main") {
+            show_main_window(&window);
+            Some(window)
+        } else {
+            if let Err(e) = windows::create_main_window(app) {
+                error!("❌ 创建主窗口失败: {}", e);
+                return None;
+            }
+            app.get_webview_window("main")
+        }
+    }
+
     match event_id {
         "main" | "toolbar_main" => {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            ensure_main_window(app);
         }
         "vdd" | "toolbar_vdd" => {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
+            if let Some(window) = ensure_main_window(app) {
                 let _ = window.emit("open-vdd-settings", ());
             }
         }

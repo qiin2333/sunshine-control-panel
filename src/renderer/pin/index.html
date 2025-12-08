@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="../../assets/sunshine.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PIN 配对</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: transparent;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.75);
+        backdrop-filter: blur(10px);
+        cursor: pointer;
+        animation: overlayIn 0.2s ease;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+
+      @keyframes overlayIn {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+
+      .pin-container {
+        padding: 48px 40px;
+        max-width: 420px;
+        width: 90%;
+        background: linear-gradient(135deg, #2b7fd9 0%, #5a9fe6 100%);
+        border-radius: 20px;
+        box-shadow: 0 20px 60px rgba(43, 127, 217, 0.5);
+        cursor: default;
+        animation: panelIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+      }
+
+      @keyframes panelIn {
+        from {
+          opacity: 0;
+          transform: scale(0.8) translateY(30px);
+        }
+        to {
+          opacity: 1;
+          transform: scale(1) translateY(0);
+        }
+      }
+
+      h1 {
+        color: white;
+        margin-bottom: 8px;
+        font-size: 24px;
+        font-weight: 600;
+        text-align: center;
+        letter-spacing: -0.02em;
+        text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+      }
+
+      .subtitle {
+        color: rgba(255, 255, 255, 0.9);
+        margin-bottom: 32px;
+        font-size: 14px;
+        text-align: center;
+      }
+
+      .pin-inputs {
+        display: flex;
+        justify-content: center;
+        gap: 10px;
+        margin-bottom: 24px;
+      }
+
+      .pin-input {
+        width: 56px;
+        height: 64px;
+        text-align: center;
+        font-size: 28px;
+        font-weight: 600;
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        border-radius: 12px;
+        outline: none;
+        transition: all 0.2s ease;
+        background: rgba(255, 255, 255, 0.95);
+        color: #1d1d1f;
+        caret-color: #2b7fd9;
+      }
+
+      .pin-input:focus {
+        border-color: rgba(255, 255, 255, 0.8);
+        box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.3);
+        transform: scale(1.05);
+      }
+
+      .pin-input:not(:placeholder-shown) {
+        border-color: rgba(255, 255, 255, 0.6);
+      }
+
+      .pin-input:disabled {
+        background: rgba(255, 255, 255, 0.5);
+        color: rgba(29, 29, 31, 0.5);
+        cursor: not-allowed;
+      }
+
+      .status {
+        margin-top: 20px;
+        padding: 12px 16px;
+        border-radius: 10px;
+        font-size: 13px;
+        text-align: center;
+        display: none;
+        font-weight: 500;
+        backdrop-filter: blur(10px);
+      }
+
+      .status.success {
+        background: rgba(255, 255, 255, 0.25);
+        color: white;
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        display: block;
+      }
+
+      .status.error {
+        background: rgba(255, 59, 48, 0.3);
+        color: white;
+        border: 1px solid rgba(255, 59, 48, 0.5);
+        display: block;
+      }
+
+      .status.loading {
+        background: rgba(255, 255, 255, 0.2);
+        color: white;
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        display: block;
+      }
+
+      .spinner {
+        display: inline-block;
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        border-radius: 50%;
+        border-top-color: white;
+        animation: spin 0.8s linear infinite;
+        margin-right: 8px;
+        vertical-align: middle;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      ::selection {
+        background: rgba(255, 255, 255, 0.3);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="pin-container">
+      <h1>🔐 PIN 配对</h1>
+      <p class="subtitle">快点输入 4 位 PIN 码啦~人家等着配对呢！</p>
+
+      <div class="pin-inputs">
+        <input type="text" class="pin-input" maxlength="1" inputmode="numeric" pattern="\d" data-index="0" autofocus />
+        <input type="text" class="pin-input" maxlength="1" inputmode="numeric" pattern="\d" data-index="1" />
+        <input type="text" class="pin-input" maxlength="1" inputmode="numeric" pattern="\d" data-index="2" />
+        <input type="text" class="pin-input" maxlength="1" inputmode="numeric" pattern="\d" data-index="3" />
+      </div>
+
+      <div id="status" class="status"></div>
+    </div>
+
+    <script type="module">
+      const CONFIG = {
+        DEFAULT_PROXY_URL: 'http://localhost:48081',
+        DEFAULT_CLIENT_NAME: 'Moonlight Client',
+        PIN_LENGTH: 4,
+        CLOSE_DELAY: 2000,
+        PROXY_CHECK_INTERVAL: 1000, // 增加到 1 秒
+        PROXY_CHECK_MAX_RETRIES: 30, // 增加到 30 次（30秒）
+        PROXY_CHECK_TIMEOUT: 3000, // 每次请求超时 3 秒
+      }
+
+      const state = {
+        isSubmitting: false,
+        proxyUrl: CONFIG.DEFAULT_PROXY_URL,
+        clientName: CONFIG.DEFAULT_CLIENT_NAME,
+        proxyReady: false,
+      }
+
+      const $ = (selector) => document.querySelector(selector)
+      const $$ = (selector) => document.querySelectorAll(selector)
+
+      const statusEl = $('#status')
+      const pinInputs = $$('.pin-input')
+
+      const showStatus = (message, type) => {
+        statusEl.innerHTML = message
+        statusEl.className = `status ${type}`
+      }
+
+      const setInputsDisabled = (disabled) => {
+        pinInputs.forEach((input) => (input.disabled = disabled))
+      }
+
+      const closeWindow = async () => {
+        try {
+          const { getCurrentWindow } = await import('@tauri-apps/api/window')
+          await getCurrentWindow().close()
+        } catch {}
+      }
+
+      const getPin = () => Array.from(pinInputs, (i) => i.value).join('')
+
+      const clearPin = () => {
+        pinInputs.forEach((i) => (i.value = ''))
+        pinInputs[0].focus()
+      }
+
+      const getProxyUrl = async () => {
+        try {
+          const { invoke } = await import('@tauri-apps/api/core')
+          state.proxyUrl = await invoke('get_proxy_url_command')
+          console.log('📡 代理 URL:', state.proxyUrl)
+        } catch (e) {
+          console.warn('获取代理 URL 失败，使用默认值:', e)
+        }
+      }
+
+      const waitForProxy = async () => {
+        showStatus('<span class="spinner"></span>正在启动服务...', 'loading')
+        setInputsDisabled(true)
+
+        for (let i = 0; i < CONFIG.PROXY_CHECK_MAX_RETRIES; i++) {
+          try {
+            // 使用 AbortController 以便更好地控制超时
+            const controller = new AbortController()
+            const timeoutId = setTimeout(() => controller.abort(), CONFIG.PROXY_CHECK_TIMEOUT)
+
+            const response = await fetch(`${state.proxyUrl}/api/config`, {
+              method: 'GET',
+              signal: controller.signal,
+            })
+
+            clearTimeout(timeoutId)
+
+            if (response.ok) {
+              console.log('✅ 代理服务已就绪')
+              state.proxyReady = true
+              statusEl.className = 'status'
+              statusEl.innerHTML = ''
+              setInputsDisabled(false)
+              pinInputs[0].focus()
+              return true
+            } else {
+              console.log(
+                `⏳ 代理服务响应异常 (${response.status}), 继续等待... (${i + 1}/${CONFIG.PROXY_CHECK_MAX_RETRIES})`
+              )
+            }
+          } catch (e) {
+            if (e.name === 'AbortError') {
+              console.log(`⏳ 请求超时，继续等待代理服务... (${i + 1}/${CONFIG.PROXY_CHECK_MAX_RETRIES})`)
+            } else {
+              console.log(`⏳ 等待代理服务启动... (${i + 1}/${CONFIG.PROXY_CHECK_MAX_RETRIES})`, e.message)
+            }
+
+            // 更新状态提示
+            const progress = Math.floor(((i + 1) / CONFIG.PROXY_CHECK_MAX_RETRIES) * 100)
+            showStatus(`<span class="spinner"></span>正在启动服务... (${progress}%)`, 'loading')
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, CONFIG.PROXY_CHECK_INTERVAL))
+        }
+
+        showStatus('❌ 无法连接到服务，请确保 Sunshine 正在运行', 'error')
+        setInputsDisabled(false)
+        return false
+      }
+
+      const getClientName = async () => {
+        try {
+          const response = await fetch(`${state.proxyUrl}/api/config`)
+          if (!response.ok) return
+
+          const data = await response.json()
+          const name = data.pair_name || data.sunshine_name
+          if (name) {
+            state.clientName = name
+            console.log('📛 客户端名称:', name)
+          }
+        } catch (e) {
+          console.warn('获取客户端名称失败，使用默认值:', e)
+        }
+      }
+
+      const submitPin = async (pin) => {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 10000) // 10秒超时
+
+        try {
+          const response = await fetch(`${state.proxyUrl}/api/pin`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pin, name: state.clientName }),
+            signal: controller.signal,
+          })
+
+          clearTimeout(timeoutId)
+
+          if (!response.ok) {
+            const errorText = await response.text().catch(() => '')
+            throw new Error(`HTTP ${response.status}: ${errorText || '请求失败'}`)
+          }
+
+          return await response.json()
+        } catch (e) {
+          clearTimeout(timeoutId)
+          if (e.name === 'AbortError') {
+            throw new Error('请求超时，请检查网络连接')
+          }
+          throw e
+        }
+      }
+
+      const handleAutoSubmit = async () => {
+        const pin = getPin()
+        if (pin.length !== CONFIG.PIN_LENGTH || state.isSubmitting || !/^\d+$/.test(pin)) return
+        if (!state.proxyReady) {
+          showStatus('⏳ 服务尚未就绪，请稍候...', 'loading')
+          return
+        }
+
+        state.isSubmitting = true
+        setInputsDisabled(true)
+        showStatus('<span class="spinner"></span>配对中...', 'loading')
+
+        try {
+          const data = await submitPin(pin)
+          const isSuccess = String(data.status).toLowerCase() === 'true'
+
+          if (isSuccess) {
+            showStatus('✅ 配对成功！', 'success')
+            setTimeout(closeWindow, CONFIG.CLOSE_DELAY)
+          } else {
+            showStatus('❌ 配对失败：PIN 码错误', 'error')
+            clearPin()
+            setInputsDisabled(false)
+          }
+        } catch (error) {
+          console.error('配对失败:', error)
+          const errorMsg = error.message || '网络错误'
+          if (errorMsg.includes('超时') || errorMsg.includes('timeout')) {
+            showStatus('❌ 请求超时，请检查网络连接或稍后重试', 'error')
+          } else if (errorMsg.includes('Failed to fetch') || errorMsg.includes('NetworkError')) {
+            showStatus('❌ 无法连接到服务，请确保 Sunshine 正在运行', 'error')
+          } else {
+            showStatus(`❌ ${errorMsg}`, 'error')
+          }
+          clearPin()
+          setInputsDisabled(false)
+        } finally {
+          state.isSubmitting = false
+        }
+      }
+
+      const handleInput = (input, index) => {
+        input.value = input.value.replace(/\D/g, '')
+        if (input.value && index < CONFIG.PIN_LENGTH - 1) {
+          pinInputs[index + 1].focus()
+        }
+        if (getPin().length === CONFIG.PIN_LENGTH) {
+          handleAutoSubmit()
+        }
+      }
+
+      const handleKeydown = (e, index) => {
+        if (e.key === 'Backspace' && !e.target.value && index > 0) {
+          pinInputs[index - 1].focus()
+        }
+      }
+
+      const handlePaste = (e) => {
+        e.preventDefault()
+        const data = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, CONFIG.PIN_LENGTH)
+        data.split('').forEach((char, i) => {
+          if (pinInputs[i]) pinInputs[i].value = char
+        })
+        pinInputs[Math.min(data.length, CONFIG.PIN_LENGTH - 1)].focus()
+        if (getPin().length === CONFIG.PIN_LENGTH) {
+          handleAutoSubmit()
+        }
+      }
+
+      const setupEventListeners = () => {
+        pinInputs.forEach((input, index) => {
+          input.addEventListener('input', () => handleInput(input, index))
+          input.addEventListener('keydown', (e) => handleKeydown(e, index))
+          input.addEventListener('paste', handlePaste)
+        })
+
+        window.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape' && !state.isSubmitting) {
+            closeWindow()
+          }
+        })
+
+        document.body.addEventListener('click', (e) => {
+          if (e.target === document.body && !state.isSubmitting) {
+            closeWindow()
+          }
+        })
+      }
+
+      const init = async () => {
+        await getProxyUrl()
+        setupEventListeners()
+
+        // 等待代理服务就绪
+        const proxyReady = await waitForProxy()
+        if (proxyReady) {
+          await getClientName()
+        }
+      }
+
+      init()
+    </script>
+  </body>
+</html>

@@ -19,7 +19,8 @@
       error ? pending.reject(new Error(error)) : pending.resolve(result)
     },
     'theme-sync': ({ theme }) => {
-      document.body.setAttribute('data-bs-theme', theme)
+      document.documentElement.setAttribute('data-bs-theme', theme)
+      localStorage.setItem('theme', theme)
     },
     'set-background': ({ dataUrl, filePath }) => {
       document.body.style.backgroundImage = `url("${dataUrl}")`
@@ -44,10 +45,16 @@
       const timeoutId = setTimeout(() => {
         pendingMessages.delete(id) && reject(new Error(`API call timeout: ${command}`))
       }, TIMEOUT_MS)
-      
+
       pendingMessages.set(id, {
-        resolve: (result) => { clearTimeout(timeoutId); resolve(result) },
-        reject: (error) => { clearTimeout(timeoutId); reject(error) },
+        resolve: (result) => {
+          clearTimeout(timeoutId)
+          resolve(result)
+        },
+        reject: (error) => {
+          clearTimeout(timeoutId)
+          reject(error)
+        },
       })
       postToParent('tauri-invoke', { id, command, args })
     })
@@ -107,17 +114,22 @@
   const disableContextMenu = () => {
     if (!isProductionEnv() || !isTauriEnv()) return
 
-    const preventDefault = (e) => { e.preventDefault(); return false }
-    
+    const preventDefault = (e) => {
+      e.preventDefault()
+      return false
+    }
+
     // 禁用开发者工具快捷键
     const blockedKeys = new Set([123]) // F12
     const blockedCtrlShiftKeys = new Set([73, 74]) // I, J
     const blockedCtrlKeys = new Set([85]) // U
 
     const keydownHandler = (e) => {
-      if (blockedKeys.has(e.keyCode) ||
-          (e.ctrlKey && e.shiftKey && blockedCtrlShiftKeys.has(e.keyCode)) ||
-          (e.ctrlKey && !e.shiftKey && blockedCtrlKeys.has(e.keyCode))) {
+      if (
+        blockedKeys.has(e.keyCode) ||
+        (e.ctrlKey && e.shiftKey && blockedCtrlShiftKeys.has(e.keyCode)) ||
+        (e.ctrlKey && !e.shiftKey && blockedCtrlKeys.has(e.keyCode))
+      ) {
         return preventDefault(e)
       }
     }
@@ -154,7 +166,5 @@
     postToParent('request-theme')
   }
 
-  document.readyState === 'loading'
-    ? document.addEventListener('DOMContentLoaded', init)
-    : init()
+  document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', init) : init()
 })()

@@ -603,7 +603,8 @@ async fn fetch_and_proxy(
     let body_bytes = response.bytes().await?.to_vec();
     
     // 判断是否需要注入脚本
-    let final_body = if should_inject_script(url, content_type) {
+    let needs_injection = should_inject_script(url, content_type);
+    let final_body = if needs_injection {
         inject_if_needed(body_bytes)
     } else {
         body_bytes
@@ -613,9 +614,22 @@ async fn fetch_and_proxy(
     let mut res = axum::http::Response::builder().status(status.as_u16());
     
     for (key, value) in resp_headers.iter() {
-        if !matches!(key.as_str(), "content-length" | "transfer-encoding" | "content-encoding") {
-            res = res.header(key, value);
+        let key_str = key.as_str().to_lowercase();
+        // 排除内容长度、传输编码、内容编码，以及需要注入时排除缓存相关头部
+        if matches!(key_str.as_str(), "content-length" | "transfer-encoding" | "content-encoding") {
+            continue;
         }
+        if needs_injection && matches!(key_str.as_str(), "cache-control" | "etag" | "last-modified" | "expires") {
+            continue;
+        }
+        res = res.header(key, value);
+    }
+    
+    // 需要注入脚本的页面添加无缓存头部
+    if needs_injection {
+        res = res.header("Cache-Control", "no-cache, no-store, must-revalidate");
+        res = res.header("Pragma", "no-cache");
+        res = res.header("Expires", "0");
     }
     
     Ok(res.body(axum::body::Body::from(final_body))?)

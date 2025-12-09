@@ -130,11 +130,12 @@ const disableContextMenu = () => {
 export function initTheme() {
   if (typeof document === 'undefined') return
 
-  const body = document.body
+  const html = document.documentElement
   const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
 
   const updateTheme = (isDark) => {
-    body.setAttribute('data-bs-theme', isDark ? 'dark' : 'light')
+    const theme = isDark ? 'dark' : 'light'
+    html.setAttribute('data-bs-theme', theme)
   }
 
   updateTheme(mediaQuery.matches)

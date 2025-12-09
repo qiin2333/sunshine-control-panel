@@ -304,21 +304,6 @@ const onLoad = () => {
   setTimeout(() => {
     loading.value = false
     console.log('✅ Sunshine 页面加载完成')
-    console.log('🎨 主题同步脚本已注入，可以同步主题了')
-
-    // 发送当前主题
-    const currentTheme = document.body.getAttribute('data-bs-theme') || 'dark'
-    const iframe = sunshineIframe.value
-    if (iframe && iframe.contentWindow) {
-      iframe.contentWindow.postMessage(
-        {
-          type: 'theme-sync',
-          theme: currentTheme,
-        },
-        '*'
-      )
-      console.log('📤 已发送初始主题:', currentTheme)
-    }
 
     // 更新当前 URL 和路径（用于导航检测和显示）
     try {
@@ -332,7 +317,7 @@ const onLoad = () => {
     } catch (e) {
       // 跨域时无法读取，保持显示上次的路径
     }
-  }, 300)
+  }, 100)
 }
 
 // 监听 iframe 内部导航

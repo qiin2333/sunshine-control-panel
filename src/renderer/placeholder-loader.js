@@ -15,11 +15,11 @@ if (document.readyState === 'loading') {
 async function initLoader() {
   try {
     // 等待 1 秒显示占位动画
-    await new Promise(resolve => setTimeout(resolve, 1000))
-    
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+
     // 检查是否有命令行参数指定的 URL
     let sunshineUrl = await invoke('get_command_line_url')
-    
+
     if (sunshineUrl) {
       console.log('✅ 检测到命令行参数 URL:', sunshineUrl)
       updateLoadingText('正在加载指定的 URL...')
@@ -31,10 +31,9 @@ async function initLoader() {
       // 加载带自定义菜单的 Sunshine Frame
       window.location.href = './sunshine-frame.html'
     }
-    
   } catch (error) {
     console.error('加载 Sunshine 失败:', error)
-    
+
     // 失败后显示错误信息
     const container = document.querySelector('.placeholder-container')
     if (container) {
@@ -43,7 +42,7 @@ async function initLoader() {
       errorText.style.marginTop = '20px'
       errorText.textContent = '无法连接到 Sunshine，请确保 Sunshine 正在运行'
       container.appendChild(errorText)
-      
+
       // 5秒后尝试默认URL
       setTimeout(() => {
         window.location.href = 'https://localhost:47990/'
@@ -65,7 +64,7 @@ async function checkSunshineAvailability(url) {
   try {
     const response = await fetch(url, {
       method: 'HEAD',
-      mode: 'no-cors'
+      mode: 'no-cors',
     })
     return true
   } catch (error) {

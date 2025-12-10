@@ -1,60 +1,63 @@
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { useRouter, ROUTES } from './useRouter.js'
 
-// 忽略版本的 localStorage 键名
 const SKIPPED_VERSION_KEY = 'sunshine-skipped-version'
+const THEME_KEY = 'sunshine-theme'
+const THEME_DARK = 'dark'
+const THEME_LIGHT = 'light'
+
+/**
+ * 规范化版本号（移除 v/V 前缀）
+ */
+const normalizeVersion = (version) => version?.replace(/^[vV]/, '') || ''
+
+/**
+ * 向 iframe 发送消息
+ */
+const postMessageToIframes = (message) => {
+  document.querySelectorAll('iframe').forEach((iframe) => {
+    try {
+      iframe.contentWindow?.postMessage(message, '*')
+    } catch {
+      // 跨域限制，忽略错误
+    }
+  })
+}
 
 /**
  * 侧边栏状态管理 Composable
  */
 export function useSidebarState() {
+  const router = useRouter()
+
   // 状态定义
   const isCollapsed = ref(false)
   const isDark = ref(true)
   const isMaximized = ref(false)
   const isAdmin = ref(true)
-  const showVddSettings = ref(false)
   const showUpdateDialog = ref(false)
   const updateInfo = ref(null)
   const currentVersion = ref('0.0.0')
   const skippedVersion = ref(localStorage.getItem(SKIPPED_VERSION_KEY) || '')
 
-  // 存储需要清理的监听器
-  let unlistenUpdateAvailable = null
-  let unlistenUpdateCheckResult = null
-  let messageEventListener = null
+  // 计算属性
+  const showVddSettings = computed(() => router.isRoute(ROUTES.VDD_SETTINGS))
+  const showWelcome = computed(() => router.isRoute(ROUTES.WELCOME))
+  const currentTheme = computed(() => (isDark.value ? THEME_DARK : THEME_LIGHT))
+
+  // 清理函数存储
+  const cleanupFns = []
 
   /**
    * 切换主题
    */
-  const toggleTheme = async () => {
+  const toggleTheme = () => {
     isDark.value = !isDark.value
-    const body = document.querySelector('body')
-    if (body) {
-      body.setAttribute('data-bs-theme', isDark.value ? 'dark' : 'light')
-    }
+    document.body?.setAttribute('data-bs-theme', currentTheme.value)
+    localStorage.setItem(THEME_KEY, currentTheme.value)
 
-    // 保存主题偏好
-    localStorage.setItem('sunshine-theme', isDark.value ? 'dark' : 'light')
-
-    // 向所有 iframe 发送主题变化消息
-    const iframes = document.querySelectorAll('iframe')
-    iframes.forEach((iframe) => {
-      try {
-        if (iframe.contentWindow) {
-          iframe.contentWindow.postMessage(
-            {
-              type: 'theme-sync',
-              theme: isDark.value ? 'dark' : 'light',
-            },
-            '*'
-          )
-        }
-      } catch (error) {
-        console.log('无法向 iframe 发送主题消息（跨域限制）')
-      }
-    })
-
+    postMessageToIframes({ type: 'theme-sync', theme: currentTheme.value })
     ElMessage.success(isDark.value ? '已切换到深色模式' : '已切换到浅色模式')
   }
 
@@ -66,23 +69,21 @@ export function useSidebarState() {
   }
 
   /**
-   * 打开 VDD 设置
+   * 导航方法
    */
-  const openVddSettings = () => {
-    showVddSettings.value = true
-  }
+  const openVddSettings = () => router.navigate(ROUTES.VDD_SETTINGS)
+  const openWelcome = () => router.navigate(ROUTES.WELCOME)
+  const goHome = () => router.goHome()
 
   /**
    * 忽略指定版本的更新
    */
   const skipVersion = (version) => {
-    if (version) {
-      // 规范化版本号（移除 v/V 前缀）
-      const normalizedVersion = version.replace(/^[vV]/, '')
-      skippedVersion.value = normalizedVersion
-      localStorage.setItem(SKIPPED_VERSION_KEY, normalizedVersion)
-      ElMessage.info(`已忽略版本 ${version}，下次自动检查更新时将跳过此版本`)
-    }
+    if (!version) return
+    const normalized = normalizeVersion(version)
+    skippedVersion.value = normalized
+    localStorage.setItem(SKIPPED_VERSION_KEY, normalized)
+    ElMessage.info(`已忽略版本 ${version}，下次自动检查更新时将跳过此版本`)
   }
 
   /**
@@ -90,137 +91,111 @@ export function useSidebarState() {
    */
   const isVersionSkipped = (version) => {
     if (!version || !skippedVersion.value) return false
-    const normalizedVersion = version.replace(/^[vV]/, '')
-    return normalizedVersion === skippedVersion.value
+    return normalizeVersion(version) === skippedVersion.value
+  }
+
+  /**
+   * 初始化管理员状态
+   */
+  const initAdminStatus = async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core')
+      isAdmin.value = await invoke('is_running_as_admin')
+      console.log(isAdmin.value ? '✅ 当前以管理员权限运行' : '⚠️  当前未以管理员权限运行')
+    } catch (error) {
+      console.error('检测管理员权限失败:', error)
+    }
+  }
+
+  /**
+   * 初始化主题
+   */
+  const initTheme = () => {
+    const savedTheme = localStorage.getItem(THEME_KEY)
+    if (savedTheme) {
+      isDark.value = savedTheme === THEME_DARK
+    } else {
+      isDark.value = window.matchMedia('(prefers-color-scheme: dark)').matches
+    }
+    document.body?.setAttribute('data-bs-theme', currentTheme.value)
+  }
+
+  /**
+   * 初始化窗口状态
+   */
+  const initWindowState = async () => {
+    try {
+      const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow')
+      isMaximized.value = await getCurrentWebviewWindow().isMaximized()
+    } catch (error) {
+      console.error('检测窗口状态失败:', error)
+    }
+  }
+
+  /**
+   * 初始化版本信息
+   */
+  const initVersion = async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core')
+      currentVersion.value = (await invoke('get_sunshine_version')) || 'Unknown'
+    } catch (error) {
+      console.error('获取 Sunshine 版本失败:', error)
+      currentVersion.value = 'Unknown'
+    }
+  }
+
+  /**
+   * 初始化事件监听
+   */
+  const initEventListeners = async () => {
+    // iframe 主题请求监听
+    const handleMessage = (event) => {
+      const isLocalhost = event.origin.includes('localhost') || event.origin.includes('127.0.0.1')
+      if (isLocalhost && event.data.type === 'request-theme') {
+        postMessageToIframes({ type: 'theme-sync', theme: currentTheme.value })
+      }
+    }
+    window.addEventListener('message', handleMessage)
+    cleanupFns.push(() => window.removeEventListener('message', handleMessage))
+
+    // Tauri 事件监听
+    const { listen } = await import('@tauri-apps/api/event')
+
+    const unlistenUpdate = await listen('update-available', (event) => {
+      const newVersion = event.payload?.version
+      if (!isVersionSkipped(newVersion)) {
+        updateInfo.value = event.payload
+        showUpdateDialog.value = true
+      }
+    })
+    cleanupFns.push(unlistenUpdate)
+
+    const unlistenCheckResult = await listen('update-check-result', (event) => {
+      const { is_latest, message, error } = event.payload
+      if (is_latest) {
+        ElMessage.success(message || '已是最新版本')
+      } else if (error) {
+        ElMessage.error(`检查更新失败: ${error}`)
+      }
+    })
+    cleanupFns.push(unlistenCheckResult)
   }
 
   /**
    * 初始化状态
    */
   const initState = async () => {
-    const body = document.querySelector('body')
-
-    // 检测是否以管理员权限运行
-    try {
-      const { invoke } = await import('@tauri-apps/api/core')
-      const adminStatus = await invoke('is_running_as_admin')
-      isAdmin.value = adminStatus
-      if (!adminStatus) {
-        console.log('⚠️  当前未以管理员权限运行')
-      } else {
-        console.log('✅ 当前以管理员权限运行')
-      }
-    } catch (error) {
-      console.error('检测管理员权限失败:', error)
-    }
-
-    // 首先从 localStorage 读取保存的主题
-    const savedTheme = localStorage.getItem('sunshine-theme')
-    if (savedTheme) {
-      isDark.value = savedTheme === 'dark'
-      body?.setAttribute('data-bs-theme', savedTheme)
-    } else {
-      const currentTheme = body?.getAttribute('data-bs-theme')
-      isDark.value = currentTheme === 'dark' || currentTheme === null
-
-      // 同步系统主题
-      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
-      if (!currentTheme) {
-        isDark.value = prefersDark
-        body?.setAttribute('data-bs-theme', prefersDark ? 'dark' : 'light')
-      }
-    }
-
-    // 检测窗口是否已经最大化
-    try {
-      const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow')
-      const window = getCurrentWebviewWindow()
-      isMaximized.value = await window.isMaximized()
-    } catch (error) {
-      console.error('检测窗口状态失败:', error)
-    }
-
-    // 监听来自 iframe 的主题请求
-    messageEventListener = (event) => {
-      // 安全检查：只接受来自 localhost 的消息
-      if (event.origin.includes('localhost') || event.origin.includes('127.0.0.1')) {
-        if (event.data.type === 'request-theme') {
-          // 回复当前主题
-          const iframe = document.querySelector('iframe')
-          if (iframe && iframe.contentWindow) {
-            iframe.contentWindow.postMessage(
-              {
-                type: 'theme-sync',
-                theme: isDark.value ? 'dark' : 'light',
-              },
-              '*'
-            )
-          }
-        }
-      }
-    }
-    window.addEventListener('message', messageEventListener)
-
-    // 获取当前 Sunshine 版本
-    try {
-      const { invoke } = await import('@tauri-apps/api/core')
-      const sunshineVersion = await invoke('get_sunshine_version')
-      currentVersion.value = sunshineVersion || 'Unknown'
-    } catch (error) {
-      console.error('获取 Sunshine 版本失败:', error)
-      currentVersion.value = 'Unknown'
-    }
-
-    // 监听自动更新检查事件
-    const { listen } = await import('@tauri-apps/api/event')
-    unlistenUpdateAvailable = await listen('update-available', (event) => {
-      console.log('收到更新可用事件:', event.payload)
-      const newVersion = event.payload?.version
-
-      // 检查是否是被忽略的版本
-      if (isVersionSkipped(newVersion)) {
-        console.log(`版本 ${newVersion} 已被忽略，跳过更新提示`)
-        return
-      }
-
-      updateInfo.value = event.payload
-      showUpdateDialog.value = true
-    })
-
-    // 监听更新检查结果事件（来自托盘菜单）
-    unlistenUpdateCheckResult = await listen('update-check-result', (event) => {
-      const data = event.payload
-      if (data.is_latest) {
-        ElMessage.success(data.message || '已是最新版本')
-      } else if (data.error) {
-        ElMessage.error('检查更新失败: ' + data.error)
-      }
-    })
+    await Promise.all([initAdminStatus(), initWindowState(), initVersion()])
+    initTheme()
+    await initEventListeners()
   }
 
-  // 初始化
   onMounted(initState)
 
-  // 清理资源
   onUnmounted(() => {
-    console.log('🧹 useSidebarState 清理资源')
-
-    // 清理消息监听器
-    if (messageEventListener) {
-      window.removeEventListener('message', messageEventListener)
-      messageEventListener = null
-    }
-
-    // 清理 Tauri 事件监听器
-    if (unlistenUpdateAvailable) {
-      unlistenUpdateAvailable()
-      unlistenUpdateAvailable = null
-    }
-
-    if (unlistenUpdateCheckResult) {
-      unlistenUpdateCheckResult()
-      unlistenUpdateCheckResult = null
-    }
+    cleanupFns.forEach((fn) => fn?.())
+    cleanupFns.length = 0
   })
 
   return {
@@ -230,15 +205,21 @@ export function useSidebarState() {
     isMaximized,
     isAdmin,
     showVddSettings,
+    showWelcome,
     showUpdateDialog,
     updateInfo,
     currentVersion,
     skippedVersion,
 
+    // 路由
+    router,
+
     // 方法
     toggleTheme,
     toggleCollapse,
     openVddSettings,
+    openWelcome,
+    goHome,
     skipVersion,
     isVersionSkipped,
   }

@@ -31,94 +31,30 @@
 
       <!-- 菜单列表 -->
       <el-scrollbar class="menu-scrollbar">
+        <!-- 管理菜单 -->
         <div class="menu-section">
           <p v-if="!isCollapsed" class="section-title">管理</p>
-
-          <div class="menu-item" :class="{ active: !showVddSettings }" @click="showVddSettings = false">
-            <el-icon :size="20"><Setting /></el-icon>
+          <div
+            v-for="item in managementMenuItems"
+            :key="item.label"
+            class="menu-item"
+            :class="{ active: item.isActive?.() }"
+            @click="item.action"
+          >
+            <el-icon :size="20"><component :is="item.icon" /></el-icon>
             <transition name="fade">
-              <span v-if="!isCollapsed">高级设置</span>
-            </transition>
-          </div>
-
-          <div class="menu-item" :class="{ active: showVddSettings }" @click="openVddSettings">
-            <el-icon :size="20"><Monitor /></el-icon>
-            <transition name="fade">
-              <span v-if="!isCollapsed">虚拟显示器</span>
-            </transition>
-          </div>
-
-          <div class="menu-item" @click="uninstallVdd">
-            <el-icon :size="20"><Delete /></el-icon>
-            <transition name="fade">
-              <span v-if="!isCollapsed">卸载 VDD</span>
-            </transition>
-          </div>
-
-          <div class="menu-item" @click="restartDriver">
-            <el-icon :size="20"><RefreshRight /></el-icon>
-            <transition name="fade">
-              <span v-if="!isCollapsed">重启显卡驱动</span>
-            </transition>
-          </div>
-
-          <div class="menu-item" @click="restartSunshine">
-            <el-icon :size="20"><Refresh /></el-icon>
-            <transition name="fade">
-              <span v-if="!isCollapsed">重启 Sunshine</span>
-            </transition>
-          </div>
-
-          <div class="menu-item" @click="handleCheckForUpdates">
-            <el-icon :size="20"><Download /></el-icon>
-            <transition name="fade">
-              <span v-if="!isCollapsed">检查更新</span>
+              <span v-if="!isCollapsed">{{ item.label }}</span>
             </transition>
           </div>
         </div>
 
+        <!-- 工具菜单 -->
         <div class="menu-section">
           <p v-if="!isCollapsed" class="section-title">工具</p>
-
-          <div class="menu-item" @click="openUrl('https://sunshine-foundation.vercel.app/')">
-            <el-icon :size="20"><Link /></el-icon>
+          <div v-for="item in toolsMenuItems" :key="item.label" class="menu-item" @click="item.action">
+            <el-icon :size="20"><component :is="item.icon" /></el-icon>
             <transition name="fade">
-              <span v-if="!isCollapsed">官方网站</span>
-            </transition>
-          </div>
-
-          <div class="menu-item" @click="openTimer">
-            <el-icon :size="20"><Timer /></el-icon>
-            <transition name="fade">
-              <span v-if="!isCollapsed">串流计时器</span>
-            </transition>
-          </div>
-
-          <div class="menu-item" @click="openUrl('https://yangkile.github.io/D-lay/')">
-            <el-icon :size="20"><DataLine /></el-icon>
-            <transition name="fade">
-              <span v-if="!isCollapsed">延迟测试</span>
-            </transition>
-          </div>
-
-          <div class="menu-item" @click="openUrl('https://hardwaretester.com/gamepad')">
-            <el-icon :size="20"><Cpu /></el-icon>
-            <transition name="fade">
-              <span v-if="!isCollapsed">手柄测试</span>
-            </transition>
-          </div>
-
-          <div class="menu-item" @click="openUrl('https://gcopy.rutron.net/zh')">
-            <el-icon :size="20"><CopyDocument /></el-icon>
-            <transition name="fade">
-              <span v-if="!isCollapsed">剪贴板同步</span>
-            </transition>
-          </div>
-
-          <div class="menu-item" @click="cleanupCovers">
-            <el-icon :size="20"><Delete /></el-icon>
-            <transition name="fade">
-              <span v-if="!isCollapsed">清理临时文件</span>
+              <span v-if="!isCollapsed">{{ item.label }}</span>
             </transition>
           </div>
         </div>
@@ -126,35 +62,16 @@
 
       <!-- 底部操作 -->
       <div class="sidebar-footer">
-        <!-- 主题切换 -->
-        <div class="menu-item" @click="toggleTheme">
-          <el-icon :size="20">
-            <Sunny v-if="isDark" />
-            <Moon v-else />
-          </el-icon>
+        <div
+          v-for="item in footerMenuItems"
+          :key="item.label"
+          class="menu-item"
+          :class="item.class"
+          @click="item.action"
+        >
+          <el-icon :size="20"><component :is="item.icon" /></el-icon>
           <transition name="fade">
-            <span v-if="!isCollapsed">{{ isDark ? '浅色模式' : '深色模式' }}</span>
-          </transition>
-        </div>
-
-        <div class="menu-item" @click="minimizeWindow">
-          <el-icon :size="20"><Minus /></el-icon>
-          <transition name="fade">
-            <span v-if="!isCollapsed">最小化</span>
-          </transition>
-        </div>
-
-        <div class="menu-item danger" @click="closeWindow">
-          <el-icon :size="20"><Close /></el-icon>
-          <transition name="fade">
-            <span v-if="!isCollapsed">隐藏窗口</span>
-          </transition>
-        </div>
-
-        <div v-if="!isAdmin" class="menu-item warning" @click="restartAsAdmin">
-          <el-icon :size="20"><Key /></el-icon>
-          <transition name="fade">
-            <span v-if="!isCollapsed">以管理员重启</span>
+            <span v-if="!isCollapsed">{{ item.label }}</span>
           </transition>
         </div>
       </div>
@@ -203,7 +120,14 @@
 
       <!-- 页面内容 -->
       <div class="page-content">
-        <VddSettings v-if="showVddSettings" @close="showVddSettings = false" />
+        <!-- 动态路由组件 -->
+        <VddSettings v-if="router.isRoute(ROUTES.VDD_SETTINGS)" @close="goHome" />
+        <Welcome v-if="router.isRoute(ROUTES.WELCOME)" @close="goHome" />
+
+        <!-- 默认内容 (slot) -->
+        <slot v-if="router.isRoute(ROUTES.HOME)" />
+
+        <!-- 更新对话框 -->
         <UpdateDialog
           v-if="showUpdateDialog"
           v-model="showUpdateDialog"
@@ -212,18 +136,20 @@
           @close="showUpdateDialog = false"
           @skip-version="handleSkipVersion"
         />
-        <slot v-if="!showVddSettings && !showUpdateDialog"></slot>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import VddSettings from './VddSettings.vue'
+import Welcome from './welcome.vue'
 import UpdateDialog from './UpdateDialog.vue'
 import { useSidebarState } from '../composables/useSidebarState.js'
 import { useWindowControls } from '../composables/useWindowControls.js'
 import { useTools } from '../composables/useTools.js'
+import { ROUTES } from '../composables/useRouter.js'
 import {
   Monitor,
   Delete,
@@ -237,28 +163,26 @@ import {
   Cpu,
   Minus,
   Close,
-  FullScreen,
-  DArrowLeft,
-  DArrowRight,
   Sunny,
   Moon,
   Key,
   Download,
 } from '@element-plus/icons-vue'
 
-// 使用 composables
 const {
   isCollapsed,
   isDark,
   isMaximized,
   isAdmin,
-  showVddSettings,
   showUpdateDialog,
   updateInfo,
   currentVersion,
+  router,
   toggleTheme,
   toggleCollapse,
   openVddSettings,
+  openWelcome,
+  goHome,
   skipVersion,
 } = useSidebarState()
 
@@ -274,6 +198,39 @@ const {
   restartAsAdmin,
   checkForUpdates,
 } = useTools()
+
+// 管理菜单配置
+const managementMenuItems = computed(() => [
+  { icon: Setting, label: '高级设置', action: goHome, isActive: () => router.isRoute(ROUTES.HOME) },
+  { icon: Monitor, label: '虚拟显示器', action: openVddSettings, isActive: () => router.isRoute(ROUTES.VDD_SETTINGS) },
+  { icon: Delete, label: '卸载 VDD', action: uninstallVdd },
+  { icon: RefreshRight, label: '重启显卡驱动', action: restartDriver },
+  { icon: Refresh, label: '重启 Sunshine', action: restartSunshine },
+  { icon: Download, label: '检查更新', action: handleCheckForUpdates },
+])
+
+// 工具菜单配置
+const toolsMenuItems = [
+  { icon: Link, label: '官方网站', action: () => openUrl('https://sunshine-foundation.vercel.app/') },
+  { icon: Timer, label: '串流计时器', action: openTimer },
+  { icon: DataLine, label: '延迟测试', action: () => openUrl('https://yangkile.github.io/D-lay/') },
+  { icon: Cpu, label: '手柄测试', action: () => openUrl('https://hardwaretester.com/gamepad') },
+  { icon: CopyDocument, label: '剪贴板同步', action: () => openUrl('https://gcopy.rutron.net/zh') },
+  { icon: Delete, label: '清理临时文件', action: cleanupCovers },
+]
+
+// 底部菜单配置
+const footerMenuItems = computed(() => {
+  const items = [
+    { icon: isDark.value ? Sunny : Moon, label: isDark.value ? '浅色模式' : '深色模式', action: toggleTheme },
+    { icon: Minus, label: '最小化', action: minimizeWindow },
+    { icon: Close, label: '隐藏窗口', action: closeWindow, class: 'danger' },
+  ]
+  if (!isAdmin.value) {
+    items.push({ icon: Key, label: '以管理员重启', action: restartAsAdmin, class: 'warning' })
+  }
+  return items
+})
 
 // 处理检查更新的结果
 const handleCheckForUpdates = async () => {
@@ -292,6 +249,9 @@ const handleSkipVersion = (version) => {
 // 暴露方法供父组件调用
 defineExpose({
   openVddSettings,
+  openWelcome,
+  goHome,
+  router,
 })
 </script>
 

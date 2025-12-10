@@ -1,6 +1,5 @@
 <template>
   <SidebarMenu ref="sidebarMenuRef">
-    <!-- Sunshine iframe -->
     <div class="iframe-container">
       <transition name="fade-loading">
         <div v-if="loading" class="loading-overlay">
@@ -8,7 +7,6 @@
             <img src="../public/gura-pix.png" class="loading-image" alt="Loading" />
             <div class="loading-text">
               <p>正在准备 {{ currentPath }} ...</p>
-              <!-- <p class="url-hint">{{ displayUrl }}{{ currentPath }}</p> -->
             </div>
           </div>
         </div>
@@ -32,366 +30,270 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { sunshine } from '@/tauri-adapter.js'
 import SidebarMenu from './SidebarMenu.vue'
 
+// Refs
 const loading = ref(true)
-const sunshineUrl = ref('') // 代理 URL
-const displayUrl = ref('') // 显示的实际 URL
-const currentPath = ref('/') // 当前页面路径
+const sunshineUrl = ref('')
+const currentPath = ref('/')
 const sunshineIframe = ref(null)
 const sidebarMenuRef = ref(null)
-const animationsPaused = ref(false)
 
-// 用于存储需要清理的资源
+// State
 let pollTimer = null
 let unlistenVddSettings = null
 let unlistenDragDrop = null
-let onVisibilityHandler = null
+let messageHandler = null
 
-/**
- * 切换页面动画暂停/恢复
- * 通过在 body 上添加/移除类，统一暂停 CSS 动画与过渡
- */
+// Constants
+const ALLOWED_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']
+const POLL_INTERVAL = 3000
+const LOAD_DELAY = 100
+
+// Utility functions
+const extractPathFromUrl = (url) => {
+  try {
+    const { pathname, search, hash } = new URL(url)
+    return pathname + search + hash
+  } catch {
+    return '/'
+  }
+}
+
+const isImageFile = (path) => {
+  const ext = path.toLowerCase().slice(path.lastIndexOf('.'))
+  return ALLOWED_IMAGE_EXTENSIONS.includes(ext)
+}
+
 const setAnimationsPaused = (paused) => {
-  console.log('🔄 切换页面动画暂停/恢复:', paused)
-  animationsPaused.value = paused
-  const root = document.body
-  if (!root) return
-  if (paused) {
-    root.classList.add('paused-animations')
-  } else {
-    root.classList.remove('paused-animations')
-  }
+  document.body?.classList.toggle('paused-animations', paused)
 }
 
-onUnmounted(() => {
-  console.log('🧹 组件卸载，清理资源')
-
-  // 清理轮询定时器
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
-
-  // 清理 visibilitychange 监听器
-  if (onVisibilityHandler) {
-    document.removeEventListener('visibilitychange', onVisibilityHandler)
-    onVisibilityHandler = null
-  }
-
-  // 清理 Tauri 事件监听器
-  if (unlistenVddSettings) {
-    unlistenVddSettings()
-    unlistenVddSettings = null
-  }
-
-  if (unlistenDragDrop) {
-    unlistenDragDrop()
-    unlistenDragDrop = null
-  }
-})
-
-onMounted(async () => {
+const isWelcomePath = (url) => {
+  if (!url) return false
   try {
-    // 获取代理服务器 URL（动态端口）
-    const proxyBaseUrl = await sunshine.getProxyUrl()
-    console.log('📡 代理服务器 URL:', proxyBaseUrl)
-
-    // 检查是否有命令行传递的 URL 参数（来自 --url= 参数）
-    const cmdLineUrl = await sunshine.getCommandLineUrl()
-
-    if (cmdLineUrl) {
-      // 使用命令行参数指定的 URL（通过代理）
-      console.log('✅ 使用命令行参数 URL:', cmdLineUrl)
-
-      // 提取路径部分（如 /pin）
-      let targetPath = '/'
-      try {
-        const urlObj = new URL(cmdLineUrl)
-        targetPath = urlObj.pathname + urlObj.search + urlObj.hash
-        console.log('📍 提取的路径:', targetPath)
-      } catch (e) {
-        console.warn('⚠️  URL 解析失败，使用根路径:', e)
-      }
-
-      // 设置代理 URL，包含路径
-      sunshineUrl.value = proxyBaseUrl + targetPath
-      displayUrl.value = cmdLineUrl
-      currentPath.value = targetPath
-      console.log('📡 通过本地代理访问:', sunshineUrl.value)
-    } else {
-      // 获取代理服务器 URL（支持主题同步）
-      const proxyUrl = await sunshine.getUrl()
-      sunshineUrl.value = proxyBaseUrl + '/'
-      displayUrl.value = proxyUrl // 显示实际的 Sunshine URL
-      currentPath.value = '/'
-      console.log('✅ 使用本地代理服务器（支持主题同步）')
-      console.log('📡 代理 URL:', sunshineUrl.value)
-      console.log('🎯 目标 Sunshine:', proxyUrl)
-      console.log('💡 代理将自动注入主题同步脚本和 API')
-    }
-
-    // 监听 Tauri 文件拖放事件
-    const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow')
-    const currentWindow = getCurrentWebviewWindow()
-
-    // 监听文件拖放事件
-    unlistenDragDrop = await currentWindow.onDragDropEvent((event) => {
-      console.log('🎯 Tauri 拖放事件:', event)
-
-      if (event.payload.type === 'drop') {
-        console.log('📂 拖放的文件路径:', event.payload.paths)
-        handleTauriFileDrop(event.payload.paths)
-      } else if (event.payload.type === 'over') {
-        console.log('🟢 文件悬停中')
-      }
-    })
-
-    console.log('✅ Tauri 文件拖放监听器已启用')
-
-    // 监听窗口状态变化以暂停/恢复动画
-    let lastMinimized = false
-    let lastHidden = false
-
-    // 轮询检测窗口状态（因为 WebView2 不可靠触发 visibilitychange）
-    const checkWindowState = async () => {
-      try {
-        const isMinimized = await currentWindow.isMinimized()
-        const isVisible = await currentWindow.isVisible()
-        const shouldPause = isMinimized || !isVisible
-
-        // 状态变化时才调用
-        if (isMinimized !== lastMinimized || !isVisible !== lastHidden) {
-          console.log('🔍 窗口状态变化: 最小化=', isMinimized, '可见=', isVisible)
-          lastMinimized = isMinimized
-          lastHidden = !isVisible
-          setAnimationsPaused(shouldPause)
-        }
-      } catch (e) {
-        console.warn('⚠️  检测窗口状态失败:', e)
-      }
-    }
-
-    // 启动轮询（每秒检测一次）
-    pollTimer = setInterval(checkWindowState, 3000)
-    // 立即检测一次
-    await checkWindowState()
-
-    // 文档可见性变更（辅助检测，浏览器级别）
-    onVisibilityHandler = () => {
-      console.log('📄 visibilitychange 触发, document.hidden=', document.hidden)
-      setAnimationsPaused(document.hidden)
-    }
-    document.addEventListener('visibilitychange', onVisibilityHandler)
-
-    // 监听来自 iframe 的消息
-    window.addEventListener('message', async (event) => {
-      // 处理路径更新消息
-      if (event.data && event.data.type === 'path-update') {
-        currentPath.value = event.data.path
-        return
-      }
-
-      // 处理导航开始消息
-      if (event.data && event.data.type === 'navigation-start') {
-        console.log('🔄 收到导航开始通知')
-        loading.value = true
-        // 如果消息中包含目标路径，立即更新显示
-        if (event.data.path) {
-          currentPath.value = event.data.path
-        }
-        return
-      }
-
-      // 处理恢复背景图片请求
-      if (event.data && event.data.type === 'restore-background') {
-        const path = event.data.path
-        console.log('🔄 恢复背景图片请求:', path)
-        await loadAndSetBackground(path)
-        return
-      }
-
-      // 处理 API 调用请求
-      if (event.data && event.data.type === 'tauri-invoke') {
-        const { id, command, args } = event.data
-
-        try {
-          let result
-
-          // 特殊处理：请求文件路径（打开文件对话框）
-          if (command === 'request_file_path') {
-            const { open } = await import('@tauri-apps/plugin-dialog')
-            const selected = await open({
-              title: '选择图片文件',
-              filters: [
-                {
-                  name: '图片文件',
-                  extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'],
-                },
-              ],
-              multiple: false,
-              directory: false,
-            })
-
-            if (selected) {
-              result = { path: selected }
-              console.log('✅ 用户选择文件:', selected)
-            } else {
-              result = { path: null }
-              console.log('⚠️  用户取消选择文件')
-            }
-          } else {
-            // 普通 API 调用
-            const { invoke } = await import('@tauri-apps/api/core')
-            result = await invoke(command, args)
-          }
-
-          // 返回结果给 iframe
-          const iframe = sunshineIframe.value
-          if (iframe && iframe.contentWindow) {
-            iframe.contentWindow.postMessage(
-              {
-                type: 'api-response',
-                id,
-                result,
-              },
-              '*'
-            )
-          }
-        } catch (error) {
-          // 返回错误给 iframe
-          const iframe = sunshineIframe.value
-          if (iframe && iframe.contentWindow) {
-            iframe.contentWindow.postMessage(
-              {
-                type: 'api-response',
-                id,
-                error: error.message || String(error),
-              },
-              '*'
-            )
-          }
-        }
-      }
-    })
-
-    // 监听来自托盘的VDD设置打开事件
-    unlistenVddSettings = await currentWindow.listen('open-vdd-settings', () => {
-      console.log('📱 收到托盘VDD设置事件')
-      // 通过ref调用SidebarMenu的方法打开VDD设置
-      if (sidebarMenuRef.value && sidebarMenuRef.value.openVddSettings) {
-        sidebarMenuRef.value.openVddSettings()
-      } else {
-        console.warn('⚠️  无法访问SidebarMenu的openVddSettings方法')
-      }
-    })
-
-    console.log('✅ Tauri VDD设置事件监听器已启用')
-  } catch (error) {
-    console.error('获取配置失败:', error)
-    // 尝试获取代理 URL，失败则使用默认端口
-    try {
-      const proxyBaseUrl = await sunshine.getProxyUrl()
-      sunshineUrl.value = proxyBaseUrl + '/'
-    } catch (e) {
-      sunshineUrl.value = 'http://localhost:48081/' // 降级到默认端口
-    }
+    const path = new URL(url).pathname.toLowerCase()
+    return path === '/welcome' || path.startsWith('/welcome/') || path === '/welcome.html'
+  } catch {
+    return url.includes('/welcome') || url.includes('welcome.html')
   }
-})
-
-let currentUrl = ''
-
-const onLoad = () => {
-  // 延迟隐藏 loading，确保页面渲染完成
-  setTimeout(() => {
-    loading.value = false
-    console.log('✅ Sunshine 页面加载完成')
-
-    // 更新当前 URL 和路径（用于导航检测和显示）
-    try {
-      const newUrl = iframe?.contentWindow?.location?.href
-      if (newUrl && newUrl !== 'about:blank') {
-        currentUrl = newUrl
-        // 提取路径部分
-        const urlObj = new URL(newUrl)
-        currentPath.value = urlObj.pathname + urlObj.search + urlObj.hash
-      }
-    } catch (e) {
-      // 跨域时无法读取，保持显示上次的路径
-    }
-  }, 100)
 }
 
-// 监听 iframe 内部导航
-onMounted(() => {
-  const iframe = sunshineIframe.value
-  if (!iframe) return
+const openWelcome = () => sidebarMenuRef.value?.openWelcome?.()
 
-  // 监听所有可能导致导航的事件
-  iframe.addEventListener('load', () => {
-    console.log('📄 iframe load 事件')
-  })
+// Navigation handler
+const handleNavigateFrame = (event) => {
+  const url = event.detail?.url
+  if (!url) return
 
-  // 多页应用不需要轮询检测，每次都是完整的页面加载
-  // iframe 的 load 事件会自然触发
-})
+  if (isWelcomePath(url)) {
+    console.log('🔄 拦截 welcome 页面加载，打开 Vue welcome 组件')
+    openWelcome()
+    return
+  }
 
-// ========== 加载并设置背景图片（通用函数） ==========
+  sunshineUrl.value = url
+  loading.value = true
+}
+
+// Background image handling
 const loadAndSetBackground = async (imagePath) => {
-  console.log('📖 正在加载背景图片:', imagePath)
-
   try {
-    // 使用 Rust 命令读取图片并转换为 Data URL
     const { invoke } = await import('@tauri-apps/api/core')
     const dataUrl = await invoke('read_image_as_data_url', { path: imagePath })
 
-    console.log('✅ Data URL 生成成功，长度:', dataUrl.length)
-
-    // 通知 iframe 设置背景
-    const iframe = sunshineIframe.value
-    if (iframe && iframe.contentWindow) {
-      iframe.contentWindow.postMessage(
-        {
-          type: 'set-background',
-          dataUrl: dataUrl,
-          filePath: imagePath, // 传递文件路径用于保存
-        },
-        '*'
-      )
-      console.log('✅ 已发送背景图片到 iframe')
-    }
+    sunshineIframe.value?.contentWindow?.postMessage(
+      {
+        type: 'set-background',
+        dataUrl,
+        filePath: imagePath,
+      },
+      '*'
+    )
   } catch (error) {
-    console.error('❌ 读取文件失败:', error)
+    console.error('❌ 读取背景图片失败:', error)
   }
 }
 
-// ========== Tauri 文件拖放处理 ==========
 const handleTauriFileDrop = async (paths) => {
-  if (!paths || paths.length === 0) {
-    console.warn('⚠️  没有拖放文件')
-    return
+  const imagePath = paths?.find(isImageFile)
+  if (imagePath) await loadAndSetBackground(imagePath)
+}
+
+// Message handling
+const createMessageHandler = () => {
+  const handlers = {
+    'path-update': (data) => {
+      currentPath.value = data.path
+    },
+    'navigation-start': (data) => {
+      if (data.path) {
+        if (isWelcomePath(data.path) || data.path.toLowerCase().includes('welcome')) {
+          console.log('🔄 拦截导航到 welcome 页面，打开 Vue welcome 组件')
+          openWelcome()
+          return
+        }
+        currentPath.value = data.path
+      }
+      loading.value = true
+    },
+    'restore-background': (data) => loadAndSetBackground(data.path),
+    'tauri-invoke': (data) => handleTauriInvoke(data),
   }
 
-  console.log('📂 处理拖放的文件:', paths)
+  return async (event) => {
+    const { data } = event
+    if (data?.type && handlers[data.type]) {
+      await handlers[data.type](data)
+    }
+  }
+}
 
-  // 查找图片文件
-  const allowedExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.webp']
-  let imagePath = null
+const handleTauriInvoke = async ({ id, command, args }) => {
+  const contentWindow = sunshineIframe.value?.contentWindow
+  if (!contentWindow) return
 
-  for (const path of paths) {
-    const ext = path.toLowerCase().substring(path.lastIndexOf('.'))
-    console.log('📄 文件:', path, '扩展名:', ext)
-    if (allowedExtensions.includes(ext)) {
-      imagePath = path
-      break
+  const sendResponse = (payload) => {
+    contentWindow.postMessage({ type: 'api-response', id, ...payload }, '*')
+  }
+
+  try {
+    let result
+    if (command === 'request_file_path') {
+      const { open } = await import('@tauri-apps/plugin-dialog')
+      const selected = await open({
+        title: '选择图片文件',
+        filters: [{ name: '图片文件', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'] }],
+        multiple: false,
+        directory: false,
+      })
+      result = { path: selected || null }
+    } else {
+      const { invoke } = await import('@tauri-apps/api/core')
+      result = await invoke(command, args)
+    }
+    sendResponse({ result })
+  } catch (error) {
+    sendResponse({ error: error.message || String(error) })
+  }
+}
+
+// Window state monitoring
+const setupWindowStateMonitor = async (currentWindow) => {
+  let lastMinimized = false
+  let lastHidden = false
+
+  const checkWindowState = async () => {
+    try {
+      const [isMinimized, isVisible] = await Promise.all([currentWindow.isMinimized(), currentWindow.isVisible()])
+
+      if (isMinimized !== lastMinimized || !isVisible !== lastHidden) {
+        lastMinimized = isMinimized
+        lastHidden = !isVisible
+        setAnimationsPaused(isMinimized || !isVisible)
+      }
+    } catch (e) {
+      console.warn('⚠️ 检测窗口状态失败:', e)
     }
   }
 
-  if (!imagePath) {
-    console.warn('⚠️  没有找到支持的图片格式')
-    return
-  }
+  pollTimer = setInterval(checkWindowState, POLL_INTERVAL)
+  await checkWindowState()
 
-  console.log('✅ 找到图片文件:', imagePath)
-  await loadAndSetBackground(imagePath)
+  const visibilityHandler = () => setAnimationsPaused(document.hidden)
+  document.addEventListener('visibilitychange', visibilityHandler)
+
+  return visibilityHandler
+}
+
+// Lifecycle
+onUnmounted(() => {
+  window.removeEventListener('navigate-frame', handleNavigateFrame)
+  if (messageHandler) window.removeEventListener('message', messageHandler)
+  if (pollTimer) clearInterval(pollTimer)
+  unlistenVddSettings?.()
+  unlistenDragDrop?.()
+})
+
+onMounted(async () => {
+  window.addEventListener('navigate-frame', handleNavigateFrame)
+
+  try {
+    const proxyBaseUrl = await sunshine.getProxyUrl()
+    const cmdLineUrl = await sunshine.getCommandLineUrl()
+
+    if (cmdLineUrl) {
+      const targetPath = extractPathFromUrl(cmdLineUrl)
+      const fullUrl = proxyBaseUrl + targetPath
+
+      if (isWelcomePath(fullUrl)) {
+        console.log('🔄 启动时检测到 welcome 页面，打开 Vue welcome 组件')
+        openWelcome()
+        sunshineUrl.value = 'about:blank'
+        currentPath.value = '/'
+        loading.value = false
+        return
+      }
+
+      sunshineUrl.value = fullUrl
+      currentPath.value = targetPath
+    } else {
+      sunshineUrl.value = proxyBaseUrl + '/'
+      currentPath.value = '/'
+    }
+
+    messageHandler = createMessageHandler()
+    window.addEventListener('message', messageHandler)
+
+    const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow')
+    const currentWindow = getCurrentWebviewWindow()
+
+    unlistenDragDrop = await currentWindow.onDragDropEvent((event) => {
+      if (event.payload.type === 'drop') {
+        handleTauriFileDrop(event.payload.paths)
+      }
+    })
+
+    await setupWindowStateMonitor(currentWindow)
+
+    unlistenVddSettings = await currentWindow.listen('open-vdd-settings', () => {
+      sidebarMenuRef.value?.openVddSettings?.()
+    })
+
+    await currentWindow.listen('open-welcome', openWelcome)
+  } catch (error) {
+    console.error('初始化失败:', error)
+    try {
+      sunshineUrl.value = (await sunshine.getProxyUrl()) + '/'
+    } catch {
+      sunshineUrl.value = 'http://localhost:48081/'
+    }
+  }
+})
+
+const onLoad = () => {
+  setTimeout(() => {
+    try {
+      const iframe = sunshineIframe.value
+      const newUrl = iframe?.contentWindow?.location?.href
+
+      if (newUrl && newUrl !== 'about:blank') {
+        const path = extractPathFromUrl(newUrl)
+
+        if (isWelcomePath(newUrl) || path.toLowerCase().includes('welcome')) {
+          console.log('🔄 检测到 welcome 页面加载，拦截并打开 Vue welcome 组件')
+          openWelcome()
+          if (iframe) iframe.src = 'about:blank'
+          loading.value = true
+          return
+        }
+
+        currentPath.value = path
+      }
+    } catch {
+      // 跨域时无法读取，保持当前路径
+    }
+
+    loading.value = false
+  }, LOAD_DELAY)
 }
 </script>
 
@@ -414,10 +316,7 @@ const handleTauriFileDrop = async (paths) => {
 
 .loading-overlay {
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  inset: 0;
   background: linear-gradient(135deg, @morandi-dark-bg 0%, @morandi-mid-bg 100%);
   display: flex;
   align-items: center;
@@ -432,7 +331,6 @@ const handleTauriFileDrop = async (paths) => {
   max-width: 400px;
 }
 
-// 复用 placeholder 的 Gura 动画
 .loading-image {
   width: 60%;
   max-width: 180px;
@@ -491,17 +389,6 @@ const handleTauriFileDrop = async (paths) => {
   }
 }
 
-.url-hint {
-  font-size: 12px;
-  color: @morandi-yellow;
-  opacity: 0.5;
-  margin-top: 12px;
-  font-family: 'Courier New', monospace;
-  transform: skew(0deg);
-  letter-spacing: normal;
-}
-
-// 淡入淡出过渡
 .fade-loading-enter-active,
 .fade-loading-leave-active {
   transition: opacity 0.3s ease;
@@ -512,7 +399,6 @@ const handleTauriFileDrop = async (paths) => {
   opacity: 0;
 }
 
-// ========== 亮色模式适配（Gura 蓝色主题）==========
 body[data-bs-theme='light'] {
   .loading-overlay {
     background: linear-gradient(135deg, @gura-bg-light 0%, @gura-bg-mid 100%);
@@ -526,15 +412,10 @@ body[data-bs-theme='light'] {
     color: @gura-blue;
     text-shadow: 1px 1px 3px rgba(74, 158, 255, 0.2);
   }
-
-  .url-hint {
-    color: @gura-light-blue;
-  }
 }
 </style>
 
 <style>
-/* 全局：当 body 具有 paused-animations 类时，暂停所有动画与过渡 */
 .paused-animations *,
 .paused-animations *::before,
 .paused-animations *::after {

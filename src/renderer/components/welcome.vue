@@ -1,5 +1,5 @@
 <template>
-  <div class="welcome-page" :data-theme="currentTheme">
+  <div class="welcome-page">
     <div class="language-selector">
       <select v-model="currentLocale" @change="handleLocaleChange">
         <option v-for="loc in supportedLocales" :key="loc.code" :value="loc.code">
@@ -82,14 +82,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { supportedLocales, setLocale as setI18nLocale, getDefaultLocale } from '../../i18n/index.js'
 import { sunshine } from '../tauri-adapter.js'
 
 const REDIRECT_DELAY = 2000
 
-const emit = defineEmits(['close'])
 const { t, locale } = useI18n()
 
 const currentLocale = ref(locale.value)
@@ -97,7 +96,6 @@ const formData = ref({ username: 'sunshine', password: '', confirmPassword: '' }
 const loading = ref(false)
 const errorMessage = ref('')
 const successMessage = ref('')
-const currentTheme = ref('light')
 
 const passwordsMatch = computed(() => {
   const { password, confirmPassword } = formData.value
@@ -105,15 +103,18 @@ const passwordsMatch = computed(() => {
 })
 
 const showPasswordError = computed(() => !passwordsMatch.value && formData.value.confirmPassword)
-const showPasswordSuccess = computed(
-  () => passwordsMatch.value && formData.value.confirmPassword && formData.value.password
+
+const showPasswordSuccess = computed(() => 
+  passwordsMatch.value && formData.value.confirmPassword && formData.value.password
 )
+
 const isFormValid = computed(() => {
   const { username, password, confirmPassword } = formData.value
   return username && password && confirmPassword && passwordsMatch.value
 })
 
-watch(locale, (val) => (currentLocale.value = val))
+watch(locale, (val) => { currentLocale.value = val })
+
 watch(currentLocale, (val) => {
   if (locale.value !== val) {
     setI18nLocale(val)
@@ -145,7 +146,11 @@ const handleSubmit = async () => {
     const response = await fetch(`${proxyUrl}/api/password`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ newUsername: username, newPassword: password, confirmNewPassword: confirmPassword }),
+      body: JSON.stringify({ 
+        newUsername: username, 
+        newPassword: password, 
+        confirmNewPassword: confirmPassword 
+      }),
     })
 
     const result = await response.json()
@@ -166,48 +171,10 @@ const handleSubmit = async () => {
   }
 }
 
-const getCurrentTheme = () => {
-  const savedTheme = localStorage.getItem('sunshine-theme')
-  return savedTheme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-}
-
-const updateTheme = () => {
-  currentTheme.value = getCurrentTheme()
-}
-
-let themeObserver = null
-let themeMediaQuery = null
-let themeChangeHandler = null
-
 onMounted(() => {
   const defaultLocale = getDefaultLocale()
   currentLocale.value = defaultLocale
   setI18nLocale(defaultLocale)
-
-  updateTheme()
-
-  themeObserver = new MutationObserver(updateTheme)
-  if (document.body) {
-    themeObserver.observe(document.body, {
-      attributes: true,
-      attributeFilter: ['data-bs-theme'],
-    })
-  }
-
-  themeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-  themeChangeHandler = () => {
-    if (!localStorage.getItem('sunshine-theme')) {
-      updateTheme()
-    }
-  }
-  themeMediaQuery.addEventListener('change', themeChangeHandler)
-})
-
-onUnmounted(() => {
-  themeObserver?.disconnect()
-  if (themeMediaQuery && themeChangeHandler) {
-    themeMediaQuery.removeEventListener('change', themeChangeHandler)
-  }
 })
 </script>
 
@@ -241,7 +208,6 @@ onUnmounted(() => {
 // Mixins
 .pixel-rendering() {
   image-rendering: pixelated;
-  image-rendering: -moz-crisp-edges;
   image-rendering: crisp-edges;
 }
 
@@ -285,19 +251,10 @@ onUnmounted(() => {
 }
 
 @keyframes gura-float {
-  0%,
-  100% {
-    transform: translateY(0) rotate(0deg);
-  }
-  25% {
-    transform: translateY(-10px) rotate(2deg);
-  }
-  50% {
-    transform: translateY(-5px) rotate(-2deg);
-  }
-  75% {
-    transform: translateY(-8px) rotate(1deg);
-  }
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  25% { transform: translateY(-10px) rotate(2deg); }
+  50% { transform: translateY(-5px) rotate(-2deg); }
+  75% { transform: translateY(-8px) rotate(1deg); }
 }
 
 .welcome-title {
@@ -399,16 +356,9 @@ input {
 }
 
 @keyframes shake {
-  0%,
-  100% {
-    transform: translateX(0);
-  }
-  25% {
-    transform: translateX(-4px);
-  }
-  75% {
-    transform: translateX(4px);
-  }
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
 }
 
 .error-message,
@@ -493,9 +443,7 @@ input {
 }
 
 @keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+  to { transform: rotate(360deg); }
 }
 
 .message {
@@ -554,7 +502,7 @@ input {
 }
 
 // Dark theme
-.welcome-page[data-theme='dark'] {
+[data-bs-theme='dark'] .welcome-page {
   background: linear-gradient(135deg, @dark-bg 0%, @dark-bg-mid 50%, #4a3f42 100%);
 
   .welcome-image {

@@ -74,15 +74,15 @@
         }
       }
       /* 深色模式适配*/
-      body[data-bs-theme='dark'] {
+      [data-bs-theme='dark'] {
         background: linear-gradient(135deg, #2d2628 0%, #3d3235 100%);
       }
 
-      body[data-bs-theme='dark'] .placeholder-image {
+      [data-bs-theme='dark'] .placeholder-image {
         filter: drop-shadow(0 4px 12px rgba(212, 165, 165, 0.3));
       }
 
-      body[data-bs-theme='dark'] .placeholder-text {
+      [data-bs-theme='dark'] .placeholder-text {
         color: #e6d5b8;
         text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.4);
       }
@@ -91,14 +91,14 @@
   <body>
     <script>
       // 立即设置主题，避免闪烁
-      (function() {
+      ;(function () {
         const savedTheme = localStorage.getItem('sunshine-theme')
         if (savedTheme) {
-          document.body.setAttribute('data-bs-theme', savedTheme)
+          document.documentElement.setAttribute('data-bs-theme', savedTheme)
         } else {
           // 如果没有保存的主题，使用系统偏好
           const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
-          document.body.setAttribute('data-bs-theme', prefersDark ? 'dark' : 'light')
+          document.documentElement.setAttribute('data-bs-theme', prefersDark ? 'dark' : 'light')
         }
       })()
     </script>
@@ -106,12 +106,12 @@
       <img src="./public/gura-pix.png" class="placeholder-image" alt="加载指示" />
       <div class="placeholder-text">
         <p>正在连接 Sunshine...</p>
-        <p style="font-size: 14px; opacity: 0.7; margin-top: 10px;">
+        <p style="font-size: 14px; opacity: 0.7; margin-top: 10px">
           長時間応答がない場合は、サービスが正常に起動しているかご確認ください
         </p>
       </div>
     </div>
-    
+
     <!-- Tauri 自动加载脚本 -->
     <script type="module" src="./placeholder-loader.js"></script>
   </body>

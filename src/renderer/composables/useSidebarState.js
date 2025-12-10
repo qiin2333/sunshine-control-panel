@@ -54,7 +54,7 @@ export function useSidebarState() {
    */
   const toggleTheme = () => {
     isDark.value = !isDark.value
-    document.body?.setAttribute('data-bs-theme', currentTheme.value)
+    document.documentElement?.setAttribute('data-bs-theme', currentTheme.value)
     localStorage.setItem(THEME_KEY, currentTheme.value)
 
     postMessageToIframes({ type: 'theme-sync', theme: currentTheme.value })
@@ -117,7 +117,7 @@ export function useSidebarState() {
     } else {
       isDark.value = window.matchMedia('(prefers-color-scheme: dark)').matches
     }
-    document.body?.setAttribute('data-bs-theme', currentTheme.value)
+    document.documentElement?.setAttribute('data-bs-theme', currentTheme.value)
   }
 
   /**

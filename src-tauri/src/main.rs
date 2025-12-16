@@ -89,6 +89,8 @@ fn main() {
             fs_utils::resolve_lnk_target,
             fs_utils::scan_directory_for_apps,
             update::check_for_updates,
+            update::get_include_prerelease_preference,
+            update::set_include_prerelease_preference,
             update::download_update,
             update::install_update,
             logger::get_all_logs,

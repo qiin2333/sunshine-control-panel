@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH, Duration};
-use tauri::{AppHandle, Manager, Emitter};
+use tauri::{AppHandle, Manager, Emitter, Runtime};
 use log::{info, warn, error, debug};
 
 // ========== 常量定义 ==========
@@ -63,6 +63,7 @@ struct GitHubAsset {
 #[derive(Default)]
 pub struct UpdatePreferences {
     pub last_check_time: u64,
+    pub include_prerelease: bool,
 }
 
 // ========== 版本相关 ==========
@@ -274,8 +275,8 @@ fn create_update_info(release: &GitHubRelease) -> UpdateInfo {
 }
 
 /// 检查更新（内部函数）
-pub async fn check_for_updates_internal(show_notification: bool) -> Result<Option<UpdateInfo>, String> {
-    info!("🔍 开始检查更新...");
+pub async fn check_for_updates_internal(show_notification: bool, include_prerelease: bool) -> Result<Option<UpdateInfo>, String> {
+    info!("🔍 开始检查更新... (包含预发布版本: {})", include_prerelease);
     
     // 获取当前 Sunshine 版本
     let current_version = match get_current_sunshine_version().await {
@@ -292,9 +293,6 @@ pub async fn check_for_updates_internal(show_notification: bool) -> Result<Optio
     if releases.is_empty() {
         return Err("未找到任何发布版本".to_string());
     }
-    
-    // 默认包含预发布版本
-    let include_prerelease = true;
     
     // 查找最新的可用发布版本
     let release = find_latest_release(&releases, include_prerelease)
@@ -344,10 +342,39 @@ fn save_last_check_time(app: &AppHandle) {
     }
 }
 
+/// 获取是否包含预发布版本的偏好
+pub(crate) fn get_include_prerelease<R: Runtime>(app: &AppHandle<R>) -> bool {
+    app.try_state::<Arc<Mutex<UpdatePreferences>>>()
+        .map(|prefs| prefs.lock().unwrap().include_prerelease)
+        .unwrap_or(false)
+}
+
+/// 设置是否包含预发布版本的偏好
+fn set_include_prerelease<R: Runtime>(app: &AppHandle<R>, include: bool) {
+    if let Some(prefs) = app.try_state::<Arc<Mutex<UpdatePreferences>>>() {
+        let mut prefs = prefs.lock().unwrap();
+        prefs.include_prerelease = include;
+        info!("📝 更新偏好设置: 包含预发布版本 = {}", include);
+    }
+}
+
+/// Tauri命令：获取是否包含预发布版本的偏好
+#[tauri::command]
+pub fn get_include_prerelease_preference(app: AppHandle) -> bool {
+    get_include_prerelease(&app)
+}
+
+/// Tauri命令：设置是否包含预发布版本的偏好
+#[tauri::command]
+pub fn set_include_prerelease_preference(app: AppHandle, include: bool) {
+    set_include_prerelease(&app, include);
+}
+
 /// Tauri命令：手动检查更新
 #[tauri::command]
 pub async fn check_for_updates(app: AppHandle) -> Result<Option<UpdateInfo>, String> {
-    let result = check_for_updates_internal(true).await;
+    let include_prerelease = get_include_prerelease(&app);
+    let result = check_for_updates_internal(true, include_prerelease).await;
     save_last_check_time(&app);
     
     match result {
@@ -396,8 +423,9 @@ pub fn check_for_updates_on_startup(app: AppHandle) {
     
     debug!("⏰ 距离上次检查已超过4小时，自动检查更新...");
     let app_clone = app.clone();
+    let include_prerelease = get_include_prerelease(&app);
     tauri::async_runtime::spawn(async move {
-        let result = check_for_updates_internal(false).await;
+        let result = check_for_updates_internal(false, include_prerelease).await;
         handle_auto_check_result(&app_clone, result);
     });
 }
@@ -660,6 +688,8 @@ pub async fn download_update(
 ) -> Result<serde_json::Value, String> {
     info!("📥 开始下载更新: {}", filename);
 
+    cleanup_old_installers();
+
     let download_dir = std::env::temp_dir();
     let file_path = download_dir.join(&filename);
 
@@ -780,12 +810,69 @@ pub async fn install_update(file_path: String, app_handle: AppHandle) -> Result<
     }
 }
 
-// ========== 模块初始化 ==========
+/// 清理临时目录中的旧安装包
+fn cleanup_old_installers() {
+    let temp_dir = std::env::temp_dir();
+    
+    info!("🧹 检查并清理临时目录中的旧安装包...");
+    
+    let entries = match std::fs::read_dir(&temp_dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            warn!("⚠️ 无法读取临时目录: {}", e);
+            return;
+        }
+    };
+    
+    let cleaned_count = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let ext = path.extension()?.to_str()?.to_lowercase();
+            
+            if !matches!(ext.as_str(), "msi" | "exe") {
+                return None;
+            }
+            
+            let file_name = path.file_name()?.to_str()?;
+            let file_name_lower = file_name.to_lowercase();
+            
+            // 检查是否包含 sunshine 相关关键词
+            let is_sunshine_installer = file_name_lower.contains("sunshine")
+                || file_name_lower.starts_with("sunshine-");
+            
+            if !is_sunshine_installer {
+                return None;
+            }
+            
+            match std::fs::remove_file(&path) {
+                Ok(_) => {
+                    info!("✅ 已删除旧安装包: {}", file_name);
+                    Some(())
+                }
+                Err(e) => {
+                    debug!("⚠️ 无法删除 {}: {} (可能正在使用中)", file_name, e);
+                    None
+                }
+            }
+        })
+        .count();
+    
+    if cleaned_count > 0 {
+        info!("✅ 清理完成，共删除 {} 个旧安装包", cleaned_count);
+    } else {
+        debug!("✅ 未发现需要清理的旧安装包");
+    }
+}
 
 /// 初始化更新检查模块
 pub fn init_update_checker(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let prefs = Arc::new(Mutex::new(UpdatePreferences::default()));
     app.manage(prefs);
+    
+    // 在启动时清理旧的安装包（在检查更新之前）
+    cleanup_old_installers();
+    
     check_for_updates_on_startup(app.clone());
     Ok(())
 }

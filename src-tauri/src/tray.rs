@@ -187,8 +187,9 @@ fn check_for_updates<R: Runtime>(app: &AppHandle<R>) {
         windows::show_and_activate_window(&window);
     }
     
+    let include_prerelease = update::get_include_prerelease(app);
     tauri::async_runtime::spawn(async move {
-        match update::check_for_updates_internal(false).await {
+        match update::check_for_updates_internal(false, include_prerelease).await {
             Ok(Some(update_info)) => {
                 info!("🎉 发现新版本: {}", update_info.version);
                 save_update_check_time(&app_handle);

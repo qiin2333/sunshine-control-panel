@@ -210,7 +210,7 @@
   align-items: center;
   gap: 12px;
   padding: 12px 16px;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   border-radius: @border-radius;
   color: @morandi-yellow;
   cursor: pointer;
@@ -295,6 +295,52 @@
     font-size: 14px;
     font-weight: 500;
     white-space: nowrap;
+    transition: opacity @transition-smooth;
+  }
+}
+
+.sidebar.collapsed {
+  .menu-item span {
+    opacity: 0;
+  }
+}
+
+// ========== 更新菜单项（带内测开关） ==========
+.menu-item-switch {
+  .update-item-content {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    gap: 8px;
+    flex: 1;
+
+    span {
+      flex: 1;
+    }
+  }
+
+  :deep(.el-switch) {
+    flex-shrink: 0;
+    height: 18px;
+
+    .el-switch__label {
+      font-size: 11px;
+      color: @morandi-yellow;
+      transform: scale(0.8) translateX(-10px);
+      transition: color @transition-smooth;
+    }
+
+    &.is-checked {
+      .el-switch__label {
+        color: @morandi-yellow;
+      }
+
+      .el-switch__core {
+        background-color: @morandi-yellow;
+        border-color: @morandi-yellow;
+      }
+    }
   }
 }
 
@@ -548,6 +594,23 @@
 
       &:hover {
         background: rgba(122, 184, 255, 0.2);
+      }
+    }
+
+    :deep(.el-switch) {
+      .el-switch__label {
+        color: @gura-accent;
+      }
+
+      &.is-checked {
+        .el-switch__label {
+          color: @gura-blue;
+        }
+
+        .el-switch__core {
+          background-color: @gura-blue;
+          border-color: @gura-blue;
+        }
       }
     }
   }

@@ -23,7 +23,7 @@ a {
   color: @primary-color;
   text-decoration: none;
   transition: color @transition-normal;
-  
+
   &:hover {
     color: @primary-hover;
   }
@@ -70,7 +70,7 @@ button {
   font-family: inherit;
   font-size: inherit;
   transition: all @transition-normal;
-  
+
   &:focus {
     outline: 2px solid @primary-color;
     outline-offset: 2px;
@@ -85,7 +85,7 @@ input, textarea, select {
   border-radius: @border-radius-sm;
   padding: @spacing-xs @spacing-sm;
   transition: border-color @transition-normal;
-  
+
   &:focus {
     outline: none;
     border-color: @primary-color;
@@ -113,7 +113,7 @@ img {
 ::-webkit-scrollbar-thumb {
   background: @border-color;
   border-radius: 4px;
-  
+
   &:hover {
     background: @text-secondary;
   }
@@ -125,7 +125,7 @@ img {
   color: @text-primary;
 }
 
-// 工具类
+// 工具类 - 屏幕阅读器
 .sr-only {
   position: absolute;
   width: 1px;
@@ -138,56 +138,45 @@ img {
   border: 0;
 }
 
+// 工具类 - 文本对齐
 .text-center { text-align: center; }
 .text-left { text-align: left; }
 .text-right { text-align: right; }
 
+// 工具类 - 字重
 .font-bold { font-weight: @font-weight-bold; }
 .font-semibold { font-weight: @font-weight-semibold; }
 .font-medium { font-weight: @font-weight-medium; }
 .font-normal { font-weight: @font-weight-normal; }
 
+// 工具类 - 颜色
 .text-primary { color: @primary-color; }
 .text-secondary { color: @text-secondary; }
 .text-muted { color: @text-muted; }
-
 .bg-primary { background-color: @primary-color; }
 .bg-secondary { background-color: @background-secondary; }
 
+// 工具类 - 圆角
 .rounded { border-radius: @border-radius-sm; }
 .rounded-md { border-radius: @border-radius-md; }
 .rounded-lg { border-radius: @border-radius-lg; }
 
+// 工具类 - 阴影
 .shadow { box-shadow: @shadow-sm; }
 .shadow-md { box-shadow: @shadow-md; }
 .shadow-lg { box-shadow: @shadow-lg; }
 
 // 动画类
-.fade-in {
-  .fade-in();
-}
-
-.slide-up {
-  .slide-up();
-}
+.fade-in { .fade-in(); }
+.slide-up { .slide-up(); }
 
 // 响应式工具类
 @media (max-width: @breakpoint-md) {
-  .hide-mobile {
-    display: none !important;
-  }
-  
-  .show-mobile {
-    display: block !important;
-  }
+  .hide-mobile { display: none !important; }
+  .show-mobile { display: block !important; }
 }
 
 @media (min-width: @breakpoint-md) {
-  .hide-desktop {
-    display: none !important;
-  }
-  
-  .show-desktop {
-    display: block !important;
-  }
+  .hide-desktop { display: none !important; }
+  .show-desktop { display: block !important; }
 }

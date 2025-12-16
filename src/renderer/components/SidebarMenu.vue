@@ -31,19 +31,31 @@
 
       <!-- 菜单列表 -->
       <el-scrollbar class="menu-scrollbar">
-        <!-- 管理菜单 -->
         <div class="menu-section">
           <p v-if="!isCollapsed" class="section-title">管理</p>
           <div
             v-for="item in managementMenuItems"
             :key="item.label"
             class="menu-item"
-            :class="{ active: item.isActive?.() }"
-            @click="item.action"
+            :class="[{ active: item.isActive?.() }, { 'menu-item-switch': item.hasSwitch }]"
+            @click.stop="item.action"
           >
             <el-icon :size="20"><component :is="item.icon" /></el-icon>
             <transition name="fade">
-              <span v-if="!isCollapsed">{{ item.label }}</span>
+              <template v-if="!isCollapsed">
+                <div v-if="item.hasSwitch" class="update-item-content">
+                  <span>{{ item.label }}</span>
+                  <el-switch
+                    v-model="includePrerelease"
+                    size="small"
+                    active-text="Beta"
+                    @change="handlePrereleaseToggle"
+                    @click.stop
+                  />
+                </div>
+                <span v-else>{{ item.label }}</span>
+              </template>
+              <span v-else>{{ item.label }}</span>
             </transition>
           </div>
         </div>
@@ -93,18 +105,9 @@
         <el-tooltip :content="isMaximized ? '还原' : '最大化'" placement="bottom">
           <div class="control-btn maximize" @click="toggleMaximize">
             <img
-              v-if="isMaximized"
-              class="control-icon"
-              src="../public/icons/btn-restore-buoy.svg"
-              alt="还原"
-              width="20"
-              height="20"
-            />
-            <img
-              v-else
-              class="control-icon"
-              src="../public/icons/btn-maximize-buoy.svg"
-              alt="最大化"
+              :class="['control-icon']"
+              :src="isMaximized ? '../public/icons/btn-restore-buoy.svg' : '../public/icons/btn-maximize-buoy.svg'"
+              :alt="isMaximized ? '还原' : '最大化'"
               width="20"
               height="20"
             />
@@ -142,7 +145,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import VddSettings from './VddSettings.vue'
 import Welcome from './welcome.vue'
 import UpdateDialog from './UpdateDialog.vue'
@@ -169,6 +172,7 @@ import {
   Download,
 } from '@element-plus/icons-vue'
 
+// Composables
 const {
   isCollapsed,
   isDark,
@@ -199,17 +203,46 @@ const {
   checkForUpdates,
 } = useTools()
 
-// 管理菜单配置
+const includePrerelease = ref(false)
+
+onMounted(async () => {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    includePrerelease.value = await invoke('get_include_prerelease_preference')
+  } catch (error) {
+    console.error('加载内测偏好设置失败:', error)
+  }
+})
+
+const handlePrereleaseToggle = async (value) => {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('set_include_prerelease_preference', { include: value })
+  } catch (error) {
+    console.error('保存内测偏好设置失败:', error)
+  }
+}
+
+const handleCheckForUpdates = async () => {
+  const result = await checkForUpdates()
+  if (result) {
+    updateInfo.value = result
+    showUpdateDialog.value = true
+  }
+}
+
+const handleSkipVersion = (version) => skipVersion(version)
+
+// 菜单配置
 const managementMenuItems = computed(() => [
   { icon: Setting, label: '高级设置', action: goHome, isActive: () => router.isRoute(ROUTES.HOME) },
   { icon: Monitor, label: '虚拟显示器', action: openVddSettings, isActive: () => router.isRoute(ROUTES.VDD_SETTINGS) },
   { icon: Delete, label: '卸载 VDD', action: uninstallVdd },
   { icon: RefreshRight, label: '重启显卡驱动', action: restartDriver },
   { icon: Refresh, label: '重启 Sunshine', action: restartSunshine },
-  { icon: Download, label: '检查更新', action: handleCheckForUpdates },
+  { icon: Download, label: '检查更新', action: handleCheckForUpdates, hasSwitch: true },
 ])
 
-// 工具菜单配置
 const toolsMenuItems = [
   { icon: Link, label: '官方网站', action: () => openUrl('https://sunshine-foundation.vercel.app/') },
   { icon: Timer, label: '串流计时器', action: openTimer },
@@ -219,7 +252,6 @@ const toolsMenuItems = [
   { icon: Delete, label: '清理临时文件', action: cleanupCovers },
 ]
 
-// 底部菜单配置
 const footerMenuItems = computed(() => {
   const items = [
     { icon: isDark.value ? Sunny : Moon, label: isDark.value ? '浅色模式' : '深色模式', action: toggleTheme },
@@ -231,20 +263,6 @@ const footerMenuItems = computed(() => {
   }
   return items
 })
-
-// 处理检查更新的结果
-const handleCheckForUpdates = async () => {
-  const result = await checkForUpdates()
-  if (result) {
-    updateInfo.value = result
-    showUpdateDialog.value = true
-  }
-}
-
-// 处理忽略版本
-const handleSkipVersion = (version) => {
-  skipVersion(version)
-}
 
 // 暴露方法供父组件调用
 defineExpose({

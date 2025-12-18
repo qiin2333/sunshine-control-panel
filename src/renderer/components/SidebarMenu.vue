@@ -105,9 +105,18 @@
         <el-tooltip :content="isMaximized ? '还原' : '最大化'" placement="bottom">
           <div class="control-btn maximize" @click="toggleMaximize">
             <img
-              :class="['control-icon']"
-              :src="isMaximized ? '../public/icons/btn-restore-buoy.svg' : '../public/icons/btn-maximize-buoy.svg'"
-              :alt="isMaximized ? '还原' : '最大化'"
+              v-if="isMaximized"
+              class="control-icon"
+              src="../public/icons/btn-restore-buoy.svg"
+              alt="还原"
+              width="20"
+              height="20"
+            />
+            <img
+              v-else
+              class="control-icon"
+              src="../public/icons/btn-maximize-buoy.svg"
+              alt="最大化"
               width="20"
               height="20"
             />

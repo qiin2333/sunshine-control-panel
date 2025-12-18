@@ -1,6 +1,6 @@
 [package]
 name = "sunshine-gui"
-version = "0.2.7"
+version = "0.2.8"
 description = "A GUI for sunshine"
 authors = ["qiin2333"]
 license = ""

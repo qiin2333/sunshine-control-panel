@@ -142,6 +142,69 @@ pub async fn restart_sunshine_service() -> Result<String, String> {
     }
 }
 
+/// 以用户模式重启 Sunshine（非服务模式，但需要管理员权限）
+#[tauri::command]
+pub async fn restart_sunshine_in_user_mode() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        
+        info!("🔄 开始以用户模式重启 Sunshine（管理员权限）...");
+        
+        // 从注册表动态获取 Sunshine 安装路径
+        let sunshine_path = std::path::PathBuf::from(sunshine::get_sunshine_install_path());
+        let sunshine_exe = sunshine_path.join("sunshine.exe");
+        
+        if !sunshine_exe.exists() {
+            return Err(format!("找不到 sunshine.exe: {}", sunshine_exe.display()));
+        }
+        
+        // 构建重启命令
+        // 1. 停止旧的服务（SunshineService 和 sunshineservice）
+        // 2. 强制结束所有 Sunshine 进程（忽略错误）
+        // 3. 等待1秒确保进程完全退出
+        // 4. 以用户模式启动 sunshine.exe（需要管理员权限，但不显示窗口）
+        let command = format!(
+            "net stop SunshineService 2>$null; \
+             net stop sunshineservice 2>$null; \
+             taskkill /IM sunshine.exe /F 2>$null; \
+             Start-Sleep -Seconds 1; \
+             Set-Location '{}'; \
+             Start-Process -FilePath '.\\sunshine.exe' -Verb RunAs -WindowStyle Hidden",
+            sunshine_path.display()
+        );
+        
+        // 使用 PowerShell 以管理员权限执行命令
+        // 单引号需要双写转义
+        let ps_command = format!(
+            "Start-Process powershell -ArgumentList '-NoProfile', '-Command', '{}' -Verb RunAs -WindowStyle Hidden",
+            command.replace("'", "''")
+        );
+        
+        // CREATE_NO_WINDOW = 0x08000000，用于隐藏 PowerShell 窗口
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        
+        // 启动进程（不等待完成）
+        Command::new("powershell")
+            .args(&["-NoProfile", "-Command", &ps_command])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| {
+                error!("❌ 启动用户模式重启命令失败: {}", e);
+                format!("启动用户模式重启命令失败: {}", e)
+            })?;
+        
+        info!("✅ 用户模式重启命令已启动，正在后台执行（需要管理员权限）...");
+        
+        Ok("success".to_string())
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("此功能仅支持 Windows".to_string())
+    }
+}
+
 /// 以管理员权限重启 GUI
 #[tauri::command]
 pub async fn restart_as_admin(app_handle: tauri::AppHandle) -> Result<String, String> {

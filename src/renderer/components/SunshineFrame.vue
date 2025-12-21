@@ -27,6 +27,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
+import { ElMessage } from 'element-plus'
 import { sunshine } from '@/tauri-adapter.js'
 import SidebarMenu from './SidebarMenu.vue'
 
@@ -137,6 +138,25 @@ const createMessageHandler = () => {
     },
     'restore-background': (data) => loadAndSetBackground(data.path),
     'tauri-invoke': (data) => handleTauriInvoke(data),
+    'show-message': (data) => {
+      // 处理来自 Web UI 的消息显示请求
+      if (data.source === 'sunshine-webui' && data.message) {
+        const messageType = data.messageType || 'info'
+        switch (messageType) {
+          case 'success':
+            ElMessage.success(data.message)
+            break
+          case 'error':
+            ElMessage.error(data.message)
+            break
+          case 'warning':
+            ElMessage.warning(data.message)
+            break
+          default:
+            ElMessage.info(data.message)
+        }
+      }
+    },
   }
 
   return async (event) => {

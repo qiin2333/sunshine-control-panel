@@ -78,6 +78,7 @@ fn main() {
             utils::open_external_url,
             utils::restart_graphics_driver,
             utils::restart_sunshine_service,
+            utils::restart_sunshine_in_user_mode,
             utils::restart_as_admin,
             utils::is_running_as_admin,
             vdd::uninstall_vdd_driver,

@@ -205,6 +205,7 @@ const {
   uninstallVdd,
   restartDriver,
   restartSunshine,
+  restartSunshineInUserMode,
   openTimer,
   openUrl,
   cleanupCovers,
@@ -248,7 +249,7 @@ const managementMenuItems = computed(() => [
   { icon: Monitor, label: '虚拟显示器', action: openVddSettings, isActive: () => router.isRoute(ROUTES.VDD_SETTINGS) },
   { icon: Delete, label: '卸载 VDD', action: uninstallVdd },
   { icon: RefreshRight, label: '重启显卡驱动', action: restartDriver },
-  { icon: Refresh, label: '重启 Sunshine', action: restartSunshine },
+  // { icon: Refresh, label: '使用WGC捕获', action: restartSunshineInUserMode },
   { icon: Download, label: '检查更新', action: handleCheckForUpdates, hasSwitch: true },
 ])
 

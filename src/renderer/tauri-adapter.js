@@ -194,6 +194,15 @@ export const tools = {
     }
   },
 
+  async restartSunshineInUserMode() {
+    try {
+      return await invoke('restart_sunshine_in_user_mode')
+    } catch (error) {
+      console.error('以用户模式重启 Sunshine 失败:', error)
+      throw error
+    }
+  },
+
   async uninstallVddDriver() {
     try {
       return await invoke('uninstall_vdd_driver')

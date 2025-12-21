@@ -65,6 +65,18 @@ export function useTools() {
   }
 
   /**
+   * 以用户模式重启 Sunshine（非服务模式）
+   */
+  const restartSunshineInUserMode = async () => {
+    await confirmAction(
+      '确定要以用户模式重启 Sunshine 吗？\n\n这将：\n1. 停止 Sunshine 服务\n2. 关闭所有 Sunshine 进程\n3. 以用户模式启动 Sunshine \n\n这将断开当前所有连接。',
+      '确认重启',
+      tools.restartSunshineInUserMode,
+      '用户模式重启请求已发送'
+    )
+  }
+
+  /**
    * 打开串流计时器
    */
   const openTimer = async () => {
@@ -257,6 +269,7 @@ export function useTools() {
     uninstallVdd,
     restartDriver,
     restartSunshine,
+    restartSunshineInUserMode,
     openTimer,
     openUrl,
     cleanupCovers,

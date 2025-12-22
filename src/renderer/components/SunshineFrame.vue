@@ -137,7 +137,6 @@ const createMessageHandler = () => {
       loading.value = true
     },
     'restore-background': (data) => loadAndSetBackground(data.path),
-    'tauri-invoke': (data) => handleTauriInvoke(data),
     'show-message': (data) => {
       // 处理来自 Web UI 的消息显示请求
       if (data.source === 'sunshine-webui' && data.message) {
@@ -167,34 +166,6 @@ const createMessageHandler = () => {
   }
 }
 
-const handleTauriInvoke = async ({ id, command, args }) => {
-  const contentWindow = sunshineIframe.value?.contentWindow
-  if (!contentWindow) return
-
-  const sendResponse = (payload) => {
-    contentWindow.postMessage({ type: 'api-response', id, ...payload }, '*')
-  }
-
-  try {
-    let result
-    if (command === 'request_file_path') {
-      const { open } = await import('@tauri-apps/plugin-dialog')
-      const selected = await open({
-        title: '选择图片文件',
-        filters: [{ name: '图片文件', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'] }],
-        multiple: false,
-        directory: false,
-      })
-      result = { path: selected || null }
-    } else {
-      const { invoke } = await import('@tauri-apps/api/core')
-      result = await invoke(command, args)
-    }
-    sendResponse({ result })
-  } catch (error) {
-    sendResponse({ error: error.message || String(error) })
-  }
-}
 
 // Window state monitoring
 const setupWindowStateMonitor = async (currentWindow) => {

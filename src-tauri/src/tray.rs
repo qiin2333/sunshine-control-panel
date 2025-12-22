@@ -19,6 +19,8 @@ pub fn create_system_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     // 创建菜单项
     let open_website = MenuItem::with_id(app, "open_website", "🌐 打开官网", true, None::<&str>)?;
     let vdd_settings = MenuItem::with_id(app, "vdd_settings", "📱 设置虚拟显示器（VDD）", true, None::<&str>)?;
+    #[cfg(target_os = "windows")]
+    let restart_user_mode = MenuItem::with_id(app, "restart_user_mode", "☀ 以用户模式启动 Sunshine", true, None::<&str>)?;
     let show_toolbar = MenuItem::with_id(app, "show_toolbar", "🐾 显示工具栏", true, None::<&str>)?;
     let log_console = MenuItem::with_id(app, "log_console", "🔍 打开日志控制台", true, None::<&str>)?;
     let check_update = MenuItem::with_id(app, "check_update", "🔄 检查更新", true, None::<&str>)?;
@@ -40,8 +42,13 @@ pub fn create_system_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     
     // 构建菜单
     let mut items: Vec<&dyn tauri::menu::IsMenuItem<R>> = vec![
-        &open_website, &separator1, &vdd_settings, &show_toolbar,
+        &open_website, &separator1, &vdd_settings,
     ];
+    
+    #[cfg(target_os = "windows")]
+    items.push(&restart_user_mode);
+    
+    items.push(&show_toolbar);
     
     #[cfg(target_os = "windows")]
     items.push(&prevent_sleep);
@@ -124,6 +131,10 @@ pub fn handle_tray_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) {
         "vdd_settings" => {
             open_vdd_settings(app);
         }
+        #[cfg(target_os = "windows")]
+        "restart_user_mode" => {
+            restart_sunshine_in_user_mode(app);
+        }
         "show_toolbar" => {
             toggle_toolbar(app);
         }
@@ -165,6 +176,36 @@ fn open_vdd_settings<R: Runtime>(app: &AppHandle<R>) {
         windows::show_and_activate_window(&window);
         let _ = window.emit("open-vdd-settings", ());
     }
+}
+
+/// 以用户模式重启 Sunshine
+#[cfg(target_os = "windows")]
+fn restart_sunshine_in_user_mode<R: Runtime>(app: &AppHandle<R>) {
+    info!("🔄 托盘菜单：以用户模式启动 Sunshine");
+    let app_handle = app.clone();
+    
+    tauri::async_runtime::spawn(async move {
+        match utils::restart_sunshine_in_user_mode().await {
+            Ok(msg) => {
+                info!("✅ {}", msg);
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.emit("show-message", serde_json::json!({
+                        "type": "success",
+                        "message": msg
+                    }));
+                }
+            }
+            Err(e) => {
+                error!("❌ 以用户模式启动 Sunshine 失败: {}", e);
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.emit("show-message", serde_json::json!({
+                        "type": "error",
+                        "message": format!("启动失败: {}", e)
+                    }));
+                }
+            }
+        }
+    });
 }
 
 /// 切换工具栏显示/隐藏

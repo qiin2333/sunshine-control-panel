@@ -1,6 +1,6 @@
 [package]
 name = "sunshine-gui"
-version = "0.2.8"
+version = "0.2.9"
 description = "A GUI for sunshine"
 authors = ["qiin2333"]
 license = ""
@@ -13,7 +13,7 @@ edition = "2024"
 tauri-build = { version = "2.5.0", features = [] }
 
 [dependencies]
-tauri = { version = "2.9.4", features = [ "tray-icon", "native-tls-vendored"] }
+tauri = { version = "2.9.5", features = [ "tray-icon", "native-tls-vendored"] }
 tauri-plugin-shell = "2.3.3"
 tauri-plugin-dialog = "2.4.2"
 tauri-plugin-fs = "2.4.4"

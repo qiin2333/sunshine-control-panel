@@ -487,3 +487,158 @@ pub async fn change_bitrate(client_name: String, bitrate: u32) -> Result<String,
         }
     }
 }
+
+/// 检查 Sunshine 是否以用户模式运行（非服务模式）
+#[tauri::command]
+pub fn is_sunshine_running_in_user_mode() -> Result<bool, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        
+        // 方法1: 检查 SunshineService 服务是否正在运行
+        // 如果服务正在运行，说明是服务模式（不是用户模式）
+        let service_output = Command::new("sc")
+            .args(&["query", "SunshineService"])
+            .output();
+        
+        if let Ok(result) = service_output {
+            let output_str = String::from_utf8_lossy(&result.stdout).to_uppercase();
+            // 如果服务状态包含 "RUNNING"，说明服务正在运行
+            if output_str.contains("RUNNING") {
+                return Ok(false);  // 服务模式
+            }
+        }
+        
+        // 方法2: 检查 sunshineservice（小写）服务是否正在运行
+        let service_output2 = Command::new("sc")
+            .args(&["query", "sunshineservice"])
+            .output();
+        
+        if let Ok(result) = service_output2 {
+            let output_str = String::from_utf8_lossy(&result.stdout).to_uppercase();
+            if output_str.contains("RUNNING") {
+                return Ok(false);  // 服务模式
+            }
+        }
+        
+        // 方法3: 检查 sunshine.exe 进程是否存在
+        // 如果服务未运行但进程存在，可能是用户模式
+        let process_output = Command::new("tasklist")
+            .args(&["/FI", "IMAGENAME eq sunshine.exe", "/FO", "CSV", "/NH"])
+            .output();
+        
+        if let Ok(result) = process_output {
+            let output_str = String::from_utf8_lossy(&result.stdout);
+            // 如果输出包含 "sunshine.exe"，说明进程存在
+            if output_str.contains("sunshine.exe") {
+                // 进程存在但服务未运行，可能是用户模式
+                return Ok(true);
+            }
+        }
+        
+        // 如果服务未运行且进程也不存在，说明 Sunshine 未运行
+        // 默认返回 false（假设是服务模式，或者未运行）
+        Ok(false)
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        // 非 Windows 系统，暂时返回 false
+        Ok(false)
+    }
+}
+
+
+/// 构建停止 Sunshine 的命令片段
+#[cfg(target_os = "windows")]
+fn build_stop_sunshine_command() -> String {
+    "net stop SunshineService 2>$null; \
+     net stop sunshineservice 2>$null; \
+     taskkill /IM sunshine.exe /F 2>$null; \
+     Start-Sleep -Seconds 1".to_string()
+}
+
+/// 构建启动服务模式的命令片段
+#[cfg(target_os = "windows")]
+fn build_start_service_command(sunshine_path: &std::path::Path) -> String {
+    format!(
+        "$serviceExists = Get-Service -Name 'SunshineService' -ErrorAction SilentlyContinue; \
+         if ($serviceExists) {{ \
+             net start SunshineService \
+         }} else {{ \
+             Set-Location '{}'; \
+             Start-Process -FilePath '.\\sunshine.exe' -WindowStyle Hidden \
+         }}",
+        sunshine_path.display()
+    )
+}
+
+/// 切换 Sunshine 运行模式（用户模式 ↔ 服务模式）
+#[tauri::command]
+pub async fn toggle_sunshine_mode() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let is_user_mode = is_sunshine_running_in_user_mode().unwrap_or(false);
+        let sunshine_path = get_sunshine_path();
+        let sunshine_exe = sunshine_path.join("sunshine.exe");
+        
+        if !sunshine_exe.exists() {
+            return Err(format!("找不到 sunshine.exe: {}", sunshine_exe.display()));
+        }
+        
+        let stop_cmd = build_stop_sunshine_command();
+        
+        let (mode_name, command) = if is_user_mode {
+            info!("🔄 切换 Sunshine 模式：用户模式 → 服务模式");
+            let start_cmd = build_start_service_command(&sunshine_path);
+            ("服务模式", format!("{}; {}", stop_cmd, start_cmd))
+        } else {
+            info!("🔄 切换 Sunshine 模式：服务模式 → 用户模式");
+            let start_cmd = format!(
+                "Set-Location '{}'; Start-Process -FilePath '.\\sunshine.exe' -Verb RunAs -WindowStyle Hidden",
+                sunshine_path.display()
+            );
+            ("用户模式", format!("{}; {}", stop_cmd, start_cmd))
+        };
+        
+        crate::utils::execute_powershell_command(&command, &format!("切换到{}失败", mode_name))?;
+        
+        info!("✅ 切换到{}命令已启动，正在后台执行...", mode_name);
+        Ok(format!("正在切换到{}", mode_name))
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("此功能仅支持 Windows".to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn restart_sunshine_service() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        info!("🔄 开始重启 Sunshine 服务...");
+        
+        let sunshine_path = get_sunshine_path();
+        let stop_cmd = build_stop_sunshine_command();
+        let start_cmd = build_start_service_command(&sunshine_path);
+        let command = format!("{}; {}", stop_cmd, start_cmd);
+        
+        crate::utils::execute_powershell_command(&command, "启动重启命令失败")?;
+        
+        info!("✅ 重启命令已启动，正在后台执行...");
+        Ok("success".to_string())
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("此功能仅支持 Windows".to_string())
+    }
+}
+
+/// 以用户模式重启 Sunshine（非服务模式，但需要管理员权限）
+/// @deprecated 使用 sunshine::toggle_sunshine_mode 代替
+#[tauri::command]
+pub async fn restart_sunshine_in_user_mode() -> Result<String, String> {
+    toggle_sunshine_mode().await
+}

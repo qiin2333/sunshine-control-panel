@@ -49,7 +49,7 @@
                     v-model="includePrerelease"
                     size="small"
                     active-text="Beta"
-                    @change="handlePrereleaseToggle"
+                    @change="setIncludePrerelease"
                     @click.stop
                   />
                 </div>
@@ -154,7 +154,7 @@
 </template>
 
 <script setup>
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref } from 'vue'
 import VddSettings from './VddSettings.vue'
 import Welcome from './welcome.vue'
 import UpdateDialog from './UpdateDialog.vue'
@@ -197,6 +197,8 @@ const {
   openWelcome,
   goHome,
   skipVersion,
+  includePrerelease,
+  setIncludePrerelease,
 } = useSidebarState()
 
 const { minimizeWindow, toggleMaximize, closeWindow } = useWindowControls(isMaximized)
@@ -212,26 +214,6 @@ const {
   restartAsAdmin,
   checkForUpdates,
 } = useTools()
-
-const includePrerelease = ref(false)
-
-onMounted(async () => {
-  try {
-    const { invoke } = await import('@tauri-apps/api/core')
-    includePrerelease.value = await invoke('get_include_prerelease_preference')
-  } catch (error) {
-    console.error('加载内测偏好设置失败:', error)
-  }
-})
-
-const handlePrereleaseToggle = async (value) => {
-  try {
-    const { invoke } = await import('@tauri-apps/api/core')
-    await invoke('set_include_prerelease_preference', { include: value })
-  } catch (error) {
-    console.error('保存内测偏好设置失败:', error)
-  }
-}
 
 const handleCheckForUpdates = async () => {
   const result = await checkForUpdates()

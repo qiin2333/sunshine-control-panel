@@ -55,10 +55,7 @@ mod power {
 /// 创建系统托盘
 pub fn create_system_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     #[cfg(target_os = "windows")]
-    {
-        let is_user_mode = crate::sunshine::is_sunshine_running_in_user_mode().unwrap_or(false);
-        *SUNSHINE_USER_MODE_STATE.lock().unwrap() = is_user_mode;
-    }
+    init_sunshine_user_mode_state(app);
 
     // 初始化工具栏状态
     let is_toolbar_visible = app.get_webview_window("toolbar")
@@ -87,6 +84,30 @@ pub fn create_system_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         .build(app)?;
 
     Ok(())
+}
+
+/// 初始化 Sunshine 用户模式状态（仅 Windows）
+#[cfg(target_os = "windows")]
+fn init_sunshine_user_mode_state<R: Runtime>(app: &AppHandle<R>) {
+    // 使用默认值 false，避免阻塞启动
+    *SUNSHINE_USER_MODE_STATE.lock().unwrap() = false;
+    
+    // 异步更新 Sunshine 用户模式状态（不阻塞启动）
+    let _app_handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        // 延迟一小段时间，确保窗口已经显示
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        
+        match crate::sunshine::is_sunshine_running_in_user_mode() {
+            Ok(is_user_mode) => {
+                *SUNSHINE_USER_MODE_STATE.lock().unwrap() = is_user_mode;
+                debug!("✅ Sunshine 用户模式状态已异步更新: {}", is_user_mode);
+            }
+            Err(e) => {
+                debug!("⚠️ 检查 Sunshine 用户模式状态失败: {}", e);
+            }
+        }
+    });
 }
 
 /// 构建托盘菜单

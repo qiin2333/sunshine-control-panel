@@ -105,7 +105,7 @@
               @keyup.enter="addRefreshRate"
               @blur="handleRateInputConfirm"
               size="small"
-              placeholder="30-240"
+              placeholder="例如: 120 或 119.88"
               style="width: 100px"
             />
             <el-button v-else size="small" @click="showRefreshRateInput" class="add-btn">
@@ -222,7 +222,7 @@ import { vdd } from '../tauri-adapter.js'
 
 const resolutionOptions = ref(new Set())
 const gpuFriendlyName = ref('')
-const refreshRateOptions = ref(new Set([60, 120, 240]))
+const refreshRateOptions = ref(new Set(['60', '120', '240']))
 
 // 常量定义
 const MIN_REFRESH_RATE = 30
@@ -237,7 +237,7 @@ const initialSettings = {
   monitors: { count: 1 },
   gpu: { friendlyname: '' },
   global: {
-    g_refresh_rate: [60, 120, 240],
+    g_refresh_rate: ['60', '120', '240'],
   },
   resolutions: { resolution: [] },
   colour: {
@@ -320,9 +320,11 @@ const loadSettings = async () => {
     }
     resolutionOptions.value = processedResolutions
 
-    // 刷新率处理
+    // 刷新率处理 - 支持字符串格式（包括NTSC帧率如 "59.94", "29.97"）
     if (data.global?.g_refresh_rate) {
-      refreshRateOptions.value = new Set(data.global.g_refresh_rate)
+      // 确保所有值都转换为字符串格式，以支持分数刷新率
+      const rateArray = data.global.g_refresh_rate.map(rate => String(rate))
+      refreshRateOptions.value = new Set(rateArray)
     }
 
     ElMessage.success('设置加载成功')
@@ -362,7 +364,8 @@ const saveSettings = async () => {
         friendlyname: gpuFriendlyName.value,
       },
       global: {
-        g_refresh_rate: Array.from(refreshRateOptions.value).map(Number),
+        // 保持字符串格式，支持NTSC帧率（如 "59.94", "29.97"）
+        g_refresh_rate: Array.from(refreshRateOptions.value),
       },
       resolutions: {
         resolution: Array.from(resolutionOptions.value).map((res) => {
@@ -422,29 +425,42 @@ const handleResInputConfirm = () => {
 }
 
 // 刷新率管理
-const validateRefreshRate = (value) => /^\d+$/.test(value)
+// 支持整数和分数格式（如 60, 59.94, 29.97）
+const validateRefreshRate = (value) => {
+  // 匹配整数或小数格式（如 60, 59.94, 29.97）
+  const pattern = /^\d+(\.\d+)?$/
+  if (!pattern.test(value)) {
+    return false
+  }
+  const rate = parseFloat(value)
+  // 允许范围：1-480（支持NTSC帧率如29.97, 59.94, 119.88等）
+  return rate >= 1 && rate <= 480
+}
 
 const addRefreshRate = () => {
   const value = newRefreshRate.value.trim()
   if (!validateRefreshRate(value)) {
-    ElMessage.warning('请输入有效的刷新率（30-240）')
+    ElMessage.warning('请输入有效的刷新率（支持整数或小数，如 60 或 59.94）')
     newRefreshRate.value = ''
     return
   }
-  const rate = parseInt(value)
-  if (rate < MIN_REFRESH_RATE || rate > MAX_REFRESH_RATE) {
-    ElMessage.warning('刷新率范围应在30-240之间')
+  const rate = parseFloat(value)
+  // 检查范围（允许1-480，包括NTSC帧率）
+  if (rate < 1 || rate > 480) {
+    ElMessage.warning('刷新率范围应在1-480之间')
     return
   }
-  if (refreshRateOptions.value.has(rate)) {
+  // 使用字符串格式存储，支持分数格式
+  const rateStr = value
+  if (refreshRateOptions.value.has(rateStr)) {
     ElMessage.warning('该刷新率已存在')
     newRefreshRate.value = ''
     return
   }
-  refreshRateOptions.value.add(rate)
+  refreshRateOptions.value.add(rateStr)
   newRefreshRate.value = ''
   showRateInput.value = false
-  ElMessage.success(`已添加刷新率 ${rate}Hz`)
+  ElMessage.success(`已添加刷新率 ${rateStr}Hz`)
 }
 
 const removeRefreshRate = (value) => {

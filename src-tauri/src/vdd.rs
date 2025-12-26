@@ -399,7 +399,7 @@ pub struct Gpu {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Global {
     #[serde(rename = "g_refresh_rate")]
-    pub g_refresh_rate: Vec<u32>,
+    pub g_refresh_rate: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -520,7 +520,7 @@ fn get_default_settings() -> VddSettings {
             friendlyname: String::new(),
         },
         global: Global {
-            g_refresh_rate: vec![60, 120, 240],
+            g_refresh_rate: vec!["60".to_string(), "120".to_string(), "240".to_string()],
         },
         resolutions: Resolutions {
             resolution: vec![],

@@ -873,6 +873,14 @@ pub fn init_update_checker(app: &tauri::AppHandle) -> Result<(), Box<dyn std::er
     // 在启动时清理旧的安装包（在检查更新之前）
     cleanup_old_installers();
     
-    check_for_updates_on_startup(app.clone());
+    // 延迟自动检查更新，等待前端初始化偏好设置
+    // 前端会在 onMounted 时从 localStorage 读取偏好并同步到后端
+    // 延迟 2 秒，给前端足够的时间初始化偏好设置
+    let app_clone = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        check_for_updates_on_startup(app_clone);
+    });
+    
     Ok(())
 }

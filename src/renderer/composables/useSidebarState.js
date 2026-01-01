@@ -248,11 +248,13 @@ export function useSidebarState() {
    */
   const initState = async () => {
     initTheme()
+    // 优先初始化偏好设置，确保后端在检查更新前能读取到正确的偏好
+    await initIncludePrerelease()
+    // 然后并行初始化其他状态
     await Promise.all([
       initAdminStatus(),
       initWindowState(),
       initVersion(),
-      initIncludePrerelease(),
       initEventListeners(),
     ])
   }

@@ -136,9 +136,9 @@ const clients = [
     color: 'red',
   },
   {
-    name: '威力加强版 Moonlight-Android',
+    name: 'VPLUS Moonlight-Android',
     platform: 'Android',
-    link: 'https://github.com/qiin2333/moonlight-android/releases/tag/shortcut',
+    link: 'https://github.com/qiin2333/moonlight-vplus',
     color: 'green',
   },
   {
@@ -150,7 +150,7 @@ const clients = [
   {
     name: 'VoidLink (Moonlight-iOS)',
     platform: 'iOS',
-    link: 'https://github.com/The-Fried-Fish/VoidLink-previously-moonlight-zwm',
+    link: 'https://apps.apple.com/cn/app/voidlink/id6747717070',
     color: 'grey',
   },
 ]

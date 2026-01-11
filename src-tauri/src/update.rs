@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH, Duration};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, Emitter, Runtime};
 use log::{info, warn, error, debug};
 
@@ -60,7 +62,7 @@ struct GitHubAsset {
 }
 
 /// 更新检查偏好设置
-#[derive(Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct UpdatePreferences {
     pub last_check_time: u64,
     pub include_prerelease: bool,
@@ -319,6 +321,81 @@ pub async fn check_for_updates_internal(show_notification: bool, include_prerele
 
 // ========== 偏好设置管理 ==========
 
+/// 获取更新偏好设置文件路径
+fn get_update_preferences_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("获取应用数据目录失败: {}", e))?;
+
+    // 确保目录存在
+    if !app_data_dir.exists() {
+        fs::create_dir_all(&app_data_dir).map_err(|e| format!("创建应用数据目录失败: {}", e))?;
+    }
+
+    Ok(app_data_dir.join("update_preferences.json"))
+}
+
+/// 从磁盘加载更新偏好设置（失败则回退默认值）
+fn load_update_preferences<R: Runtime>(app: &AppHandle<R>) -> UpdatePreferences {
+    let path = match get_update_preferences_path(app) {
+        Ok(p) => p,
+        Err(e) => {
+            warn!("⚠️ 获取更新偏好设置路径失败: {}，使用默认偏好", e);
+            return UpdatePreferences::default();
+        }
+    };
+
+    if !path.exists() {
+        return UpdatePreferences::default();
+    }
+
+    match fs::read_to_string(&path) {
+        Ok(content) => match serde_json::from_str::<UpdatePreferences>(&content) {
+            Ok(prefs) => {
+                debug!(
+                    "📂 已加载更新偏好: include_prerelease={}, last_check_time={}",
+                    prefs.include_prerelease, prefs.last_check_time
+                );
+                prefs
+            }
+            Err(e) => {
+                warn!("⚠️ 解析更新偏好设置失败: {}，使用默认偏好", e);
+                UpdatePreferences::default()
+            }
+        },
+        Err(e) => {
+            warn!("⚠️ 读取更新偏好设置失败: {}，使用默认偏好", e);
+            UpdatePreferences::default()
+        }
+    }
+}
+
+/// 将更新偏好设置持久化到磁盘（失败只记录日志，不影响运行）
+fn persist_update_preferences<R: Runtime>(app: &AppHandle<R>, prefs: &UpdatePreferences) {
+    let path = match get_update_preferences_path(app) {
+        Ok(p) => p,
+        Err(e) => {
+            warn!("⚠️ 获取更新偏好设置路径失败，无法保存: {}", e);
+            return;
+        }
+    };
+
+    match serde_json::to_string_pretty(prefs) {
+        Ok(json) => {
+            if let Err(e) = fs::write(&path, json) {
+                warn!("⚠️ 保存更新偏好设置失败: {}", e);
+            } else {
+                debug!(
+                    "💾 已保存更新偏好: include_prerelease={}, last_check_time={}",
+                    prefs.include_prerelease, prefs.last_check_time
+                );
+            }
+        }
+        Err(e) => warn!("⚠️ 序列化更新偏好设置失败: {}", e),
+    }
+}
+
 /// 获取当前时间戳（秒）
 fn get_current_timestamp() -> u64 {
     SystemTime::now()
@@ -337,8 +414,12 @@ fn get_last_check_time(app: &AppHandle) -> u64 {
 /// 保存上次检查时间
 fn save_last_check_time(app: &AppHandle) {
     if let Some(prefs) = app.try_state::<Arc<Mutex<UpdatePreferences>>>() {
-        let mut prefs = prefs.lock().unwrap();
-        prefs.last_check_time = get_current_timestamp();
+        let prefs_snapshot = {
+            let mut prefs = prefs.lock().unwrap();
+            prefs.last_check_time = get_current_timestamp();
+            prefs.clone()
+        };
+        persist_update_preferences(app, &prefs_snapshot);
     }
 }
 
@@ -352,9 +433,13 @@ pub(crate) fn get_include_prerelease<R: Runtime>(app: &AppHandle<R>) -> bool {
 /// 设置是否包含预发布版本的偏好
 fn set_include_prerelease<R: Runtime>(app: &AppHandle<R>, include: bool) {
     if let Some(prefs) = app.try_state::<Arc<Mutex<UpdatePreferences>>>() {
-        let mut prefs = prefs.lock().unwrap();
-        prefs.include_prerelease = include;
+        let prefs_snapshot = {
+            let mut prefs = prefs.lock().unwrap();
+            prefs.include_prerelease = include;
+            prefs.clone()
+        };
         info!("📝 更新偏好设置: 包含预发布版本 = {}", include);
+        persist_update_preferences(app, &prefs_snapshot);
     }
 }
 
@@ -867,15 +952,15 @@ fn cleanup_old_installers() {
 
 /// 初始化更新检查模块
 pub fn init_update_checker(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    let prefs = Arc::new(Mutex::new(UpdatePreferences::default()));
+    // 启动时先从磁盘加载偏好，避免依赖前端 onMounted 同步时机
+    let loaded_prefs = load_update_preferences(app);
+    let prefs = Arc::new(Mutex::new(loaded_prefs));
     app.manage(prefs);
     
     // 在启动时清理旧的安装包（在检查更新之前）
     cleanup_old_installers();
     
-    // 延迟自动检查更新，等待前端初始化偏好设置
-    // 前端会在 onMounted 时从 localStorage 读取偏好并同步到后端
-    // 延迟 2 秒，给前端足够的时间初始化偏好设置
+    // 延迟自动检查更新：主要是等待主窗口/前端就绪（偏好已在后端启动时加载）
     let app_clone = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;

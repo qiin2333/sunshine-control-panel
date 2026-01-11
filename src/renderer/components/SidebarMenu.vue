@@ -13,7 +13,7 @@
           <img src="../public/gura-pix.png" alt="Sunshine Logo" class="logo-img" />
         </div>
         <transition name="fade">
-          <h3 v-if="!isCollapsed" class="app-name">Sunshine Foundation</h3>
+          <h3 v-if="!isCollapsed" class="app-name">Foundation Sunshine</h3>
         </transition>
       </div>
 

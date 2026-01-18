@@ -1,0 +1,3 @@
+# Cloudflare Pages SPA 路由重定向配置
+# 将所有请求重定向到 index.html，支持 Vue Router 的客户端路由
+/*    /index.html   200

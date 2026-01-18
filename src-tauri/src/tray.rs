@@ -92,19 +92,21 @@ fn init_sunshine_user_mode_state<R: Runtime>(app: &AppHandle<R>) {
     // 使用默认值 false，避免阻塞启动
     *SUNSHINE_USER_MODE_STATE.lock().unwrap() = false;
     
-    // 异步更新 Sunshine 用户模式状态（不阻塞启动）
+    // 异步更新 Sunshine 用户模式状态（不阻塞启动；阻塞的 sc/tasklist 放在 spawn_blocking 中）
     let _app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
-        // 延迟一小段时间，确保窗口已经显示
         tokio::time::sleep(Duration::from_millis(500)).await;
-        
-        match crate::sunshine::is_sunshine_running_in_user_mode() {
-            Ok(is_user_mode) => {
+
+        match tokio::task::spawn_blocking(crate::sunshine::is_sunshine_running_in_user_mode_impl).await {
+            Ok(Ok(is_user_mode)) => {
                 *SUNSHINE_USER_MODE_STATE.lock().unwrap() = is_user_mode;
                 debug!("✅ Sunshine 用户模式状态已异步更新: {}", is_user_mode);
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 debug!("⚠️ 检查 Sunshine 用户模式状态失败: {}", e);
+            }
+            Err(e) => {
+                debug!("⚠️ spawn_blocking 检查用户模式失败: {}", e);
             }
         }
     });
@@ -245,6 +247,18 @@ fn open_vdd_settings<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
+/// 更新 Sunshine 用户模式状态
+#[cfg(target_os = "windows")]
+async fn update_sunshine_mode_state(check_label: &str) {
+    let is_user_mode = tokio::task::spawn_blocking(crate::sunshine::is_sunshine_running_in_user_mode_impl)
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or(false);
+    *SUNSHINE_USER_MODE_STATE.lock().unwrap() = is_user_mode;
+    info!("✅ Sunshine 用户模式状态已更新({}): {}", check_label, is_user_mode);
+}
+
 /// 切换 Sunshine 运行模式
 #[cfg(target_os = "windows")]
 fn toggle_sunshine_mode<R: Runtime>(app: &AppHandle<R>) {
@@ -257,10 +271,13 @@ fn toggle_sunshine_mode<R: Runtime>(app: &AppHandle<R>) {
                 info!("✅ {}", msg);
                 emit_message(&app_handle, "success", &msg);
 
-                tokio::time::sleep(Duration::from_secs(2)).await;
-                let is_user_mode = crate::sunshine::is_sunshine_running_in_user_mode().unwrap_or(false);
-                *SUNSHINE_USER_MODE_STATE.lock().unwrap() = is_user_mode;
-                info!("✅ Sunshine 用户模式状态已更新: {}", is_user_mode);
+                // 切换由 UAC 提升的 PowerShell 在后台执行，需预留 UAC + stop + start
+                // 两次检查以减少"中间状态"导致的误判
+                tokio::time::sleep(Duration::from_secs(6)).await;
+                update_sunshine_mode_state("首次").await;
+
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                update_sunshine_mode_state("二次").await;
             }
             Err(e) => {
                 error!("❌ 切换 Sunshine 模式失败: {}", e);

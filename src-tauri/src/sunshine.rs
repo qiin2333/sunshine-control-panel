@@ -489,62 +489,49 @@ pub async fn change_bitrate(client_name: String, bitrate: u32) -> Result<String,
 }
 
 /// 检查 Sunshine 是否以用户模式运行（非服务模式）
-#[tauri::command]
-pub fn is_sunshine_running_in_user_mode() -> Result<bool, String> {
+/// 内部实现：执行 sc / tasklist 等阻塞系统调用，必须在 spawn_blocking 中调用
+pub(crate) fn is_sunshine_running_in_user_mode_impl() -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {
         use std::process::Command;
-        
-        // 方法1: 检查 SunshineService 服务是否正在运行
-        // 如果服务正在运行，说明是服务模式（不是用户模式）
-        let service_output = Command::new("sc")
+
+        // 检查服务是否正在运行（服务名不区分大小写，只需检查一次）
+        if let Ok(result) = Command::new("sc")
             .args(&["query", "SunshineService"])
-            .output();
-        
-        if let Ok(result) = service_output {
-            let output_str = String::from_utf8_lossy(&result.stdout).to_uppercase();
-            // 如果服务状态包含 "RUNNING"，说明服务正在运行
-            if output_str.contains("RUNNING") {
-                return Ok(false);  // 服务模式
-            }
-        }
-        
-        // 方法2: 检查 sunshineservice（小写）服务是否正在运行
-        let service_output2 = Command::new("sc")
-            .args(&["query", "sunshineservice"])
-            .output();
-        
-        if let Ok(result) = service_output2 {
+            .output()
+        {
             let output_str = String::from_utf8_lossy(&result.stdout).to_uppercase();
             if output_str.contains("RUNNING") {
-                return Ok(false);  // 服务模式
+                return Ok(false); // 服务模式
             }
         }
-        
-        // 方法3: 检查 sunshine.exe 进程是否存在
-        // 如果服务未运行但进程存在，可能是用户模式
-        let process_output = Command::new("tasklist")
+
+        // 服务未运行，检查 sunshine.exe 进程是否存在
+        if let Ok(result) = Command::new("tasklist")
             .args(&["/FI", "IMAGENAME eq sunshine.exe", "/FO", "CSV", "/NH"])
-            .output();
-        
-        if let Ok(result) = process_output {
+            .output()
+        {
             let output_str = String::from_utf8_lossy(&result.stdout);
-            // 如果输出包含 "sunshine.exe"，说明进程存在
             if output_str.contains("sunshine.exe") {
-                // 进程存在但服务未运行，可能是用户模式
-                return Ok(true);
+                return Ok(true); // 用户模式
             }
         }
-        
-        // 如果服务未运行且进程也不存在，说明 Sunshine 未运行
-        // 默认返回 false（假设是服务模式，或者未运行）
+
         Ok(false)
     }
-    
+
     #[cfg(not(target_os = "windows"))]
     {
-        // 非 Windows 系统，暂时返回 false
         Ok(false)
+    }
+}
+
+/// 检查 Sunshine 是否以用户模式运行（Tauri 命令，在后台线程执行阻塞逻辑，避免卡住 WebView）
+#[tauri::command]
+pub async fn is_sunshine_running_in_user_mode() -> Result<bool, String> {
+    match tokio::task::spawn_blocking(is_sunshine_running_in_user_mode_impl).await {
+        Ok(inner) => inner,
+        Err(e) => Err(e.to_string()),
     }
 }
 
@@ -578,7 +565,11 @@ fn build_start_service_command(sunshine_path: &std::path::Path) -> String {
 pub async fn toggle_sunshine_mode() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
-        let is_user_mode = is_sunshine_running_in_user_mode().unwrap_or(false);
+        let is_user_mode = tokio::task::spawn_blocking(is_sunshine_running_in_user_mode_impl)
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or(false);
         let sunshine_path = get_sunshine_path();
         let sunshine_exe = sunshine_path.join("sunshine.exe");
         

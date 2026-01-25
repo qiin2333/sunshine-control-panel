@@ -268,6 +268,22 @@ const getBubbleStyle = (index) => {
   }
 }
 
+// 后台更新精灵图缓存（静默失败，不影响用户体验）
+const updateSpritesheetCacheInBackground = () => {
+  const updateUrl = `${SPRITESHEET_URL}?t=${Date.now()}`
+  fetch(updateUrl)
+    .then((res) => {
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`)
+      }
+      return res.blob()
+    })
+    .then((blob) => saveBlobToCache(blob))
+    .catch((err) => {
+      console.debug('📦 后台更新精灵图跳过（网络不可用或资源暂时无法访问）')
+    })
+}
+
 // 初始化 PixiJS 精灵动画
 const initPixiApp = async () => {
   if (!pixiCanvas.value) return
@@ -286,7 +302,7 @@ const initPixiApp = async () => {
   })
 
   let spritesheet = null
-  let shouldUpdateCache = true
+  let usedCache = false
 
   const cachedBlob = await getCachedBlob()
   if (cachedBlob) {
@@ -306,6 +322,7 @@ const initPixiApp = async () => {
         source: texture.source,
       }
 
+      usedCache = true
       console.log('✅ 缓存的精灵图加载成功', spritesheet.width, 'x', spritesheet.height)
     } catch (error) {
       console.warn('⚠️  缓存的精灵图加载失败，将重新下载:', error)
@@ -319,17 +336,14 @@ const initPixiApp = async () => {
       PIXI.Assets.add({ alias: SPRITESHEET_ALIAS, src: SPRITESHEET_URL })
     }
     spritesheet = await PIXI.Assets.load(SPRITESHEET_ALIAS)
-  } else {
-    // 使用了缓存，在后台更新
-    shouldUpdateCache = true
   }
 
-  if (shouldUpdateCache) {
-    const updateUrl = `${SPRITESHEET_URL}?t=${Date.now()}`
-    fetch(updateUrl)
-      .then((res) => res.blob())
-      .then((blob) => saveBlobToCache(blob))
-      .catch((err) => console.warn('⚠️  后台更新精灵图失败:', err))
+  // 后台静默更新缓存（无论是否使用了缓存，都尝试更新以保持最新）
+  if (usedCache) {
+    // 延迟执行后台更新，避免阻塞主流程
+    setTimeout(() => {
+      updateSpritesheetCacheInBackground()
+    }, 3000)
   }
 
   // 4列x4行 (16帧)

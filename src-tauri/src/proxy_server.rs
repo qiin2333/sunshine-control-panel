@@ -2,6 +2,7 @@ use axum::{
     extract::Request,
     response::{IntoResponse, Response},
     Router,
+    middleware::Next,
 };
 use tower_http::cors::CorsLayer;
 use std::net::SocketAddr;
@@ -61,11 +62,39 @@ const INJECT_SCRIPT: &str = include_str!("../inject-script.js");
 /// 调皮的404页面（当Sunshine未启动时显示，编译时从文件读取）
 const ERROR_404_PAGE: &str = include_str!("../error-404.html");
 
+/// Private Network Access (PNA) Middleware
+/// 根据 Microsoft Edge 143+ 的要求添加 PNA 支持头部
+async fn pna_middleware(req: Request, next: Next) -> Response {
+    // 预定义常用的 header 值
+    const PNA_HEADER: &str = "Access-Control-Allow-Private-Network";
+    const PNA_VALUE: axum::http::HeaderValue = axum::http::HeaderValue::from_static("true");
+    
+    // 检查是否是 OPTIONS 预检请求（CORS）
+    if req.method() == axum::http::Method::OPTIONS {
+        // 处理 CORS 预检请求，添加 PNA 支持
+        return Response::builder()
+            .status(axum::http::StatusCode::NO_CONTENT)
+            .header("Access-Control-Allow-Origin", "*")
+            .header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD")
+            .header("Access-Control-Allow-Headers", "*")
+            .header(PNA_HEADER, "true")
+            .header("Access-Control-Max-Age", "86400")
+            .body(axum::body::Body::empty())
+            .unwrap();
+    }
+    
+    // 对于非 OPTIONS 请求，执行原有的处理器，然后在响应中添加 PNA 头部
+    let mut response = next.run(req).await;
+    response.headers_mut().insert(PNA_HEADER, PNA_VALUE);
+    response
+}
+
 /// 启动本地代理服务器
 pub async fn start_proxy_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let app = Router::new()
         .fallback(proxy_handler)
-        .layer(CorsLayer::permissive());
+        .layer(CorsLayer::permissive())
+        .layer(axum::middleware::from_fn(pna_middleware));
     
     // 尝试在端口范围内找到可用端口
     let mut listener = None;

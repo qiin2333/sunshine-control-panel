@@ -151,7 +151,11 @@ fn start_proxy_server_async() {
 /// 处理单实例逻辑
 pub fn handle_single_instance(app: &AppHandle, args: Vec<String>) {
     info!("🔔 检测到第二个实例启动，激活现有窗口");
-    debug!("   启动参数: {:?}", args);
+    info!("   启动参数: {:?}", args);
+    
+    // 诊断：列出当前所有窗口
+    let windows: Vec<_> = app.webview_windows().keys().cloned().collect();
+    info!("📋 当前存在的窗口: {:?}", windows);
     
     // 检查是否要打开桌面 UI
     if args.iter().any(|arg| arg == "--desktop" || arg == "-d") {

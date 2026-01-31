@@ -39,6 +39,7 @@ futures-util = "0.3.31"
 bytes = "1.11"
 log = "0.4"
 env_logger = "0.11.8"
+raw-window-handle = "0.6"
 
 [features]
 # by default Tauri runs in production mode

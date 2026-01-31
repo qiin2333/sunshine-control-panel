@@ -56,24 +56,62 @@ pub fn show_and_activate_window<R: Runtime>(window: &WebviewWindow<R>) {
 fn force_activate_window_win32<R: Runtime>(window: &WebviewWindow<R>) {
     use windows::Win32::UI::WindowsAndMessaging::{
         SetForegroundWindow, ShowWindow, BringWindowToTop, SW_RESTORE, SW_SHOW,
-        AllowSetForegroundWindow, ASFW_ANY, FindWindowW
+        AllowSetForegroundWindow, ASFW_ANY, GetWindowThreadProcessId
     };
-    use windows::core::PCWSTR;
+    use windows::Win32::System::Threading::GetCurrentThreadId;
+    use windows::Win32::Foundation::HWND;
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use log::warn;
     
-    let Ok(title) = window.title() else { return };
-    let title_wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+    // 直接从 Tauri 窗口获取 HWND，避免使用 FindWindowW（对隐藏窗口不可靠）
+    let hwnd = match window.window_handle() {
+        Ok(handle) => {
+            match handle.as_raw() {
+                RawWindowHandle::Win32(win32_handle) => {
+                    HWND(win32_handle.hwnd.get() as *mut _)
+                }
+                _ => {
+                    error!("❌ 无法获取 Win32 窗口句柄：不是 Win32 窗口");
+                    return;
+                }
+            }
+        }
+        Err(e) => {
+            error!("❌ 获取窗口句柄失败: {:?}", e);
+            return;
+        }
+    };
+    
+    if hwnd.0.is_null() {
+        error!("❌ 窗口句柄为空");
+        return;
+    }
+    
+    debug!("✅ 获取到窗口句柄: {:?}", hwnd);
     
     unsafe {
-        let Ok(hwnd) = FindWindowW(PCWSTR::null(), PCWSTR::from_raw(title_wide.as_ptr())) else { return };
-        if hwnd.0.is_null() { return }
+        // 获取目标窗口的线程ID用于诊断
+        let mut target_pid: u32 = 0;
+        let target_tid = GetWindowThreadProcessId(hwnd, Some(&mut target_pid));
+        let current_tid = GetCurrentThreadId();
+        debug!("📊 当前线程: {}, 目标线程: {}, 目标进程: {}", current_tid, target_tid, target_pid);
         
+        // 允许任何进程设置前台窗口
         let _ = AllowSetForegroundWindow(ASFW_ANY);
+        
+        // 确保窗口可见并恢复
         let _ = ShowWindow(hwnd, SW_RESTORE);
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = BringWindowToTop(hwnd);
-        let _ = SetForegroundWindow(hwnd);
         
-        debug!("✅ 已使用 Windows API 强制激活窗口");
+        // 尝试设置为前台窗口
+        let result = SetForegroundWindow(hwnd);
+        
+        if result.as_bool() {
+            info!("✅ 已使用 Windows API 强制激活窗口");
+        } else {
+            warn!("⚠️ SetForegroundWindow 返回 FALSE，窗口可能未能激活到前台");
+        }
     }
 }
 
@@ -263,8 +301,13 @@ pub fn open_desktop_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String>
 
 /// 激活主窗口
 pub fn activate_main_window(app: &tauri::AppHandle, target_url: Option<String>) { 
+    info!("📱 activate_main_window 被调用，target_url: {:?}", target_url);
+    
     let Some(window) = app.get_webview_window(MAIN_WINDOW_ID) else {
-        error!("❌ 未找到主窗口");
+        error!("❌ 未找到主窗口 '{}'", MAIN_WINDOW_ID);
+        // 列出所有现有窗口以便诊断
+        let windows: Vec<_> = app.webview_windows().keys().cloned().collect();
+        error!("   当前存在的窗口: {:?}", windows);
         return;
     };
     

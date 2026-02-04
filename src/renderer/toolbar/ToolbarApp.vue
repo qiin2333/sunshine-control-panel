@@ -58,7 +58,7 @@ let animationTimer = null
 
 // 精灵图集 URL
 const SPRITESHEET_URL =
-  'https://hub.gitmirror.com/raw.githubusercontent.com/qiin2333/qiin.github.io/assets/img/toolbar-spritesheet.png'
+  'https://assets.alkaidlab.com/toolbar-spritesheet.png'
 
 // 精灵图集别名，便于使用 PixiJS 资源缓存
 const SPRITESHEET_ALIAS = 'toolbar-spritesheet'

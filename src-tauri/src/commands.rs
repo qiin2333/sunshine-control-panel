@@ -43,7 +43,7 @@ pub async fn open_tool_window(app: AppHandle, tool_name: String) -> Result<(), S
 pub async fn fetch_speech_phrases() -> Result<Vec<String>, String> {
     debug!("💬 开始获取话术配置");
     
-    let url = "https://raw.githubusercontent.com/qiin2333/qiin.github.io/assets/speech-phrases.json";
+    let url = "https://assets.alkaidlab.com/speech-phrases.json";
     
     let response = reqwest::get(url).await
         .map_err(|e| format!("请求失败: {}", e))?;

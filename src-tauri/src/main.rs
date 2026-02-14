@@ -56,6 +56,7 @@ fn main() {
             commands::open_tool_window,
             toolbar::create_toolbar_window,
             commands::fetch_speech_phrases,
+            commands::fetch_remote_bytes,
             vdd::get_vdd_settings_file_path,
             vdd::get_vdd_tools_dir_path,
             vdd::get_vdd_edid_file_path,

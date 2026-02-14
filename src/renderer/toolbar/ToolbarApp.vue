@@ -60,22 +60,25 @@ let animationTimer = null
 const SPRITESHEET_URL =
   'https://assets.alkaidlab.com/toolbar-spritesheet.png'
 
-// 精灵图集别名，便于使用 PixiJS 资源缓存
-const SPRITESHEET_ALIAS = 'toolbar-spritesheet'
-
 // IndexedDB 缓存配置
 const DB_NAME = 'toolbar-cache'
-const DB_STORE = 'images'
-const CACHE_KEY = 'spritesheet-blob'
+const DB_VERSION = 2
+const DB_STORE = 'resources'
+const CACHE_KEY_SPRITE = 'spritesheet'
+const CACHE_KEY_PHRASES = 'phrases'
 
 // 打开 IndexedDB
 const openDB = () => {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1)
+    const request = indexedDB.open(DB_NAME, DB_VERSION)
     request.onerror = () => reject(request.error)
     request.onsuccess = () => resolve(request.result)
     request.onupgradeneeded = (event) => {
       const db = event.target.result
+      // v1→v2: 删除旧 store 'images'，创建新 'resources' store（含 ETag）
+      if (db.objectStoreNames.contains('images')) {
+        db.deleteObjectStore('images')
+      }
       if (!db.objectStoreNames.contains(DB_STORE)) {
         db.createObjectStore(DB_STORE)
       }
@@ -83,15 +86,19 @@ const openDB = () => {
   })
 }
 
-// 从 IndexedDB 获取缓存的 Blob
-const getCachedBlob = async () => {
+// 缓存读取（返回 { data, etag } 或 null）
+const getCacheEntry = async (key) => {
   try {
     const db = await openDB()
-    const transaction = db.transaction([DB_STORE], 'readonly')
-    const store = transaction.objectStore(DB_STORE)
+    const tx = db.transaction([DB_STORE], 'readonly')
+    const store = tx.objectStore(DB_STORE)
     return new Promise((resolve, reject) => {
-      const request = store.get(CACHE_KEY)
-      request.onsuccess = () => resolve(request.result)
+      const request = store.get(key)
+      request.onsuccess = () => {
+        const entry = request.result
+        if (!entry || !entry.data) return resolve(null)
+        resolve(entry)
+      }
       request.onerror = () => reject(request.error)
     })
   } catch (error) {
@@ -100,20 +107,19 @@ const getCachedBlob = async () => {
   }
 }
 
-// 保存 Blob 到 IndexedDB
-const saveBlobToCache = async (blob) => {
+// 缓存写入（data + etag）
+const setCacheEntry = async (key, data, etag) => {
   try {
     const db = await openDB()
-    const transaction = db.transaction([DB_STORE], 'readwrite')
-    const store = transaction.objectStore(DB_STORE)
+    const tx = db.transaction([DB_STORE], 'readwrite')
+    const store = tx.objectStore(DB_STORE)
     await new Promise((resolve, reject) => {
-      const request = store.put(blob, CACHE_KEY)
+      const request = store.put({ data, etag: etag || null }, key)
       request.onsuccess = () => resolve()
       request.onerror = () => reject(request.error)
     })
-    console.log('✅ 精灵图已缓存到 IndexedDB')
   } catch (error) {
-    console.warn('⚠️  IndexedDB 保存失败:', error)
+    console.warn('⚠️  IndexedDB 写入失败:', error)
   }
 }
 
@@ -141,17 +147,24 @@ const defaultPhrases = [
 // 响应式话术列表
 const speechPhrases = ref([...defaultPhrases])
 
-// 通过后端代理加载话术（延迟加载，不阻塞图标显示）
+// 加载话术（ETag 条件请求：有缓存则先用缓存，同时带 ETag 请求确认是否需要更新）
 const loadSpeechPhrases = async () => {
   try {
-    console.log('💬 开始加载话术配置...')
-    const phrases = await invoke('fetch_speech_phrases')
-    if (Array.isArray(phrases) && phrases.length > 0) {
-      speechPhrases.value = phrases
-      console.log('✅ 话术加载成功，共', phrases.length, '条')
-    } else {
-      console.warn('⚠️  话术格式错误，使用默认话术')
+    const cached = await getCacheEntry(CACHE_KEY_PHRASES)
+    // 先应用缓存数据（如果有）
+    if (cached && Array.isArray(cached.data) && cached.data.length > 0) {
+      speechPhrases.value = cached.data
     }
+    // 带 ETag 条件请求后端
+    const result = await invoke('fetch_speech_phrases', {
+      ifNoneMatch: cached?.etag || null,
+    })
+    if (result) {
+      // 有新数据（200）
+      speechPhrases.value = result.phrases
+      await setCacheEntry(CACHE_KEY_PHRASES, result.phrases, result.etag)
+    }
+    // result 为 null 表示 304 未修改，不需要更新
   } catch (error) {
     console.warn('⚠️  话术加载失败，使用默认话术:', error)
   }
@@ -268,25 +281,83 @@ const getBubbleStyle = (index) => {
   }
 }
 
-// 后台更新精灵图缓存（静默失败，不影响用户体验）
-const updateSpritesheetCacheInBackground = () => {
-  const updateUrl = `${SPRITESHEET_URL}?t=${Date.now()}`
-  fetch(updateUrl)
-    .then((res) => {
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`)
-      }
-      return res.blob()
+// 后台更新精灵图缓存（ETag 条件请求，静默失败）
+const updateSpritesheetCacheInBackground = async (cachedEtag) => {
+  try {
+    const result = await invoke('fetch_remote_bytes', {
+      url: SPRITESHEET_URL,
+      ifNoneMatch: cachedEtag || null,
     })
-    .then((blob) => saveBlobToCache(blob))
-    .catch((err) => {
-      console.debug('📦 后台更新精灵图跳过（网络不可用或资源暂时无法访问）')
-    })
+    if (result) {
+      // 有新数据
+      const resp = await fetch(result.data_url)
+      const blob = await resp.blob()
+      await setCacheEntry(CACHE_KEY_SPRITE, blob, result.etag)
+      return true // 表示有更新
+    }
+    return false // 304 未修改
+  } catch (_) {
+    return false
+  }
+}
+
+// 生成本地 fallback 精灵图（当网络和缓存都不可用时）
+// 用 Canvas 绘制 4x4 共 16 帧简单表情图案
+const generateFallbackSpritesheet = () => {
+  const frameSize = 64
+  const cols = 4
+  const rows = 4
+  const canvas = document.createElement('canvas')
+  canvas.width = frameSize * cols
+  canvas.height = frameSize * rows
+  const ctx = canvas.getContext('2d')
+
+  // 16 种颜色/表情变体
+  const colors = [
+    '#FFB6C1', '#FF69B4', '#DDA0DD', '#BA55D3',
+    '#87CEEB', '#4FC3F7', '#81C784', '#AED581',
+    '#FFD54F', '#FFB74D', '#FF8A65', '#F48FB1',
+    '#CE93D8', '#9FA8DA', '#80CBC4', '#A5D6A7',
+  ]
+  const expressions = ['◕‿◕', '≧ω≦', '✧ω✧', '◠‿◠', '≧◡≦', '♡ω♡', 'ↂ‿ↂ', '◕ᴗ◕',
+                        'ᵔᴥᵔ', '◕‸◕', 'ᓚᘏᗢ', 'ᘡᘏᗢ', '◔‸◔', '◠ω◠', '✦‿✦', '◕△◕']
+
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      const i = row * cols + col
+      const x = col * frameSize
+      const y = row * frameSize
+      const cx = x + frameSize / 2
+      const cy = y + frameSize / 2
+
+      // 画圆形背景
+      ctx.beginPath()
+      ctx.arc(cx, cy, frameSize * 0.4, 0, Math.PI * 2)
+      ctx.fillStyle = colors[i]
+      ctx.fill()
+      ctx.strokeStyle = 'rgba(255,255,255,0.6)'
+      ctx.lineWidth = 2
+      ctx.stroke()
+
+      // 画表情文字
+      ctx.fillStyle = '#fff'
+      ctx.font = `${frameSize * 0.25}px sans-serif`
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(expressions[i], cx, cy)
+    }
+  }
+
+  console.info('🎨 [桌宠] 已生成本地 fallback 精灵图:', canvas.width, 'x', canvas.height)
+  return canvas
 }
 
 // 初始化 PixiJS 精灵动画
 const initPixiApp = async () => {
-  if (!pixiCanvas.value) return
+  if (!pixiCanvas.value) {
+    console.error('❌ [桌宠] pixiCanvas ref 为空，无法初始化')
+    return
+  }
 
   // 创建 PixiJS 应用
   pixiApp = new PIXI.Application()
@@ -302,55 +373,86 @@ const initPixiApp = async () => {
   })
 
   let spritesheet = null
-  let usedCache = false
+  let cachedEtag = null
 
-  const cachedBlob = await getCachedBlob()
-  if (cachedBlob) {
+  const cachedEntry = await getCacheEntry(CACHE_KEY_SPRITE)
+  if (cachedEntry && cachedEntry.data) {
     try {
-      console.log('⚡ 使用 IndexedDB 缓存的精灵图')
-
-      // 将 Blob 转换为 ImageBitmap（PixiJS 支持）
-      const imageBitmap = await createImageBitmap(cachedBlob)
-
-      // 从 ImageBitmap 创建纹理（PixiJS 会自动处理）
+      const imageBitmap = await createImageBitmap(cachedEntry.data)
       const texture = PIXI.Texture.from(imageBitmap)
-
-      // 创建一个兼容的 spritesheet 对象
       spritesheet = {
         width: imageBitmap.width,
         height: imageBitmap.height,
         source: texture.source,
       }
-
-      usedCache = true
-      console.log('✅ 缓存的精灵图加载成功', spritesheet.width, 'x', spritesheet.height)
+      cachedEtag = cachedEntry.etag || null
+      console.info('⚡ [桌宠] 缓存精灵图加载成功:', spritesheet.width, 'x', spritesheet.height, 'etag:', cachedEtag)
     } catch (error) {
-      console.warn('⚠️  缓存的精灵图加载失败，将重新下载:', error)
+      console.warn('⚠️ [桌宠] 缓存精灵图加载失败，将从远程下载:', error?.message || String(error))
       spritesheet = null
     }
   }
 
   if (!spritesheet) {
-    console.log('📥 首次加载精灵图')
-    if (!PIXI.Assets.resolver.hasKey(SPRITESHEET_ALIAS)) {
-      PIXI.Assets.add({ alias: SPRITESHEET_ALIAS, src: SPRITESHEET_URL })
+    // 无缓存，全量下载
+    console.info('📥 [桌宠] 通过 Rust 代理下载精灵图...')
+    try {
+      const result = await invoke('fetch_remote_bytes', { url: SPRITESHEET_URL, ifNoneMatch: null })
+      if (result) {
+        const img = new Image()
+        await new Promise((resolve, reject) => {
+          img.onload = resolve
+          img.onerror = reject
+          img.src = result.data_url
+        })
+        const texture = PIXI.Texture.from(img)
+        spritesheet = {
+          width: img.width,
+          height: img.height,
+          source: texture.source,
+        }
+        console.info('✅ [桌宠] 精灵图下载成功:', spritesheet.width, 'x', spritesheet.height)
+
+        // 缓存到 IndexedDB（含 ETag）
+        try {
+          const resp = await fetch(result.data_url)
+          const blob = await resp.blob()
+          await setCacheEntry(CACHE_KEY_SPRITE, blob, result.etag)
+        } catch (cacheErr) {
+          console.warn('⚠️ [桌宠] 缓存写入失败（不影响显示）:', cacheErr?.message || String(cacheErr))
+        }
+      }
+    } catch (proxyErr) {
+      console.error('❌ [桌宠] 精灵图下载失败:', proxyErr?.message || String(proxyErr))
     }
-    spritesheet = await PIXI.Assets.load(SPRITESHEET_ALIAS)
+  } else {
+    // 有缓存 → 延迟后台 ETag 条件请求检查更新
+    setTimeout(() => {
+      updateSpritesheetCacheInBackground(cachedEtag)
+    }, 3000)
   }
 
-  // 后台静默更新缓存（无论是否使用了缓存，都尝试更新以保持最新）
-  if (usedCache) {
-    // 延迟执行后台更新，避免阻塞主流程
-    setTimeout(() => {
-      updateSpritesheetCacheInBackground()
-    }, 3000)
+  // 如果远程和缓存都失败了，使用本地生成的 fallback
+  if (!spritesheet) {
+    console.warn('⚠️ [桌宠] 远程和缓存均不可用，使用本地 fallback 精灵图')
+    try {
+      const fallbackCanvas = generateFallbackSpritesheet()
+      const texture = PIXI.Texture.from(fallbackCanvas)
+      spritesheet = {
+        width: fallbackCanvas.width,
+        height: fallbackCanvas.height,
+        source: texture.source,
+      }
+    } catch (fallbackErr) {
+      console.error('❌ [桌宠] Fallback 精灵图也失败:', fallbackErr?.message || String(fallbackErr))
+      return
+    }
   }
 
   // 4列x4行 (16帧)
   const frameWidth = spritesheet.width / 4
   const frameHeight = spritesheet.height / 4
 
-  // 创建所有帧的纹理
   for (let row = 0; row < 4; row++) {
     for (let col = 0; col < 4; col++) {
       const rect = new PIXI.Rectangle(col * frameWidth, row * frameHeight, frameWidth, frameHeight)
@@ -361,11 +463,11 @@ const initPixiApp = async () => {
       spriteFrames.push(texture)
     }
   }
+  console.info('🐾 [桌宠] 纹理帧创建完毕，共', spriteFrames.length, '帧')
 
   // 创建精灵并添加到舞台
   currentSprite = new PIXI.Sprite(spriteFrames[0])
 
-  // 缩放精灵以适应画布（保持宽高比）
   const scale = Math.min(80 / frameWidth, 80 / frameHeight) * 0.9
   currentSprite.scale.set(scale)
   currentSprite.anchor.set(0.5)
@@ -374,8 +476,8 @@ const initPixiApp = async () => {
 
   pixiApp.stage.addChild(currentSprite)
 
-  // 启动动画循环：idle动作（帧0-3），偶尔切换到其他表情
   startIdleAnimation()
+  console.info('✅ [桌宠] PixiJS 精灵动画已启动')
 }
 
 // 随机切换表情/动作帧（静态显示，不连续播放）
@@ -412,15 +514,49 @@ const cleanupPixiApp = () => {
   currentSprite = null
 }
 
-onMounted(async () => {
-  // 优先显示图标，话术后台加载不阻塞
-  await initPixiApp()
-  startSpeechLoop()
+// 定时刷新间隔（30 分钟）
+const REFRESH_INTERVAL_MS = 30 * 60 * 1000
+let refreshTimer = null
 
+// 后台定时检查资源更新（ETag 条件请求，无变化不下载）
+const startResourceRefresh = () => {
+  refreshTimer = setInterval(async () => {
+    // 刷新话术（ETag 条件请求）
+    try {
+      const cachedPhrases = await getCacheEntry(CACHE_KEY_PHRASES)
+      const result = await invoke('fetch_speech_phrases', {
+        ifNoneMatch: cachedPhrases?.etag || null,
+      })
+      if (result) {
+        speechPhrases.value = result.phrases
+        await setCacheEntry(CACHE_KEY_PHRASES, result.phrases, result.etag)
+      }
+    } catch (_) {}
+
+    // 刷新精灵图缓存（ETag 条件请求，下次启动时生效）
+    try {
+      const cachedSprite = await getCacheEntry(CACHE_KEY_SPRITE)
+      await updateSpritesheetCacheInBackground(cachedSprite?.etag)
+    } catch (_) {}
+  }, REFRESH_INTERVAL_MS)
+}
+
+onMounted(async () => {
+  try {
+    await initPixiApp()
+  } catch (error) {
+    console.error('❌ [桌宠] PixiJS 初始化异常:', error?.message || String(error))
+  }
+  startSpeechLoop()
   loadSpeechPhrases()
+  startResourceRefresh()
 })
 
 onUnmounted(() => {
+  if (refreshTimer) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
+  }
   if (speechInterval) {
     clearInterval(speechInterval)
     speechInterval = null

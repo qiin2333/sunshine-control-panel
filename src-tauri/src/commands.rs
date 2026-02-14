@@ -1,6 +1,71 @@
 use tauri::{AppHandle, Manager, Emitter};
-use log::{info, debug};
+use log::{info, warn};
 use crate::windows;
+use base64::Engine as _;
+use std::sync::OnceLock;
+use serde::Serialize;
+
+/// 共享的 CDN HTTP 客户端（连接池复用，避免频繁 TLS 握手被 CDN 拒绝）
+fn cdn_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .pool_max_idle_per_host(5)
+            .timeout(std::time::Duration::from_secs(15))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()
+            .expect("Failed to create CDN HTTP client")
+    })
+}
+
+/// CDN 响应（区分"未修改"和"有新数据"两种状态）
+enum CdnResult {
+    /// 304 Not Modified，资源未变化
+    NotModified,
+    /// 200 OK，返回响应和 ETag
+    Fresh(reqwest::Response, Option<String>),
+}
+
+/// 带一次重试的 CDN GET 请求，支持 ETag 条件请求
+async fn cdn_get(url: &str, if_none_match: Option<&str>) -> Result<CdnResult, String> {
+    let client = cdn_client();
+    
+    let build_request = || {
+        let mut req = client.get(url);
+        if let Some(etag) = if_none_match {
+            req = req.header("If-None-Match", etag);
+        }
+        req
+    };
+    
+    let result = build_request().send().await;
+    let response = match result {
+        Ok(resp) => resp,
+        Err(_first_err) => {
+            warn!("⚠️  CDN 请求失败，1s 后重试");
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            build_request().send().await
+                .map_err(|e| format!("请求失败（重试后仍失败）: {}", e))?
+        }
+    };
+    
+    // 304 Not Modified
+    if response.status() == reqwest::StatusCode::NOT_MODIFIED {
+        return Ok(CdnResult::NotModified);
+    }
+    
+    if !response.status().is_success() {
+        return Err(format!("HTTP 错误: {}", response.status()));
+    }
+    
+    let etag = response
+        .headers()
+        .get(reqwest::header::ETAG)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    
+    Ok(CdnResult::Fresh(response, etag))
+}
 
 /// 注意：菜单现在是气泡样式，直接在工具栏窗口内部渲染，此函数已弃用
 #[tauri::command]
@@ -39,18 +104,75 @@ pub async fn open_tool_window(app: AppHandle, tool_name: String) -> Result<(), S
     Ok(())
 }
 
+/// 话术响应（包含 ETag 用于条件请求）
+#[derive(Serialize)]
+pub struct SpeechPhrasesResponse {
+    pub phrases: Vec<String>,
+    pub etag: Option<String>,
+}
+
 #[tauri::command]
-pub async fn fetch_speech_phrases() -> Result<Vec<String>, String> {
-    debug!("💬 开始获取话术配置");
-    
+pub async fn fetch_speech_phrases(if_none_match: Option<String>) -> Result<Option<SpeechPhrasesResponse>, String> {
     let url = "https://assets.alkaidlab.com/speech-phrases.json";
     
-    let response = reqwest::get(url).await
-        .map_err(|e| format!("请求失败: {}", e))?;
+    let result = cdn_get(url, if_none_match.as_deref()).await?;
+    let (response, etag) = match result {
+        CdnResult::NotModified => return Ok(None),
+        CdnResult::Fresh(resp, etag) => (resp, etag),
+    };
     
-    let phrases: Vec<String> = response.json().await
-        .map_err(|e| format!("解析失败: {}", e))?;
+    let body_text = response.text().await
+        .map_err(|e| format!("读取响应体失败: {}", e))?;
+    
+    // 去除 UTF-8 BOM（CDN 返回的 JSON 可能带 BOM，serde_json 不接受）
+    let body_text = body_text.trim_start_matches('\u{FEFF}');
+    
+    let phrases: Vec<String> = serde_json::from_str(body_text)
+        .map_err(|e| {
+            let preview = if body_text.len() > 200 { &body_text[..200] } else { body_text };
+            format!("JSON 解析失败: {}，响应前200字符: {}", e, preview)
+        })?;
     
     info!("✅ 话术加载成功，共 {} 条", phrases.len());
-    Ok(phrases)
+    Ok(Some(SpeechPhrasesResponse { phrases, etag }))
+}
+
+/// 远程资源响应（包含 ETag 用于条件请求）
+#[derive(Serialize)]
+pub struct RemoteBytesResponse {
+    pub data_url: String,
+    pub etag: Option<String>,
+}
+
+/// 通过 Rust 后端代理下载远程资源（绕过 WebView 的 CORS 限制）
+/// 支持 ETag 条件请求：传入 if_none_match 则只在资源变化时返回数据
+/// 返回 None 表示 304 未修改
+#[tauri::command]
+pub async fn fetch_remote_bytes(url: String, if_none_match: Option<String>) -> Result<Option<RemoteBytesResponse>, String> {
+    // 安全检查：仅允许特定域名
+    if !url.starts_with("https://assets.alkaidlab.com/") {
+        return Err(format!("不允许代理此 URL: {}", url));
+    }
+    
+    let result = cdn_get(&url, if_none_match.as_deref()).await?;
+    let (response, etag) = match result {
+        CdnResult::NotModified => return Ok(None),
+        CdnResult::Fresh(resp, etag) => (resp, etag),
+    };
+    
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+    
+    let bytes = response.bytes().await
+        .map_err(|e| format!("读取响应体失败: {}", e))?;
+    
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    let data_url = format!("data:{};base64,{}", content_type, b64);
+    
+    info!("✅ 代理下载成功 ({} bytes)", bytes.len());
+    Ok(Some(RemoteBytesResponse { data_url, etag }))
 }

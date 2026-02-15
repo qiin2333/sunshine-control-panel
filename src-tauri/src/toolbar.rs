@@ -192,7 +192,7 @@ pub fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<
     debug!("🔧 创建工具栏窗口");
     
     // 窗口大小和边距配置
-    let toolbar_size = 280.0;  // 窗口大小（正方形，包含气泡菜单空间）
+    let toolbar_size = 240.0;  // 窗口大小（紧凑布局：80px 图标 + 80px 气泡半径 × 2）
     let margin = 20.0;         // 距离屏幕边缘的边距
     
     // 先创建窗口在默认位置

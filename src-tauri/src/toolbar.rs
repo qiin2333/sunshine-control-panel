@@ -191,18 +191,18 @@ pub fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<
     
     debug!("🔧 创建工具栏窗口");
     
-    // 窗口大小和边距配置（物理像素，不随 DPI 缩放）
-    let toolbar_physical_size = 280u32;  // 物理像素大小（包含气泡菜单空间）
-    let margin = 20.0;                   // 距离屏幕边缘的边距（逻辑像素）
+    // 窗口大小和边距配置
+    let toolbar_size = 240.0;  // 窗口大小（紧凑布局：80px 图标 + 80px 气泡半径 × 2）
+    let margin = 20.0;         // 距离屏幕边缘的边距
     
-    // 先创建窗口在默认位置（使用 PhysicalSize 避免 DPI 缩放导致窗口过大）
+    // 先创建窗口在默认位置
     let window = match tauri::WebviewWindowBuilder::new(
         app,
         TOOLBAR_WINDOW_ID,
         tauri::WebviewUrl::App("toolbar/index.html".into())
     )
     .title("工具栏")
-    .inner_size(toolbar_physical_size as f64, toolbar_physical_size as f64)
+    .inner_size(toolbar_size, toolbar_size)
     .resizable(false)
     .maximizable(false)
     .minimizable(false)
@@ -215,16 +215,6 @@ pub fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<
     .build()
     {
         Ok(win) => {
-            // DPI 修正：让窗口始终为 toolbar_physical_size 物理像素
-            // 步骤 1: set_size(PhysicalSize) 让窗口物理尺寸为 280px
-            // 步骤 2: set_zoom(1/scale_factor) 让 CSS 视口恢复为 280 CSS px
-            // 效果: 1 CSS px = 1 物理像素，窗口和内容都是 280px，不受 DPI 缩放影响
-            let _ = win.set_size(tauri::PhysicalSize::new(toolbar_physical_size, toolbar_physical_size));
-            let dpi_scale = win.scale_factor().unwrap_or(1.0);
-            if dpi_scale > 1.01 {
-                let _ = win.set_zoom(1.0 / dpi_scale);
-            }
-            
             // 在生产环境禁用右键菜单
             windows::disable_context_menu(&win);
             
@@ -256,7 +246,6 @@ pub fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<
                 // 计算逻辑像素尺寸
                 let screen_width = size.width as f64 / scale_factor;
                 let screen_height = size.height as f64 / scale_factor;
-                let toolbar_logical = toolbar_physical_size as f64 / scale_factor;
                 
                 // 转换保存的物理坐标为逻辑坐标（用于边界检查）
                 let logical_x = saved_x / scale_factor;
@@ -269,8 +258,8 @@ pub fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<
                 
                 // 检查是否越界
                 let is_out_of_bounds = 
-                    logical_x < -toolbar_logical + min_visible ||
-                    logical_y < -toolbar_logical + min_visible ||
+                    logical_x < -toolbar_size + min_visible ||
+                    logical_y < -toolbar_size + min_visible ||
                     logical_x > max_x ||
                     logical_y > max_y;
                 
@@ -279,8 +268,8 @@ pub fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<
                     debug!("   屏幕尺寸: {}x{}, 保存位置(逻辑): ({}, {})", 
                              screen_width, screen_height, logical_x, logical_y);
                     // 使用默认位置（右下角）
-                    let x = screen_width - toolbar_logical - margin - 60.0;
-                    let y = screen_height - toolbar_logical - margin - 80.0;
+                    let x = screen_width - toolbar_size - margin - 60.0;
+                    let y = screen_height - toolbar_size - margin - 80.0;
                     
                     if let Err(e) = window.set_position(tauri::PhysicalPosition::new(
                         (x * scale_factor) as i32,
@@ -328,11 +317,10 @@ pub fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<
                 // 计算逻辑像素尺寸
                 let screen_width = size.width as f64 / scale_factor;
                 let screen_height = size.height as f64 / scale_factor;
-                let toolbar_logical = toolbar_physical_size as f64 / scale_factor;
                 
                 // 计算右下角位置（考虑任务栏）
-                let x = screen_width - toolbar_logical - margin - 60.0;
-                let y = screen_height - toolbar_logical - margin - 80.0;
+                let x = screen_width - toolbar_size - margin - 60.0;
+                let y = screen_height - toolbar_size - margin - 80.0;
                 
                 debug!("📍 屏幕尺寸: {}x{}, 缩放: {}, 默认工具栏位置: ({}, {})", 
                          screen_width, screen_height, scale_factor, x, y);

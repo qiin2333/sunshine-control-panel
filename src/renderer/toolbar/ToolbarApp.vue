@@ -762,7 +762,8 @@ onUnmounted(() => {
   bottom: calc(50% + 60px);
   left: 50%;
   transform: translateX(-50%);
-  max-width: 280px;
+  max-width: 220px;
+  width: max-content;
   padding: 8px 12px;
   color: #4b2b34;
   font-size: 12px;
@@ -770,9 +771,8 @@ onUnmounted(() => {
   background: rgba(255, 248, 252, 0.95);
   border-radius: 12px;
   pointer-events: none;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  word-break: break-all;
   z-index: 150;
 
   &::after {

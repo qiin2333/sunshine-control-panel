@@ -43,6 +43,7 @@ let pollTimer = null
 let unlistenVddSettings = null
 let unlistenDragDrop = null
 let messageHandler = null
+let visibilityHandlerRef = null
 let proxyBase = '' // 代理服务器基础 URL，用于恢复 iframe 到正确页面
 
 // Constants
@@ -251,6 +252,7 @@ const setupWindowStateMonitor = async (currentWindow) => {
     }
   }
   document.addEventListener('visibilitychange', visibilityHandler)
+  visibilityHandlerRef = visibilityHandler
 
   return visibilityHandler
 }
@@ -259,6 +261,7 @@ const setupWindowStateMonitor = async (currentWindow) => {
 onUnmounted(() => {
   window.removeEventListener('navigate-frame', handleNavigateFrame)
   if (messageHandler) window.removeEventListener('message', messageHandler)
+  if (visibilityHandlerRef) document.removeEventListener('visibilitychange', visibilityHandlerRef)
   if (pollTimer) clearInterval(pollTimer)
   unlistenVddSettings?.()
   unlistenDragDrop?.()

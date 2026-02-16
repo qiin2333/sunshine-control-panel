@@ -329,27 +329,84 @@
             }, 15000);
         }
         
-        // 持续生成气泡
-        setInterval(createBubble, 300);
+        // 持续生成气泡（降低频率节省性能）
+        setInterval(createBubble, 800);
         
         // 初始气泡
-        for (let i = 0; i < 10; i++) {
+        for (let i = 0; i < 8; i++) {
             createBubble();
         }
         
-        // 自动重试连接（30秒后）
-        let countdown = 30;
+        // 三阶段自动重试策略
+        // 阶段1: 前10秒每秒探测（快速重连）
+        // 阶段2: 第2-5轮每5秒探测
+        // 阶段3: 之后每30秒探测
         const footerEl = document.getElementById('footer-text');
+        const PHASE1_DURATION = 10;
+        const PHASE2_INTERVAL = 5;
+        const PHASE2_ROUNDS = 4;
+        const PHASE3_INTERVAL = 30;
+        let roundCount = 0;
+        let countdown = 0;
+        let countdownTimer = null;
         
-        const timer = setInterval(() => {
-            countdown--;
-            if (countdown > 0) {
-                footerEl.textContent = `⏰ 还有${countdown}秒就要惩罚杂鱼了哦～`;
-            } else {
-                clearInterval(timer);
-                location.reload();
+        async function probe(timeoutMs) {
+            try {
+                const resp = await fetch(location.origin + '/', {
+                    method: 'GET', cache: 'no-store',
+                    signal: AbortSignal.timeout(timeoutMs || 5000)
+                });
+                return resp.status !== 503 && resp.status !== 502;
+            } catch { return false; }
+        }
+        
+        function onSuccess() {
+            if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+            footerEl.textContent = '🎉 Sunshine 醒过来啦！正在跳转...';
+            setTimeout(() => location.reload(), 300);
+        }
+        
+        function scheduleNextRound() {
+            roundCount++;
+            const interval = roundCount <= 1 + PHASE2_ROUNDS ? PHASE2_INTERVAL : PHASE3_INTERVAL;
+            countdown = interval;
+            footerEl.textContent = `⏰ 第${roundCount - 1}次探测失败，${countdown}秒后重试...`;
+            countdownTimer = setInterval(() => {
+                if (--countdown <= 0) {
+                    clearInterval(countdownTimer);
+                    countdownTimer = null;
+                    normalProbe();
+                } else {
+                    footerEl.textContent = `⏰ 第${roundCount - 1}次探测失败，${countdown}秒后重试...`;
+                }
+            }, 1000);
+        }
+        
+        // 阶段1: 10秒内每秒探测（超时1秒，确保总时长可控）
+        async function phase1() {
+            roundCount = 1;
+            for (let i = 0; i < PHASE1_DURATION; i++) {
+                footerEl.textContent = `🔍 第1次探测 Sunshine...`;
+                if (await probe(1000)) return onSuccess();
+                if (i < PHASE1_DURATION - 1) await new Promise(r => setTimeout(r, 1000));
             }
-        }, 1000);
+            scheduleNextRound();
+        }
+        
+        async function normalProbe() {
+            footerEl.textContent = `🔍 第${roundCount}次探测 Sunshine...`;
+            if (await probe()) return onSuccess();
+            scheduleNextRound();
+        }
+
+        document.querySelector('.btn').addEventListener('click', (e) => {
+            e.preventDefault();
+            if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+            roundCount = 0;
+            phase1();
+        });
+        
+        phase1();
     </script>
 </body>
 </html>

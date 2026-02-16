@@ -154,7 +154,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import VddSettings from './VddSettings.vue'
 import Welcome from './welcome.vue'
 import UpdateDialog from './UpdateDialog.vue'
@@ -180,6 +180,8 @@ import {
   Key,
   Download,
 } from '@element-plus/icons-vue'
+
+const emit = defineEmits(['route-change'])
 
 // Composables
 const {
@@ -254,6 +256,13 @@ const footerMenuItems = computed(() => {
     items.push({ icon: Key, label: '以管理员重启', action: restartAsAdmin, class: 'warning' })
   }
   return items
+})
+
+// 路由变化时通知父组件（用于 iframe 休眠/唤醒）
+watch(() => router.currentRoute.value, (newRoute, oldRoute) => {
+  if (newRoute !== oldRoute) {
+    emit('route-change', { from: oldRoute, to: newRoute })
+  }
 })
 
 // 暴露方法供父组件调用

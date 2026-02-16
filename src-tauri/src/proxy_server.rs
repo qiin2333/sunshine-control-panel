@@ -183,6 +183,11 @@ fn mark_available() {
     SUNSHINE_AVAILABLE.store(true, Ordering::Relaxed);
 }
 
+/// 重置代理快速失败状态（窗口恢复时调用，确保首次请求不被拦截）
+pub fn reset_fast_fail() {
+    mark_available();
+}
+
 /// 检查是否是连接错误
 fn is_connection_error(error: &str) -> bool {
     const CONNECTION_ERROR_PATTERNS: &[&str] = &[
@@ -332,11 +337,27 @@ async fn proxy_handler(req: Request) -> Response {
     match fetch_and_proxy(&target_url, &method, &headers, body).await {
         Ok(response) => {
             mark_available();
+            let status = response.status();
+            if status.is_client_error() || status.is_server_error() {
+                warn!("⚠️ 代理响应异常 [{}]: HTTP {}", path, status.as_u16());
+            }
             response
         }
         Err(e) => {
             let error_str = e.to_string();
-            error!("❌ 代理错误 [{}]: {}", path, error_str);
+            // 细分错误类型以便排查
+            let error_kind = if error_str.contains("Connection refused") || error_str.contains("connection refused") {
+                "连接被拒绝（后端未启动？）"
+            } else if error_str.contains("timed out") || error_str.contains("timeout") {
+                "连接超时"
+            } else if error_str.contains("certificate") || error_str.contains("ssl") || error_str.contains("tls") {
+                "TLS/证书错误"
+            } else if is_connection_error(&error_str) {
+                "连接失败"
+            } else {
+                "请求失败"
+            };
+            error!("❌ 代理错误 [{}] ({}): {}", path, error_kind, error_str);
             
             if is_connection_error(&error_str) {
                 mark_unavailable();

@@ -1,8 +1,9 @@
 <template>
-  <div id="toolbar-container" @click.self="handleOutsideClick" data-tauri-drag-region>
+  <div id="toolbar-container" @click.self="handleOutsideClick"
+       @pointerdown.self="onDragStart">
     <!-- 气泡菜单 -->
     <transition name="bubble">
-      <div v-if="menuVisible" class="bubble-menu" @click.stop data-tauri-drag-region="false">
+      <div v-if="menuVisible" class="bubble-menu" @click.stop>
         <div v-for="(item, index) in menuItems" :key="item.id" class="bubble-wrapper" :style="getBubbleStyle(index)">
           <div
             class="bubble-item"
@@ -26,8 +27,8 @@
     <div
       class="toolbar-icon"
       :class="{ active: menuVisible }"
-      data-tauri-drag-region="false"
-      @click.stop="toggleMenu"
+      @pointerdown="onDragStart"
+      @click.stop="onIconClick"
       @contextmenu.prevent="toggleMenu"
     >
       <!-- PixiJS Canvas 容器 -->
@@ -40,6 +41,7 @@
 import { ref, onUnmounted, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { PhysicalPosition } from '@tauri-apps/api/dpi'
 import * as PIXI from 'pixi.js'
 
 const menuVisible = ref(false)
@@ -53,12 +55,11 @@ const pixiCanvas = ref(null)
 let pixiApp = null
 let spriteFrames = []
 let currentSprite = null
-let currentFrameIndex = 0
 let animationTimer = null
 
 // 精灵图集 URL
 const SPRITESHEET_URL =
-  'https://assets.alkaidlab.com/toolbar-spritesheet.png'
+  'https://assets.alkaidlab.com/toolbar-spritesheet.webp'
 
 // IndexedDB 缓存配置
 const DB_NAME = 'toolbar-cache'
@@ -189,7 +190,7 @@ const startSpeechLoop = () => {
   // 首次延迟随机出现
   const firstDelay = 4000 + Math.random() * 6000
   setTimeout(() => showSpeech(), firstDelay)
-  // 后续随机间隔 15s ~ 35s
+  // 后续固定间隔（启动时随机选择 15s~35s）
   speechInterval = setInterval(() => {
     // 避免菜单展开时打断交互
     if (!menuVisible.value) {
@@ -232,15 +233,8 @@ const menuItems = [
   },
 ]
 
-const toggleMenu = (e) => {
-  if (e) {
-    e.preventDefault()
-    e.stopPropagation()
-  }
-
-  console.log('切换菜单，当前状态:', menuVisible.value)
+const toggleMenu = () => {
   menuVisible.value = !menuVisible.value
-  console.log('新状态:', menuVisible.value)
 }
 
 const handleOutsideClick = () => {
@@ -262,21 +256,13 @@ const handleMenuItem = async (action) => {
 
 // 计算气泡位置（六角星布局：固定六个顶点分布）
 const getBubbleStyle = (index) => {
-  const outerRadius = 80 // 外圈半径
-  const jitter = 0 // 轻微抖动保留为 0，便于后续微调
-
-  // 六角星（大卫星）可视为正六边形的六个顶点
-  // 顶点从顶部开始，顺时针每 60° 一个
+  const outerRadius = 80
   const baseAngles = [-90, -30, 30, 90, 150, -150]
-  const k = index % 6
-  const angle = baseAngles[k]
+  const angle = baseAngles[index % 6]
   const rad = (angle * Math.PI) / 180
 
-  const x = Math.cos(rad) * outerRadius + (jitter ? (Math.random() - 0.5) * jitter : 0)
-  const y = Math.sin(rad) * outerRadius + (jitter ? (Math.random() - 0.5) * jitter : 0)
-
   return {
-    transform: `translate(${x}px, ${y}px)`,
+    transform: `translate(${Math.cos(rad) * outerRadius}px, ${Math.sin(rad) * outerRadius}px)`,
     transitionDelay: `${index * 200}ms`,
   }
 }
@@ -541,6 +527,150 @@ const startResourceRefresh = () => {
   }, REFRESH_INTERVAL_MS)
 }
 
+// 自定义拖拽（使用 PointerEvent 统一处理鼠标和触摸，替代 data-tauri-drag-region）
+const appWindow = getCurrentWindow()
+let isDragging = false
+let hasMoved = false            // 是否实际产生了移动（区分点击和拖拽）
+let dragPointerType = ''        // 发起拖拽的指针类型（mouse/pen/touch）
+let dragStartScreenX = 0        // 按下时的屏幕坐标（用于鼠标阈值检测）
+let dragStartScreenY = 0
+// 触摸拖拽专用变量
+// 核心思路：WebView2 触摸的 screenX ≈ clientX（视口相对坐标，非屏幕绝对坐标）
+// 移动窗口会导致 screenX 偏移→反馈震荡，因此用 clientX + 已知窗口位置 + 串行 await setPosition
+let touchStartClientX = 0       // 触摸开始时的 clientX（抓取偏移量）
+let touchStartClientY = 0
+let touchBaseLogX = NaN         // 当前已确认的窗口逻辑位置（setPosition 完成后更新）
+let touchBaseLogY = NaN
+let touchPendingLogX = 0        // 待应用的逻辑坐标
+let touchPendingLogY = 0
+let touchIsSettingPos = false   // setPosition 正在执行中，跳过中间事件
+let touchRafId = null           // requestAnimationFrame ID
+const DRAG_THRESHOLD = 3        // 移动超过 3px 才算拖拽
+
+// 移除所有拖拽相关事件监听（复用于多处清理）
+const removeDragListeners = () => {
+  document.removeEventListener('pointermove', onDragMove)
+  document.removeEventListener('pointerup', onDragEnd)
+  document.removeEventListener('pointercancel', onDragEnd)
+}
+
+const onDragStart = (e) => {
+  if (e.button !== 0) return
+  e.preventDefault()
+  isDragging = true
+  hasMoved = false
+  dragPointerType = e.pointerType
+  dragStartScreenX = e.screenX
+  dragStartScreenY = e.screenY
+  
+  document.addEventListener('pointermove', onDragMove)
+  document.addEventListener('pointerup', onDragEnd)
+  document.addEventListener('pointercancel', onDragEnd)
+  
+  if (e.pointerType === 'touch') {
+    touchStartClientX = e.clientX
+    touchStartClientY = e.clientY
+    touchBaseLogX = NaN
+    touchBaseLogY = NaN
+    touchIsSettingPos = false
+    const dpr = window.devicePixelRatio || 1
+    appWindow.outerPosition().then((pos) => {
+      touchBaseLogX = pos.x / dpr
+      touchBaseLogY = pos.y / dpr
+    }).catch(() => { isDragging = false })
+  }
+}
+
+// 触摸拖拽：rAF 回调，串行 await setPosition 避免竞态
+const touchApplyPosition = async () => {
+  touchRafId = null
+  if (!isDragging || touchIsSettingPos) return
+  touchIsSettingPos = true
+  const dpr = window.devicePixelRatio || 1
+  const physX = Math.round(touchPendingLogX * dpr)
+  const physY = Math.round(touchPendingLogY * dpr)
+  try {
+    await appWindow.setPosition(new PhysicalPosition(physX, physY))
+    // 更新 baseline（用物理→逻辑避免累积舍入误差）
+    touchBaseLogX = physX / dpr
+    touchBaseLogY = physY / dpr
+  } catch {} finally {
+    touchIsSettingPos = false
+  }
+}
+
+const onDragMove = (e) => {
+  if (!isDragging) return
+  // 过滤非同类型指针（避免 Windows 触摸模拟鼠标事件）
+  if (e.pointerType !== dragPointerType) return
+  
+  if (dragPointerType === 'mouse' || dragPointerType === 'pen') {
+    const dx = e.screenX - dragStartScreenX
+    const dy = e.screenY - dragStartScreenY
+    if (!hasMoved && Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return
+    hasMoved = true
+    e.preventDefault()
+    // 超过阈值 → 切换为 OS 原生拖拽（完美处理跨 DPI 显示器）
+    isDragging = false
+    removeDragListeners()
+    appWindow.startDragging().then(async () => {
+      try {
+        const finalPos = await appWindow.outerPosition()
+        await invoke('save_toolbar_position', { x: finalPos.x, y: finalPos.y })
+      } catch {}
+    }).catch(() => {})
+    return
+  }
+  
+  // === 触摸拖拽 ===
+  if (Number.isNaN(touchBaseLogX) || touchIsSettingPos) return
+  
+  const dcx = e.clientX - touchStartClientX
+  const dcy = e.clientY - touchStartClientY
+  if (!hasMoved && Math.abs(dcx) < DRAG_THRESHOLD && Math.abs(dcy) < DRAG_THRESHOLD) return
+  hasMoved = true
+  e.preventDefault()
+  
+  // 目标 = 已确认位置 + clientX delta（详见 docs/toolbar_interaction.md）
+  touchPendingLogX = touchBaseLogX + dcx
+  touchPendingLogY = touchBaseLogY + dcy
+  if (!touchRafId) {
+    touchRafId = requestAnimationFrame(touchApplyPosition)
+  }
+}
+
+const onDragEnd = async (e) => {
+  const wasDragged = isDragging && hasMoved
+  isDragging = false
+  if (touchRafId) {
+    cancelAnimationFrame(touchRafId)
+    touchRafId = null
+  }
+  removeDragListeners()
+  
+  if (wasDragged && dragPointerType === 'touch') {
+    // 等待 flight 中的 setPosition 完成
+    while (touchIsSettingPos) {
+      await new Promise(r => setTimeout(r, 10))
+    }
+    try {
+      const dpr = window.devicePixelRatio || 1
+      await appWindow.setPosition(new PhysicalPosition(
+        Math.round(touchPendingLogX * dpr),
+        Math.round(touchPendingLogY * dpr)
+      ))
+      const finalPos = await appWindow.outerPosition()
+      await invoke('save_toolbar_position', { x: finalPos.x, y: finalPos.y })
+    } catch {}
+  }
+  requestAnimationFrame(() => { hasMoved = false })
+}
+
+// 点击切换菜单（鼠标 click + 触摸合成 click 都走这里）
+const onIconClick = () => {
+  if (!hasMoved) toggleMenu()
+}
+
 onMounted(async () => {
   try {
     await initPixiApp()
@@ -566,6 +696,9 @@ onUnmounted(() => {
     speechTimer = null
   }
   cleanupPixiApp()
+  // 清理拖拽
+  removeDragListeners()
+  if (touchRafId) { cancelAnimationFrame(touchRafId); touchRafId = null }
 })
 </script>
 
@@ -612,6 +745,7 @@ onUnmounted(() => {
   justify-content: center;
   position: relative;
   box-sizing: border-box;
+  touch-action: none;  // 阻止浏览器默认触摸手势（滚动/缩放），确保 touchmove 可用
   .gpu-accelerate();
   -webkit-font-smoothing: antialiased;
 }

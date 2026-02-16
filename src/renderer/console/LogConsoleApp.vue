@@ -242,7 +242,7 @@ async function loadLogs() {
   loading.value = true
   try {
     const logs = await invoke('get_all_logs')
-    allLogs.value = logs.reverse() // 最新的在前
+    allLogs.value = logs
   } catch (error) {
     console.error('加载日志失败:', error)
   } finally {
@@ -296,7 +296,7 @@ onMounted(async () => {
   // 监听新日志事件
   unsubscribe = await listen('log-entry', (event) => {
     const newLog = event.payload
-    allLogs.value.unshift(newLog) // 添加到开头
+    allLogs.value.push(newLog)
 
     // 限制日志数量
     if (allLogs.value.length > 10000) {

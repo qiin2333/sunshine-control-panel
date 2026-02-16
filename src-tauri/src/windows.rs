@@ -108,7 +108,7 @@ fn force_activate_window_win32<R: Runtime>(window: &WebviewWindow<R>) {
         let result = SetForegroundWindow(hwnd);
         
         if result.as_bool() {
-            info!("✅ 已使用 Windows API 强制激活窗口");
+            debug!("✅ 已使用 Windows API 强制激活窗口");
         } else {
             warn!("⚠️ SetForegroundWindow 返回 FALSE，窗口可能未能激活到前台");
         }
@@ -149,7 +149,7 @@ pub fn open_about_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     })?;
     
     disable_context_menu(&window);
-    info!("✅ 关于窗口已打开");
+    debug!("✅ 关于窗口已打开");
     Ok(())
 }
 
@@ -168,7 +168,7 @@ pub fn open_log_console<R: Runtime>(app: &AppHandle<R>) {
     }) {
         Ok(window) => {
             disable_context_menu(&window);
-            info!("✅ 日志控制台窗口已打开");
+            debug!("✅ 日志控制台窗口已打开");
         }
         Err(e) => error!("❌ {}", e),
     }
@@ -180,7 +180,7 @@ pub fn open_pin_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
-        info!("✅ PIN 窗口已激活");
+        debug!("✅ PIN 窗口已激活");
         return Ok(());
     }
     
@@ -202,7 +202,7 @@ pub fn open_pin_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std
         let _ = window.show();
     });
     
-    info!("✅ PIN 配对窗口创建成功");
+    debug!("✅ PIN 配对窗口创建成功");
     Ok(())
 }
 
@@ -221,7 +221,7 @@ pub fn open_debug_page<R: Runtime>(app: &AppHandle<R>) {
             .center()
             .build()
     }) {
-        Ok(_) => info!("✅ 调试页面窗口已打开"),
+        Ok(_) => debug!("✅ 调试页面窗口已打开"),
         Err(e) => error!("❌ {}", e),
     }
 }
@@ -292,7 +292,7 @@ pub fn open_desktop_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String>
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
-        info!("✅ 桌面 UI 窗口已激活");
+        debug!("✅ 桌面 UI 窗口已激活");
     } else {
         create_desktop_window(app).map_err(|e| e.to_string())?;
     }
@@ -301,7 +301,7 @@ pub fn open_desktop_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String>
 
 /// 激活主窗口
 pub fn activate_main_window(app: &tauri::AppHandle, target_url: Option<String>) { 
-    info!("📱 activate_main_window 被调用，target_url: {:?}", target_url);
+    debug!("📱 activate_main_window 被调用，target_url: {:?}", target_url);
     
     let Some(window) = app.get_webview_window(MAIN_WINDOW_ID) else {
         error!("❌ 未找到主窗口 '{}'", MAIN_WINDOW_ID);
@@ -311,7 +311,7 @@ pub fn activate_main_window(app: &tauri::AppHandle, target_url: Option<String>) 
         return;
     };
     
-    info!("📱 正在激活主窗口...");
+    debug!("📱 正在激活主窗口...");
     
     let is_visible = window.is_visible().unwrap_or(false);
     let is_minimized = window.is_minimized().unwrap_or(false);
@@ -335,12 +335,12 @@ pub fn activate_main_window(app: &tauri::AppHandle, target_url: Option<String>) 
         let _ = window_clone.set_always_on_top(false);
     });
     
-    info!("✅ 窗口激活完成");
+    debug!("✅ 窗口激活完成");
 }
 
 /// 导航到指定 URL
 fn navigate_to_url(window: &WebviewWindow, url: &str) {
-    info!("🔄 正在导航到: {}", url);
+    debug!("🔄 正在导航到: {}", url);
     
     let Ok(parsed_url) = url::Url::parse(url) else {
         error!("❌ URL 解析失败: {}", url);
@@ -354,7 +354,7 @@ fn navigate_to_url(window: &WebviewWindow, url: &str) {
     );
     
     if path.contains("/pin") {
-        info!("🔐 检测到 /pin 路径，跳过导航");
+        debug!("🔐 检测到 /pin 路径，跳过导航");
         return;
     }
     
@@ -370,22 +370,25 @@ fn navigate_to_url(window: &WebviewWindow, url: &str) {
 
 /// 处理窗口事件
 pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
-    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-        match window.label() {
-            "main" => {
-                api.prevent_close();
-                let _ = window.hide();
-            }
-            "toolbar" => {
-                if let Ok(position) = window.outer_position() {
-                    crate::toolbar::save_toolbar_position_internal(
-                        &window.app_handle(),
-                        position.x as f64,
-                        position.y as f64
-                    );
+    match event {
+        tauri::WindowEvent::CloseRequested { api, .. } => {
+            match window.label() {
+                "main" => {
+                    api.prevent_close();
+                    let _ = window.hide();
                 }
+                "toolbar" => {
+                    if let Ok(position) = window.outer_position() {
+                        crate::toolbar::save_toolbar_position_internal(
+                            &window.app_handle(),
+                            position.x as f64,
+                            position.y as f64
+                        );
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
+        _ => {}
     }
 }

@@ -67,13 +67,6 @@ async fn cdn_get(url: &str, if_none_match: Option<&str>) -> Result<CdnResult, St
     Ok(CdnResult::Fresh(response, etag))
 }
 
-/// 注意：菜单现在是气泡样式，直接在工具栏窗口内部渲染，此函数已弃用
-#[tauri::command]
-pub async fn show_toolbar_menu(_app: AppHandle) -> Result<(), String> {
-    // 菜单现在是工具栏内部的气泡菜单，不需要创建独立窗口
-    Ok(())
-}
-
 #[tauri::command]
 pub async fn toggle_dark_mode(_window: tauri::Window) -> Result<bool, String> {
     // Tauri 通过前端控制主题，这里只是示例

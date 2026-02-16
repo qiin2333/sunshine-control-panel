@@ -59,7 +59,7 @@ let animationTimer = null
 
 // 精灵图集 URL
 const SPRITESHEET_URL =
-  'https://assets.alkaidlab.com/toolbar-spritesheet.png'
+  'https://assets.alkaidlab.com/toolbar-spritesheet.webp'
 
 // IndexedDB 缓存配置
 const DB_NAME = 'toolbar-cache'

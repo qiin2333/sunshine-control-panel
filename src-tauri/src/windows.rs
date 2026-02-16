@@ -75,9 +75,7 @@ pub fn show_and_activate_window<R: Runtime>(window: &WebviewWindow<R>) {
     let _ = window.set_focus();
     
     // 恢复 WebView 活跃状态（引擎级 + JS 级）
-    #[cfg(target_os = "windows")]
-    set_webview_native_visibility(window, true);
-    let _ = window.eval("if(window.__setWebviewVisibility)window.__setWebviewVisibility(true)");
+    set_webview_window_visibility(window, true);
     
     // 重置代理快速失败状态，确保恢复后首次请求不被拦截
     proxy_server::reset_fast_fail();
@@ -358,9 +356,7 @@ pub fn activate_main_window(app: &tauri::AppHandle, target_url: Option<String>) 
     let _ = window.set_focus();
     
     // 恢复 WebView 活跃状态（引擎级 + JS 级）
-    #[cfg(target_os = "windows")]
-    set_webview_native_visibility(&window, true);
-    let _ = window.eval("if(window.__setWebviewVisibility)window.__setWebviewVisibility(true)");
+    set_webview_window_visibility(&window, true);
     
     // 重置代理快速失败状态
     proxy_server::reset_fast_fail();
@@ -437,15 +433,21 @@ fn set_webview_native_visibility<R: Runtime>(window: &WebviewWindow<R>, visible:
 fn set_webview_visibility(window: &tauri::Window, visible: bool) {
     let label = window.label().to_string();
     if let Some(webview_window) = window.app_handle().get_webview_window(&label) {
-        // 1. 原生 WebView2 API：引擎级节流（暂停渲染、降低定时器频率）
-        #[cfg(target_os = "windows")]
-        set_webview_native_visibility(&webview_window, visible);
+        set_webview_window_visibility(&webview_window, visible);
+    }
+}
 
-        // 2. JS 层：通知前端代码（触发 visibilitychange 事件）
-        let js = format!("if(window.__setWebviewVisibility)window.__setWebviewVisibility({})", visible);
-        if let Err(e) = webview_window.eval(&js) {
-            debug!("⚠️ 设置 WebView 可见性失败 [{}]: {}", label, e);
-        }
+/// 设置 WebviewWindow 的可见性状态（引擎级 + JS 级双重控制）
+fn set_webview_window_visibility<R: Runtime>(ww: &WebviewWindow<R>, visible: bool) {
+    // 1. 原生 WebView2 API：引擎级节流（暂停渲染、降低定时器频率）
+    #[cfg(target_os = "windows")]
+    set_webview_native_visibility(ww, visible);
+
+    // 2. JS 层：通知前端代码（触发 visibilitychange 事件）
+    let label = ww.label();
+    let js = format!("if(window.__setWebviewVisibility)window.__setWebviewVisibility({})", visible);
+    if let Err(e) = ww.eval(&js) {
+        debug!("⚠️ 设置 WebView 可见性失败 [{}]: {}", label, e);
     }
 }
 
@@ -494,12 +496,7 @@ pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
                         let is_minimized = ww.is_minimized().unwrap_or(false);
                         let is_visible = ww.is_visible().unwrap_or(true);
                         if is_minimized || !is_visible {
-                            // 原生 WebView2 API：引擎级休眠
-                            #[cfg(target_os = "windows")]
-                            set_webview_native_visibility(&ww, false);
-                            // JS 层通知
-                            let js = "if(window.__setWebviewVisibility)window.__setWebviewVisibility(false)";
-                            let _ = ww.eval(js);
+                            set_webview_window_visibility(&ww, false);
                             debug!("💤 WebView 进入休眠 [{}]: minimized={}, visible={}", label, is_minimized, is_visible);
                         }
                     }

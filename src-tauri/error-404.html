@@ -350,11 +350,11 @@
         let countdown = 0;
         let countdownTimer = null;
         
-        async function probe() {
+        async function probe(timeoutMs) {
             try {
                 const resp = await fetch(location.origin + '/', {
                     method: 'GET', cache: 'no-store',
-                    signal: AbortSignal.timeout(3000)
+                    signal: AbortSignal.timeout(timeoutMs || 5000)
                 });
                 return resp.status !== 503 && resp.status !== 502;
             } catch { return false; }
@@ -382,11 +382,12 @@
             }, 1000);
         }
         
+        // 阶段1: 10秒内每秒探测（超时1秒，确保总时长可控）
         async function phase1() {
             roundCount = 1;
             for (let i = 0; i < PHASE1_DURATION; i++) {
                 footerEl.textContent = `🔍 第1次探测 Sunshine...`;
-                if (await probe()) return onSuccess();
+                if (await probe(1000)) return onSuccess();
                 if (i < PHASE1_DURATION - 1) await new Promise(r => setTimeout(r, 1000));
             }
             scheduleNextRound();

@@ -362,6 +362,9 @@ pub fn activate_main_window(app: &tauri::AppHandle, target_url: Option<String>) 
     set_webview_native_visibility(&window, true);
     let _ = window.eval("if(window.__setWebviewVisibility)window.__setWebviewVisibility(true)");
     
+    // 重置代理快速失败状态
+    proxy_server::reset_fast_fail();
+    
     #[cfg(target_os = "windows")]
     force_activate_window_win32(&window);
     

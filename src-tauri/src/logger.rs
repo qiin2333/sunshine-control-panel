@@ -99,7 +99,7 @@ pub struct TauriLogger {
 
 impl TauriLogger {
     pub fn new(collector: Arc<LogCollector>) -> Self {
-        let default_log_level = if cfg!(debug_assertions) { "debug" } else { "info" };
+        let default_log_level = if cfg!(debug_assertions) { "warn,tao=error,sunshine_gui=debug" } else { "warn,tao=error,sunshine_gui=info" };
         let log_level = std::env::var("RUST_LOG").unwrap_or_else(|_| default_log_level.to_string());
         
         let mut builder = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(&log_level));

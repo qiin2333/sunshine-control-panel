@@ -48,7 +48,6 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::toggle_dark_mode,
-            commands::show_toolbar_menu,
             toolbar::handle_toolbar_menu_action,
             toolbar::save_toolbar_position,
             system::get_current_dpi,

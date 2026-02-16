@@ -3,7 +3,7 @@
 use tauri::{AppHandle, Manager, Runtime, Emitter};
 use std::path::PathBuf;
 use std::fs;
-use log::{info, warn, error, debug};
+use log::{warn, error, debug};
 use crate::windows;
 
 // 获取工具栏配置文件路径
@@ -203,6 +203,7 @@ pub fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<
     )
     .title("工具栏")
     .inner_size(toolbar_size, toolbar_size)
+    .max_inner_size(toolbar_size, toolbar_size)
     .resizable(false)
     .maximizable(false)
     .minimizable(false)
@@ -224,6 +225,22 @@ pub fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<
                 win.open_devtools();
                 debug!("🔧 [开发模式] 已自动打开 DevTools");
             }
+            
+            // 延迟 500ms 检查窗口尺寸（WebView2 初始化可能意外扩大窗口）
+            let win_check = win.clone();
+            let target = toolbar_size;
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                if let Ok(size) = win_check.inner_size() {
+                    let sf = win_check.scale_factor().unwrap_or(1.0);
+                    let expected_phys = (target * sf) as u32;
+                    if size.width != expected_phys || size.height != expected_phys {
+                        warn!("⚠️ 窗口尺寸异常！期望 {}x{} 实际 {}x{}", expected_phys, expected_phys, size.width, size.height);
+                        let _ = win_check.set_size(tauri::Size::Physical(tauri::PhysicalSize::new(expected_phys, expected_phys)));
+                    }
+                }
+            });
+            
             win
         }
         Err(e) => {
@@ -341,7 +358,7 @@ pub fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<
         error!("❌ 显示工具栏窗口失败: {}", e);
     }
     
-    info!("✅ 工具栏窗口创建成功");
+    debug!("✅ 工具栏窗口创建成功");
     Ok(())
 }
 

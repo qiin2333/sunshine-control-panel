@@ -1,5 +1,5 @@
 <template>
-  <SidebarMenu ref="sidebarMenuRef">
+  <SidebarMenu ref="sidebarMenuRef" @route-change="handleRouteChange">
     <div class="iframe-container">
       <transition name="fade-loading">
         <div v-if="loading" class="loading-overlay">
@@ -43,6 +43,7 @@ let pollTimer = null
 let unlistenVddSettings = null
 let unlistenDragDrop = null
 let messageHandler = null
+let proxyBase = '' // 代理服务器基础 URL，用于恢复 iframe 到正确页面
 
 // Constants
 const ALLOWED_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']
@@ -93,6 +94,36 @@ const handleNavigateFrame = (event) => {
 
   sunshineUrl.value = url
   loading.value = true
+}
+
+// 路由切换：离开 HOME 时休眠 iframe，返回时恢复
+let savedIframeUrl = ''
+// 窗口隐藏/最小化时的 iframe URL 保存（与 tab 切换分开追踪）
+let windowSuspendedUrl = ''
+
+const handleRouteChange = ({ from, to }) => {
+  if (from === 'home' && to !== 'home') {
+    // 离开高级设置页 → 强制卸载 iframe 内容以终止所有定时器
+    savedIframeUrl = proxyBase ? proxyBase + currentPath.value : sunshineUrl.value
+    sunshineUrl.value = 'about:blank'
+    loading.value = true
+    if (pollTimer) {
+      clearInterval(pollTimer)
+      pollTimer = null
+    }
+    console.log('[SunshineFrame] iframe 休眠: 已导航到 about:blank')
+  } else if (from !== 'home' && to === 'home') {
+    // 返回高级设置页 → 恢复 iframe 内容
+    if (savedIframeUrl && savedIframeUrl !== 'about:blank') {
+      sunshineUrl.value = savedIframeUrl
+      savedIframeUrl = ''
+      console.log('[SunshineFrame] iframe 唤醒: 恢复 URL')
+    }
+    // 重启窗口状态轮询
+    if (!pollTimer && checkWindowStateFn) {
+      pollTimer = setInterval(checkWindowStateFn, POLL_INTERVAL)
+    }
+  }
 }
 
 // Background image handling
@@ -168,11 +199,13 @@ const createMessageHandler = () => {
 
 
 // Window state monitoring
+let checkWindowStateFn = null
+
 const setupWindowStateMonitor = async (currentWindow) => {
   let lastMinimized = false
   let lastHidden = false
 
-  const checkWindowState = async () => {
+  checkWindowStateFn = async () => {
     try {
       const [isMinimized, isVisible] = await Promise.all([currentWindow.isMinimized(), currentWindow.isVisible()])
 
@@ -186,10 +219,37 @@ const setupWindowStateMonitor = async (currentWindow) => {
     }
   }
 
-  pollTimer = setInterval(checkWindowState, POLL_INTERVAL)
-  await checkWindowState()
+  pollTimer = setInterval(checkWindowStateFn, POLL_INTERVAL)
+  await checkWindowStateFn()
 
-  const visibilityHandler = () => setAnimationsPaused(document.hidden)
+  const visibilityHandler = () => {
+    const hidden = document.hidden
+    setAnimationsPaused(hidden)
+
+    if (hidden) {
+      // 窗口被最小化/隐藏 → 休眠 iframe（仅当 iframe 有实际内容时）
+      if (sunshineUrl.value && sunshineUrl.value !== 'about:blank') {
+        // 保存当前实际页面路径（而非初始 URL），恢复时能回到用户所在的页面
+        windowSuspendedUrl = proxyBase ? proxyBase + currentPath.value : sunshineUrl.value
+        sunshineUrl.value = 'about:blank'
+        console.log('[SunshineFrame] 窗口隐藏 → iframe 休眠, saved:', windowSuspendedUrl)
+      }
+      if (pollTimer) {
+        clearInterval(pollTimer)
+        pollTimer = null
+      }
+    } else {
+      // 窗口恢复 → 唤醒 iframe（仅当是窗口隐藏导致的休眠时恢复）
+      if (windowSuspendedUrl) {
+        sunshineUrl.value = windowSuspendedUrl
+        windowSuspendedUrl = ''
+        console.log('[SunshineFrame] 窗口恢复 → iframe 唤醒')
+      }
+      if (!pollTimer && checkWindowStateFn) {
+        pollTimer = setInterval(checkWindowStateFn, POLL_INTERVAL)
+      }
+    }
+  }
   document.addEventListener('visibilitychange', visibilityHandler)
 
   return visibilityHandler
@@ -209,6 +269,7 @@ onMounted(async () => {
 
   try {
     const proxyBaseUrl = await sunshine.getProxyUrl()
+    proxyBase = proxyBaseUrl
     const cmdLineUrl = await sunshine.getCommandLineUrl()
 
     if (cmdLineUrl) {
@@ -266,19 +327,22 @@ const onLoad = () => {
       const iframe = sunshineIframe.value
       const newUrl = iframe?.contentWindow?.location?.href
 
-      if (newUrl && newUrl !== 'about:blank') {
-        const path = extractPathFromUrl(newUrl)
-
-        if (isWelcomePath(newUrl) || path.toLowerCase().includes('welcome')) {
-          console.log('🔄 检测到 welcome 页面加载，拦截并打开 Vue welcome 组件')
-          openWelcome()
-          if (iframe) iframe.src = 'about:blank'
-          loading.value = true
-          return
-        }
-
-        currentPath.value = path
+      // 休眠导航到 about:blank 时不处理
+      if (!newUrl || newUrl === 'about:blank') {
+        return
       }
+
+      const path = extractPathFromUrl(newUrl)
+
+      if (isWelcomePath(newUrl) || path.toLowerCase().includes('welcome')) {
+        console.log('🔄 检测到 welcome 页面加载，拦截并打开 Vue welcome 组件')
+        openWelcome()
+        if (iframe) iframe.src = 'about:blank'
+        loading.value = true
+        return
+      }
+
+      currentPath.value = path
     } catch {
       // 跨域时无法读取，保持当前路径
     }

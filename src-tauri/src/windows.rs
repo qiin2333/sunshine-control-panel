@@ -10,6 +10,33 @@ const DESKTOP_WINDOW_ID: &str = "desktop";
 #[cfg(debug_assertions)]
 const DEBUG_PAGE_WINDOW_ID: &str = "debug_page";
 
+/// WebView 可见性控制初始化脚本
+/// 窗口最小化或隐藏到托盘时，模拟 Page Visibility API 状态变化，触发 Chromium 内置节流：
+/// - hidden 页面的 setTimeout/setInterval 最小间隔从 4ms 变为 1000ms
+/// - requestAnimationFrame 停止执行
+/// - CSS 动画暂停
+const WEBVIEW_VISIBILITY_INIT_SCRIPT: &str = r#"
+(function() {
+    let _hidden = false;
+    Object.defineProperty(document, 'hidden', {
+        get: function() { return _hidden; },
+        configurable: true,
+    });
+    Object.defineProperty(document, 'visibilityState', {
+        get: function() { return _hidden ? 'hidden' : 'visible'; },
+        configurable: true,
+    });
+    window.__setWebviewVisibility = function(visible) {
+        var wasHidden = _hidden;
+        _hidden = !visible;
+        if (wasHidden !== _hidden) {
+            console.log('[WebView Visibility] ' + (_hidden ? '进入休眠' : '恢复活跃'));
+            document.dispatchEvent(new Event('visibilitychange'));
+        }
+    };
+})();
+"#;
+
 /// 禁用窗口的右键菜单（仅在生产环境）
 #[cfg(not(debug_assertions))]
 pub fn disable_context_menu<R: Runtime>(window: &WebviewWindow<R>) {
@@ -46,6 +73,14 @@ pub fn show_and_activate_window<R: Runtime>(window: &WebviewWindow<R>) {
     let _ = window.unminimize();
     let _ = window.show();
     let _ = window.set_focus();
+    
+    // 恢复 WebView 活跃状态（引擎级 + JS 级）
+    #[cfg(target_os = "windows")]
+    set_webview_native_visibility(window, true);
+    let _ = window.eval("if(window.__setWebviewVisibility)window.__setWebviewVisibility(true)");
+    
+    // 重置代理快速失败状态，确保恢复后首次请求不被拦截
+    proxy_server::reset_fast_fail();
     
     #[cfg(target_os = "windows")]
     force_activate_window_win32(window);
@@ -255,6 +290,7 @@ fn create_main_window_internal<R: Runtime>(app: &AppHandle<R>, visible: bool) ->
         .shadow(false)
         .visible(visible)
         .disable_drag_drop_handler()
+        .initialization_script(WEBVIEW_VISIBILITY_INIT_SCRIPT)
         .build()
         .map_err(|e| format!("创建{}主窗口失败: {}", visibility_desc, e))?;
     
@@ -278,6 +314,7 @@ pub fn create_desktop_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<d
         .visible(true)
         .maximized(true)
         .disable_drag_drop_handler()
+        .initialization_script(WEBVIEW_VISIBILITY_INIT_SCRIPT)
         .build()
         .map_err(|e| format!("创建桌面窗口失败: {}", e))?;
     
@@ -319,6 +356,11 @@ pub fn activate_main_window(app: &tauri::AppHandle, target_url: Option<String>) 
     if is_minimized { let _ = window.unminimize(); }
     if !is_visible { let _ = window.show(); }
     let _ = window.set_focus();
+    
+    // 恢复 WebView 活跃状态（引擎级 + JS 级）
+    #[cfg(target_os = "windows")]
+    set_webview_native_visibility(&window, true);
+    let _ = window.eval("if(window.__setWebviewVisibility)window.__setWebviewVisibility(true)");
     
     #[cfg(target_os = "windows")]
     force_activate_window_win32(&window);
@@ -368,6 +410,42 @@ fn navigate_to_url(window: &WebviewWindow, url: &str) {
     debug!("✅ 已发送导航命令");
 }
 
+/// 通过 WebView2 原生 API 设置 IsVisible 状态（引擎级定时器节流 + 渲染暂停）
+#[cfg(target_os = "windows")]
+fn set_webview_native_visibility<R: Runtime>(window: &WebviewWindow<R>, visible: bool) {
+    let label = window.label().to_string();
+    let _ = window.with_webview(move |webview| {
+        let controller = webview.controller();
+        unsafe {
+            match controller.SetIsVisible(visible) {
+                Ok(_) => log::debug!(
+                    "{} WebView native IsVisible={} [{}]",
+                    if visible { "👁️" } else { "💤" },
+                    visible,
+                    label
+                ),
+                Err(e) => log::debug!("⚠️ SetIsVisible({}) 失败 [{}]: {:?}", visible, label, e),
+            }
+        }
+    });
+}
+
+/// 设置 WebView 的可见性状态（引擎级 + JS 级双重控制）
+fn set_webview_visibility(window: &tauri::Window, visible: bool) {
+    let label = window.label().to_string();
+    if let Some(webview_window) = window.app_handle().get_webview_window(&label) {
+        // 1. 原生 WebView2 API：引擎级节流（暂停渲染、降低定时器频率）
+        #[cfg(target_os = "windows")]
+        set_webview_native_visibility(&webview_window, visible);
+
+        // 2. JS 层：通知前端代码（触发 visibilitychange 事件）
+        let js = format!("if(window.__setWebviewVisibility)window.__setWebviewVisibility({})", visible);
+        if let Err(e) = webview_window.eval(&js) {
+            debug!("⚠️ 设置 WebView 可见性失败 [{}]: {}", label, e);
+        }
+    }
+}
+
 /// 处理窗口事件
 pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     match event {
@@ -376,6 +454,8 @@ pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
                 "main" => {
                     api.prevent_close();
                     let _ = window.hide();
+                    // 窗口隐藏到托盘时，将 WebView 设为休眠状态
+                    set_webview_visibility(window, false);
                 }
                 "toolbar" => {
                     if let Ok(position) = window.outer_position() {
@@ -387,6 +467,40 @@ pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
                     }
                 }
                 _ => {}
+            }
+        }
+        tauri::WindowEvent::Focused(focused) => {
+            // 仅对有 visibility init script 的窗口处理（main 和 desktop）
+            let label = window.label();
+            if label != MAIN_WINDOW_ID && label != DESKTOP_WINDOW_ID {
+                return;
+            }
+            
+            if *focused {
+                // 窗口获得焦点时恢复 WebView 活跃状态
+                set_webview_visibility(window, true);
+                // 重置代理快速失败状态
+                proxy_server::reset_fast_fail();
+            } else {
+                // 失去焦点时，延迟检查是否处于最小化或隐藏状态
+                let app_handle = window.app_handle().clone();
+                let label = window.label().to_string();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    if let Some(ww) = app_handle.get_webview_window(&label) {
+                        let is_minimized = ww.is_minimized().unwrap_or(false);
+                        let is_visible = ww.is_visible().unwrap_or(true);
+                        if is_minimized || !is_visible {
+                            // 原生 WebView2 API：引擎级休眠
+                            #[cfg(target_os = "windows")]
+                            set_webview_native_visibility(&ww, false);
+                            // JS 层通知
+                            let js = "if(window.__setWebviewVisibility)window.__setWebviewVisibility(false)";
+                            let _ = ww.eval(js);
+                            debug!("💤 WebView 进入休眠 [{}]: minimized={}, visible={}", label, is_minimized, is_visible);
+                        }
+                    }
+                });
             }
         }
         _ => {}

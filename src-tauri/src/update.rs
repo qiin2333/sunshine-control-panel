@@ -30,7 +30,7 @@ const DOWNLOAD_PROXY_PREFIXES: &[&str] = &[
 
 // ========== 数据结构定义 ==========
 
-/// 更新信息
+/// 更新信息，`is_latest` 决定前端以“查看更新内容”还是“下载新版本”模式展示。
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UpdateInfo {
     pub version: String,
@@ -38,6 +38,9 @@ pub struct UpdateInfo {
     pub download_url: Option<String>,
     pub download_name: Option<String>,
     pub release_page: String,
+    /// `true` = 已是最新（只读浏览），`false`（默认）= 有可用更新
+    #[serde(default)]
+    pub is_latest: bool,
 }
 
 /// GitHub Release 数据结构
@@ -263,7 +266,7 @@ async fn get_releases() -> Result<Vec<GitHubRelease>, String> {
     }
 }
 
-/// 创建更新信息
+/// 从 GitHub release 构建 `UpdateInfo`（`is_latest` 默认为 `false`，调用方按需设置）。
 fn create_update_info(release: &GitHubRelease) -> UpdateInfo {
     let (download_url, download_name) = find_best_download_asset(&release.assets);
     
@@ -273,11 +276,15 @@ fn create_update_info(release: &GitHubRelease) -> UpdateInfo {
         download_url,
         download_name,
         release_page: release.html_url.clone(),
+        is_latest: false,
     }
 }
 
-/// 检查更新（内部函数）
-pub async fn check_for_updates_internal(show_notification: bool, include_prerelease: bool) -> Result<Option<UpdateInfo>, String> {
+/// 检查更新核心逻辑。
+///
+/// `manual=true` 时已是最新也返回 `Some(info { is_latest: true })`，
+/// `manual=false` 时已是最新返回 `None`。
+pub async fn check_for_updates_internal(manual: bool, include_prerelease: bool) -> Result<Option<UpdateInfo>, String> {
     info!("🔍 开始检查更新... (包含预发布版本: {})", include_prerelease);
     
     // 获取当前 Sunshine 版本
@@ -309,12 +316,15 @@ pub async fn check_for_updates_internal(show_notification: bool, include_prerele
     );
     
     if !is_new_version_available(&current_version, &latest_version) {
-        if show_notification {
-            return Err("已是最新版本".to_string());
+        if manual {
+            let mut info = create_update_info(release);
+            info.is_latest = true;
+            return Ok(Some(info));
         }
         return Ok(None);
     }
     
+    // 存在可用的新版本
     let update_info = create_update_info(release);
     Ok(Some(update_info))
 }
@@ -412,7 +422,7 @@ fn get_last_check_time(app: &AppHandle) -> u64 {
 }
 
 /// 保存上次检查时间
-fn save_last_check_time(app: &AppHandle) {
+pub(crate) fn save_last_check_time<R: Runtime>(app: &AppHandle<R>) {
     if let Some(prefs) = app.try_state::<Arc<Mutex<UpdatePreferences>>>() {
         let prefs_snapshot = {
             let mut prefs = prefs.lock().unwrap();
@@ -455,18 +465,13 @@ pub fn set_include_prerelease_preference(app: AppHandle, include: bool) {
     set_include_prerelease(&app, include);
 }
 
-/// Tauri命令：手动检查更新
+/// Tauri 命令：手动检查更新
 #[tauri::command]
 pub async fn check_for_updates(app: AppHandle) -> Result<Option<UpdateInfo>, String> {
     let include_prerelease = get_include_prerelease(&app);
     let result = check_for_updates_internal(true, include_prerelease).await;
     save_last_check_time(&app);
-    
-    match result {
-        Ok(Some(info)) => Ok(Some(info)),
-        Ok(None) => Err("已是最新版本".to_string()),
-        Err(e) => Err(e),
-    }
+    result
 }
 
 /// 检查是否需要自动更新
@@ -475,7 +480,7 @@ fn should_auto_check(last_check_time: u64) -> bool {
     current_time.saturating_sub(last_check_time) > UPDATE_CHECK_INTERVAL
 }
 
-/// 处理自动检查结果
+/// 处理自动检查结果（`manual=false`，`Some` 必定是新版本）
 fn handle_auto_check_result(app: &AppHandle, result: Result<Option<UpdateInfo>, String>) {
     match result {
         Ok(Some(update_info)) => {

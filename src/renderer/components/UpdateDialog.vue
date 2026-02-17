@@ -1,35 +1,27 @@
 <template>
   <el-dialog
     v-model="visible"
-    title="发现新版本"
-    width="600px"
-    :close-on-click-modal="false"
-    :close-on-press-escape="false"
+    :title="dialogTitle"
+    width="720px"
+    :close-on-click-modal="isLatest"
+    :close-on-press-escape="isLatest || !isInstalling"
     :show-close="!isInstalling"
   >
     <div class="update-dialog-content">
-      <!-- 版本信息 -->
-      <div class="version-info">
-        <div class="version-badge">
-          <el-icon :size="24"><Download /></el-icon>
-          <span class="version-text">{{ updateInfo?.version }}</span>
-        </div>
-        <p class="current-version">当前版本: {{ currentVersion }}</p>
-      </div>
 
       <!-- 更新说明 -->
       <div v-if="updateInfo?.release_notes" class="release-notes">
         <div class="notes-content" v-html="parsedReleaseNotes"></div>
       </div>
 
-      <!-- 下载进度 -->
-      <div v-if="isDownloadInProgress" class="download-progress">
+      <!-- 下载进度 (仅新版本) -->
+      <div v-if="!isLatest && isDownloadInProgress" class="download-progress">
         <el-progress :percentage="downloadProgress" :stroke-width="8" />
         <p class="progress-text">正在下载... {{ downloadProgress }}%</p>
       </div>
 
-      <!-- 安装提示 -->
-      <div v-if="isInstalling" class="install-notice">
+      <!-- 安装提示 (仅新版本) -->
+      <div v-if="!isLatest && isInstalling" class="install-notice">
         <el-alert type="warning" :closable="false" show-icon>
           <template #title>
             <p>正在准备安装更新，系统将自动关闭服务并启动安装程序</p>
@@ -40,19 +32,22 @@
 
     <template #footer>
       <div class="dialog-footer">
-        <template v-if="showDownloadButtons">
-          <el-button type="primary" :loading="isDownloading" @click="handleDownload">
-            <el-icon><Download /></el-icon>
-            下载并安装
-          </el-button>
-          <el-button @click="handleOpenBrowser">
-            <el-icon><Link /></el-icon>
-            在浏览器中打开
-          </el-button>
+        <template v-if="isLatest">
+          <el-button @click="handleOpenBrowser">在浏览器中查看</el-button>
+          <el-button type="primary" @click="handleCancel">关闭</el-button>
         </template>
-        <el-button v-if="!isInstalling" @click="handleSkipVersion">忽略此版本</el-button>
-        <el-button v-if="!isInstalling" @click="handleCancel">稍后提醒</el-button>
-        <el-button v-if="isInstalling" type="primary" disabled>正在安装...</el-button>
+        <template v-else>
+          <template v-if="showDownloadButtons">
+            <el-button @click="handleOpenBrowser">在浏览器中打开</el-button>
+            <el-button @click="handleSkipVersion">忽略此版本</el-button>
+            <el-button @click="handleCancel">稍后提醒</el-button>
+            <el-button type="primary" :loading="isDownloading" @click="handleDownload">
+              <el-icon><Download /></el-icon>
+              下载并安装
+            </el-button>
+          </template>
+          <el-button v-if="isInstalling" type="primary" disabled>正在安装...</el-button>
+        </template>
       </div>
     </template>
   </el-dialog>
@@ -61,7 +56,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Download, Link } from '@element-plus/icons-vue'
+import { Download, Link, CircleCheckFilled } from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
 
 const props = defineProps({
@@ -80,6 +75,16 @@ const visible = computed({
 const isDownloading = ref(false)
 const downloadProgress = ref(0)
 const isInstalling = ref(false)
+
+const isLatest = computed(() => !!props.updateInfo?.is_latest)
+
+const dialogTitle = computed(() => {
+  const ver = props.updateInfo?.version || ''
+  if (isLatest.value) {
+    return `已经是最新版本——此版本更新内容：${ver}`
+  }
+  return `发现新版本：${ver} （当前版本: ${props.currentVersion}）`
+})
 
 const md = new MarkdownIt({ html: true, breaks: true, linkify: true })
 
@@ -203,55 +208,24 @@ watch(
 </script>
 
 <style scoped lang="less">
+@border-radius: 8px;
+
 .update-dialog-content {
-  padding: 20px 0;
-}
-
-.version-info {
-  text-align: center;
-  margin-bottom: 24px;
-}
-
-.version-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 24px;
-  background: linear-gradient(135deg, #4a9eff 0%, #7ab8ff 100%);
-  border-radius: 12px;
-  color: white;
-  margin-bottom: 12px;
-
-  .version-text {
-    font-size: 20px;
-    font-weight: 600;
-  }
-}
-
-.current-version {
-  color: #909399;
-  font-size: 14px;
-  margin: 0;
+  padding: 0;
 }
 
 .release-notes {
-  margin-bottom: 24px;
-
-  h4 {
-    color: #303133;
-    font-size: 16px;
-    margin-bottom: 12px;
-  }
+  margin-bottom: 0;
 
   .notes-content {
-    max-height: 200px;
+    max-height: 400px;
     overflow-y: auto;
-    padding: 12px;
+    padding: 14px 18px;
     background: #f5f7fa;
-    border-radius: 8px;
-    color: #606266;
+    border-radius: @border-radius;
+    color: #4a4a4a;
     font-size: 14px;
-    line-height: 1.6;
+    line-height: 1.7;
 
     &::-webkit-scrollbar {
       width: 6px;
@@ -301,6 +275,7 @@ watch(
     :deep(a) {
       color: #409eff;
       text-decoration: none;
+      word-break: break-all;
 
       &:hover {
         text-decoration: underline;
@@ -310,7 +285,7 @@ watch(
 }
 
 .download-progress {
-  margin-bottom: 24px;
+  margin-bottom: 20px;
 
   .progress-text {
     text-align: center;
@@ -321,11 +296,12 @@ watch(
 }
 
 .install-notice {
-  margin-bottom: 24px;
+  margin-bottom: 20px;
 }
 
 .dialog-footer {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 12px;
 }

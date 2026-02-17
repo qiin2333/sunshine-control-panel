@@ -303,7 +303,7 @@ fn toggle_toolbar<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
-/// 检查更新
+/// 检查更新（托盘菜单触发，`manual = true`）
 fn check_for_updates<R: Runtime>(app: &AppHandle<R>) {
     info!("🔄 托盘菜单：检查更新");
     let app_handle = app.clone();
@@ -314,29 +314,27 @@ fn check_for_updates<R: Runtime>(app: &AppHandle<R>) {
 
     let include_prerelease = update::get_include_prerelease(app);
     tauri::async_runtime::spawn(async move {
-        match update::check_for_updates_internal(false, include_prerelease).await {
+        match update::check_for_updates_internal(true, include_prerelease).await {
             Ok(Some(update_info)) => {
-                info!("🎉 发现新版本: {}", update_info.version);
-                save_update_check_time(&app_handle);
+                if update_info.is_latest {
+                    info!("✅ 已是最新版本: {}", update_info.version);
+                } else {
+                    info!("🎉 发现新版本: {}", update_info.version);
+                }
+                update::save_last_check_time(&app_handle);
                 if let Some(window) = app_handle.get_webview_window("main") {
                     let _ = window.emit("update-available", &update_info);
                 }
             }
             Ok(None) => {
-                info!("✅ 已是最新版本");
-                save_update_check_time(&app_handle);
-                if let Some(window) = app_handle.get_webview_window("main") {
-                    let _ = window.emit("update-check-result", serde_json::json!({
-                        "is_latest": true,
-                        "message": "已是最新版本"
-                    }));
-                }
+                // manual=true 时此分支不会触发
+                debug!("✅ 已是最新版本");
+                update::save_last_check_time(&app_handle);
             }
             Err(e) => {
                 error!("❌ 检查更新失败: {}", e);
                 if let Some(window) = app_handle.get_webview_window("main") {
                     let _ = window.emit("update-check-result", serde_json::json!({
-                        "is_latest": false,
                         "error": e
                     }));
                 }
@@ -355,18 +353,6 @@ fn emit_message<R: Runtime>(app: &AppHandle<R>, msg_type: &str, message: &str) {
     }
 }
 
-/// 保存更新检查时间
-fn save_update_check_time<R: Runtime>(app: &AppHandle<R>) {
-    use std::{sync::Arc, time::{SystemTime, UNIX_EPOCH}};
-
-    if let Some(prefs) = app.try_state::<Arc<Mutex<update::UpdatePreferences>>>() {
-        let mut prefs = prefs.lock().unwrap();
-        prefs.last_check_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-    }
-}
 
 /// 切换防止睡眠功能
 #[cfg(target_os = "windows")]

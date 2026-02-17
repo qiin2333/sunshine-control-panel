@@ -225,7 +225,8 @@ export function useSidebarState() {
     const { listen } = await import('@tauri-apps/api/event')
 
     const unlistenUpdate = await listen('update-available', ({ payload }) => {
-      if (!isVersionSkipped(payload?.version)) {
+      // is_latest 时跳过“忽略版本”检查，始终弹出
+      if (payload?.is_latest || !isVersionSkipped(payload?.version)) {
         updateInfo.value = payload
         showUpdateDialog.value = true
       }
@@ -233,10 +234,8 @@ export function useSidebarState() {
     cleanupFns.push(unlistenUpdate)
 
     const unlistenCheckResult = await listen('update-check-result', ({ payload }) => {
-      const { is_latest, message, error } = payload
-      if (is_latest) {
-        ElMessage.success(message || '已是最新版本')
-      } else if (error) {
+      const { error } = payload
+      if (error) {
         ElMessage.error(`检查更新失败: ${error}`)
       }
     })

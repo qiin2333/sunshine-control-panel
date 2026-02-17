@@ -198,7 +198,7 @@ export function useTools() {
   }
 
   /**
-   * 检查更新
+   * 检查更新，返回 UpdateInfo（包含 is_latest 标记）由调用方处理展示
    */
   const checkForUpdates = async () => {
     try {
@@ -209,18 +209,12 @@ export function useTools() {
       const result = await invoke('check_for_updates')
 
       if (result) {
-        return result // 返回更新信息，让调用者处理
-      } else {
-        ElMessage.success('已是最新版本')
-        return null
+        return result // 返回更新信息（包含 is_latest 标记），让调用者处理
       }
+      return null
     } catch (error) {
-      if (error.includes('已是最新版本')) {
-        ElMessage.success('已是最新版本')
-      } else {
-        console.error('检查更新失败:', error)
-        ElMessage.error('检查更新失败: ' + error)
-      }
+      console.error('检查更新失败:', error)
+      ElMessage.error('检查更新失败: ' + error)
       return null
     }
   }

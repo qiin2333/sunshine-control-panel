@@ -56,7 +56,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Download, Link, CircleCheckFilled } from '@element-plus/icons-vue'
+import { Download } from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
 
 const props = defineProps({
@@ -87,6 +87,14 @@ const dialogTitle = computed(() => {
 })
 
 const md = new MarkdownIt({ html: true, breaks: true, linkify: true })
+
+// 所有链接添加 target="_blank" rel="noopener"，让 Tauri 在系统浏览器中打开
+const defaultLinkRender = md.renderer.rules.link_open || ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
+md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
+  tokens[idx].attrSet('target', '_blank')
+  tokens[idx].attrSet('rel', 'noopener')
+  return defaultLinkRender(tokens, idx, options, env, self)
+}
 
 const parsedReleaseNotes = computed(() =>
   props.updateInfo?.release_notes ? md.render(props.updateInfo.release_notes) : ''

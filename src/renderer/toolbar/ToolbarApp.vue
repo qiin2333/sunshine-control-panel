@@ -715,9 +715,9 @@ onUnmounted(() => {
 @danger-light: rgba(255, 182, 193, 0.95);
 @danger-dark: rgba(255, 150, 150, 0.95);
 
-@halo-default: drop-shadow(0 0 8px rgba(255, 182, 193, 0.4)) drop-shadow(0 0 16px rgba(221, 160, 221, 0.2));
-@halo-hover: drop-shadow(0 0 12px rgba(255, 182, 193, 0.6)) drop-shadow(0 0 24px rgba(221, 160, 221, 0.3));
-@halo-active: drop-shadow(0 0 16px rgba(123, 80, 87, 0.8)) drop-shadow(0 0 32px rgba(221, 160, 221, 0.4));
+@halo-default: drop-shadow(0 0 4px rgba(255, 182, 193, 0.25)) drop-shadow(0 0 8px rgba(221, 160, 221, 0.1));
+@halo-hover: drop-shadow(0 0 6px rgba(255, 182, 193, 0.4)) drop-shadow(0 0 12px rgba(221, 160, 221, 0.15));
+@halo-active: drop-shadow(0 0 8px rgba(123, 80, 87, 0.5)) drop-shadow(0 0 16px rgba(221, 160, 221, 0.2));
 
 @transition-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
 
@@ -729,12 +729,12 @@ onUnmounted(() => {
 }
 
 .bubble-shadow(@color) {
-  box-shadow: 0 4px 20px fade(@color, 60%), 0 0 0 3px rgba(255, 255, 255, 0.4), inset 0 2px 8px rgba(255, 255, 255, 0.3);
+  box-shadow: 0 2px 10px fade(@color, 35%), 0 0 0 2px rgba(255, 255, 255, 0.3), inset 0 1px 4px rgba(255, 255, 255, 0.2);
 }
 
 .bubble-shadow-hover(@color) {
-  box-shadow: 0 8px 35px fade(@color, 90%), 0 0 0 4px rgba(255, 255, 255, 0.6),
-    inset 0 3px 10px rgba(255, 255, 255, 0.5);
+  box-shadow: 0 4px 18px fade(@color, 55%), 0 0 0 3px rgba(255, 255, 255, 0.4),
+    inset 0 2px 6px rgba(255, 255, 255, 0.35);
 }
 
 #toolbar-container {

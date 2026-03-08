@@ -61,7 +61,7 @@
               <div v-if="showPasswordError" class="error-message">✗ {{ t('password_mismatch') }}</div>
             </transition>
             <transition name="fade">
-              <div v-if="showPasswordSuccess" class="success-message">✓ {{ t('password_match_success') }}</div>
+              <div v-if="showPasswordSuccess" class="success-message">✓ {{ t('password_match') }}</div>
             </transition>
           </div>
 

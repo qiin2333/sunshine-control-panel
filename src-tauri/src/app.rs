@@ -80,14 +80,21 @@ fn register_global_shortcuts(app: &mut App) -> Result<(), Box<dyn std::error::Er
     
     let app_handle = app.handle().clone();
     
-    app.handle().global_shortcut().on_shortcut("CmdOrCtrl+Shift+Alt+T", move |_app, _shortcut, event| {
+    match app.handle().global_shortcut().on_shortcut("CmdOrCtrl+Shift+Alt+T", move |_app, _shortcut, event| {
         if event.state == ShortcutState::Pressed {
             debug!("⌨️ 全局快捷键触发: CTRL+SHIFT+ALT+T");
             toggle_toolbar_window(&app_handle);
         }
-    })?;
+    }) {
+        Ok(_) => {
+            info!("⌨️ 全局快捷键已注册: CTRL+SHIFT+ALT+T");
+        }
+        Err(e) => {
+            log::warn!("⚠️  全局快捷键 CTRL+SHIFT+ALT+T 注册失败（可能已被其他程序占用）: {}", e);
+            log::warn!("⚠️  工具栏快捷键不可用，但应用程序将继续正常运行");
+        }
+    }
     
-    info!("⌨️ 全局快捷键已注册: CTRL+SHIFT+ALT+T");
     Ok(())
 }
 

@@ -1,6 +1,7 @@
 <template>
-  <div id="toolbar-container" @click.self="handleOutsideClick"
-       @pointerdown.self="onDragStart">
+  <div id="toolbar-container" :class="{ 'menu-open': menuVisible }"
+       @click.self="handleOutsideClick"
+       @pointerdown.self="onContainerDragStart">
     <!-- 气泡菜单 -->
     <transition name="bubble">
       <div v-if="menuVisible" class="bubble-menu" @click.stop>
@@ -554,6 +555,13 @@ const removeDragListeners = () => {
   document.removeEventListener('pointercancel', onDragEnd)
 }
 
+// 容器拖拽：仅在菜单展开时响应（空白区域拖拽）
+const onContainerDragStart = (e) => {
+  if (menuVisible.value) {
+    onDragStart(e)
+  }
+}
+
 const onDragStart = (e) => {
   if (e.button !== 0) return
   e.preventDefault()
@@ -745,9 +753,16 @@ onUnmounted(() => {
   justify-content: center;
   position: relative;
   box-sizing: border-box;
-  touch-action: none;  // 阻止浏览器默认触摸手势（滚动/缩放），确保 touchmove 可用
+  // 默认状态（菜单收起）：容器不响应鼠标/触控，只有图标可交互
+  pointer-events: none;
   .gpu-accelerate();
   -webkit-font-smoothing: antialiased;
+
+  // 菜单展开状态：容器响应点击（用于点击空白关闭菜单）
+  &.menu-open {
+    pointer-events: auto;
+    touch-action: none;
+  }
 }
 
 .bubble-menu {
@@ -864,6 +879,8 @@ onUnmounted(() => {
   transition: all 0.4s @transition-bounce;
   position: relative;
   z-index: 100;
+  pointer-events: auto;  // 始终可交互（覆盖容器的 pointer-events: none）
+  touch-action: none;    // 阻止浏览器默认触摸手势
   .gpu-accelerate();
   -webkit-font-smoothing: antialiased;
 

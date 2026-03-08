@@ -18,12 +18,23 @@ mod commands;
 use log::info;
 
 fn main() {
-    // 设置环境变量以忽略证书错误
+    // 设置 WebView2 浏览器参数以优化 GPU 占用和安全策略
     #[cfg(target_os = "windows")]
     unsafe {
-        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
-        std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", 
-            "--ignore-certificate-errors --enable-features=IntensiveWakeUpThrottling,ThrottleDisplayNoneAndVisibilityHiddenCrossOriginIframes");
+        std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", [
+            // 安全：忽略自签名证书错误（连接本地 Sunshine）
+            "--ignore-certificate-errors",
+            // 节流：激进的后台/隐藏标签页定时器节流
+            "--enable-features=IntensiveWakeUpThrottling,ThrottleDisplayNoneAndVisibilityHiddenCrossOriginIframes",
+            // GPU 优化：禁用 Edge 特有的 UI 覆盖层（减少不必要的 GPU 合成层）
+            "--disable-features=msWebOOUI",
+            // GPU 优化：禁用 GPU 着色器磁盘缓存，减少 VRAM 占用
+            "--disable-gpu-shader-disk-cache",
+            // GPU 优化：关闭 GPU 光栅化抗锯齿（控制面板 UI 无需 MSAA）
+            "--gpu-rasterization-msaa-sample-count=0",
+            // GPU 优化：限制渲染进程数量，减少 GPU 上下文切换开销
+            "--renderer-process-limit=1",
+        ].join(" "));
     }
     
     tauri::Builder::default()

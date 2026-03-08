@@ -1,5 +1,5 @@
 use tauri::{Manager, AppHandle, Runtime, WebviewWindow};
-use log::{info, error, debug};
+use log::{info, error, debug, warn};
 use crate::proxy_server;
 
 const MAIN_WINDOW_ID: &str = "main";
@@ -15,9 +15,12 @@ const DEBUG_PAGE_WINDOW_ID: &str = "debug_page";
 /// - hidden 页面的 setTimeout/setInterval 最小间隔从 4ms 变为 1000ms
 /// - requestAnimationFrame 停止执行
 /// - CSS 动画暂停
+/// 同时通过注入 CSS 暂停所有 CSS 动画/过渡，进一步降低 GPU 合成开销
 const WEBVIEW_VISIBILITY_INIT_SCRIPT: &str = r#"
 (function() {
     let _hidden = false;
+    let _pauseStyleEl = null;
+
     Object.defineProperty(document, 'hidden', {
         get: function() { return _hidden; },
         configurable: true,
@@ -26,11 +29,34 @@ const WEBVIEW_VISIBILITY_INIT_SCRIPT: &str = r#"
         get: function() { return _hidden ? 'hidden' : 'visible'; },
         configurable: true,
     });
+
+    function pauseAnimations() {
+        if (!_pauseStyleEl) {
+            _pauseStyleEl = document.createElement('style');
+            _pauseStyleEl.id = '__gpu_pause_animations';
+            _pauseStyleEl.textContent = '*, *::before, *::after { animation-play-state: paused !important; transition: none !important; }';
+        }
+        if (!_pauseStyleEl.parentNode) {
+            (document.head || document.documentElement).appendChild(_pauseStyleEl);
+        }
+    }
+
+    function resumeAnimations() {
+        if (_pauseStyleEl && _pauseStyleEl.parentNode) {
+            _pauseStyleEl.parentNode.removeChild(_pauseStyleEl);
+        }
+    }
+
     window.__setWebviewVisibility = function(visible) {
         var wasHidden = _hidden;
         _hidden = !visible;
         if (wasHidden !== _hidden) {
             console.log('[WebView Visibility] ' + (_hidden ? '进入休眠' : '恢复活跃'));
+            if (_hidden) {
+                pauseAnimations();
+            } else {
+                resumeAnimations();
+            }
             document.dispatchEvent(new Event('visibilitychange'));
         }
     };
@@ -144,6 +170,39 @@ fn force_activate_window_win32<R: Runtime>(window: &WebviewWindow<R>) {
             debug!("✅ 已使用 Windows API 强制激活窗口");
         } else {
             warn!("⚠️ SetForegroundWindow 返回 FALSE，窗口可能未能激活到前台");
+        }
+    }
+}
+
+/// 为窗口设置 DWM 圆角（仅 Windows 11+ 生效）
+/// 让系统在 DWM 层面裁剪窗口圆角，无需 WebView2 透明合成，大幅降低 GPU 开销
+#[cfg(target_os = "windows")]
+fn apply_dwm_rounded_corners<R: Runtime>(window: &WebviewWindow<R>) {
+    use windows::Win32::Graphics::Dwm::DwmSetWindowAttribute;
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows::Win32::Foundation::HWND;
+
+    let hwnd = match window.window_handle() {
+        Ok(handle) => match handle.as_raw() {
+            RawWindowHandle::Win32(h) => HWND(h.hwnd.get() as *mut _),
+            _ => return,
+        },
+        Err(_) => return,
+    };
+
+    unsafe {
+        // DWMWA_WINDOW_CORNER_PREFERENCE = 33
+        // DWMWCP_ROUND = 2  (标准圆角，约 8px)
+        let preference: u32 = 2;
+        let attr = windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(33i32);
+        match DwmSetWindowAttribute(
+            hwnd,
+            attr,
+            &preference as *const u32 as *const std::ffi::c_void,
+            std::mem::size_of::<u32>() as u32,
+        ) {
+            Ok(_) => debug!("✅ 已设置 DWM 圆角 (DWMWCP_ROUND)"),
+            Err(e) => debug!("⚠️ DWM 圆角设置失败（Windows 10 不支持）: {:?}", e),
         }
     }
 }
@@ -292,6 +351,10 @@ fn create_main_window_internal<R: Runtime>(app: &AppHandle<R>, visible: bool) ->
         .build()
         .map_err(|e| format!("创建{}主窗口失败: {}", visibility_desc, e))?;
     
+    // 设置 DWM 圆角，让系统级合成器裁剪窗口圆角
+    #[cfg(target_os = "windows")]
+    apply_dwm_rounded_corners(&window);
+    
     disable_context_menu(&window);
     info!("✅ {}主窗口创建成功", visibility_desc);
     Ok(())
@@ -315,6 +378,9 @@ pub fn create_desktop_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<d
         .initialization_script(WEBVIEW_VISIBILITY_INIT_SCRIPT)
         .build()
         .map_err(|e| format!("创建桌面窗口失败: {}", e))?;
+    
+    #[cfg(target_os = "windows")]
+    apply_dwm_rounded_corners(&window);
     
     disable_context_menu(&window);
     info!("✅ 桌面 UI 窗口创建成功");
@@ -410,12 +476,19 @@ fn navigate_to_url(window: &WebviewWindow, url: &str) {
 }
 
 /// 通过 WebView2 原生 API 设置 IsVisible 状态（引擎级定时器节流 + 渲染暂停）
+/// hidden 状态下 WebView2 会暂停渲染管线和 GPU 合成，大幅降低 GPU 占用
 #[cfg(target_os = "windows")]
 fn set_webview_native_visibility<R: Runtime>(window: &WebviewWindow<R>, visible: bool) {
     let label = window.label().to_string();
     let _ = window.with_webview(move |webview| {
         let controller = webview.controller();
         unsafe {
+            // 核心：暂停/恢复 WebView 渲染管线
+            // SetIsVisible(false) 会：
+            //   - 停止 GPU 合成器帧生成（GPU 占用降至 ~0%）
+            //   - 冻结 requestAnimationFrame 回调
+            //   - 降低 setTimeout/setInterval 分辨率到 ~1000ms
+            //   - 暂停 CSS 动画和过渡
             match controller.SetIsVisible(visible) {
                 Ok(_) => log::debug!(
                     "{} WebView native IsVisible={} [{}]",
@@ -424,6 +497,14 @@ fn set_webview_native_visibility<R: Runtime>(window: &WebviewWindow<R>, visible:
                     label
                 ),
                 Err(e) => log::debug!("⚠️ SetIsVisible({}) 失败 [{}]: {:?}", visible, label, e),
+            }
+
+            // 尝试设置默认背景色为不透明黑色（隐藏时减少 alpha 合成开销）
+            // ICoreWebView2Controller2::put_DefaultBackgroundColor
+            // 注：仅在窗口隐藏时设为不透明以降低 GPU，恢复时还原透明以保留圆角效果
+            if !visible {
+                // 不改变背景色，保持一致的视觉效果
+                // 未来可以考虑：隐藏时 SetDefaultBackgroundColor 为不透明色进一步降低 GPU
             }
         }
     });

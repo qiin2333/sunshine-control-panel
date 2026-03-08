@@ -1,6 +1,7 @@
 <template>
-  <div id="toolbar-container" @click.self="handleOutsideClick"
-       @pointerdown.self="onDragStart">
+  <div id="toolbar-container" :class="{ 'menu-open': menuVisible }"
+       @click.self="handleOutsideClick"
+       @pointerdown.self="onContainerDragStart">
     <!-- 气泡菜单 -->
     <transition name="bubble">
       <div v-if="menuVisible" class="bubble-menu" @click.stop>
@@ -554,6 +555,13 @@ const removeDragListeners = () => {
   document.removeEventListener('pointercancel', onDragEnd)
 }
 
+// 容器拖拽：仅在菜单展开时响应（空白区域拖拽）
+const onContainerDragStart = (e) => {
+  if (menuVisible.value) {
+    onDragStart(e)
+  }
+}
+
 const onDragStart = (e) => {
   if (e.button !== 0) return
   e.preventDefault()
@@ -715,9 +723,9 @@ onUnmounted(() => {
 @danger-light: rgba(255, 182, 193, 0.95);
 @danger-dark: rgba(255, 150, 150, 0.95);
 
-@halo-default: drop-shadow(0 0 8px rgba(255, 182, 193, 0.4)) drop-shadow(0 0 16px rgba(221, 160, 221, 0.2));
-@halo-hover: drop-shadow(0 0 12px rgba(255, 182, 193, 0.6)) drop-shadow(0 0 24px rgba(221, 160, 221, 0.3));
-@halo-active: drop-shadow(0 0 16px rgba(123, 80, 87, 0.8)) drop-shadow(0 0 32px rgba(221, 160, 221, 0.4));
+@halo-default: drop-shadow(0 0 4px rgba(255, 182, 193, 0.25)) drop-shadow(0 0 8px rgba(221, 160, 221, 0.1));
+@halo-hover: drop-shadow(0 0 6px rgba(255, 182, 193, 0.4)) drop-shadow(0 0 12px rgba(221, 160, 221, 0.15));
+@halo-active: drop-shadow(0 0 8px rgba(123, 80, 87, 0.5)) drop-shadow(0 0 16px rgba(221, 160, 221, 0.2));
 
 @transition-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
 
@@ -729,12 +737,12 @@ onUnmounted(() => {
 }
 
 .bubble-shadow(@color) {
-  box-shadow: 0 4px 20px fade(@color, 60%), 0 0 0 3px rgba(255, 255, 255, 0.4), inset 0 2px 8px rgba(255, 255, 255, 0.3);
+  box-shadow: 0 2px 10px fade(@color, 35%), 0 0 0 2px rgba(255, 255, 255, 0.3), inset 0 1px 4px rgba(255, 255, 255, 0.2);
 }
 
 .bubble-shadow-hover(@color) {
-  box-shadow: 0 8px 35px fade(@color, 90%), 0 0 0 4px rgba(255, 255, 255, 0.6),
-    inset 0 3px 10px rgba(255, 255, 255, 0.5);
+  box-shadow: 0 4px 18px fade(@color, 55%), 0 0 0 3px rgba(255, 255, 255, 0.4),
+    inset 0 2px 6px rgba(255, 255, 255, 0.35);
 }
 
 #toolbar-container {
@@ -745,9 +753,16 @@ onUnmounted(() => {
   justify-content: center;
   position: relative;
   box-sizing: border-box;
-  touch-action: none;  // 阻止浏览器默认触摸手势（滚动/缩放），确保 touchmove 可用
+  // 默认状态（菜单收起）：容器不响应鼠标/触控，只有图标可交互
+  pointer-events: none;
   .gpu-accelerate();
   -webkit-font-smoothing: antialiased;
+
+  // 菜单展开状态：容器响应点击（用于点击空白关闭菜单）
+  &.menu-open {
+    pointer-events: auto;
+    touch-action: none;
+  }
 }
 
 .bubble-menu {
@@ -864,6 +879,8 @@ onUnmounted(() => {
   transition: all 0.4s @transition-bounce;
   position: relative;
   z-index: 100;
+  pointer-events: auto;  // 始终可交互（覆盖容器的 pointer-events: none）
+  touch-action: none;    // 阻止浏览器默认触摸手势
   .gpu-accelerate();
   -webkit-font-smoothing: antialiased;
 

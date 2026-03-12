@@ -256,6 +256,10 @@ export const moonlightWeb = {
   async getInstallPath() {
     return await invoke('moonlight_web_get_install_path')
   },
+
+  async generateCert() {
+    return await invoke('moonlight_web_generate_cert')
+  },
 }
 
 // 文件系统相关（如果需要）

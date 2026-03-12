@@ -197,9 +197,10 @@ pub async fn moonlight_web_get_status() -> Result<MoonlightWebStatus, String> {
         String::new()
     };
 
-    // 根据本机 IP 生成访问 URL
+    // 根据配置判断协议并生成访问 URL
     let access_url = if running {
-        format!("http://localhost:{}", port)
+        let scheme = if has_https_certificate() { "https" } else { "http" };
+        format!("{}://localhost:{}", scheme, port)
     } else {
         String::new()
     };
@@ -487,6 +488,58 @@ pub fn moonlight_web_get_install_path() -> String {
     get_install_dir().to_string_lossy().to_string()
 }
 
+/// 自动生成自签名 HTTPS 证书
+#[tauri::command]
+pub async fn moonlight_web_generate_cert() -> Result<CertificateConfig, String> {
+    let install_dir = get_install_dir();
+    let server_dir = install_dir.join("server");
+    std::fs::create_dir_all(&server_dir)
+        .map_err(|e| format!("创建目录失败: {}", e))?;
+
+    let key_path = server_dir.join("key.pem");
+    let cert_path = server_dir.join("cert.pem");
+
+    info!("🔐 正在生成自签名 HTTPS 证书...");
+
+    // 使用 rcgen 生成自签名证书
+    let mut params = rcgen::CertificateParams::new(vec![
+        "localhost".to_string(),
+    ]).map_err(|e| format!("证书参数创建失败: {}", e))?;
+
+    // 添加 SAN（Subject Alternative Names）
+    params.subject_alt_names = vec![
+        rcgen::SanType::DnsName("localhost".try_into().map_err(|e| format!("DNS name 无效: {}", e))?),
+        rcgen::SanType::IpAddress(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))),
+        rcgen::SanType::IpAddress(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0))),
+    ];
+
+    // 设置有效期 10 年
+    params.not_before = rcgen::date_time_ymd(2025, 1, 1);
+    params.not_after = rcgen::date_time_ymd(2035, 1, 1);
+
+    // 设置 DN
+    params.distinguished_name = rcgen::DistinguishedName::new();
+    params.distinguished_name.push(rcgen::DnType::CommonName, "Moonlight Web Stream");
+    params.distinguished_name.push(rcgen::DnType::OrganizationName, "Sunshine Control Panel");
+
+    let key_pair = rcgen::KeyPair::generate().map_err(|e| format!("密钥生成失败: {}", e))?;
+    let cert = params.self_signed(&key_pair).map_err(|e| format!("证书签名失败: {}", e))?;
+
+    // 写入文件
+    std::fs::write(&key_path, key_pair.serialize_pem())
+        .map_err(|e| format!("写入私钥失败: {}", e))?;
+    std::fs::write(&cert_path, cert.pem())
+        .map_err(|e| format!("写入证书失败: {}", e))?;
+
+    info!("✅ 自签名证书已生成: {:?}, {:?}", cert_path, key_path);
+
+    // 返回相对于 moonlight-web 安装目录的路径（web-server 工作目录）
+    Ok(CertificateConfig {
+        private_key_pem: "./server/key.pem".to_string(),
+        certificate_pem: "./server/cert.pem".to_string(),
+    })
+}
+
 // ========== 内部工具函数 ==========
 
 /// 检测 moonlight-web 进程是否在运行
@@ -648,6 +701,17 @@ async fn ensure_config_exists() -> Result<(), String> {
 /// 从 bind_address 中解析端口
 fn parse_port_from_bind_address(addr: &str) -> Option<u16> {
     addr.rsplit(':').next()?.parse().ok()
+}
+
+/// 检查配置中是否启用了 HTTPS 证书
+fn has_https_certificate() -> bool {
+    let config_path = get_config_path();
+    if let Ok(content) = std::fs::read_to_string(&config_path) {
+        if let Ok(config) = serde_json::from_str::<MoonlightWebConfig>(&content) {
+            return config.web_server.certificate.is_some();
+        }
+    }
+    false
 }
 
 /// 解压下载的压缩包

@@ -120,6 +120,7 @@ fn main() {
             moonlight_web::moonlight_web_check_release,
             moonlight_web::moonlight_web_download,
             moonlight_web::moonlight_web_get_install_path,
+            moonlight_web::moonlight_web_generate_cert,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

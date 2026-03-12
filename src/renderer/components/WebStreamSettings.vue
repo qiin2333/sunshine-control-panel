@@ -125,6 +125,13 @@
               <el-form-item label="证书文件">
                 <el-input v-model="certPemPath" placeholder="./server/cert.pem" />
               </el-form-item>
+              <el-form-item>
+                <el-button @click="handleGenerateCert" :loading="generatingCert" round>
+                  <el-icon><Key /></el-icon>
+                  自动生成自签名证书
+                </el-button>
+                <span class="form-tip">生成的证书有效期 10 年，浏览器会提示不安全但可正常使用</span>
+              </el-form-item>
             </template>
 
             <el-divider content-position="left">默认串流设置</el-divider>
@@ -189,7 +196,7 @@ import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Connection, Download, VideoPlay, VideoPause, Refresh,
-  Link, CopyDocument, Position, Setting, Folder,
+  Link, CopyDocument, Position, Setting, Folder, Key,
 } from '@element-plus/icons-vue'
 import { moonlightWeb } from '../tauri-adapter.js'
 
@@ -218,6 +225,7 @@ const downloading = ref(false)
 const downloadProgress = ref(0)
 const saving = ref(false)
 const configDirty = ref(false)
+const generatingCert = ref(false)
 const httpsEnabled = ref(false)
 const certKeyPath = ref('./server/key.pem')
 const certPemPath = ref('./server/cert.pem')
@@ -407,6 +415,40 @@ async function handleCheckUpdate() {
   }
 }
 
+async function handleGenerateCert() {
+  generatingCert.value = true
+  try {
+    const result = await moonlightWeb.generateCert()
+    certKeyPath.value = result.private_key_pem
+    certPemPath.value = result.certificate_pem
+    // 生成后自动保存配置
+    await handleSaveConfig()
+    // 如果服务正在运行，提示重启
+    if (status.running) {
+      try {
+        await ElMessageBox.confirm(
+          '证书已生成并保存。需要重启服务才能生效，是否立即重启？',
+          'HTTPS 证书',
+          { confirmButtonText: '重启服务', cancelButtonText: '稍后手动重启' }
+        )
+        await moonlightWeb.stop()
+        await new Promise(resolve => setTimeout(resolve, 500))
+        await moonlightWeb.start()
+        await refreshStatus()
+        ElMessage.success('服务已重启，HTTPS 已生效')
+      } catch {
+        ElMessage.info('请稍后手动重启服务以启用 HTTPS')
+      }
+    } else {
+      ElMessage.success('自签名证书已生成并保存，启动服务即可使用 HTTPS')
+    }
+  } catch (e) {
+    ElMessage.error('证书生成失败: ' + e)
+  } finally {
+    generatingCert.value = false
+  }
+}
+
 async function handleSaveConfig() {
   saving.value = true
   try {
@@ -421,8 +463,10 @@ async function handleSaveConfig() {
         private_key_pem: certKeyPath.value,
         certificate_pem: certPemPath.value,
       }
+      saveConfig.web_server.session_cookie_secure = true
     } else {
       delete saveConfig.web_server.certificate
+      saveConfig.web_server.session_cookie_secure = false
     }
 
     saveConfig.default_settings = {

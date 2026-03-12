@@ -313,6 +313,10 @@ onMounted(async () => {
       sidebarMenuRef.value?.openVddSettings?.()
     })
 
+    await currentWindow.listen('open-web-stream', () => {
+      sidebarMenuRef.value?.openWebStream?.()
+    })
+
     await currentWindow.listen('open-welcome', openWelcome)
   } catch (error) {
     console.error('初始化失败:', error)

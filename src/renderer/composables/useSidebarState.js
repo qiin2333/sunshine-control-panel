@@ -100,6 +100,7 @@ export function useSidebarState() {
   // 导航方法
   const openVddSettings = () => router.navigate(ROUTES.VDD_SETTINGS)
   const openWelcome = () => router.navigate(ROUTES.WELCOME)
+  const openWebStream = () => router.navigate(ROUTES.WEB_STREAM)
   const goHome = () => router.goHome()
 
   /**
@@ -285,6 +286,7 @@ export function useSidebarState() {
     toggleCollapse,
     openVddSettings,
     openWelcome,
+    openWebStream,
     goHome,
     skipVersion,
     isVersionSkipped,

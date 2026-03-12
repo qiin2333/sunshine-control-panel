@@ -135,6 +135,7 @@
         <!-- 动态路由组件 -->
         <VddSettings v-if="router.isRoute(ROUTES.VDD_SETTINGS)" @close="goHome" />
         <Welcome v-if="router.isRoute(ROUTES.WELCOME)" @close="goHome" />
+        <WebStreamSettings v-if="router.isRoute(ROUTES.WEB_STREAM)" @close="goHome" />
 
         <!-- 默认内容 (slot) -->
         <slot v-if="router.isRoute(ROUTES.HOME)" />
@@ -157,6 +158,7 @@
 import { computed, ref, watch } from 'vue'
 import VddSettings from './VddSettings.vue'
 import Welcome from './welcome.vue'
+import WebStreamSettings from './WebStreamSettings.vue'
 import UpdateDialog from './UpdateDialog.vue'
 import { useSidebarState } from '../composables/useSidebarState.js'
 import { useWindowControls } from '../composables/useWindowControls.js'
@@ -179,6 +181,7 @@ import {
   Moon,
   Key,
   Download,
+  Connection,
 } from '@element-plus/icons-vue'
 
 const emit = defineEmits(['route-change'])
@@ -197,6 +200,7 @@ const {
   toggleCollapse,
   openVddSettings,
   openWelcome,
+  openWebStream,
   goHome,
   skipVersion,
   includePrerelease,
@@ -231,6 +235,10 @@ const handleSkipVersion = (version) => skipVersion(version)
 const managementMenuItems = computed(() => [
   { icon: Setting, label: '高级设置', action: goHome, isActive: () => router.isRoute(ROUTES.HOME) },
   { icon: Monitor, label: '虚拟显示器', action: openVddSettings, isActive: () => router.isRoute(ROUTES.VDD_SETTINGS) },
+  // Web 串流（内测功能，仅开发模式可见）
+  ...(typeof __DEV__ !== 'undefined' && __DEV__ ? [
+    { icon: Connection, label: 'Web 串流', action: openWebStream, isActive: () => router.isRoute(ROUTES.WEB_STREAM) },
+  ] : []),
   { icon: Delete, label: '卸载 VDD', action: uninstallVdd },
   { icon: RefreshRight, label: '重启显卡驱动', action: restartDriver },
   // { icon: Refresh, label: '使用WGC捕获', action: restartSunshineInUserMode },
@@ -269,6 +277,7 @@ watch(() => router.currentRoute.value, (newRoute, oldRoute) => {
 defineExpose({
   openVddSettings,
   openWelcome,
+  openWebStream,
   goHome,
   router,
 })

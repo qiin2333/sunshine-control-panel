@@ -7,6 +7,7 @@ export const ROUTES = {
   HOME: 'home',           // 默认内容 (slot)
   VDD_SETTINGS: 'vdd-settings',
   WELCOME: 'welcome',
+  WEB_STREAM: 'web-stream',
 }
 
 /**
@@ -27,6 +28,11 @@ const routeConfig = {
     name: ROUTES.WELCOME,
     component: 'Welcome',
     title: '欢迎页面',
+  },
+  [ROUTES.WEB_STREAM]: {
+    name: ROUTES.WEB_STREAM,
+    component: 'WebStreamSettings',
+    title: 'Web 串流',
   },
 }
 

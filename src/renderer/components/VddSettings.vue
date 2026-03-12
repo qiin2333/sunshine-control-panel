@@ -205,7 +205,7 @@
         <!-- 保存按钮 -->
         <el-form-item class="form-actions">
           <el-button type="primary" @click="saveSettings" size="large">
-            <el-icon style="margin-right: 6px"><UploadFilled /></el-icon>
+            <el-icon><UploadFilled /></el-icon>
             保存设置
           </el-button>
         </el-form-item>

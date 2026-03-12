@@ -213,6 +213,51 @@ export const tools = {
   },
 }
 
+// Moonlight Web 串流服务管理
+export const moonlightWeb = {
+  async getStatus() {
+    try {
+      return await invoke('moonlight_web_get_status')
+    } catch (error) {
+      console.error('获取 Moonlight Web 状态失败:', error)
+      return { installed: false, running: false, install_path: '', version: '', access_url: '', port: 8080 }
+    }
+  },
+
+  async start() {
+    return await invoke('moonlight_web_start')
+  },
+
+  async stop() {
+    return await invoke('moonlight_web_stop')
+  },
+
+  async getConfig() {
+    try {
+      return await invoke('moonlight_web_get_config')
+    } catch (error) {
+      console.error('获取 Moonlight Web 配置失败:', error)
+      return { web_server: { bind_address: '0.0.0.0:8080' }, webrtc: null, default_settings: null }
+    }
+  },
+
+  async saveConfig(config) {
+    return await invoke('moonlight_web_save_config', { config })
+  },
+
+  async checkRelease() {
+    return await invoke('moonlight_web_check_release')
+  },
+
+  async download(url, version) {
+    return await invoke('moonlight_web_download', { url, version: version || '' })
+  },
+
+  async getInstallPath() {
+    return await invoke('moonlight_web_get_install_path')
+  },
+}
+
 // 文件系统相关（如果需要）
 export async function readDirectory(path) {
   // Tauri 使用 fs API
@@ -226,5 +271,6 @@ export default {
   vdd,
   sunshine,
   tools,
+  moonlightWeb,
   readDirectory,
 }

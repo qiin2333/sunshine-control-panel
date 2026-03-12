@@ -14,6 +14,7 @@ mod tray;
 mod windows;
 mod app;
 mod commands;
+mod moonlight_web;
 
 use log::info;
 
@@ -111,6 +112,14 @@ fn main() {
             logger::get_all_logs,
             logger::clear_logs,
             logger::export_logs,
+            moonlight_web::moonlight_web_get_status,
+            moonlight_web::moonlight_web_start,
+            moonlight_web::moonlight_web_stop,
+            moonlight_web::moonlight_web_get_config,
+            moonlight_web::moonlight_web_save_config,
+            moonlight_web::moonlight_web_check_release,
+            moonlight_web::moonlight_web_download,
+            moonlight_web::moonlight_web_get_install_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

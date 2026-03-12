@@ -6,7 +6,7 @@ use tauri::{
 use std::{sync::Mutex, time::Duration};
 use log::{debug, error, info, warn};
 
-use crate::{toolbar, update, utils, windows};
+use crate::{toolbar, update, utils, windows, moonlight_web};
 
 // 托盘图标 ID
 const TRAY_ID: &str = "main-tray";
@@ -122,6 +122,8 @@ fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let show_toolbar = CheckMenuItem::with_id(app, "show_toolbar", "🐾 显示工具栏", true, is_toolbar_visible, None::<&str>)?;
     
     let log_console = MenuItem::with_id(app, "log_console", "🔍 打开日志控制台", true, None::<&str>)?;
+    #[cfg(debug_assertions)]
+    let web_stream = MenuItem::with_id(app, "web_stream", "🌙 Web 串流服务", true, None::<&str>)?;
     let check_update = MenuItem::with_id(app, "check_update", "🔄 检查更新", true, None::<&str>)?;
     let about = MenuItem::with_id(app, "about", "ℹ️ 关于", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出程序", true, None::<&str>)?;
@@ -157,6 +159,8 @@ fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     items.push(&prevent_sleep);
 
     items.push(&log_console);
+    #[cfg(debug_assertions)]
+    items.push(&web_stream);
 
     #[cfg(debug_assertions)]
     items.extend([&separator_debug as &dyn tauri::menu::IsMenuItem<R>, &debug_page, &open_desktop]);
@@ -216,6 +220,7 @@ pub fn handle_tray_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) {
         "restart_user_mode" => toggle_sunshine_mode(app),
         "show_toolbar" => toggle_toolbar(app),
         "log_console" => windows::open_log_console(app),
+        "web_stream" => open_web_stream_settings(app),
         #[cfg(target_os = "windows")]
         "prevent_sleep" => toggle_prevent_sleep(),
         #[cfg(debug_assertions)]
@@ -232,6 +237,7 @@ pub fn handle_tray_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) {
             info!("🚪 托盘菜单：退出应用");
             #[cfg(target_os = "windows")]
             cleanup_prevent_sleep();
+            moonlight_web::cleanup();
             std::process::exit(0);
         }
         _ => warn!("⚠️ 未知的托盘菜单事件: {}", menu_id),
@@ -244,6 +250,15 @@ fn open_vdd_settings<R: Runtime>(app: &AppHandle<R>) {
         info!("📱 托盘菜单：打开VDD设置");
         windows::show_and_activate_window(&window);
         let _ = window.emit("open-vdd-settings", ());
+    }
+}
+
+/// 从托盘打开 Web 串流设置
+fn open_web_stream_settings<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(window) = app.get_webview_window("main") {
+        info!("🌙 托盘菜单：打开 Web 串流设置");
+        windows::show_and_activate_window(&window);
+        let _ = window.emit("open-web-stream", ());
     }
 }
 

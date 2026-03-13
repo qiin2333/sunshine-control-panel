@@ -61,6 +61,7 @@ export default defineConfig(() => ({
     // 根据构建模式设置环境变量
     __PROD__: JSON.stringify(process.env.NODE_ENV === 'production'),
     __DEV__: JSON.stringify(process.env.NODE_ENV === 'development'),
+    __BETA__: JSON.stringify(process.env.BETA === 'true'),
   },
   css: {
     preprocessorOptions: {

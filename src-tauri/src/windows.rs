@@ -1,6 +1,16 @@
 use tauri::{Manager, AppHandle, Runtime, WebviewWindow};
 use log::{info, error, debug, warn};
 use crate::proxy_server;
+use std::collections::HashMap;
+use std::sync::Mutex;
+use once_cell::sync::Lazy;
+
+/// WebView 心跳追踪表：记录各窗口最近一次 JS 心跳的时间戳
+static HEARTBEAT_MAP: Lazy<Mutex<HashMap<String, std::time::Instant>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// 心跳超时阈值（秒）：超过此时间未收到心跳则认为渲染进程可能崩溃
+const HEARTBEAT_STALE_SECS: u64 = 30;
 
 const MAIN_WINDOW_ID: &str = "main";
 const ABOUT_WINDOW_ID: &str = "about";
@@ -60,6 +70,22 @@ const WEBVIEW_VISIBILITY_INIT_SCRIPT: &str = r#"
             document.dispatchEvent(new Event('visibilitychange'));
         }
     };
+
+    // WebView 心跳：每 10 秒向 Rust 后端发送心跳信号
+    // 若渲染进程崩溃，心跳停止，后端检测到后可触发自动恢复
+    setInterval(function() {
+        try {
+            if (window.__TAURI_INTERNALS__) {
+                window.__TAURI_INTERNALS__.invoke('_webview_heartbeat');
+            }
+        } catch(e) {}
+    }, 10000);
+    // 立即发送首次心跳
+    try {
+        if (window.__TAURI_INTERNALS__) {
+            window.__TAURI_INTERNALS__.invoke('_webview_heartbeat');
+        }
+    } catch(e) {}
 })();
 "#;
 
@@ -94,6 +120,77 @@ pub fn disable_context_menu<R: Runtime>(window: &WebviewWindow<R>) {
 #[cfg(debug_assertions)]
 pub fn disable_context_menu<R: Runtime>(_window: &WebviewWindow<R>) {}
 
+/// WebView 心跳命令：由前端 JS 定期调用，表明渲染进程仍然存活
+#[tauri::command]
+pub fn _webview_heartbeat(webview: tauri::Webview) {
+    let label = webview.label().to_string();
+    HEARTBEAT_MAP.lock().unwrap().insert(label, std::time::Instant::now());
+}
+
+/// 通过 WebView2 COM API 强制重新加载页面（在渲染进程崩溃后仍可工作）
+#[cfg(target_os = "windows")]
+fn reload_webview_via_com<R: Runtime>(window: &WebviewWindow<R>) {
+    let label = window.label().to_string();
+    let _ = window.with_webview(move |webview| {
+        let controller = webview.controller();
+        unsafe {
+            if let Ok(core_webview) = controller.CoreWebView2() {
+                match core_webview.Reload() {
+                    Ok(_) => log::info!("🔄 WebView 渲染进程恢复：已触发重新加载 [{}]", label),
+                    Err(e) => log::warn!("⚠️ WebView 重新加载失败 [{}]: {:?}", label, e),
+                }
+            }
+        }
+    });
+}
+
+/// 检查指定窗口的心跳是否已超时，若超时则触发 COM 级重新加载
+#[cfg(target_os = "windows")]
+fn check_and_recover_webview<R: Runtime>(window: &WebviewWindow<R>) {
+    let label = window.label().to_string();
+    let is_stale = {
+        let map = HEARTBEAT_MAP.lock().unwrap();
+        match map.get(&label) {
+            Some(last_beat) => last_beat.elapsed().as_secs() > HEARTBEAT_STALE_SECS,
+            None => false, // 尚未收到过心跳，不视为崩溃（可能是刚创建的窗口）
+        }
+    };
+
+    if is_stale {
+        warn!("💀 WebView 心跳超时 [{}]，渲染进程可能已崩溃，尝试恢复...", label);
+        reload_webview_via_com(window);
+        // 重置心跳时间，给恢复留出时间
+        HEARTBEAT_MAP.lock().unwrap().insert(label, std::time::Instant::now());
+    }
+}
+
+/// 启动 WebView 心跳监控后台任务
+/// 定期检查可见窗口的心跳状态，若检测到崩溃则自动恢复
+pub fn start_heartbeat_monitor(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        // 等待应用完全启动后再开始监控
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            
+            // 只检查可见的主要窗口（main / desktop）
+            for label in &[MAIN_WINDOW_ID, DESKTOP_WINDOW_ID] {
+                if let Some(win) = app.get_webview_window(label) {
+                    let is_visible = win.is_visible().unwrap_or(false);
+                    let is_minimized = win.is_minimized().unwrap_or(true);
+                    
+                    // 仅当窗口可见且未最小化时检查心跳
+                    if is_visible && !is_minimized {
+                        #[cfg(target_os = "windows")]
+                        check_and_recover_webview(&win);
+                    }
+                }
+            }
+        }
+    });
+}
+
 /// 显示并激活窗口（解决权限隔离问题）
 pub fn show_and_activate_window<R: Runtime>(window: &WebviewWindow<R>) {
     let _ = window.unminimize();
@@ -105,6 +202,10 @@ pub fn show_and_activate_window<R: Runtime>(window: &WebviewWindow<R>) {
     
     // 重置代理快速失败状态，确保恢复后首次请求不被拦截
     proxy_server::reset_fast_fail();
+    
+    // 检查 WebView 心跳，若渲染进程已崩溃则自动恢复
+    #[cfg(target_os = "windows")]
+    check_and_recover_webview(window);
     
     #[cfg(target_os = "windows")]
     force_activate_window_win32(window);
@@ -240,6 +341,9 @@ pub fn open_about_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
             .build()
     })?;
     
+    #[cfg(target_os = "windows")]
+    configure_webview_security(&window);
+    
     disable_context_menu(&window);
     debug!("✅ 关于窗口已打开");
     Ok(())
@@ -259,6 +363,8 @@ pub fn open_log_console<R: Runtime>(app: &AppHandle<R>) {
             .build()
     }) {
         Ok(window) => {
+            #[cfg(target_os = "windows")]
+            configure_webview_security(&window);
             disable_context_menu(&window);
             debug!("✅ 日志控制台窗口已打开");
         }
@@ -288,6 +394,10 @@ pub fn open_pin_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std
         .map_err(|e| format!("创建 PIN 窗口失败: {}", e))?;
     
     disable_context_menu(&window);
+    
+    // 禁用自动填充和密码保存提示
+    #[cfg(target_os = "windows")]
+    configure_webview_security(&window);
     
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -355,6 +465,10 @@ fn create_main_window_internal<R: Runtime>(app: &AppHandle<R>, visible: bool) ->
     #[cfg(target_os = "windows")]
     apply_dwm_rounded_corners(&window);
     
+    // 禁用自动填充和密码保存提示
+    #[cfg(target_os = "windows")]
+    configure_webview_security(&window);
+    
     disable_context_menu(&window);
     info!("✅ {}主窗口创建成功", visibility_desc);
     Ok(())
@@ -381,6 +495,10 @@ pub fn create_desktop_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<d
     
     #[cfg(target_os = "windows")]
     apply_dwm_rounded_corners(&window);
+    
+    // 禁用自动填充和密码保存提示
+    #[cfg(target_os = "windows")]
+    configure_webview_security(&window);
     
     disable_context_menu(&window);
     info!("✅ 桌面 UI 窗口创建成功");
@@ -505,6 +623,47 @@ fn set_webview_native_visibility<R: Runtime>(window: &WebviewWindow<R>, visible:
             if !visible {
                 // 不改变背景色，保持一致的视觉效果
                 // 未来可以考虑：隐藏时 SetDefaultBackgroundColor 为不透明色进一步降低 GPU
+            }
+        }
+    });
+}
+
+/// 配置 WebView2 安全设置（禁用浏览器自动填充和密码自动保存）
+///
+/// WebView2 默认会弹出自动填充/密码保存提示，在嵌入式管理面板中会干扰用户操作。
+/// 通过 ICoreWebView2Settings4 接口在引擎级别禁用，比 HTML autocomplete="off" 更可靠。
+#[cfg(target_os = "windows")]
+pub(crate) fn configure_webview_security<R: Runtime>(window: &WebviewWindow<R>) {
+    let label = window.label().to_string();
+    let _ = window.with_webview(move |webview| {
+        // 引入 webview2-com 的 COM 接口类型
+        use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings4;
+        // 引入 windows-core 0.61 的 Interface trait（与 webview2-com 版本一致）
+        use wv2_windows_core::Interface;
+
+        let controller = webview.controller();
+        unsafe {
+            let Ok(core_webview) = controller.CoreWebView2() else {
+                log::warn!("⚠️ 无法获取 ICoreWebView2 [{}]", label);
+                return;
+            };
+            let Ok(settings) = core_webview.Settings() else {
+                log::warn!("⚠️ 无法获取 ICoreWebView2Settings [{}]", label);
+                return;
+            };
+
+            // Cast 到 Settings4（WebView2 SDK 1.0.902+，所有现代版本均支持）
+            match settings.cast::<ICoreWebView2Settings4>() {
+                Ok(settings4) => {
+                    // 禁用地址/联系人等通用自动填充
+                    let _ = settings4.SetIsGeneralAutofillEnabled(false);
+                    // 禁用密码自动保存提示
+                    let _ = settings4.SetIsPasswordAutosaveEnabled(false);
+                    log::debug!("🔒 已禁用 WebView2 自动填充和密码保存 [{}]", label);
+                }
+                Err(e) => {
+                    log::warn!("⚠️ 无法获取 ICoreWebView2Settings4（WebView2 版本可能过旧）[{}]: {:?}", label, e);
+                }
             }
         }
     });

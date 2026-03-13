@@ -235,8 +235,8 @@ const handleSkipVersion = (version) => skipVersion(version)
 const managementMenuItems = computed(() => [
   { icon: Setting, label: '高级设置', action: goHome, isActive: () => router.isRoute(ROUTES.HOME) },
   { icon: Monitor, label: '虚拟显示器', action: openVddSettings, isActive: () => router.isRoute(ROUTES.VDD_SETTINGS) },
-  // Web 串流（内测功能，仅开发模式可见）
-  ...(typeof __DEV__ !== 'undefined' && __DEV__ ? [
+  // Web 串流（内测功能，仅开发/内测模式可见）
+  ...((typeof __DEV__ !== 'undefined' && __DEV__) || (typeof __BETA__ !== 'undefined' && __BETA__) ? [
     { icon: Connection, label: 'Web 串流', action: openWebStream, isActive: () => router.isRoute(ROUTES.WEB_STREAM) },
   ] : []),
   { icon: Delete, label: '卸载 VDD', action: uninstallVdd },

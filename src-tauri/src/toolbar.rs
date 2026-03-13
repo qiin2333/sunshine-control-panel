@@ -111,6 +111,10 @@ pub fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &s
             // 在生产环境禁用右键菜单
             windows::disable_context_menu(&window);
             
+            // 禁用自动填充和密码保存提示
+            #[cfg(target_os = "windows")]
+            windows::configure_webview_security(&window);
+            
             // 开发模式下自动打开 DevTools
             #[cfg(debug_assertions)]
             {

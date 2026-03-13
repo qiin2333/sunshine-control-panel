@@ -122,7 +122,7 @@ fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let show_toolbar = CheckMenuItem::with_id(app, "show_toolbar", "🐾 显示工具栏", true, is_toolbar_visible, None::<&str>)?;
     
     let log_console = MenuItem::with_id(app, "log_console", "🔍 打开日志控制台", true, None::<&str>)?;
-    #[cfg(debug_assertions)]
+    #[cfg(any(debug_assertions, feature = "beta"))]
     let web_stream = MenuItem::with_id(app, "web_stream", "🌙 Web 串流服务", true, None::<&str>)?;
     let check_update = MenuItem::with_id(app, "check_update", "🔄 检查更新", true, None::<&str>)?;
     let about = MenuItem::with_id(app, "about", "ℹ️ 关于", true, None::<&str>)?;
@@ -159,7 +159,7 @@ fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     items.push(&prevent_sleep);
 
     items.push(&log_console);
-    #[cfg(debug_assertions)]
+    #[cfg(any(debug_assertions, feature = "beta"))]
     items.push(&web_stream);
 
     #[cfg(debug_assertions)]

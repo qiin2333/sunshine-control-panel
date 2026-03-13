@@ -13,7 +13,9 @@
     "build:home": "vite build --config vite.home.config.js --mode production",
     "dev:home": "vite --config vite.home.config.js --mode development",
     "preview:home": "vite preview --config vite.home.config.js",
-    "build:win": "npm run build:renderer && tauri build --target x86_64-pc-windows-msvc --bundles nsis"
+    "build:win": "npm run build:renderer && tauri build --target x86_64-pc-windows-msvc --bundles nsis",
+    "build:beta": "cross-env BETA=true npm run build:renderer && tauri build --features beta",
+    "build:beta:win": "cross-env BETA=true npm run build:renderer && tauri build --features beta --target x86_64-pc-windows-msvc --bundles nsis"
   },
   "repository": "https://github.com/qiin2333/sunshine",
   "author": {
@@ -21,7 +23,7 @@
     "url": "https://github.com/qiin2333"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.8.4",
+    "@tauri-apps/cli": "^2.10.1",
     "@vitejs/plugin-vue": "^6.0.4",
     "cross-env": "^7.0.3",
     "less": "^4.2.2",
@@ -31,10 +33,10 @@
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
-    "@tauri-apps/api": "^2.9.1",
-    "@tauri-apps/plugin-dialog": "^2.4.2",
-    "@tauri-apps/plugin-fs": "^2.4.4",
-    "@tauri-apps/plugin-shell": "^2.3.3",
+    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/plugin-dialog": "^2.6.0",
+    "@tauri-apps/plugin-fs": "^2.4.5",
+    "@tauri-apps/plugin-shell": "^2.3.5",
     "element-plus": "^2.11.9",
     "markdown-it": "^14.1.0",
     "pixi.js": "^8.6.6",

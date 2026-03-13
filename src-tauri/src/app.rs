@@ -42,6 +42,9 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
     setup_menu_event_handler(app);
     start_proxy_server_async();
     
+    // 启动 WebView 心跳监控（检测渲染进程崩溃并自动恢复）
+    windows::start_heartbeat_monitor(app.handle().clone());
+    
     // 延迟任务
     tauri::async_runtime::spawn(async move {
         // PIN 配对窗口

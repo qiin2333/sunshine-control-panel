@@ -121,6 +121,7 @@ fn main() {
             moonlight_web::moonlight_web_download,
             moonlight_web::moonlight_web_get_install_path,
             moonlight_web::moonlight_web_generate_cert,
+            windows::_webview_heartbeat,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

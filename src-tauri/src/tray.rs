@@ -141,7 +141,6 @@ fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     #[cfg(target_os = "windows")]
     let prevent_sleep = CheckMenuItem::with_id(app, "prevent_sleep", "💤 不许睡", true, false, None::<&str>)?;
 
-    #[cfg(debug_assertions)]
     let open_desktop = MenuItem::with_id(app, "open_desktop", "🖥️ 打开桌面 UI", true, None::<&str>)?;
     #[cfg(debug_assertions)]
     let debug_page = MenuItem::with_id(app, "debug_page", "🐛 打开调试页面", true, None::<&str>)?;
@@ -159,11 +158,12 @@ fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     items.push(&prevent_sleep);
 
     items.push(&log_console);
+    items.push(&open_desktop);
     #[cfg(any(debug_assertions, feature = "beta"))]
     items.push(&web_stream);
 
     #[cfg(debug_assertions)]
-    items.extend([&separator_debug as &dyn tauri::menu::IsMenuItem<R>, &debug_page, &open_desktop]);
+    items.extend([&separator_debug as &dyn tauri::menu::IsMenuItem<R>, &debug_page]);
 
     items.extend([&separator2 as &dyn tauri::menu::IsMenuItem<R>, &check_update, &about, &separator3, &quit]);
 

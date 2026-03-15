@@ -97,6 +97,67 @@ pub async fn open_tool_window(app: AppHandle, tool_name: String) -> Result<(), S
     Ok(())
 }
 
+#[tauri::command]
+pub async fn launch_app(cmd: String, working_dir: Option<String>, elevated: Option<bool>) -> Result<(), String> {
+    if cmd.trim().is_empty() {
+        return Err("启动命令不能为空".to_string());
+    }
+    info!("🚀 启动应用: {}", cmd);
+
+    let is_elevated = elevated.unwrap_or(false);
+
+    tokio::task::spawn_blocking(move || {
+        use ::windows::core::PCWSTR;
+        use ::windows::Win32::Foundation::HWND;
+        use ::windows::Win32::UI::Shell::ShellExecuteW;
+        use ::windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+        fn to_wide(s: &str) -> Vec<u16> {
+            s.encode_utf16().chain(std::iter::once(0u16)).collect()
+        }
+
+        let operation = to_wide(if is_elevated { "runas" } else { "open" });
+
+        // 分离命令和参数
+        let trimmed = cmd.trim();
+        let (file, params) = if trimmed.starts_with('"') {
+            if let Some(end) = trimmed[1..].find('"') {
+                let f = &trimmed[1..=end];
+                let p = trimmed[end + 2..].trim();
+                (f.to_string(), p.to_string())
+            } else {
+                (trimmed.to_string(), String::new())
+            }
+        } else if let Some(space_pos) = trimmed.find(' ') {
+            (trimmed[..space_pos].to_string(), trimmed[space_pos + 1..].to_string())
+        } else {
+            (trimmed.to_string(), String::new())
+        };
+
+        let file_wide = to_wide(&file);
+        let params_wide = to_wide(&params);
+        let dir_wide: Option<Vec<u16>> = working_dir.as_ref().filter(|d| !d.is_empty()).map(|d| to_wide(d));
+
+        let result = unsafe {
+            ShellExecuteW(
+                Some(HWND(std::ptr::null_mut())),
+                PCWSTR(operation.as_ptr()),
+                PCWSTR(file_wide.as_ptr()),
+                PCWSTR(params_wide.as_ptr()),
+                dir_wide.as_ref().map_or(PCWSTR::null(), |d| PCWSTR(d.as_ptr())),
+                SW_SHOWNORMAL,
+            )
+        };
+
+        if (result.0 as isize) <= 32 {
+            Err(format!("启动失败，错误码: {}", result.0 as isize))
+        } else {
+            info!("✅ 应用启动成功: {}", file);
+            Ok(())
+        }
+    }).await.map_err(|e| format!("任务执行失败: {}", e))?
+}
+
 /// 话术响应（包含 ETag 用于条件请求）
 #[derive(Serialize)]
 pub struct SpeechPhrasesResponse {

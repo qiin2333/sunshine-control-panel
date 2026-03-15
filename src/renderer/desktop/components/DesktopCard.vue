@@ -73,16 +73,15 @@ function handleClick() {
 
 <style lang="less" scoped>
 .desktop-card {
-  background: linear-gradient(145deg, rgba(26, 26, 46, 0.9) 0%, rgba(22, 33, 62, 0.9) 100%);
-  border: 1px solid rgba(0, 255, 245, 0.2);
-  border-radius: 16px;
-  padding: 24px;
-  backdrop-filter: blur(10px);
+  background: linear-gradient(145deg, rgba(var(--fd-bg-secondary-rgb, 26, 26, 46), 0.95) 0%, rgba(22, 33, 62, 0.95) 100%);
+  border: 1px solid rgba(var(--fd-accent-rgb, 0, 255, 245), 0.2);
+  border-radius: 20px;
+  padding: 32px;
   transition: all 0.3s ease;
 
   &.hoverable:hover {
-    border-color: rgba(0, 255, 245, 0.5);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), 0 0 20px rgba(0, 255, 245, 0.3), 0 0 40px rgba(0, 255, 245, 0.1);
+    border-color: rgba(var(--fd-accent-rgb, 0, 255, 245), 0.5);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), 0 0 20px rgba(var(--fd-accent-rgb, 0, 255, 245), 0.3), 0 0 40px rgba(var(--fd-accent-rgb, 0, 255, 245), 0.1);
     transform: translateY(-2px);
   }
 
@@ -91,28 +90,28 @@ function handleClick() {
   }
 
   &.card-primary {
-    border-color: rgba(0, 255, 245, 0.4);
-    background: linear-gradient(145deg, rgba(0, 255, 245, 0.1) 0%, rgba(26, 26, 46, 0.9) 100%);
+    border-color: rgba(var(--fd-accent-rgb, 0, 255, 245), 0.4);
+    background: linear-gradient(145deg, rgba(var(--fd-accent-rgb, 0, 255, 245), 0.1) 0%, rgba(26, 26, 46, 0.9) 100%);
   }
 
   &.card-secondary {
-    border-color: rgba(255, 0, 255, 0.4);
-    background: linear-gradient(145deg, rgba(255, 0, 255, 0.1) 0%, rgba(26, 26, 46, 0.9) 100%);
+    border-color: rgba(var(--fd-accent-secondary-rgb, 255, 0, 255), 0.4);
+    background: linear-gradient(145deg, rgba(var(--fd-accent-secondary-rgb, 255, 0, 255), 0.1) 0%, rgba(26, 26, 46, 0.9) 100%);
   }
 
   &.card-success {
-    border-color: rgba(0, 255, 136, 0.4);
-    background: linear-gradient(145deg, rgba(0, 255, 136, 0.1) 0%, rgba(26, 26, 46, 0.9) 100%);
+    border-color: rgba(var(--fd-status-success-rgb, 0, 255, 136), 0.4);
+    background: linear-gradient(145deg, rgba(0, 255, 136, 0.1) 0%, rgba(var(--fd-bg-secondary-rgb, 26, 26, 46), 0.9) 100%);
   }
 
   &.card-warning {
-    border-color: rgba(255, 215, 0, 0.4);
-    background: linear-gradient(145deg, rgba(255, 215, 0, 0.1) 0%, rgba(26, 26, 46, 0.9) 100%);
+    border-color: rgba(var(--fd-status-warning-rgb, 255, 215, 0), 0.4);
+    background: linear-gradient(145deg, rgba(255, 215, 0, 0.1) 0%, rgba(var(--fd-bg-secondary-rgb, 26, 26, 46), 0.9) 100%);
   }
 
   &.card-danger {
-    border-color: rgba(255, 107, 53, 0.4);
-    background: linear-gradient(145deg, rgba(255, 107, 53, 0.1) 0%, rgba(26, 26, 46, 0.9) 100%);
+    border-color: rgba(var(--fd-status-danger-rgb, 255, 107, 53), 0.4);
+    background: linear-gradient(145deg, rgba(255, 107, 53, 0.1) 0%, rgba(var(--fd-bg-secondary-rgb, 26, 26, 46), 0.9) 100%);
   }
 
   .card-header {
@@ -124,7 +123,7 @@ function handleClick() {
     .card-title {
       font-size: 18px;
       font-weight: 600;
-      color: white;
+      color: var(--fd-text-primary, #fff);
       display: flex;
       align-items: center;
       gap: 8px;
@@ -132,7 +131,7 @@ function handleClick() {
       .title-icon {
         width: 20px;
         height: 20px;
-        color: #00fff5;
+        color: var(--fd-accent, #00fff5);
       }
     }
 
@@ -143,7 +142,7 @@ function handleClick() {
   }
 
   .card-content {
-    color: rgba(255, 255, 255, 0.7);
+    color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.7);
 
     &.no-padding {
       padding: 0;
@@ -154,7 +153,7 @@ function handleClick() {
   .card-footer {
     margin-top: 16px;
     padding-top: 16px;
-    border-top: 1px solid rgba(0, 255, 245, 0.1);
+    border-top: 1px solid rgba(var(--fd-accent-rgb, 0, 255, 245), 0.1);
     display: flex;
     align-items: center;
     justify-content: flex-end;

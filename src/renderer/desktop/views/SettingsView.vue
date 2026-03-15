@@ -5,7 +5,7 @@
       <p class="page-subtitle">应用程序偏好设置</p>
     </div>
 
-    <!-- 外观设置 -->
+    <!-- 外观设置 —— 统一由主题编辑器管理 -->
     <div class="desktop-card fade-in">
       <div class="card-header">
         <div class="card-title">
@@ -16,46 +16,11 @@
       <div class="card-content">
         <div class="setting-item">
           <div class="setting-info">
-            <div class="setting-name">主题</div>
-            <div class="setting-desc">选择应用程序的颜色主题</div>
+            <div class="setting-name">主题编辑器</div>
+            <div class="setting-desc">自定义主题色、壁纸、预设和外观效果</div>
           </div>
           <div class="setting-control">
-            <select v-model="settings.theme" class="select-control">
-              <option value="dark">深色 (赛博朋克)</option>
-              <option value="light">浅色</option>
-              <option value="system">跟随系统</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="setting-item">
-          <div class="setting-info">
-            <div class="setting-name">主题色</div>
-            <div class="setting-desc">自定义强调色</div>
-          </div>
-          <div class="setting-control color-options">
-            <div 
-              v-for="color in accentColors" 
-              :key="color.value"
-              class="color-option"
-              :class="{ active: settings.accentColor === color.value }"
-              :style="{ background: color.gradient }"
-              @click="settings.accentColor = color.value"
-              :title="color.name"
-            />
-          </div>
-        </div>
-
-        <div class="setting-item">
-          <div class="setting-info">
-            <div class="setting-name">动画效果</div>
-            <div class="setting-desc">启用界面动画和过渡效果</div>
-          </div>
-          <div class="setting-control">
-            <label class="switch">
-              <input type="checkbox" v-model="settings.animations" />
-              <span class="slider"></span>
-            </label>
+            <button class="desktop-btn" @click="$emit('openThemeEditor')">打开编辑器</button>
           </div>
         </div>
       </div>
@@ -205,7 +170,7 @@
       <div class="about-content">
         <div class="about-logo">☀️</div>
         <div class="about-info">
-          <div class="about-name">Sunshine Desktop</div>
+          <div class="about-name">Foundation Desktop</div>
           <div class="about-version">版本 0.2.5</div>
           <div class="about-links">
             <a href="#" @click.prevent="openLink('github')">GitHub</a>
@@ -216,7 +181,9 @@
           </div>
         </div>
       </div>
-      <button class="desktop-btn" @click="checkUpdate">检查更新</button>
+      <button class="desktop-btn" :disabled="checking" @click="checkUpdate">
+        {{ checking ? '检查中...' : '检查更新' }}
+      </button>
     </div>
 
     <!-- 保存按钮 -->
@@ -228,12 +195,13 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 
-const settings = ref({
-  theme: 'dark',
-  accentColor: 'cyan',
-  animations: true,
+const invoke = ref(null)
+
+const SETTINGS_KEY = 'sunshine-desktop-settings'
+
+const defaultSettings = {
   autoStart: false,
   startMinimized: false,
   autoStartSunshine: true,
@@ -242,36 +210,37 @@ const settings = ref({
   updateNotify: true,
   devMode: false,
   logLevel: 'info',
-})
+}
 
-const accentColors = [
-  { value: 'cyan', name: '青色', gradient: 'linear-gradient(135deg, #00fff5 0%, #00d4aa 100%)' },
-  { value: 'magenta', name: '品红', gradient: 'linear-gradient(135deg, #ff00ff 0%, #cc00cc 100%)' },
-  { value: 'green', name: '绿色', gradient: 'linear-gradient(135deg, #00ff88 0%, #00cc6a 100%)' },
-  { value: 'yellow', name: '金色', gradient: 'linear-gradient(135deg, #ffd700 0%, #ffaa00 100%)' },
-  { value: 'orange', name: '橙色', gradient: 'linear-gradient(135deg, #ff6b35 0%, #ff4500 100%)' },
-  { value: 'blue', name: '蓝色', gradient: 'linear-gradient(135deg, #6495ed 0%, #4169e1 100%)' },
-]
+const settings = ref({ ...defaultSettings })
 
-function resetSettings() {
-  settings.value = {
-    theme: 'dark',
-    accentColor: 'cyan',
-    animations: true,
-    autoStart: false,
-    startMinimized: false,
-    autoStartSunshine: true,
-    notifications: true,
-    connectionNotify: true,
-    updateNotify: true,
-    devMode: false,
-    logLevel: 'info',
+defineEmits(['openThemeEditor'])
+
+const updateStatus = ref(null)
+const checking = ref(false)
+
+function loadSettings() {
+  try {
+    const saved = localStorage.getItem(SETTINGS_KEY)
+    if (saved) {
+      settings.value = { ...defaultSettings, ...JSON.parse(saved) }
+    }
+  } catch (e) {
+    console.error('Failed to load settings:', e)
   }
 }
 
+function resetSettings() {
+  settings.value = { ...defaultSettings }
+  localStorage.removeItem(SETTINGS_KEY)
+}
+
 function saveSettings() {
-  // TODO: 保存设置
-  console.log('Saving settings:', settings.value)
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings.value))
+  } catch (e) {
+    console.error('Failed to save settings:', e)
+  }
 }
 
 function openLink(type) {
@@ -280,48 +249,77 @@ function openLink(type) {
     docs: 'https://docs.lizardbyte.dev/projects/sunshine/',
     discord: 'https://discord.gg/lizardbyte',
   }
-  window.open(urls[type], '_blank')
+  if (invoke.value) {
+    invoke.value('open_external_url', { url: urls[type] }).catch(() => {
+      window.open(urls[type], '_blank')
+    })
+  } else {
+    window.open(urls[type], '_blank')
+  }
 }
 
-function checkUpdate() {
-  // TODO: 检查更新
-  console.log('Checking for updates...')
+async function checkUpdate() {
+  if (!invoke.value) return
+  checking.value = true
+  updateStatus.value = null
+  try {
+    const update = await invoke.value('check_for_updates')
+    if (update) {
+      updateStatus.value = { type: 'success', message: `发现新版本: ${update.version}` }
+    } else {
+      updateStatus.value = { type: 'info', message: '当前已是最新版本' }
+    }
+  } catch (e) {
+    updateStatus.value = { type: 'error', message: '检查更新失败' }
+  } finally {
+    checking.value = false
+  }
 }
+
+onMounted(async () => {
+  try {
+    const tauri = await import('@tauri-apps/api/core')
+    invoke.value = tauri.invoke
+  } catch (e) {
+    console.log('Tauri invoke not available:', e)
+  }
+  loadSettings()
+})
 </script>
 
 <style lang="less" scoped>
 .settings-view {
-  max-width: 800px;
+  max-width: 1000px;
   margin: 0 auto;
 }
 
 .page-header {
-  margin-bottom: 32px;
+  margin-bottom: 40px;
 
   .page-title {
-    font-size: 32px;
+    font-size: 40px;
     font-weight: 700;
-    color: white;
-    margin: 0 0 8px 0;
+    color: var(--fd-text-primary, #fff);
+    margin: 0 0 10px 0;
   }
 
   .page-subtitle {
-    font-size: 16px;
-    color: rgba(255, 255, 255, 0.5);
+    font-size: 18px;
+    color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.5);
     margin: 0;
   }
 }
 
 .desktop-card {
-  margin-bottom: 24px;
+  margin-bottom: 28px;
 }
 
 .setting-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 0;
-  border-bottom: 1px solid rgba(0, 255, 245, 0.1);
+  padding: 20px 0;
+  border-bottom: 1px solid rgba(var(--fd-accent-rgb, 0, 255, 245), 0.1);
 
   &:last-child {
     border-bottom: none;
@@ -334,25 +332,25 @@ function checkUpdate() {
 
   .setting-info {
     .setting-name {
-      font-size: 15px;
+      font-size: 18px;
       font-weight: 500;
-      color: white;
+      color: var(--fd-text-primary, #fff);
       margin-bottom: 4px;
     }
 
     .setting-desc {
-      font-size: 13px;
-      color: rgba(255, 255, 255, 0.5);
+      font-size: 14px;
+      color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.5);
     }
   }
 }
 
 .select-control {
   padding: 8px 32px 8px 12px;
-  border: 1px solid rgba(0, 255, 245, 0.2);
+  border: 1px solid rgba(var(--fd-accent-rgb, 0, 255, 245), 0.2);
   border-radius: 8px;
   background: rgba(0, 0, 0, 0.2);
-  color: white;
+  color: var(--fd-text-primary, #fff);
   font-size: 14px;
   cursor: pointer;
   appearance: none;
@@ -362,35 +360,12 @@ function checkUpdate() {
 
   &:focus {
     outline: none;
-    border-color: #00fff5;
+    border-color: var(--fd-accent, #00fff5);
   }
 
   option {
-    background: #1a1a2e;
-    color: white;
-  }
-}
-
-.color-options {
-  display: flex;
-  gap: 8px;
-
-  .color-option {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    cursor: pointer;
-    border: 2px solid transparent;
-    transition: all 0.2s ease;
-
-    &:hover {
-      transform: scale(1.1);
-    }
-
-    &.active {
-      border-color: white;
-      box-shadow: 0 0 12px rgba(255, 255, 255, 0.3);
-    }
+    background: var(--fd-bg-secondary, #1a1a2e);
+    color: var(--fd-text-primary, #fff);
   }
 }
 
@@ -407,7 +382,7 @@ function checkUpdate() {
     height: 0;
 
     &:checked + .slider {
-      background: linear-gradient(135deg, #00fff5 0%, #ff00ff 100%);
+      background: linear-gradient(135deg, var(--fd-accent, #00fff5) 0%, var(--fd-accent-secondary, #ff00ff) 100%);
 
       &::before {
         transform: translateX(22px);
@@ -422,7 +397,7 @@ function checkUpdate() {
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.1);
     border-radius: 26px;
     transition: 0.3s;
 
@@ -459,12 +434,12 @@ function checkUpdate() {
     .about-name {
       font-size: 18px;
       font-weight: 600;
-      color: white;
+      color: var(--fd-text-primary, #fff);
     }
 
     .about-version {
       font-size: 14px;
-      color: rgba(255, 255, 255, 0.5);
+      color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.5);
       margin-bottom: 4px;
     }
 
@@ -474,7 +449,7 @@ function checkUpdate() {
       gap: 8px;
 
       a {
-        color: #00fff5;
+        color: var(--fd-accent, #00fff5);
         text-decoration: none;
 
         &:hover {
@@ -483,7 +458,7 @@ function checkUpdate() {
       }
 
       span {
-        color: rgba(255, 255, 255, 0.3);
+        color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.3);
       }
     }
   }
@@ -495,7 +470,7 @@ function checkUpdate() {
   gap: 16px;
   margin-top: 32px;
   padding-top: 24px;
-  border-top: 1px solid rgba(0, 255, 245, 0.1);
+  border-top: 1px solid rgba(var(--fd-accent-rgb, 0, 255, 245), 0.1);
 }
 </style>
 

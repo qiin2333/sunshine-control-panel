@@ -157,10 +157,10 @@ import ShortcutsTool from '../../tool-window/tools/ShortcutsTool.vue'
 const invoke = ref(null)
 
 const diagnostics = ref({
-  gpu: { value: 'NVIDIA RTX 4090', status: 'good', statusText: '正常' },
-  encoder: { value: 'NVENC H.265', status: 'good', statusText: '可用' },
-  network: { value: '千兆以太网', status: 'good', statusText: '良好' },
-  firewall: { value: '端口已开放', status: 'good', statusText: '已配置' },
+  gpu: { value: '检测中...', status: 'connecting', statusText: '检测中' },
+  encoder: { value: '检测中...', status: 'connecting', statusText: '检测中' },
+  network: { value: '检测中...', status: 'connecting', statusText: '检测中' },
+  firewall: { value: '检测中...', status: 'connecting', statusText: '检测中' },
 })
 
 async function restartGraphicsDriver() {
@@ -176,8 +176,52 @@ async function restartGraphicsDriver() {
 }
 
 async function runDiagnostics() {
-  // TODO: 运行系统诊断
-  console.log('Running diagnostics...')
+  // 重置为检测中
+  for (const key of Object.keys(diagnostics.value)) {
+    diagnostics.value[key] = { value: '检测中...', status: 'connecting', statusText: '检测中' }
+  }
+
+  if (!invoke.value) {
+    for (const key of Object.keys(diagnostics.value)) {
+      diagnostics.value[key] = { value: '未知', status: 'warning', statusText: '无法检测' }
+    }
+    return
+  }
+
+  // GPU
+  try {
+    const gpus = await invoke.value('get_gpus')
+    if (gpus && gpus.length > 0) {
+      diagnostics.value.gpu = { value: gpus[0], status: 'good', statusText: '正常' }
+      const gpuLower = gpus[0].toLowerCase()
+      const encoderName = gpuLower.includes('nvidia') || gpuLower.includes('geforce') ? 'NVENC' :
+                          gpuLower.includes('amd') || gpuLower.includes('radeon') ? 'AMF' :
+                          gpuLower.includes('intel') ? 'QuickSync' : '软件编码'
+      diagnostics.value.encoder = { value: encoderName, status: encoderName !== '软件编码' ? 'good' : 'warning', statusText: '可用' }
+    } else {
+      diagnostics.value.gpu = { value: '未检测到 GPU', status: 'error', statusText: '异常' }
+      diagnostics.value.encoder = { value: '软件编码', status: 'warning', statusText: '降级' }
+    }
+  } catch (e) {
+    diagnostics.value.gpu = { value: '检测失败', status: 'error', statusText: '错误' }
+    diagnostics.value.encoder = { value: '未知', status: 'warning', statusText: '未知' }
+  }
+
+  // 网络：测试代理服务器连通性
+  try {
+    const url = await invoke.value('get_proxy_url_command')
+    const resp = await fetch(`${url}/api/config`, { signal: AbortSignal.timeout(3000) })
+    if (resp.ok) {
+      diagnostics.value.network = { value: 'Sunshine 通信正常', status: 'good', statusText: '良好' }
+      diagnostics.value.firewall = { value: '端口可达', status: 'good', statusText: '已配置' }
+    } else {
+      diagnostics.value.network = { value: '连接异常', status: 'warning', statusText: '异常' }
+      diagnostics.value.firewall = { value: '可能受阻', status: 'warning', statusText: '请检查' }
+    }
+  } catch (_) {
+    diagnostics.value.network = { value: '无法连接 Sunshine', status: 'error', statusText: '不可达' }
+    diagnostics.value.firewall = { value: '无法确认', status: 'warning', statusText: '请检查' }
+  }
 }
 
 onMounted(async () => {
@@ -188,6 +232,7 @@ onMounted(async () => {
   } catch (e) {
     console.log('Tauri invoke not available:', e)
   }
+  runDiagnostics()
 })
 </script>
 
@@ -198,18 +243,18 @@ onMounted(async () => {
 }
 
 .page-header {
-  margin-bottom: 32px;
+  margin-bottom: 40px;
 
   .page-title {
-    font-size: 32px;
+    font-size: 40px;
     font-weight: 700;
-    color: white;
-    margin: 0 0 8px 0;
+    color: var(--fd-text-primary, #fff);
+    margin: 0 0 10px 0;
   }
 
   .page-subtitle {
-    font-size: 16px;
-    color: rgba(255, 255, 255, 0.5);
+    font-size: 18px;
+    color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.5);
     margin: 0;
   }
 }
@@ -226,11 +271,11 @@ onMounted(async () => {
     }
 
     &::-webkit-scrollbar-thumb {
-      background: rgba(0, 255, 245, 0.2);
+      background: rgba(var(--fd-accent-rgb, 0, 255, 245), 0.2);
       border-radius: 3px;
 
       &:hover {
-        background: rgba(0, 255, 245, 0.3);
+        background: rgba(var(--fd-accent-rgb, 0, 255, 245), 0.3);
       }
     }
 
@@ -249,7 +294,7 @@ onMounted(async () => {
 .section-title {
   font-size: 20px;
   font-weight: 600;
-  color: white;
+  color: var(--fd-text-primary, #fff);
   margin: 48px 0 16px 0;
   display: flex;
   align-items: center;
@@ -293,18 +338,18 @@ onMounted(async () => {
     justify-content: center;
 
     &.good {
-      background: rgba(0, 255, 136, 0.1);
-      color: #00ff88;
+      background: rgba(var(--fd-status-success-rgb, 0, 255, 136), 0.1);
+      color: var(--fd-status-success, #00ff88);
     }
 
     &.warning {
-      background: rgba(255, 215, 0, 0.1);
-      color: #ffd700;
+      background: rgba(var(--fd-status-warning-rgb, 255, 215, 0), 0.1);
+      color: var(--fd-status-warning, #ffd700);
     }
 
     &.error {
-      background: rgba(255, 107, 53, 0.1);
-      color: #ff6b35;
+      background: rgba(var(--fd-status-danger-rgb, 255, 107, 53), 0.1);
+      color: var(--fd-status-danger, #ff6b35);
     }
 
     svg {
@@ -316,14 +361,14 @@ onMounted(async () => {
   .diagnostic-info {
     .diagnostic-name {
       font-size: 14px;
-      color: rgba(255, 255, 255, 0.5);
+      color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.5);
       margin-bottom: 4px;
     }
 
     .diagnostic-value {
       font-size: 14px;
       font-weight: 500;
-      color: white;
+      color: var(--fd-text-primary, #fff);
     }
   }
 
@@ -333,18 +378,18 @@ onMounted(async () => {
     border-radius: 12px;
 
     &.good {
-      background: rgba(0, 255, 136, 0.1);
-      color: #00ff88;
+      background: rgba(var(--fd-status-success-rgb, 0, 255, 136), 0.1);
+      color: var(--fd-status-success, #00ff88);
     }
 
     &.warning {
-      background: rgba(255, 215, 0, 0.1);
-      color: #ffd700;
+      background: rgba(var(--fd-status-warning-rgb, 255, 215, 0), 0.1);
+      color: var(--fd-status-warning, #ffd700);
     }
 
     &.error {
-      background: rgba(255, 107, 53, 0.1);
-      color: #ff6b35;
+      background: rgba(var(--fd-status-danger-rgb, 255, 107, 53), 0.1);
+      color: var(--fd-status-danger, #ff6b35);
     }
   }
 }

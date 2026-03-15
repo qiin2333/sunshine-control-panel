@@ -4,7 +4,7 @@
     <div class="welcome-banner fade-in">
       <div class="banner-content">
         <h1 class="banner-title">
-          <span class="gradient-text">Sunshine</span> Desktop
+          <span class="gradient-text">Foundation</span> Desktop
         </h1>
         <p class="banner-subtitle">高性能游戏串流解决方案</p>
       </div>
@@ -75,7 +75,7 @@
     </div>
 
     <div class="desktop-grid cols-3">
-      <div class="desktop-card action-card fade-in" @click="openWebUI">
+      <div class="desktop-card action-card fade-in" tabindex="0" @click="openWebUI" @keydown.enter="openWebUI">
         <div class="action-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="10"/>
@@ -90,7 +90,7 @@
         <div class="action-arrow">→</div>
       </div>
 
-      <div class="desktop-card action-card fade-in" @click="restartService">
+      <div class="desktop-card action-card fade-in" tabindex="0" @click="restartService" @keydown.enter="restartService">
         <div class="action-icon warning">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
@@ -103,7 +103,7 @@
         <div class="action-arrow">→</div>
       </div>
 
-      <div class="desktop-card action-card fade-in" @click="openLogs">
+      <div class="desktop-card action-card fade-in" tabindex="0" @click="openLogs" @keydown.enter="openLogs">
         <div class="action-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
@@ -155,6 +155,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 
 // Tauri 命令 - 使用 ref 存储
 const invoke = ref(null)
+const proxyUrl = ref('http://localhost:48081')
 
 // 状态数据
 const serviceStatus = ref({ text: '检测中...', class: 'connecting' })
@@ -189,21 +190,31 @@ async function loadSystemInfo() {
     const version = await invoke.value('get_sunshine_version')
     systemInfo.value.sunshineVersion = version || '未知'
 
-    // 获取 GPU 信息
+    // 获取 GPU 信息（get_gpus 返回 Vec<String>，即 GPU 名称列表）
     const gpus = await invoke.value('get_gpus')
     if (gpus && gpus.length > 0) {
-      systemInfo.value.gpu = gpus[0].name || '未知'
-      systemInfo.value.encoder = gpus[0].vendor === 'NVIDIA' ? 'NVENC' : 
-                                  gpus[0].vendor === 'AMD' ? 'AMF' : 'Software'
+      systemInfo.value.gpu = gpus[0]
+      // 根据 GPU 名称推断编码器
+      const gpuLower = gpus[0].toLowerCase()
+      systemInfo.value.encoder = gpuLower.includes('nvidia') || gpuLower.includes('geforce') ? 'NVENC' :
+                                  gpuLower.includes('amd') || gpuLower.includes('radeon') ? 'AMF' :
+                                  gpuLower.includes('intel') ? 'QuickSync' : 'Software'
     }
 
     // 获取活动会话
     const sessions = await invoke.value('get_active_sessions')
     activeSessions.value = sessions?.length || 0
 
-    // 模拟服务状态
+    // 从 API 获取已配对设备数量
+    try {
+      const resp = await fetch(`${proxyUrl.value}/api/clients/list`)
+      const data = await resp.json()
+      if (data.status?.toString() === 'true' && data.named_certs) {
+        pairedDevices.value = data.named_certs.length
+      }
+    } catch (_) { /* proxy not available */ }
+
     serviceStatus.value = { text: '运行中', class: 'online' }
-    pairedDevices.value = 2 // 这里应该从实际 API 获取
   } catch (e) {
     console.error('Failed to load system info:', e)
     serviceStatus.value = { text: '离线', class: 'offline' }
@@ -236,9 +247,14 @@ async function restartService() {
   }
 }
 
-function openLogs() {
-  // TODO: 打开日志窗口
-  console.log('Open logs')
+async function openLogs() {
+  if (invoke.value) {
+    try {
+      await invoke.value('open_tool_window', { toolName: 'logs' })
+    } catch (e) {
+      console.error('Failed to open logs window:', e)
+    }
+  }
 }
 
 onMounted(async () => {
@@ -246,12 +262,14 @@ onMounted(async () => {
   try {
     const tauri = await import('@tauri-apps/api/core')
     invoke.value = tauri.invoke
+    const url = await invoke.value('get_proxy_url_command')
+    if (url) proxyUrl.value = url
   } catch (e) {
     console.log('Tauri invoke not available:', e)
   }
 
   updateUptime()
-  uptimeInterval = setInterval(updateUptime, 1000)
+  uptimeInterval = setInterval(updateUptime, 5000)
   loadSystemInfo()
 })
 
@@ -264,16 +282,16 @@ onUnmounted(() => {
 
 <style lang="less" scoped>
 .dashboard-view {
-  max-width: 1400px;
+  max-width: 1600px;
   margin: 0 auto;
 }
 
 .welcome-banner {
-  background: linear-gradient(135deg, rgba(0, 255, 245, 0.1) 0%, rgba(255, 0, 255, 0.1) 100%);
-  border: 1px solid rgba(0, 255, 245, 0.2);
-  border-radius: 20px;
-  padding: 40px;
-  margin-bottom: 32px;
+  background: linear-gradient(135deg, rgba(var(--fd-accent-rgb, 0, 255, 245), 0.1) 0%, rgba(255, 0, 255, 0.1) 100%);
+  border: 1px solid rgba(var(--fd-accent-rgb, 0, 255, 245), 0.2);
+  border-radius: 24px;
+  padding: 56px;
+  margin-bottom: 40px;
   position: relative;
   overflow: hidden;
 
@@ -283,13 +301,13 @@ onUnmounted(() => {
   }
 
   .banner-title {
-    font-size: 48px;
+    font-size: 56px;
     font-weight: 700;
-    margin: 0 0 8px 0;
-    color: white;
+    margin: 0 0 12px 0;
+    color: var(--fd-text-primary, #fff);
 
     .gradient-text {
-      background: linear-gradient(135deg, #00fff5 0%, #ff00ff 100%);
+      background: linear-gradient(135deg, var(--fd-accent, #00fff5) 0%, var(--fd-accent-secondary, #ff00ff) 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
@@ -297,8 +315,8 @@ onUnmounted(() => {
   }
 
   .banner-subtitle {
-    font-size: 18px;
-    color: rgba(255, 255, 255, 0.7);
+    font-size: 22px;
+    color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.7);
     margin: 0;
   }
 
@@ -311,7 +329,7 @@ onUnmounted(() => {
     .decoration-circle {
       width: 200px;
       height: 200px;
-      border: 2px solid rgba(0, 255, 245, 0.3);
+      border: 2px solid rgba(var(--fd-accent-rgb, 0, 255, 245), 0.3);
       border-radius: 50%;
       position: absolute;
       right: 0;
@@ -338,22 +356,103 @@ onUnmounted(() => {
 .stat-card {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 20px;
 
   .stat-icon {
-    width: 56px;
-    height: 56px;
-    border-radius: 14px;
+    width: 64px;
+    height: 64px;
+    border-radius: 16px;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(0, 255, 136, 0.1);
-    color: #00ff88;
+    background: rgba(var(--fd-status-success-rgb, 0, 255, 136), 0.1);
+    color: var(--fd-status-success, #00ff88);
 
-    &.online { background: rgba(0, 255, 136, 0.1); color: #00ff88; }
-    &.cyan { background: rgba(0, 255, 245, 0.1); color: #00fff5; }
-    &.magenta { background: rgba(255, 0, 255, 0.1); color: #ff00ff; }
-    &.yellow { background: rgba(255, 215, 0, 0.1); color: #ffd700; }
+    &.online { background: rgba(var(--fd-status-success-rgb, 0, 255, 136), 0.1); color: var(--fd-status-success, #00ff88); }
+    &.cyan { background: rgba(var(--fd-accent-rgb, 0, 255, 245), 0.1); color: var(--fd-accent, #00fff5); }
+    &.magenta { background: rgba(var(--fd-accent-secondary-rgb, 255, 0, 255), 0.1); color: var(--fd-accent-secondary, #ff00ff); }
+    &.yellow { background: rgba(var(--fd-status-warning-rgb, 255, 215, 0), 0.1); color: var(--fd-status-warning, #ffd700); }
+
+    svg {
+      width: 32px;
+      height: 32px;
+    }
+  }
+
+  .stat-info {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .stat-label {
+    font-size: 15px;
+    color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.5);
+  }
+
+  .stat-value {
+    font-size: 42px;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--fd-accent, #00fff5) 0%, var(--fd-accent-secondary, #ff00ff) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .stat-value-text {
+    font-size: 20px;
+    font-weight: 600;
+
+    &.online { color: var(--fd-status-success, #00ff88); }
+    &.offline { color: var(--fd-status-danger, #ff6b35); }
+    &.connecting { color: var(--fd-status-warning, #ffd700); }
+  }
+}
+
+.section-title {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--fd-text-primary, #fff);
+  margin: 40px 0 20px 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+
+  .title-icon {
+    font-size: 28px;
+  }
+}
+
+.action-card {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+
+  &:hover {
+    transform: translateY(-2px);
+
+    .action-arrow {
+      transform: translateX(6px);
+      color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.6);
+    }
+  }
+
+  .action-icon {
+    width: 60px;
+    height: 60px;
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(var(--fd-accent-rgb, 0, 255, 245), 0.1);
+    color: var(--fd-accent, #00fff5);
+
+    &.warning {
+      background: rgba(var(--fd-status-warning-rgb, 255, 215, 0), 0.1);
+      color: var(--fd-status-warning, #ffd700);
+    }
 
     svg {
       width: 28px;
@@ -361,108 +460,27 @@ onUnmounted(() => {
     }
   }
 
-  .stat-info {
+  .action-info {
+    flex: 1;
     display: flex;
     flex-direction: column;
     gap: 4px;
   }
 
-  .stat-label {
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.5);
-  }
-
-  .stat-value {
-    font-size: 28px;
-    font-weight: 700;
-    background: linear-gradient(135deg, #00fff5 0%, #ff00ff 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-
-  .stat-value-text {
-    font-size: 16px;
-    font-weight: 600;
-
-    &.online { color: #00ff88; }
-    &.offline { color: #ff6b35; }
-    &.connecting { color: #ffd700; }
-  }
-}
-
-.section-title {
-  font-size: 20px;
-  font-weight: 600;
-  color: white;
-  margin: 32px 0 16px 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-
-  .title-icon {
-    font-size: 24px;
-  }
-}
-
-.action-card {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  cursor: pointer;
-  transition: all 0.3s ease;
-
-  &:hover {
-    transform: translateY(-4px);
-
-    .action-arrow {
-      transform: translateX(4px);
-      color: #00fff5;
-    }
-  }
-
-  .action-icon {
-    width: 48px;
-    height: 48px;
-    border-radius: 12px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0, 255, 245, 0.1);
-    color: #00fff5;
-
-    &.warning {
-      background: rgba(255, 215, 0, 0.1);
-      color: #ffd700;
-    }
-
-    svg {
-      width: 24px;
-      height: 24px;
-    }
-  }
-
-  .action-info {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-
   .action-title {
-    font-size: 16px;
+    font-size: 20px;
     font-weight: 600;
-    color: white;
+    color: var(--fd-text-primary, #fff);
   }
 
   .action-desc {
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.5);
+    font-size: 15px;
+    color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.5);
   }
 
   .action-arrow {
-    font-size: 20px;
-    color: rgba(255, 255, 255, 0.3);
+    font-size: 24px;
+    color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.3);
     transition: all 0.3s ease;
   }
 }
@@ -471,7 +489,7 @@ onUnmounted(() => {
   .info-grid {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 24px;
+    gap: 32px;
 
     @media (max-width: 1000px) {
       grid-template-columns: repeat(2, 1fr);
@@ -481,19 +499,19 @@ onUnmounted(() => {
   .info-item {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
   }
 
   .info-label {
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.5);
+    font-size: 14px;
+    color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.5);
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
 
   .info-value {
-    font-size: 15px;
-    color: white;
+    font-size: 18px;
+    color: var(--fd-text-primary, #fff);
     font-weight: 500;
   }
 }

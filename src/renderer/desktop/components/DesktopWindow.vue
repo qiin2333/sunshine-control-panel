@@ -1,5 +1,6 @@
 <template>
   <div class="desktop-window" :class="windowClass">
+    <div class="wallpaper-layer"></div>
     <slot name="titlebar">
       <TitleBar v-if="showTitleBar" :title="title" :icon="icon" />
     </slot>
@@ -58,8 +59,29 @@ const windowClass = computed(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #16213e 100%);
+  background: linear-gradient(135deg, var(--fd-bg-primary, #0f0f23) 0%, var(--fd-bg-secondary, #1a1a2e) 50%, var(--fd-bg-tertiary, #16213e) 100%);
+  color: var(--fd-text-primary, #ffffff);
+  font-size: var(--fd-font-size, 14px);
   position: relative;
+
+  // 壁纸层
+  .wallpaper-layer {
+    position: absolute;
+    inset: 0;
+    background-image: var(--fd-wallpaper, none);
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    z-index: 0;
+    transition: opacity 0.5s ease;
+
+    &::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+    }
+  }
 
   // 背景网格效果
   &::before {
@@ -70,11 +92,12 @@ const windowClass = computed(() => {
     right: 0;
     bottom: 0;
     background-image: 
-      linear-gradient(rgba(0, 255, 245, 0.03) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(0, 255, 245, 0.03) 1px, transparent 1px);
+      linear-gradient(rgba(var(--fd-accent-rgb, 0, 255, 245), 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(var(--fd-accent-rgb, 0, 255, 245), 0.03) 1px, transparent 1px);
     background-size: 50px 50px;
     pointer-events: none;
     z-index: 0;
+    opacity: var(--fd-grid-visible, 1);
   }
 
   // 扫描线效果
@@ -94,6 +117,7 @@ const windowClass = computed(() => {
     );
     pointer-events: none;
     z-index: 1;
+    opacity: var(--fd-scanline-visible, 1);
   }
 
   .desktop-window-content {
@@ -101,17 +125,17 @@ const windowClass = computed(() => {
     display: flex;
     position: relative;
     z-index: 2;
-    height: calc(100vh - 32px);
+    height: 100vh;
     overflow: hidden;
 
     &.has-sidebar {
-      height: calc(100vh - 32px);
+      height: 100vh;
     }
   }
 
   .desktop-window-main {
     flex: 1;
-    padding: 24px;
+    padding: 40px 48px;
     overflow-y: auto;
     overflow-x: hidden;
     position: relative;
@@ -126,11 +150,11 @@ const windowClass = computed(() => {
     }
 
     &::-webkit-scrollbar-thumb {
-      background: rgba(0, 255, 245, 0.2);
+      background: rgba(var(--fd-accent-rgb, 0, 255, 245), 0.2);
       border-radius: 4px;
 
       &:hover {
-        background: rgba(0, 255, 245, 0.3);
+        background: rgba(var(--fd-accent-rgb, 0, 255, 245), 0.3);
       }
     }
   }

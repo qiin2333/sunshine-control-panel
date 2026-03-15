@@ -6,7 +6,9 @@
         :key="item.id"
         class="nav-item"
         :class="{ active: activeItem === item.id, disabled: item.disabled }"
+        tabindex="0"
         @click="handleItemClick(item)"
+        @keydown.enter="handleItemClick(item)"
         :title="item.label"
       >
         <component v-if="item.icon" :is="item.icon" class="nav-icon" />
@@ -21,7 +23,9 @@
         :key="item.id"
         class="nav-item"
         :class="{ active: activeItem === item.id, disabled: item.disabled }"
+        tabindex="0"
         @click="handleItemClick(item)"
+        @keydown.enter="handleItemClick(item)"
         :title="item.label"
       >
         <component v-if="item.icon" :is="item.icon" class="nav-icon" />
@@ -79,20 +83,19 @@ function handleItemClick(item) {
 
 <style lang="less" scoped>
 .desktop-sidebar {
-  width: 72px;
-  background: rgba(15, 15, 35, 0.8);
-  border-right: 1px solid rgba(0, 255, 245, 0.2);
+  width: 100px;
+  background: transparent;
+  border-right: none;
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 16px 0;
-  gap: 8px;
-  backdrop-filter: blur(10px);
+  padding: 24px 0;
+  gap: 12px;
   transition: width 0.3s ease;
   position: relative;
 
   &.collapsed {
-    width: 56px;
+    width: 72px;
 
     .nav-label {
       display: none;
@@ -108,14 +111,14 @@ function handleItemClick(item) {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     width: 100%;
   }
 
   .nav-item {
-    width: 48px;
-    min-height: 48px;
-    border-radius: 12px;
+    width: 64px;
+    min-height: 64px;
+    border-radius: 16px;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -123,29 +126,30 @@ function handleItemClick(item) {
     cursor: pointer;
     transition: all 0.2s ease;
     position: relative;
-    color: rgba(255, 255, 255, 0.7);
-    padding: 8px;
-    gap: 4px;
+    color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.7);
+    padding: 10px;
+    gap: 6px;
 
     &:hover:not(.disabled) {
-      background: rgba(0, 255, 245, 0.1);
-      color: #00fff5;
+      background: rgba(var(--fd-accent-rgb, 0, 255, 245), 0.1);
+      color: var(--fd-accent, #00fff5);
+      transform: scale(1.05);
     }
 
     &.active {
-      background: rgba(0, 255, 245, 0.15);
-      color: #00fff5;
-      box-shadow: 0 0 20px rgba(0, 255, 245, 0.3), 0 0 40px rgba(0, 255, 245, 0.1);
+      background: rgba(var(--fd-accent-rgb, 0, 255, 245), 0.15);
+      color: var(--fd-accent, #00fff5);
+      box-shadow: 0 0 20px rgba(var(--fd-accent-rgb, 0, 255, 245), 0.3), 0 0 40px rgba(var(--fd-accent-rgb, 0, 255, 245), 0.1);
 
       &::before {
         content: '';
         position: absolute;
-        left: -12px;
-        width: 4px;
-        height: 24px;
-        background: #00fff5;
+        left: -16px;
+        width: 5px;
+        height: 32px;
+        background: var(--fd-accent, #00fff5);
         border-radius: 0 4px 4px 0;
-        box-shadow: 0 0 20px rgba(0, 255, 245, 0.3), 0 0 40px rgba(0, 255, 245, 0.1);
+        box-shadow: 0 0 20px rgba(var(--fd-accent-rgb, 0, 255, 245), 0.3), 0 0 40px rgba(var(--fd-accent-rgb, 0, 255, 245), 0.1);
       }
     }
 
@@ -155,37 +159,38 @@ function handleItemClick(item) {
     }
 
     .nav-icon {
-      width: 24px;
-      height: 24px;
+      width: 28px;
+      height: 28px;
       flex-shrink: 0;
     }
 
     .nav-label {
-      font-size: 11px;
+      font-size: 12px;
+      font-weight: 500;
       text-align: center;
       line-height: 1.2;
     }
 
     .nav-badge {
       position: absolute;
-      top: 4px;
-      right: 4px;
-      background: linear-gradient(135deg, #00fff5 0%, #ff00ff 100%);
-      color: #0f0f23;
-      font-size: 9px;
-      padding: 2px 4px;
-      border-radius: 8px;
+      top: 6px;
+      right: 6px;
+      background: linear-gradient(135deg, var(--fd-accent, #00fff5) 0%, var(--fd-accent-secondary, #ff00ff) 100%);
+      color: var(--fd-bg-primary, #0f0f23);
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 10px;
       font-weight: 600;
-      min-width: 16px;
+      min-width: 18px;
       text-align: center;
     }
   }
 
   .nav-divider {
-    width: 32px;
+    width: 40px;
     height: 1px;
-    background: rgba(0, 255, 245, 0.2);
-    margin: 8px 0;
+    background: rgba(var(--fd-accent-rgb, 0, 255, 245), 0.2);
+    margin: 12px 0;
   }
 
   .sidebar-toggle {
@@ -196,12 +201,12 @@ function handleItemClick(item) {
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    color: rgba(255, 255, 255, 0.5);
+    color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.5);
     transition: all 0.2s ease;
 
     &:hover {
-      background: rgba(0, 255, 245, 0.1);
-      color: #00fff5;
+      background: rgba(var(--fd-accent-rgb, 0, 255, 245), 0.1);
+      color: var(--fd-accent, #00fff5);
     }
 
     svg {

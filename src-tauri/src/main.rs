@@ -66,6 +66,7 @@ fn main() {
             system::get_current_dpi,
             system::set_desktop_dpi,
             commands::open_tool_window,
+            commands::launch_app,
             toolbar::create_toolbar_window,
             commands::fetch_speech_phrases,
             commands::fetch_remote_bytes,

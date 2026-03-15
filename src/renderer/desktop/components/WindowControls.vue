@@ -83,7 +83,7 @@ async function handleClose() {
   height: 32px;
   border: none;
   background: transparent;
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.7);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -91,8 +91,8 @@ async function handleClose() {
   transition: all 0.15s ease;
 
   &:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.1);
-    color: rgba(255, 255, 255, 1);
+    background: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.1);
+    color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 1);
   }
 
   &:disabled {

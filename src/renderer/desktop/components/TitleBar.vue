@@ -26,7 +26,7 @@ import WindowControls from './WindowControls.vue'
 const props = defineProps({
   title: {
     type: String,
-    default: 'SUNSHINE DESKTOP'
+    default: 'FOUNDATION DESKTOP'
   },
   icon: {
     type: String,
@@ -46,8 +46,8 @@ const props = defineProps({
 <style lang="less" scoped>
 .desktop-titlebar {
   height: 32px;
-  background: rgba(15, 15, 35, 0.95);
-  border-bottom: 1px solid rgba(0, 255, 245, 0.2);
+  background: rgba(var(--fd-bg-primary-rgb, 15, 15, 35), 0.95);
+  border-bottom: 1px solid rgba(var(--fd-accent-rgb, 0, 255, 245), 0.2);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -75,7 +75,7 @@ const props = defineProps({
     .app-title {
       font-size: 12px;
       font-weight: 500;
-      color: rgba(255, 255, 255, 0.7);
+      color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.7);
       letter-spacing: 0.5px;
     }
   }

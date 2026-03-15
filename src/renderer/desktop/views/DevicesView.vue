@@ -2,126 +2,361 @@
   <div class="devices-view">
     <div class="page-header fade-in">
       <h1 class="page-title">设备管理</h1>
-      <p class="page-subtitle">管理已配对的 Moonlight 客户端设备</p>
+      <p class="page-subtitle">配对 Moonlight 客户端并管理已连接设备</p>
+    </div>
+
+    <!-- 配对区域 - 双列布局 -->
+    <div class="pairing-section fade-in">
+      <div class="desktop-grid cols-2">
+        <!-- 二维码配对 -->
+        <div class="desktop-card pairing-card">
+          <div class="card-header">
+            <div class="card-title">
+              <span class="title-icon">📲</span>
+              扫码配对
+            </div>
+          </div>
+          <div class="card-content">
+            <div v-if="qrActive" class="qr-display">
+              <div class="qr-image-wrapper">
+                <img :src="qrDataUrl" alt="QR Code" class="qr-image" />
+              </div>
+              <div class="qr-meta">
+                <div class="qr-pin">
+                  <span class="qr-pin-label">PIN</span>
+                  <span class="qr-pin-value">{{ qrPin }}</span>
+                </div>
+                <div class="qr-timer" :class="{ warning: qrRemaining <= 30 }">
+                  ⏱ {{ qrRemaining }}s
+                </div>
+                <div class="qr-actions">
+                  <button class="desktop-btn" @click="generateQrCode">刷新</button>
+                  <button class="desktop-btn" @click="cancelQrCode">取消</button>
+                </div>
+              </div>
+            </div>
+
+            <div v-else-if="qrError" class="qr-error">{{ qrError }}</div>
+
+            <div v-else class="qr-idle">
+              <p>使用 Moonlight 客户端扫描二维码即可配对</p>
+              <button
+                class="desktop-btn primary"
+                :disabled="qrLoading"
+                @click="generateQrCode"
+              >
+                {{ qrLoading ? '生成中...' : '生成二维码' }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 手动 PIN 配对 -->
+        <div class="desktop-card pairing-card">
+          <div class="card-header">
+            <div class="card-title">
+              <span class="title-icon">🔗</span>
+              PIN 配对
+            </div>
+          </div>
+          <div class="card-content">
+            <div class="pin-form">
+              <div class="form-row">
+                <label class="form-label">PIN 码</label>
+                <input
+                  v-model="pinInput"
+                  class="form-input"
+                  type="text"
+                  pattern="\d*"
+                  maxlength="4"
+                  placeholder="4 位数字"
+                />
+              </div>
+              <div class="form-row">
+                <label class="form-label">设备名称</label>
+                <input
+                  v-model="deviceNameInput"
+                  class="form-input"
+                  type="text"
+                  placeholder="例如：iPhone 15 Pro"
+                />
+              </div>
+              <button
+                class="desktop-btn primary full-width"
+                :disabled="pinSubmitting || !pinInput || !deviceNameInput"
+                @click="submitPin"
+              >
+                {{ pinSubmitting ? '配对中...' : '配对' }}
+              </button>
+              <div v-if="pinStatus" class="pin-status" :class="pinStatus.type">
+                {{ pinStatus.message }}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 已配对设备 -->
+    <div class="section-header fade-in">
+      <h2 class="section-title">已配对设备</h2>
+      <span class="section-count">{{ devices.length }}</span>
     </div>
 
     <div class="devices-list">
-      <div 
-        v-for="(device, index) in devices" 
-        :key="device.id"
+      <div
+        v-for="(device, index) in devices"
+        :key="device.uuid"
         class="desktop-card device-card fade-in"
         :style="{ animationDelay: `${index * 0.1}s` }"
       >
-        <div class="device-icon" :class="device.type">
-          <component :is="getDeviceIcon(device.type)" />
-        </div>
+        <div class="device-icon">📱</div>
         <div class="device-info">
-          <div class="device-name">{{ device.name }}</div>
+          <template v-if="editingUuid === device.uuid">
+            <input
+              v-model="editName"
+              class="name-input"
+              @keyup.enter="saveRename(device)"
+              @keyup.escape="cancelRename"
+              ref="nameInputRef"
+            />
+          </template>
+          <template v-else>
+            <div class="device-name">{{ device.name || '未命名设备' }}</div>
+          </template>
           <div class="device-meta">
-            <span class="device-type">{{ device.typeLabel }}</span>
-            <span class="device-separator">•</span>
-            <span class="device-last-seen">{{ device.lastSeen }}</span>
+            <span class="device-uuid">{{ device.uuid }}</span>
           </div>
-        </div>
-        <div class="device-status">
-          <span class="status-indicator" :class="device.status"></span>
-          <span class="status-text">{{ device.statusText }}</span>
         </div>
         <div class="device-actions">
-          <button class="desktop-btn" @click="unpairDevice(device)">
-            取消配对
-          </button>
+          <template v-if="editingUuid === device.uuid">
+            <button class="desktop-btn" @click="saveRename(device)">保存</button>
+            <button class="desktop-btn" @click="cancelRename">取消</button>
+          </template>
+          <template v-else>
+            <button class="desktop-btn" @click="startRename(device)">重命名</button>
+            <button class="desktop-btn danger" @click="unpairDevice(device)">取消配对</button>
+          </template>
         </div>
       </div>
 
-      <div v-if="devices.length === 0" class="empty-state fade-in">
+      <div v-if="!loading && devices.length === 0" class="empty-state fade-in">
         <div class="empty-icon">📱</div>
-        <h3>暂无已配对设备</h3>
-        <p>在 Moonlight 客户端中输入配对码来添加设备</p>
+        <p>暂无已配对设备，使用上方配对功能添加新设备</p>
       </div>
-    </div>
 
-    <!-- 配对信息卡片 -->
-    <div class="desktop-card pairing-card fade-in">
-      <div class="card-header">
-        <div class="card-title">
-          <span class="title-icon">🔗</span>
-          配对新设备
-        </div>
-      </div>
-      <div class="card-content">
-        <div class="pairing-steps">
-          <div class="step">
-            <div class="step-number">1</div>
-            <div class="step-content">
-              <div class="step-title">打开 Moonlight</div>
-              <div class="step-desc">在你的设备上启动 Moonlight 客户端</div>
-            </div>
-          </div>
-          <div class="step">
-            <div class="step-number">2</div>
-            <div class="step-content">
-              <div class="step-title">添加电脑</div>
-              <div class="step-desc">点击添加按钮，输入此电脑的 IP 地址</div>
-            </div>
-          </div>
-          <div class="step">
-            <div class="step-number">3</div>
-            <div class="step-content">
-              <div class="step-title">输入 PIN 码</div>
-              <div class="step-desc">在 Moonlight 中输入 Web 界面显示的配对码</div>
-            </div>
-          </div>
-        </div>
+      <div v-if="loading" class="empty-state fade-in">
+        <p>加载中...</p>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import QRCode from 'qrcode'
 
-// 模拟设备数据
-const devices = ref([
-  {
-    id: 1,
-    name: 'iPhone 15 Pro',
-    type: 'phone',
-    typeLabel: 'iOS',
-    lastSeen: '刚刚',
-    status: 'online',
-    statusText: '在线'
-  },
-  {
-    id: 2,
-    name: 'Steam Deck',
-    type: 'handheld',
-    typeLabel: 'Linux',
-    lastSeen: '2小时前',
-    status: 'offline',
-    statusText: '离线'
-  },
-  {
-    id: 3,
-    name: 'Android TV',
-    type: 'tv',
-    typeLabel: 'Android TV',
-    lastSeen: '昨天',
-    status: 'offline',
-    statusText: '离线'
-  }
-])
+// === Tauri invoke ===
+const invoke = ref(null)
+const proxyUrl = ref('http://localhost:48081')
 
-function getDeviceIcon(type) {
-  // 返回对应图标组件（这里用占位符）
-  return 'div'
-}
-
-function unpairDevice(device) {
-  if (confirm(`确定要取消与 "${device.name}" 的配对吗？`)) {
-    devices.value = devices.value.filter(d => d.id !== device.id)
+async function initTauri() {
+  try {
+    const tauri = await import('@tauri-apps/api/core')
+    invoke.value = tauri.invoke
+    const url = await invoke.value('get_proxy_url_command')
+    if (url) proxyUrl.value = url
+  } catch (e) {
+    console.log('Tauri invoke not available:', e)
   }
 }
+
+async function apiFetch(path, options = {}) {
+  const response = await fetch(`${proxyUrl.value}${path}`, options)
+  return await response.json()
+}
+
+// === 设备列表 ===
+const devices = ref([])
+const loading = ref(false)
+
+async function loadDevices() {
+  loading.value = true
+  try {
+    const data = await apiFetch('/api/clients/list')
+    if (data.status?.toString() === 'true' && data.named_certs) {
+      devices.value = data.named_certs
+    }
+  } catch (e) {
+    console.error('Failed to load devices:', e)
+  } finally {
+    loading.value = false
+  }
+}
+
+// === 重命名 ===
+const editingUuid = ref(null)
+const editName = ref('')
+const nameInputRef = ref(null)
+
+function startRename(device) {
+  editingUuid.value = device.uuid
+  editName.value = device.name || ''
+  nextTick(() => {
+    const input = document.querySelector('.name-input')
+    if (input) input.focus()
+  })
+}
+
+function cancelRename() {
+  editingUuid.value = null
+  editName.value = ''
+}
+
+async function saveRename(device) {
+  const newName = editName.value.trim()
+  if (!newName) return
+  try {
+    const data = await apiFetch('/api/clients/rename', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uuid: device.uuid, name: newName }),
+    })
+    if (data.status?.toString() === 'true') {
+      device.name = newName
+    }
+  } catch (e) {
+    console.error('Failed to rename:', e)
+  }
+  cancelRename()
+}
+
+// === 取消配对 ===
+async function unpairDevice(device) {
+  const name = device.name || device.uuid
+  if (!confirm(`确定要取消与「${name}」的配对吗？`)) return
+  try {
+    const data = await apiFetch('/api/clients/unpair', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uuid: device.uuid }),
+    })
+    if (data.status?.toString() === 'true') {
+      devices.value = devices.value.filter(d => d.uuid !== device.uuid)
+    }
+  } catch (e) {
+    console.error('Failed to unpair:', e)
+  }
+}
+
+// === QR 配对 ===
+const qrDataUrl = ref('')
+const qrPin = ref('')
+const qrExpiresAt = ref(0)
+const qrRemaining = ref(0)
+const qrLoading = ref(false)
+const qrError = ref('')
+let countdownTimer = null
+
+const qrActive = computed(() => qrRemaining.value > 0 && qrDataUrl.value !== '')
+
+function stopCountdown() {
+  if (countdownTimer) {
+    clearInterval(countdownTimer)
+    countdownTimer = null
+  }
+}
+
+function startCountdown() {
+  stopCountdown()
+  countdownTimer = setInterval(() => {
+    const remaining = Math.max(0, Math.floor((qrExpiresAt.value - Date.now()) / 1000))
+    qrRemaining.value = remaining
+    if (remaining <= 0) {
+      stopCountdown()
+      qrDataUrl.value = ''
+      qrPin.value = ''
+    }
+  }, 1000)
+}
+
+async function generateQrCode() {
+  qrLoading.value = true
+  qrError.value = ''
+  try {
+    console.log('QR pair: using proxy URL:', proxyUrl.value)
+    const data = await apiFetch('/api/qr-pair', { method: 'POST' })
+
+    if (data.status?.toString() !== 'true') {
+      qrError.value = data.error || '生成二维码失败'
+      return
+    }
+
+    qrPin.value = data.pin
+    qrExpiresAt.value = Date.now() + data.expires_in * 1000
+    qrRemaining.value = data.expires_in
+
+    qrDataUrl.value = await QRCode.toDataURL(data.url, {
+      width: 280,
+      margin: 2,
+      color: { dark: '#000000', light: '#ffffff' },
+    })
+
+    startCountdown()
+  } catch (e) {
+    console.error('Failed to generate QR:', e)
+    qrError.value = `网络错误: ${e.message}`
+  } finally {
+    qrLoading.value = false
+  }
+}
+
+function cancelQrCode() {
+  stopCountdown()
+  qrDataUrl.value = ''
+  qrPin.value = ''
+  qrRemaining.value = 0
+}
+
+// === 手动 PIN 配对 ===
+const pinInput = ref('')
+const deviceNameInput = ref('')
+const pinSubmitting = ref(false)
+const pinStatus = ref(null)
+
+async function submitPin() {
+  pinSubmitting.value = true
+  pinStatus.value = null
+  try {
+    const data = await apiFetch('/api/pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: pinInput.value, name: deviceNameInput.value }),
+    })
+    if (data.status?.toString() === 'true') {
+      pinStatus.value = { type: 'success', message: '配对成功！' }
+      pinInput.value = ''
+      deviceNameInput.value = ''
+      loadDevices()
+    } else {
+      pinStatus.value = { type: 'error', message: '配对失败，请检查 PIN 码是否正确' }
+    }
+  } catch (e) {
+    pinStatus.value = { type: 'error', message: '网络错误' }
+  } finally {
+    pinSubmitting.value = false
+  }
+}
+
+// === 生命周期 ===
+onMounted(async () => {
+  await initTauri()
+  loadDevices()
+})
+
+onUnmounted(() => {
+  stopCountdown()
+})
 </script>
 
 <style lang="less" scoped>
@@ -136,22 +371,206 @@ function unpairDevice(device) {
   .page-title {
     font-size: 32px;
     font-weight: 700;
-    color: white;
+    color: var(--fd-text-primary, #fff);
     margin: 0 0 8px 0;
   }
 
   .page-subtitle {
     font-size: 16px;
-    color: rgba(255, 255, 255, 0.5);
+    color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.5);
     margin: 0;
   }
 }
 
+// 配对区域
+.pairing-section {
+  margin-bottom: 40px;
+}
+
+.pairing-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.qr-idle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 24px 0;
+  text-align: center;
+
+  p {
+    margin: 0;
+    color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.4);
+    font-size: 14px;
+  }
+}
+
+.qr-display {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+
+  .qr-image-wrapper {
+    padding: 10px;
+    background: #fff;
+    border-radius: 12px;
+  }
+
+  .qr-image {
+    width: 180px;
+    height: 180px;
+    border-radius: 4px;
+    display: block;
+  }
+
+  .qr-meta {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .qr-pin {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    .qr-pin-label {
+      font-size: 13px;
+      color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.5);
+    }
+
+    .qr-pin-value {
+      font-size: 24px;
+      font-weight: 700;
+      font-family: monospace;
+      letter-spacing: 6px;
+      background: linear-gradient(135deg, var(--fd-accent, #00fff5), var(--fd-accent-secondary, #ff00ff));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+  }
+
+  .qr-timer {
+    font-size: 13px;
+    color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.6);
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: rgba(var(--fd-accent-rgb, 0, 255, 245), 0.1);
+
+    &.warning {
+      background: rgba(var(--fd-status-warning-rgb, 255, 215, 0), 0.15);
+      color: var(--fd-status-warning, #ffd700);
+    }
+  }
+
+  .qr-actions {
+    display: flex;
+    gap: 8px;
+  }
+}
+
+.qr-error {
+  color: var(--fd-status-danger, #ff6b35);
+  padding: 12px;
+  background: rgba(var(--fd-status-danger-rgb, 255, 107, 53), 0.1);
+  border-radius: 8px;
+}
+
+// PIN 表单
+.pin-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-label {
+  font-size: 13px;
+  color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.6);
+  font-weight: 500;
+}
+
+.form-input {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(var(--fd-accent-rgb, 0, 255, 245), 0.2);
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: var(--fd-text-primary, #fff);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+
+  &:focus {
+    border-color: var(--fd-accent, #00fff5);
+    box-shadow: 0 0 8px rgba(var(--fd-accent-rgb, 0, 255, 245), 0.2);
+  }
+
+  &::placeholder {
+    color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.25);
+  }
+}
+
+.full-width {
+  width: 100%;
+}
+
+.pin-status {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 14px;
+
+  &.success {
+    background: rgba(var(--fd-status-success-rgb, 0, 255, 136), 0.1);
+    color: var(--fd-status-success, #00ff88);
+    border: 1px solid rgba(var(--fd-status-success-rgb, 0, 255, 136), 0.3);
+  }
+
+  &.error {
+    background: rgba(var(--fd-status-danger-rgb, 255, 107, 53), 0.1);
+    color: var(--fd-status-danger, #ff6b35);
+    border: 1px solid rgba(var(--fd-status-danger-rgb, 255, 107, 53), 0.3);
+  }
+}
+
+// 段落标题
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.section-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--fd-text-primary, #fff);
+  margin: 0;
+}
+
+.section-count {
+  font-size: 13px;
+  padding: 2px 10px;
+  border-radius: 10px;
+  background: rgba(var(--fd-accent-rgb, 0, 255, 245), 0.12);
+  color: var(--fd-accent, #00fff5);
+}
+
+// 设备列表
 .devices-list {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  margin-bottom: 32px;
+  gap: 12px;
 }
 
 .device-card {
@@ -160,114 +579,75 @@ function unpairDevice(device) {
   gap: 20px;
 
   .device-icon {
-    width: 56px;
-    height: 56px;
-    border-radius: 14px;
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 28px;
-    background: rgba(0, 255, 245, 0.1);
-
-    &.phone::before { content: '📱'; }
-    &.handheld::before { content: '🎮'; }
-    &.tv::before { content: '📺'; }
-    &.pc::before { content: '💻'; }
+    font-size: 24px;
+    background: rgba(var(--fd-accent-rgb, 0, 255, 245), 0.1);
+    flex-shrink: 0;
   }
 
   .device-info {
     flex: 1;
+    min-width: 0;
 
     .device-name {
-      font-size: 16px;
+      font-size: 15px;
       font-weight: 600;
-      color: white;
-      margin-bottom: 4px;
+      color: var(--fd-text-primary, #fff);
+      margin-bottom: 2px;
+    }
+
+    .name-input {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--fd-text-primary, #fff);
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba(var(--fd-accent-rgb, 0, 255, 245), 0.5);
+      border-radius: 6px;
+      padding: 4px 10px;
+      outline: none;
+      margin-bottom: 2px;
+
+      &:focus {
+        border-color: var(--fd-accent, #00fff5);
+        box-shadow: 0 0 8px rgba(var(--fd-accent-rgb, 0, 255, 245), 0.3);
+      }
     }
 
     .device-meta {
-      font-size: 13px;
-      color: rgba(255, 255, 255, 0.5);
-      display: flex;
-      align-items: center;
-      gap: 8px;
+      font-size: 12px;
+      color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.3);
+      font-family: monospace;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
   }
 
-  .device-status {
+  .device-actions {
     display: flex;
-    align-items: center;
     gap: 8px;
-    padding: 8px 16px;
-    border-radius: 20px;
-    background: rgba(0, 0, 0, 0.2);
-
-    .status-text {
-      font-size: 13px;
-      color: rgba(255, 255, 255, 0.7);
-    }
+    flex-shrink: 0;
   }
 }
 
 .empty-state {
   text-align: center;
-  padding: 60px 20px;
-  color: rgba(255, 255, 255, 0.5);
+  padding: 40px 20px;
+  color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.4);
 
   .empty-icon {
-    font-size: 64px;
-    margin-bottom: 16px;
-  }
-
-  h3 {
-    font-size: 20px;
-    color: white;
-    margin: 0 0 8px 0;
+    font-size: 48px;
+    margin-bottom: 12px;
   }
 
   p {
     margin: 0;
-  }
-}
-
-.pairing-card {
-  .pairing-steps {
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-  }
-
-  .step {
-    display: flex;
-    align-items: flex-start;
-    gap: 16px;
-
-    .step-number {
-      width: 32px;
-      height: 32px;
-      border-radius: 50%;
-      background: linear-gradient(135deg, #00fff5 0%, #ff00ff 100%);
-      color: #0f0f23;
-      font-weight: 700;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-    }
-
-    .step-content {
-      .step-title {
-        font-size: 16px;
-        font-weight: 600;
-        color: white;
-        margin-bottom: 4px;
-      }
-
-      .step-desc {
-        font-size: 14px;
-        color: rgba(255, 255, 255, 0.5);
-      }
-    }
+    font-size: 14px;
   }
 }
 </style>

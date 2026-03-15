@@ -245,6 +245,7 @@
           {{ saving ? '保存中…' : '保存设置' }}
         </button>
       </div>
+
     </template>
   </div>
 </template>
@@ -365,7 +366,7 @@ async function loadSettings() {
       const appsResp = await apiFetch('/api/apps')
       const appsList = appsResp.apps || appsResp || []
       appsData.value = { apps: appsList, env: appsResp.env || {} }
-      const desktopApp = appsList.find(a => a.name === 'Desktop')
+      const desktopApp = appsList.find(isDesktopApp)
       if (desktopApp) {
         const detached = desktopApp.detached || []
         autoLaunchDesktop.value = detached.some(cmd => 
@@ -373,7 +374,7 @@ async function loadSettings() {
         )
       }
     } catch (e) {
-      console.error('Failed to load apps:', e)
+      // apps load failed
     }
   } catch (e) {
     console.error('Failed to load settings:', e)
@@ -429,11 +430,13 @@ async function saveSettings() {
 }
 
 const GUI_DESKTOP_CMD = '.\\assets\\gui\\sunshine-gui.exe --desktop'
+const DESKTOP_APP_NAMES = ['Desktop', '桌面']
+function isDesktopApp(app) { return DESKTOP_APP_NAMES.includes(app.name) }
 
 async function saveDesktopLaunchMode() {
   if (!appsData.value) return
   const appsList = appsData.value.apps || []
-  const desktopIdx = appsList.findIndex(a => a.name === 'Desktop')
+  const desktopIdx = appsList.findIndex(isDesktopApp)
   if (desktopIdx === -1) return
 
   const desktopApp = { ...appsList[desktopIdx] }
@@ -815,5 +818,6 @@ onMounted(async () => {
     color: var(--fd-status-error, #f87171);
   }
 }
+
 </style>
 

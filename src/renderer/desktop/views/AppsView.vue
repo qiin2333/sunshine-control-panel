@@ -50,6 +50,7 @@
       :isFavorite="isFavorite"
       :getAppImageUrl="getAppImageUrl"
       :handleImageError="handleImageError"
+      :helperIcons="getActiveHelperIcons"
       @launch="launchApp"
       @contextmenu="openContextMenu"
       @toggleFavorite="toggleFavorite"
@@ -77,18 +78,30 @@
       @toggleFavorite="ctxToggleFavorite"
       @copyCmd="ctxCopyCmd"
       @openDir="ctxOpenDir"
+      @configHelpers="ctxConfigHelpers"
+    />
+
+    <LaunchHelperPanel
+      :open="helperPanel.open"
+      :appName="helperPanel.appName"
+      :app="helperPanel.app"
+      :proxyUrl="proxyUrl"
+      @close="helperPanel.open = false"
+      @saved="loadApps"
     />
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useApps } from '../composables/useApps'
+import { useLaunchHelpers } from '../composables/useLaunchHelpers'
 import AppToolbar from '../components/AppToolbar.vue'
 import AppRecentStrip from '../components/AppRecentStrip.vue'
 import AppGridView from '../components/AppGridView.vue'
 import AppListView from '../components/AppListView.vue'
 import AppContextMenu from '../components/AppContextMenu.vue'
+import LaunchHelperPanel from '../components/LaunchHelperPanel.vue'
 
 const {
   loading,
@@ -115,6 +128,15 @@ const {
 // 右键菜单
 const contextMenu = ref({ visible: false, x: 0, y: 0, app: null })
 
+// 启动助手面板
+const helperPanel = ref({ open: false, appName: '', app: null })
+const { proxyUrl } = useApps()
+const { getActiveHelperIcons, helperPanelOpen } = useLaunchHelpers()
+
+// 同步面板状态到共享 composable（供 DesktopApp 控制器返回使用）
+watch(() => helperPanel.value.open, (v) => { helperPanelOpen.value = v })
+watch(helperPanelOpen, (v) => { if (!v) helperPanel.value.open = false })
+
 function openContextMenu(event, app) {
   contextMenu.value = {
     visible: true,
@@ -135,6 +157,17 @@ function ctxLaunch() {
 
 function ctxToggleFavorite() {
   if (contextMenu.value.app) toggleFavorite(contextMenu.value.app.name)
+  closeContextMenu()
+}
+
+function ctxConfigHelpers() {
+  if (contextMenu.value.app) {
+    helperPanel.value = {
+      open: true,
+      appName: contextMenu.value.app.name,
+      app: contextMenu.value.app,
+    }
+  }
   closeContextMenu()
 }
 

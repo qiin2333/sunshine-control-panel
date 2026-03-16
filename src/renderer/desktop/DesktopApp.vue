@@ -43,6 +43,7 @@ import ThemeEditor from './components/ThemeEditor.vue'
 // 手柄支持
 import { useGamepad, navigateFocus, confirmFocused } from './composables/useGamepad.js'
 import { useTheme } from './composables/useTheme.js'
+import { useLaunchHelpers } from './composables/useLaunchHelpers.js'
 
 // 图标组件
 import IconApps from './icons/IconApps.vue'
@@ -71,6 +72,7 @@ const appTitle = 'FOUNDATION DESKTOP'
 // 主题
 const { themeVars, activePreset, presets, setVar, applyPreset, exportTheme, importTheme, wallpaper, wallpaperColors, setWallpaper, removeWallpaper } = useTheme()
 const themeEditorOpen = ref(false)
+const { helperPanelOpen } = useLaunchHelpers()
 
 function handleThemeExport() {
   const json = exportTheme()
@@ -201,7 +203,9 @@ const { gamepadActive } = useGamepad({
   },
   onBack() {
     // B 按钮：优先关闭打开的抽屉面板，否则回到应用库首页
-    if (themeEditorOpen.value) {
+    if (helperPanelOpen.value) {
+      helperPanelOpen.value = false
+    } else if (themeEditorOpen.value) {
       themeEditorOpen.value = false
     } else {
       activeNav.value = 'apps'

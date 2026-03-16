@@ -24,6 +24,10 @@
         </div>
         <!-- 收藏角标 -->
         <div v-if="isFavorite(app.name)" class="favorite-badge" @click.stop="$emit('toggleFavorite', app.name)">★</div>
+        <!-- 启动助手角标 -->
+        <div v-if="helperIcons(app.name).length" class="helper-badges">
+          <span v-for="(icon, i) in helperIcons(app.name)" :key="i" class="helper-badge-icon">{{ icon }}</span>
+        </div>
         <!-- Hover 遮罩 -->
         <div class="tile-overlay">
           <span class="play-icon">▶</span>
@@ -43,13 +47,14 @@
 </template>
 
 <script setup>
-defineProps({
+const props = defineProps({
   apps: { type: Array, required: true },
   gridSize: { type: String, required: true },
   launchingApp: { type: String, default: null },
   isFavorite: { type: Function, required: true },
   getAppImageUrl: { type: Function, required: true },
   handleImageError: { type: Function, required: true },
+  helperIcons: { type: Function, default: () => [] },
 })
 
 defineEmits(['launch', 'contextmenu', 'toggleFavorite'])
@@ -148,6 +153,24 @@ defineEmits(['launch', 'contextmenu', 'toggleFavorite'])
 
   &:hover {
     transform: scale(1.4) rotate(15deg);
+  }
+}
+
+.helper-badges {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  display: flex;
+  gap: 2px;
+  z-index: 3;
+
+  .helper-badge-icon {
+    font-size: 12px;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    border-radius: 4px;
+    padding: 2px 4px;
+    line-height: 1;
   }
 }
 

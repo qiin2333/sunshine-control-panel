@@ -14,6 +14,9 @@
         {{ isFavorited ? '取消收藏' : '收藏' }}
       </div>
       <div class="menu-divider"></div>
+      <div class="menu-item" @click="$emit('configHelpers')">
+        <span class="menu-icon">⚡</span> 启动助手
+      </div>
       <div class="menu-item" @click="$emit('copyCmd')" v-if="hasCmd">
         <span class="menu-icon">📋</span> 复制命令
       </div>
@@ -34,7 +37,7 @@ defineProps({
   hasWorkingDir: { type: Boolean, default: false },
 })
 
-defineEmits(['launch', 'toggleFavorite', 'copyCmd', 'openDir'])
+defineEmits(['launch', 'toggleFavorite', 'copyCmd', 'openDir', 'configHelpers'])
 </script>
 
 <style lang="less" scoped>

@@ -200,8 +200,12 @@ const { gamepadActive } = useGamepad({
     confirmFocused()
   },
   onBack() {
-    // B 按钮：回到应用库首页
-    activeNav.value = 'apps'
+    // B 按钮：优先关闭打开的抽屉面板，否则回到应用库首页
+    if (themeEditorOpen.value) {
+      themeEditorOpen.value = false
+    } else {
+      activeNav.value = 'apps'
+    }
   },
   onTabPrev() {
     // LB：切换到上一个标签

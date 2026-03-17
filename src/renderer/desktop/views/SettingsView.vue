@@ -76,6 +76,51 @@
       </div>
     </div>
 
+    <!-- 启动助手 — 全局工具路径配置 -->
+    <div class="desktop-card fade-in">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="title-icon">⚡</span>
+          启动助手
+        </div>
+      </div>
+      <div class="card-content">
+        <p class="section-desc">
+          在此设置常用工具路径，之后在应用右键菜单中一键启用即可。
+        </p>
+        <div
+          v-for="tmpl in helperTemplates"
+          :key="tmpl.id"
+          class="setting-item tool-path-item"
+        >
+          <div class="setting-info">
+            <div class="setting-name">{{ tmpl.icon }} {{ tmpl.name }}</div>
+            <div class="setting-desc">{{ tmpl.description }}</div>
+          </div>
+          <div class="setting-control tool-path-control">
+            <div
+              v-for="param in tmpl.params.filter(p => p.key === 'path')"
+              :key="param.key"
+              class="tool-path-row"
+            >
+              <input
+                type="text"
+                class="path-input"
+                :placeholder="param.placeholder"
+                :value="getGlobalToolPath(tmpl.id, param.key)"
+                @input="setGlobalToolPath(tmpl.id, param.key, $event.target.value)"
+              />
+              <button
+                v-if="hasTauri"
+                class="browse-btn-small"
+                @click="browseToolPath(tmpl.id, param.key)"
+              >📂</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- 通知设置 -->
     <div class="desktop-card fade-in">
       <div class="card-header">
@@ -195,9 +240,35 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useLaunchHelpers } from '../composables/useLaunchHelpers'
 
 const invoke = ref(null)
+const hasTauri = ref(false)
+
+const {
+  templates: allTemplates,
+  getGlobalPath: getGlobalToolPath,
+  setGlobalPath: setGlobalToolPath,
+} = useLaunchHelpers()
+
+const helperTemplates = computed(() =>
+  allTemplates.value.filter(t => t.id !== 'custom')
+)
+
+async function browseToolPath(templateId, paramKey) {
+  try {
+    const { open } = await import('@tauri-apps/plugin-dialog')
+    const path = await open({
+      filters: [{ name: '可执行文件', extensions: ['exe', 'bat', 'cmd', 'lnk'] }],
+    })
+    if (path) {
+      setGlobalToolPath(templateId, paramKey, path)
+    }
+  } catch (e) {
+    console.warn('File dialog not available:', e)
+  }
+}
 
 const SETTINGS_KEY = 'sunshine-desktop-settings'
 
@@ -280,6 +351,7 @@ onMounted(async () => {
   try {
     const tauri = await import('@tauri-apps/api/core')
     invoke.value = tauri.invoke
+    hasTauri.value = true
   } catch (e) {
     console.log('Tauri invoke not available:', e)
   }
@@ -471,6 +543,66 @@ onMounted(async () => {
   margin-top: 32px;
   padding-top: 24px;
   border-top: 1px solid rgba(var(--fd-accent-rgb, 0, 255, 245), 0.1);
+}
+
+.section-desc {
+  font-size: 14px;
+  color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.5);
+  margin: 0 0 16px 0;
+}
+
+.tool-path-item {
+  flex-direction: column;
+  align-items: flex-start !important;
+  gap: 10px;
+
+  .setting-control {
+    width: 100%;
+  }
+}
+
+.tool-path-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.path-input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid rgba(var(--fd-accent-rgb, 0, 255, 245), 0.2);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--fd-text-primary, #fff);
+  font-size: 13px;
+  font-family: 'Consolas', 'Monaco', monospace;
+
+  &::placeholder {
+    color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.25);
+  }
+
+  &:focus {
+    outline: none;
+    border-color: var(--fd-accent, #00fff5);
+  }
+}
+
+.browse-btn-small {
+  padding: 7px 10px;
+  border: 1px solid rgba(var(--fd-accent-rgb, 0, 255, 245), 0.2);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--fd-text-primary, #fff);
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+
+  &:hover {
+    background: rgba(var(--fd-accent-rgb, 0, 255, 245), 0.1);
+    border-color: var(--fd-accent, #00fff5);
+  }
 }
 </style>
 

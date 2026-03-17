@@ -191,8 +191,8 @@ function setParamValue(templateId, paramKey, value) {
   const h = editingHelpers.value.find(h => h.templateId === templateId)
   if (h) {
     h.params = { ...h.params, [paramKey]: value }
-    // 回写全局路径（path 类型参数对所有应用生效）
-    if (paramKey === 'path' && value) {
+    // 仅当全局路径为空时才自动回写，避免 app 级修改污染其他应用
+    if (paramKey === 'path' && value && !getGlobalPath(templateId, paramKey)) {
       setGlobalPath(templateId, paramKey, value)
     }
   }
@@ -240,9 +240,11 @@ const previewCommands = computed(() => {
     if (tmpl.type === 'wrapper') {
       const wrapPath = mergedParams.path
       if (wrapPath) {
+        let wrapCmd = tmpl.wrapTemplate?.replaceAll('{path}', wrapPath) || ''
+        if (mergedParams.extraArgs) wrapCmd = `${wrapCmd} ${mergedParams.extraArgs}`
         cmds.push({
           label: `${tmpl.icon} ${tmpl.name} (包装启动命令)`,
-          value: `${tmpl.wrapTemplate?.replaceAll('{path}', wrapPath)} <游戏命令>`,
+          value: `${wrapCmd} <游戏命令>`,
         })
       }
     } else if (tmpl.id === 'custom') {
@@ -257,11 +259,13 @@ const previewCommands = computed(() => {
       let doCmd = tmpl.defaultDoCmd || ''
       let undoCmd = tmpl.defaultUndoCmd || ''
       for (const p of tmpl.params) {
+        if (p.key === 'extraArgs') continue
         doCmd = doCmd.replaceAll(`{${p.key}}`, mergedParams[p.key] || '')
         undoCmd = undoCmd.replaceAll(`{${p.key}}`, mergedParams[p.key] || '')
       }
       doCmd = doCmd.replaceAll('{exe}', exe).replace(/""\s*/g, '').trim()
       undoCmd = undoCmd.replaceAll('{exe}', exe).replace(/""\s*/g, '').trim()
+      if (mergedParams.extraArgs) doCmd = `${doCmd} ${mergedParams.extraArgs}`.trim()
       if (doCmd) cmds.push({ label: `${tmpl.icon} ${tmpl.name} (启动前)`, value: doCmd })
       if (undoCmd) cmds.push({ label: `${tmpl.icon} ${tmpl.name} (退出后)`, value: undoCmd })
     }
@@ -288,33 +292,36 @@ async function handleSave() {
     if (appIndex === -1) throw new Error('App not found')
 
     const app = { ...allApps[appIndex] }
-    const MARKER = '## launch-helper'
+    const MARKER = '& REM launch-helper'
 
     // 移除旧的 helper prep-cmd
     app['prep-cmd'] = (app['prep-cmd'] || []).filter(
-      c => !c.do?.includes(MARKER) && !c.undo?.includes(MARKER)
+      c => !c.do?.includes('REM launch-helper') && !c.undo?.includes('REM launch-helper')
     )
 
     // 添加新的 helper prep-cmd
     const helperPrepCmds = prepCmds.map(c => ({
       do: `${c.do} ${MARKER}`,
       undo: c.undo ? `${c.undo} ${MARKER}` : '',
-      elevated: c.elevated || false,
+      elevated: c.elevated ? 'true' : 'false',
     }))
     app['prep-cmd'] = [...helperPrepCmds, ...app['prep-cmd']]
 
     // 应用命令包装器
     if (wrapCmd) {
-      // 检查是否已经被包装过
       const originalCmd = app._originalCmd || app.cmd
       app.cmd = wrapCmd(originalCmd)
     }
 
-    // 保存到服务器
+    // 删除内部字段，不发给服务器
+    delete app._originalCmd
+
+    // 按 Sunshine API 格式保存：{ apps: [...], editApp: { ...app, index } }
+    const editApp = { ...app, index: appIndex }
     const saveResp = await fetch(`${props.proxyUrl}/api/apps`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ index: appIndex, ...app }),
+      body: JSON.stringify({ apps: allApps, editApp }),
     })
 
     if (!saveResp.ok) throw new Error('Failed to save app')

@@ -15,6 +15,7 @@ const BUILTIN_TEMPLATES = [
     params: [
       { key: 'path', label: '程序路径', placeholder: 'C:\\Tools\\JoyToKey.exe', required: true },
       { key: 'profile', label: '配置文件（可选）', placeholder: '默认配置' },
+      { key: 'extraArgs', label: '附加参数', placeholder: '-minimized --profile xxx' },
     ],
   },
   {
@@ -26,6 +27,7 @@ const BUILTIN_TEMPLATES = [
     wrapTemplate: '"{path}" /runas',
     params: [
       { key: 'path', label: 'LEProc 路径', placeholder: 'C:\\Tools\\Locale Emulator\\LEProc.exe', required: true },
+      { key: 'extraArgs', label: '附加参数', placeholder: '/runas /profile xxx' },
     ],
   },
   {
@@ -38,6 +40,7 @@ const BUILTIN_TEMPLATES = [
     defaultUndoCmd: 'taskkill /im "{exe}" /f',
     params: [
       { key: 'path', label: '程序路径', placeholder: 'C:\\Tools\\Textractor\\x86\\Textractor.exe', required: true },
+      { key: 'extraArgs', label: '附加参数', placeholder: '--lang=ja' },
     ],
   },
   {
@@ -50,6 +53,7 @@ const BUILTIN_TEMPLATES = [
     defaultUndoCmd: 'taskkill /im "{exe}" /f',
     params: [
       { key: 'path', label: '修改器路径', placeholder: 'C:\\Tools\\WeMod\\WeMod.exe', required: true },
+      { key: 'extraArgs', label: '附加参数', placeholder: '--minimized' },
     ],
   },
   {
@@ -84,12 +88,18 @@ function buildDoCmd(template, params) {
   }
   let cmd = template.defaultDoCmd || ''
   for (const p of template.params) {
+    if (p.key === 'extraArgs') continue // extraArgs 单独处理
     cmd = cmd.replaceAll(`{${p.key}}`, params[p.key] || '')
   }
   // 替换 exe 名
   cmd = cmd.replaceAll('{exe}', extractExeName(params.path))
   // 清理空引号对
-  return cmd.replace(/""\s*/g, '').trim()
+  cmd = cmd.replace(/""\s*/g, '').trim()
+  // 附加额外参数
+  if (params.extraArgs) {
+    cmd = `${cmd} ${params.extraArgs}`
+  }
+  return cmd.trim()
 }
 
 /**
@@ -227,9 +237,11 @@ export function useLaunchHelpers() {
       } else if (template.type === 'wrapper') {
         const wrapperPath = mergedParams.path
         if (wrapperPath) {
+          const extra = mergedParams.extraArgs || ''
           wrapCmd = (originalCmd) => {
             let wrap = template.wrapTemplate || ''
             wrap = wrap.replaceAll('{path}', wrapperPath)
+            if (extra) wrap = `${wrap} ${extra}`
             return `${wrap} ${originalCmd}`
           }
         }
@@ -246,16 +258,16 @@ export function useLaunchHelpers() {
     const { prepCmds, wrapCmd } = generateAppCommands(app.name)
     const result = { ...app }
 
-    // 标记由启动助手管理的 prep-cmd（用注释区分）
-    const MARKER = '## launch-helper'
+    // 标记由启动助手管理的 prep-cmd（用 REM 注释区分）
+    const MARKER = '& REM launch-helper'
     const existingPrepCmds = (result['prep-cmd'] || []).filter(
-      c => !c.do?.includes(MARKER) && !c.undo?.includes(MARKER)
+      c => !c.do?.includes('REM launch-helper') && !c.undo?.includes('REM launch-helper')
     )
 
     const helperPrepCmds = prepCmds.map(c => ({
       do: `${c.do} ${MARKER}`,
       undo: c.undo ? `${c.undo} ${MARKER}` : '',
-      elevated: c.elevated,
+      elevated: c.elevated ? 'true' : 'false',
     }))
 
     result['prep-cmd'] = [...helperPrepCmds, ...existingPrepCmds]

@@ -107,7 +107,7 @@ export const translations = {
       title: 'Sunshine 基地版',
       subtitle: '让游戏串流更优雅',
       links: '相关链接',
-      copyright: '© 2024 Sunshine 基地版. 基于 LizardByte/Sunshine 修改.'
+      copyright: '© 2025 Foundation Sunshine. 基于 LizardByte/Sunshine 修改. 发布者: qiin2333'
     }
   },
   en: {
@@ -213,7 +213,7 @@ export const translations = {
       title: 'Sunshine Foundation',
       subtitle: 'Make Game Streaming Greater',
       links: 'Links',
-      copyright: '© 2024 Sunshine Foundation. Modified from LizardByte/Sunshine.'
+      copyright: '© 2025 Foundation Sunshine. Modified from LizardByte/Sunshine. Publisher: qiin2333'
     }
   }
 }

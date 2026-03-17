@@ -30,6 +30,11 @@
     @setWallpaper="setWallpaper"
     @removeWallpaper="removeWallpaper"
   />
+
+  <SplashScreen
+    :visible="showSplash"
+    @done="showSplash = false"
+  />
 </template>
 
 <script setup>
@@ -39,6 +44,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import DesktopWindow from './components/DesktopWindow.vue'
 import DesktopSidebar from './components/DesktopSidebar.vue'
 import ThemeEditor from './components/ThemeEditor.vue'
+import SplashScreen from './components/SplashScreen.vue'
 
 // 手柄支持
 import { useGamepad, navigateFocus, confirmFocused } from './composables/useGamepad.js'
@@ -72,6 +78,7 @@ const appTitle = 'FOUNDATION DESKTOP'
 // 主题
 const { themeVars, activePreset, presets, setVar, applyPreset, exportTheme, importTheme, wallpaper, wallpaperColors, setWallpaper, removeWallpaper } = useTheme()
 const themeEditorOpen = ref(false)
+const showSplash = ref(true)
 const { helperPanelOpen } = useLaunchHelpers()
 
 function handleThemeExport() {

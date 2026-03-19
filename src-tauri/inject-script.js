@@ -83,6 +83,23 @@
     return emptyDir
   }
 
+  // 虚拟鼠标驱动管理 API
+  window.vmouseDriver = {
+    async getStatus() {
+      try {
+        return await invoke('get_vmouse_status')
+      } catch (e) {
+        return { installed: false, running: false, status_text: '检测失败', driver_path: '', config_enabled: false }
+      }
+    },
+    async install() {
+      return await invoke('install_vmouse_driver')
+    },
+    async uninstall() {
+      return await invoke('uninstall_vmouse_driver')
+    },
+  }
+
   // 环境检测
   const isProduction = () => window.TAURI_PRODUCTION === true && window.isTauri === true
 

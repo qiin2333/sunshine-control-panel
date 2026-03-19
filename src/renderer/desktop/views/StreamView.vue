@@ -238,6 +238,57 @@
         </div>
       </div>
 
+      <!-- 虚拟鼠标驱动 -->
+      <div class="desktop-card fade-in">
+        <div class="card-header">
+          <div class="card-title">
+            <span class="title-icon">🖱️</span>
+            虚拟鼠标 (VMouse)
+          </div>
+          <div class="card-actions">
+            <span class="status-badge" :class="vmouseStatusClass">{{ vmouseStatusLabel }}</span>
+          </div>
+        </div>
+        <div class="card-content settings-list">
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">功能开关</div>
+              <div class="setting-desc">启用后使用 HID 虚拟鼠标代替 SendInput（需重启 Sunshine）</div>
+            </div>
+            <button 
+              class="toggle-btn" 
+              :class="{ on: vmouseEnabled }"
+              @click="toggleVmouse"
+              :disabled="vmouseConfigSaving"
+            >
+              {{ vmouseEnabled ? '已启用' : '未启用' }}
+            </button>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">驱动状态</div>
+              <div class="setting-desc">{{ vmouseStatus.status_text || '检测中...' }}</div>
+            </div>
+            <button 
+              v-if="!vmouseStatus.installed"
+              class="desktop-btn primary"
+              :disabled="vmouseInstalling"
+              @click="installVmouse"
+            >
+              {{ vmouseInstalling ? '安装中…' : '安装驱动' }}
+            </button>
+            <button 
+              v-else
+              class="desktop-btn danger"
+              :disabled="vmouseUninstalling"
+              @click="uninstallVmouse"
+            >
+              {{ vmouseUninstalling ? '卸载中…' : '卸载驱动' }}
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- 保存 -->
       <div class="actions-bar fade-in">
         <span v-if="saveMsg" class="save-msg" :class="saveMsg.type">{{ saveMsg.text }}</span>
@@ -254,6 +305,7 @@
 import { ref, computed, onMounted } from 'vue'
 import PillGroup from '../components/PillGroup.vue'
 import FdDropdown from '../components/FdDropdown.vue'
+import { vmouse as vmouseApi } from '../../tauri-adapter.js'
 
 const invoke = ref(null)
 const proxyUrl = ref('http://localhost:48081')
@@ -472,7 +524,92 @@ async function saveDesktopLaunchMode() {
 onMounted(async () => {
   await initTauri()
   await loadSettings()
+  await loadVmouseStatus()
 })
+
+// ========== 虚拟鼠标驱动管理 ==========
+const vmouseStatus = ref({ installed: false, running: false, status_text: '检测中...', driver_path: '', config_enabled: true })
+const vmouseEnabled = ref(true)
+const vmouseConfigSaving = ref(false)
+const vmouseInstalling = ref(false)
+const vmouseUninstalling = ref(false)
+
+const vmouseStatusClass = computed(() => {
+  if (vmouseStatus.value.running) return 'good'
+  if (vmouseStatus.value.installed) return 'warn'
+  return 'off'
+})
+
+const vmouseStatusLabel = computed(() => {
+  if (vmouseStatus.value.running) return '运行中'
+  if (vmouseStatus.value.installed) return '已安装'
+  return '未安装'
+})
+
+async function loadVmouseStatus() {
+  try {
+    const result = await vmouseApi.getStatus()
+    if (result?.success) {
+      vmouseStatus.value = result.data
+      vmouseEnabled.value = result.data.config_enabled
+    }
+  } catch (e) {
+    console.error('获取 vmouse 状态失败:', e)
+  }
+}
+
+async function toggleVmouse() {
+  const newVal = !vmouseEnabled.value
+  vmouseConfigSaving.value = true
+  try {
+    const result = await vmouseApi.setConfig(newVal)
+    if (result?.success) {
+      vmouseEnabled.value = newVal
+    } else {
+      console.error('设置 vmouse 失败:', result?.message)
+    }
+  } catch (e) {
+    console.error('设置 vmouse 失败:', e)
+  } finally {
+    vmouseConfigSaving.value = false
+  }
+}
+
+async function installVmouse() {
+  if (!confirm('将安装虚拟鼠标驱动，需要管理员权限。\n安装后可能需要重启系统才能生效。\n\n是否继续？')) return
+  vmouseInstalling.value = true
+  try {
+    const result = await vmouseApi.install()
+    if (result?.success) {
+      alert(result.data)
+      setTimeout(() => loadVmouseStatus(), 2000)
+    } else {
+      alert('安装失败: ' + (result?.message || '未知错误'))
+    }
+  } catch (e) {
+    alert('安装失败: ' + e)
+  } finally {
+    vmouseInstalling.value = false
+  }
+}
+
+async function uninstallVmouse() {
+  if (!confirm('确定要卸载虚拟鼠标驱动吗？\nSunshine 将回退到 SendInput 方式。')) return
+  vmouseUninstalling.value = true
+  try {
+    const result = await vmouseApi.uninstall()
+    if (result?.success) {
+      alert(result.data)
+      setTimeout(() => loadVmouseStatus(), 2000)
+    } else {
+      alert('卸载失败: ' + (result?.message || '未知错误'))
+    }
+  } catch (e) {
+    alert('卸载失败: ' + e)
+  } finally {
+    vmouseUninstalling.value = false
+  }
+}
 </script>
 
 <style lang="less" scoped>
@@ -816,6 +953,40 @@ onMounted(async () => {
 
   &.error {
     color: var(--fd-status-error, #f87171);
+  }
+}
+
+// VMouse status badge
+.status-badge {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 20px;
+  letter-spacing: 0.5px;
+
+  &.good {
+    background: rgba(74, 222, 128, 0.15);
+    color: #4ade80;
+  }
+
+  &.warn {
+    background: rgba(251, 191, 36, 0.15);
+    color: #fbbf24;
+  }
+
+  &.off {
+    background: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.08);
+    color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.4);
+  }
+}
+
+.desktop-btn.danger {
+  color: #f87171;
+  border-color: rgba(248, 113, 113, 0.3);
+
+  &:hover {
+    background: rgba(248, 113, 113, 0.1);
+    border-color: #f87171;
   }
 }
 

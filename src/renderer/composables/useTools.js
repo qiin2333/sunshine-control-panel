@@ -1,5 +1,5 @@
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { openExternalUrl, tools } from '@/tauri-adapter.js'
+import { openExternalUrl, tools, vmouse } from '@/tauri-adapter.js'
 
 /**
  * 工具操作 Composable
@@ -258,6 +258,30 @@ export function useTools() {
     }
   }
 
+  /**
+   * 安装虚拟鼠标驱动
+   */
+  const installVmouse = async () => {
+    await confirmAction(
+      '将安装虚拟鼠标驱动，此操作需要管理员权限。\n安装后可能需要重启系统才能生效。',
+      '确认安装',
+      vmouse.install,
+      '安装请求已发送'
+    )
+  }
+
+  /**
+   * 卸载虚拟鼠标驱动
+   */
+  const uninstallVmouse = async () => {
+    await confirmAction(
+      '确定要卸载虚拟鼠标驱动吗？此操作需要管理员权限。\nSunshine 将回退到 SendInput 方式。',
+      '确认卸载',
+      vmouse.uninstall,
+      '卸载请求已发送'
+    )
+  }
+
   return {
     confirmAction,
     uninstallVdd,
@@ -270,7 +294,8 @@ export function useTools() {
     restartAsAdmin,
     checkForUpdates,
     createWindow,
+    installVmouse,
+    uninstallVmouse,
   }
 }
-
 

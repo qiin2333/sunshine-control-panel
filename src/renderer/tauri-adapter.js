@@ -104,6 +104,45 @@ export const vdd = {
   },
 }
 
+// Virtual Mouse 驱动管理
+export const vmouse = {
+  async getStatus() {
+    try {
+      const status = await invoke('get_vmouse_status')
+      return { success: true, data: status }
+    } catch (error) {
+      return { success: false, message: error }
+    }
+  },
+
+  async install() {
+    try {
+      const result = await invoke('install_vmouse_driver')
+      return { success: true, data: result }
+    } catch (error) {
+      return { success: false, message: error }
+    }
+  },
+
+  async uninstall() {
+    try {
+      const result = await invoke('uninstall_vmouse_driver')
+      return { success: true, data: result }
+    } catch (error) {
+      return { success: false, message: error }
+    }
+  },
+
+  async setConfig(enabled) {
+    try {
+      const result = await invoke('set_vmouse_config', { enabled })
+      return { success: true, data: result }
+    } catch (error) {
+      return { success: false, message: error }
+    }
+  },
+}
+
 // Sunshine 配置相关
 export const sunshine = {
   async getVersion() {
@@ -273,6 +312,7 @@ export default {
   darkMode,
   openExternalUrl,
   vdd,
+  vmouse,
   sunshine,
   tools,
   moonlightWeb,

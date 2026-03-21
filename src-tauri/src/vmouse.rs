@@ -7,8 +7,11 @@ use crate::sunshine;
 #[cfg(target_os = "windows")]
 fn is_elevated() -> bool {
     use std::process::Command;
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
     let output = Command::new("powershell")
         .args(&["-NoProfile", "-Command", "([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)"])
+        .creation_flags(CREATE_NO_WINDOW)
         .output();
     match output {
         Ok(out) => {
@@ -23,11 +26,14 @@ fn is_elevated() -> bool {
 #[cfg(target_os = "windows")]
 fn run_bat_elevated(bat_path: &std::path::Path) -> Result<(), String> {
     use std::process::Command;
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     if is_elevated() {
         // 已有管理员权限，直接运行
         let output = Command::new("cmd")
             .args(&["/c", &bat_path.to_string_lossy()])
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
             .map_err(|e| format!("启动脚本失败: {}", e))?;
 
@@ -44,6 +50,7 @@ fn run_bat_elevated(bat_path: &std::path::Path) -> Result<(), String> {
 
         let output = Command::new("powershell")
             .args(&["-NoProfile", "-Command", &ps_cmd])
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
             .map_err(|e| format!("启动脚本失败: {}", e))?;
 
@@ -91,7 +98,10 @@ fn check_device_installed() -> (bool, bool, String) {
 
     // 使用 PowerShell 的 Get-PnpDevice 检查设备状态
     // 排除已删除但仍有残留记录的幽灵设备（FriendlyName 为空）
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
     let output = Command::new("powershell")
+        .creation_flags(CREATE_NO_WINDOW)
         .args(&[
             "-NoProfile", "-Command",
             "Get-PnpDevice -InstanceId 'ROOT\\HIDCLASS\\*' -ErrorAction SilentlyContinue | Where-Object { ($_.FriendlyName -like '*Virtual Mouse*' -or $_.HardwareID -contains 'Root\\ZakoVirtualMouse') -and $_.FriendlyName -ne $null -and $_.FriendlyName -ne '' } | Select-Object -First 1 Status, FriendlyName, Problem | ConvertTo-Json -Compress"

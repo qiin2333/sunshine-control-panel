@@ -576,7 +576,7 @@ async function toggleVmouse() {
 }
 
 async function installVmouse() {
-  if (!confirm('将安装虚拟鼠标驱动，需要管理员权限。\n安装后可能需要重启系统才能生效。\n\n是否继续？')) return
+  if (!confirm('将安装虚拟鼠标驱动，需要管理员权限。\n\n是否继续？')) return
   vmouseInstalling.value = true
   try {
     const result = await vmouseApi.install()

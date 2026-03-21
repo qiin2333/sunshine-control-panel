@@ -206,7 +206,7 @@ pub async fn install_vmouse_driver() -> Result<String, String> {
         tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
 
         info!("✅ vmouse 驱动安装完成");
-        Ok("虚拟鼠标驱动安装完成，可能需要重启系统生效".to_string())
+        Ok("虚拟鼠标驱动安装完成".to_string())
     }
 
     #[cfg(not(target_os = "windows"))]

@@ -116,44 +116,87 @@ pub async fn launch_app(cmd: String, working_dir: Option<String>, elevated: Opti
             s.encode_utf16().chain(std::iter::once(0u16)).collect()
         }
 
-        let operation = to_wide(if is_elevated { "runas" } else { "open" });
+        fn shell_exec(
+            operation: &[u16], file: &str, params: &str,
+            dir_wide: Option<&Vec<u16>>,
+        ) -> isize {
+            let file_wide = to_wide(file);
+            let params_wide = to_wide(params);
+            let result = unsafe {
+                ShellExecuteW(
+                    Some(HWND(std::ptr::null_mut())),
+                    PCWSTR(operation.as_ptr()),
+                    PCWSTR(file_wide.as_ptr()),
+                    PCWSTR(params_wide.as_ptr()),
+                    dir_wide.map_or(PCWSTR::null(), |d| PCWSTR(d.as_ptr())),
+                    SW_SHOWNORMAL,
+                )
+            };
+            result.0 as isize
+        }
 
-        // 分离命令和参数
-        let trimmed = cmd.trim();
-        let (file, params) = if trimmed.starts_with('"') {
-            if let Some(end) = trimmed[1..].find('"') {
-                let f = &trimmed[1..=end];
-                let p = trimmed[end + 2..].trim();
-                (f.to_string(), p.to_string())
-            } else {
-                (trimmed.to_string(), String::new())
+        fn error_desc(code: isize) -> &'static str {
+            match code {
+                0 | 8 => "内存不足",
+                2 => "找不到指定文件",
+                3 => "找不到指定路径",
+                5 => "拒绝访问",
+                11 => "格式无效",
+                26 => "共享冲突",
+                27 => "文件关联不完整",
+                28 => "DDE 请求超时",
+                29 => "DDE 事务失败",
+                30 => "DDE 繁忙",
+                31 => "没有关联的应用程序",
+                32 => "DLL 未找到",
+                _ => "未知错误",
             }
-        } else if let Some(space_pos) = trimmed.find(' ') {
-            (trimmed[..space_pos].to_string(), trimmed[space_pos + 1..].to_string())
-        } else {
-            (trimmed.to_string(), String::new())
-        };
+        }
 
-        let file_wide = to_wide(&file);
-        let params_wide = to_wide(&params);
+        let operation = to_wide(if is_elevated { "runas" } else { "open" });
+        let trimmed = cmd.trim();
         let dir_wide: Option<Vec<u16>> = working_dir.as_ref().filter(|d| !d.is_empty()).map(|d| to_wide(d));
 
-        let result = unsafe {
-            ShellExecuteW(
-                Some(HWND(std::ptr::null_mut())),
-                PCWSTR(operation.as_ptr()),
-                PCWSTR(file_wide.as_ptr()),
-                PCWSTR(params_wide.as_ptr()),
-                dir_wide.as_ref().map_or(PCWSTR::null(), |d| PCWSTR(d.as_ptr())),
-                SW_SHOWNORMAL,
-            )
-        };
+        // 解析引号包裹的路径
+        if trimmed.starts_with('"') {
+            if let Some(end) = trimmed[1..].find('"') {
+                let file = &trimmed[1..=end];
+                let params = if end + 2 < trimmed.len() { trimmed[end + 2..].trim() } else { "" };
+                info!("  📂 [quoted] file: {}, params: {}", file, params);
+                let rc = shell_exec(&operation, file, params, dir_wide.as_ref());
+                return if rc > 32 {
+                    info!("✅ 应用启动成功: {}", file);
+                    Ok(())
+                } else {
+                    Err(format!("启动失败: {} (错误码: {})", error_desc(rc), rc))
+                };
+            }
+        }
 
-        if (result.0 as isize) <= 32 {
-            Err(format!("启动失败，错误码: {}", result.0 as isize))
+        // 策略：先把整个字符串作为 file 尝试，失败后再分割重试
+        // 这样 "J:\DESSERT Soft\WannabeCN.exe" 和 "steam://run/123" 都能直接成功
+        info!("  📂 [尝试1] 整个命令作为 file: {}", trimmed);
+        let rc1 = shell_exec(&operation, trimmed, "", dir_wide.as_ref());
+        if rc1 > 32 {
+            info!("✅ 应用启动成功: {}", trimmed);
+            return Ok(());
+        }
+
+        // 第一次失败 → 尝试在第一个空格处分割 (file + params)
+        if let Some(space_pos) = trimmed.find(' ') {
+            let file = &trimmed[..space_pos];
+            let params = trimmed[space_pos + 1..].trim();
+            info!("  📂 [尝试2] file: {}, params: {} (尝试1 错误码: {})", file, params, rc1);
+            let rc2 = shell_exec(&operation, file, params, dir_wide.as_ref());
+            if rc2 > 32 {
+                info!("✅ 应用启动成功: {}", file);
+                return Ok(());
+            }
+            // 两次都失败，返回更有意义的那个错误
+            let (best_rc, context) = if rc1 == 2 || rc1 == 3 { (rc2, file) } else { (rc1, trimmed) };
+            Err(format!("启动失败: {} (错误码: {})", error_desc(best_rc), best_rc))
         } else {
-            info!("✅ 应用启动成功: {}", file);
-            Ok(())
+            Err(format!("启动失败: {} (错误码: {})", error_desc(rc1), rc1))
         }
     }).await.map_err(|e| format!("任务执行失败: {}", e))?
 }

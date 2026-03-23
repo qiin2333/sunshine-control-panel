@@ -173,8 +173,19 @@ export function useApps() {
     }
   }
 
+  const launchError = ref('')
+
   async function launchApp(app) {
-    if (!app.cmd || launchingApp.value) return
+    launchError.value = ''
+
+    if (!app.cmd) {
+      launchError.value = `"${app.name}" 没有配置启动命令`
+      console.warn('[useApps] app has no cmd:', app.name)
+      setTimeout(() => { launchError.value = '' }, 4000)
+      return
+    }
+
+    if (launchingApp.value) return
     launchingApp.value = app.name
     addToRecent(app.name)
 
@@ -186,7 +197,9 @@ export function useApps() {
         elevated: app.elevated === true || app.elevated === 'true',
       })
     } catch (e) {
-      console.error('Failed to launch app:', e)
+      console.error('Failed to launch app:', e, '\ncmd:', app.cmd, '\nworking-dir:', app['working-dir'])
+      launchError.value = `"${app.name}" ${e}\ncmd: ${app.cmd}`
+      setTimeout(() => { launchError.value = '' }, 8000)
     } finally {
       setTimeout(() => { launchingApp.value = null }, 1500)
     }
@@ -208,6 +221,7 @@ export function useApps() {
     loading,
     searchQuery,
     launchingApp,
+    launchError,
     viewMode,
     gridSize,
     sortMode,

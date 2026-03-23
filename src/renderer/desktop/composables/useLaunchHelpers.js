@@ -89,12 +89,13 @@ function buildDoCmd(template, params) {
   let cmd = template.defaultDoCmd || ''
   for (const p of template.params) {
     if (p.key === 'extraArgs') continue // extraArgs 单独处理
-    cmd = cmd.replaceAll(`{${p.key}}`, params[p.key] || '')
+    // 用 split/join 替代 replaceAll，避免 $ 在替换串中被当作特殊模式
+    cmd = cmd.split(`{${p.key}}`).join(params[p.key] || '')
   }
   // 替换 exe 名
-  cmd = cmd.replaceAll('{exe}', extractExeName(params.path))
-  // 清理空引号对
-  cmd = cmd.replace(/""\s*/g, '').trim()
+  cmd = cmd.split('{exe}').join(extractExeName(params.path))
+  // 清理空引号对（仅匹配独立的 "" ，避免误伤正常内容）
+  cmd = cmd.replace(/(?<=\s|^)""(?=\s|$)/g, '').trim()
   // 附加额外参数
   if (params.extraArgs) {
     cmd = `${cmd} ${params.extraArgs}`
@@ -111,10 +112,11 @@ function buildUndoCmd(template, params) {
   }
   let cmd = template.defaultUndoCmd || ''
   for (const p of template.params) {
-    cmd = cmd.replaceAll(`{${p.key}}`, params[p.key] || '')
+    // 用 split/join 避免 $ 特殊模式解释
+    cmd = cmd.split(`{${p.key}}`).join(params[p.key] || '')
   }
-  cmd = cmd.replaceAll('{exe}', extractExeName(params.path))
-  return cmd.replace(/""\s*/g, '').trim()
+  cmd = cmd.split('{exe}').join(extractExeName(params.path))
+  return cmd.replace(/(?<=\s|^)""(?=\s|$)/g, '').trim()
 }
 
 // 全局状态（跨组件共享）
@@ -240,7 +242,8 @@ export function useLaunchHelpers() {
           const extra = mergedParams.extraArgs || ''
           wrapCmd = (originalCmd) => {
             let wrap = template.wrapTemplate || ''
-            wrap = wrap.replaceAll('{path}', wrapperPath)
+            // 用 split/join 避免 $ 特殊模式解释
+            wrap = wrap.split('{path}').join(wrapperPath)
             if (extra) wrap = `${wrap} ${extra}`
             return `${wrap} ${originalCmd}`
           }

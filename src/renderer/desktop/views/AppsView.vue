@@ -89,6 +89,15 @@
       @close="helperPanel.open = false"
       @saved="loadApps"
     />
+
+    <!-- 启动错误提示 -->
+    <Transition name="toast">
+      <div v-if="launchError" class="launch-error-toast">
+        <span class="toast-icon">⚠️</span>
+        <span class="toast-msg">{{ launchError }}</span>
+        <button class="toast-close" @click="launchError = ''">✕</button>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -107,6 +116,7 @@ const {
   loading,
   searchQuery,
   launchingApp,
+  launchError,
   viewMode,
   gridSize,
   activeFilter,
@@ -249,4 +259,40 @@ onUnmounted(() => {
   p { margin: 0; font-size: 16px; }
   .empty-hint { font-size: 13px; color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.2); }
 }
+
+// === 启动错误 Toast ===
+.launch-error-toast {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  background: rgba(220, 50, 50, 0.92);
+  color: #fff;
+  border-radius: 10px;
+  font-size: 14px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+
+  .toast-icon { font-size: 18px; }
+  .toast-msg { max-width: 600px; word-break: break-all; white-space: pre-line; font-size: 13px; line-height: 1.5; }
+  .toast-close {
+    background: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.7);
+    cursor: pointer;
+    font-size: 16px;
+    padding: 0 4px;
+    &:hover { color: #fff; }
+  }
+}
+
+.toast-enter-active { transition: all 0.3s ease-out; }
+.toast-leave-active { transition: all 0.25s ease-in; }
+.toast-enter-from { opacity: 0; transform: translateX(-50%) translateY(20px); }
+.toast-leave-to { opacity: 0; transform: translateX(-50%) translateY(10px); }
 </style>

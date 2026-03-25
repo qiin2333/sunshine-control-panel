@@ -48,6 +48,7 @@ fn get_sunshine_path_internal() -> PathBuf {
         
         // 尝试多个可能的注册表位置
         let registry_paths = [
+            r"SOFTWARE\AlkaidLab\Sunshine",
             r"SOFTWARE\LizardByte\Sunshine",
             r"SOFTWARE\WOW6432Node\LizardByte\Sunshine",
             r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine",
@@ -56,7 +57,7 @@ fn get_sunshine_path_internal() -> PathBuf {
         for reg_path in &registry_paths {
             if let Ok(sunshine_key) = hklm.open_subkey(reg_path) {
                 // 尝试读取多个可能的键名
-                for key_name in &["InstallLocation", "InstallPath", "Path", ""] {
+                for key_name in &["InstallDir", "InstallLocation", "InstallPath", "Path", ""] {
                     if let Ok(path) = sunshine_key.get_value::<String, _>(key_name) {
                         let install_path = PathBuf::from(path);
                         if install_path.exists() {

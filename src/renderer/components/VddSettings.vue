@@ -140,15 +140,15 @@
           </el-form-item>
 
           <!-- 日志 -->
-          <el-form-item label="日志">
+          <el-form-item label="日志记录">
             <el-switch v-model="settings.logging.logging" />
-            <span class="form-tip">启用VDD日志记录</span>
+            <span class="form-tip">记录驱动运行关键事件（错误、状态变化）</span>
           </el-form-item>
 
-          <!-- 调试日志 -->
-          <el-form-item label="调试日志">
+          <!-- 调试日志（仅在日志开启时显示） -->
+          <el-form-item label="详细调试" v-if="settings.logging.logging">
             <el-switch v-model="settings.logging.debuglogging" />
-            <span class="form-tip">启用详细调试日志（信息量大）</span>
+            <span class="form-tip">记录所有驱动内部调用（排障用，日志量极大）</span>
           </el-form-item>
         </div>
 

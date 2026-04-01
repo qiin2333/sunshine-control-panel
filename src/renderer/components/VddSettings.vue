@@ -140,9 +140,15 @@
           </el-form-item>
 
           <!-- 日志 -->
-          <el-form-item label="调试日志">
+          <el-form-item label="日志">
             <el-switch v-model="settings.logging.logging" />
-            <span class="form-tip">启用VDD调试日志</span>
+            <span class="form-tip">启用VDD日志记录</span>
+          </el-form-item>
+
+          <!-- 调试日志 -->
+          <el-form-item label="调试日志">
+            <el-switch v-model="settings.logging.debuglogging" />
+            <span class="form-tip">启用详细调试日志（信息量大）</span>
           </el-form-item>
         </div>
 

@@ -372,6 +372,8 @@ async fn sync_vdd_config_to_sunshine(settings: &VddSettings) -> Result<(), Strin
     }
 }
 
+fn default_true() -> bool { true }
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct VddSettings {
     pub monitors: Monitors,
@@ -426,6 +428,8 @@ pub struct Colour {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Logging {
+    #[serde(rename = "SendLogsThroughPipe", default = "default_true")]
+    pub send_logs_through_pipe: bool,
     pub logging: bool,
     pub debuglogging: bool,
 }
@@ -531,6 +535,7 @@ fn get_default_settings() -> VddSettings {
             colour_format: "RGB".to_string(),
         }),
         logging: Some(Logging {
+            send_logs_through_pipe: true,
             logging: false,
             debuglogging: false,
         }),

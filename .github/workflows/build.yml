@@ -1,0 +1,114 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create a GitHub Release'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-windows:
+    name: Build Windows (x64)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Build frontend
+        run: npm run build:renderer
+
+      - name: Build Tauri (release)
+        run: cargo build --manifest-path src-tauri/Cargo.toml --release --target x86_64-pc-windows-msvc
+
+      - name: Prepare artifacts
+        shell: pwsh
+        run: |
+          $outDir = "artifacts"
+          New-Item -ItemType Directory -Force -Path $outDir
+
+          $targetDir = "src-tauri/target/x86_64-pc-windows-msvc/release"
+          Copy-Item "$targetDir/sunshine-gui.exe" "$outDir/"
+
+          # WebView2Loader.dll (if exists — Tauri 2 may embed it)
+          if (Test-Path "$targetDir/WebView2Loader.dll") {
+            Copy-Item "$targetDir/WebView2Loader.dll" "$outDir/"
+          }
+
+          # Print artifact sizes
+          Get-ChildItem $outDir | ForEach-Object {
+            Write-Host "$($_.Name): $([math]::Round($_.Length / 1MB, 2)) MB"
+          }
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sunshine-gui-windows-x64
+          path: artifacts/*
+          if-no-files-found: error
+
+  release:
+    name: Create Release
+    needs: build-windows
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: sunshine-gui-windows-x64
+          path: artifacts
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=v$(date +%Y.%m%d.%H%M%S)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Sunshine GUI ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+          files: artifacts/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

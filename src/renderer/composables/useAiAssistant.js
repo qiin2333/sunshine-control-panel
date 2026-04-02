@@ -1,7 +1,7 @@
 import { ref, reactive, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { callLLM, fetchModels } from './aiClient.js'
-import { getAppsContext, parseAction, executeAction } from './aiActions.js'
+import { getAppsContext, getLogsContext, parseAction, executeAction } from './aiActions.js'
 import { AI_PROVIDERS, DEFAULT_CONFIG, STORAGE_KEY } from './aiProviders.js'
 
 // 重新导出供外部使用
@@ -59,6 +59,21 @@ const SYSTEM_PROMPT = `你是 Sunshine 串流软件的 AI 助手"米塔"。你�
 - 虚拟显示器配置
 - 音频设置
 - 网络/连接参数
+
+### 4. 日志诊断与分析
+当用户询问串流问题、报错、连接失败等情况时，你可以分析 Sunshine 的运行日志来帮助诊断。
+你会收到最近的 Sunshine 日志作为上下文。请关注以下内容：
+- **Fatal/Error 级别日志**：这些通常是问题的直接原因
+- **Warning 日志**：可能暗示潜在问题
+- **编码器相关日志**：NVENC/AMF/软件编码的错误或回退
+- **网络/连接日志**：Moonlight 客户端连接失败、超时等
+- **音视频管道日志**：音频设备问题、视频捕获失败
+- **配置加载日志**：配置项无效或冲突
+
+诊断时请：
+1. 指出最可能的问题原因
+2. 给出具体的解决建议（可以生成对应的配置修改或命令）
+3. 如果日志中没有明显错误，告知用户并建议提供更多信息
 
 ## 返回格式
 
@@ -255,9 +270,9 @@ export function useAiAssistant() {
     isLoading.value = true
 
     try {
-      const appsContext = await getAppsContext()
+      const [appsContext, logsContext] = await Promise.all([getAppsContext(), getLogsContext()])
       const messages = [
-        { role: 'system', content: SYSTEM_PROMPT + appsContext },
+        { role: 'system', content: SYSTEM_PROMPT + appsContext + logsContext },
         ...chatHistory.value.slice(-10).map((m) => ({ role: m.role, content: m.content })),
       ]
 

@@ -50,6 +50,24 @@ function generateId() {
 }
 
 /**
+ * 获取 Sunshine 最近日志，供 AI 分析使用
+ * 只取最后若干行，避免 token 过多
+ */
+export async function getLogsContext(maxLines = 150) {
+  try {
+    const proxyUrl = await getProxyUrl()
+    const resp = await fetch(`${proxyUrl}/api/logs`)
+    if (!resp.ok) return ''
+    const text = await resp.text()
+    const lines = text.split('\n')
+    const recent = lines.slice(-maxLines).join('\n')
+    return `\n\n最近的 Sunshine 日志（最后 ${Math.min(lines.length, maxLines)} 行）：\n\`\`\`\n${recent}\n\`\`\``
+  } catch {
+    return ''
+  }
+}
+
+/**
  * 获取当前应用列表摘要，供 AI 上下文使用
  */
 export async function getAppsContext() {

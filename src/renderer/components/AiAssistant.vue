@@ -224,6 +224,8 @@ const exampleQueries = [
   '串流前切换到高性能电源计划',
   '帮我的游戏添加优化配置',
   '添加一个切换 HDR 的菜单命令',
+  '帮我看看日志有没有报错',
+  '串流连接失败，帮我分析一下原因',
 ]
 
 // AI 能力列表
@@ -234,6 +236,7 @@ const capabilities = [
   { icon: Connection, title: '串流优化', desc: '根据使用场景自动推荐最佳配置' },
   { icon: Headset, title: '音视频调优', desc: '音频通道、采样率等音视频参数调优' },
   { icon: Picture, title: '应用管理', desc: '添加、编辑串流应用程序配置' },
+  { icon: ChatDotRound, title: '日志诊断', desc: '分析 Sunshine 运行日志，诊断串流问题和报错原因' },
 ]
 
 /**

@@ -136,6 +136,7 @@
         <VddSettings v-if="router.isRoute(ROUTES.VDD_SETTINGS)" @close="goHome" />
         <Welcome v-if="router.isRoute(ROUTES.WELCOME)" @close="goHome" />
         <WebStreamSettings v-if="router.isRoute(ROUTES.WEB_STREAM)" @close="goHome" />
+        <AiAssistant v-if="router.isRoute(ROUTES.AI_ASSISTANT)" @close="goHome" />
 
         <!-- 默认内容 (slot) -->
         <slot v-if="router.isRoute(ROUTES.HOME)" />
@@ -159,6 +160,7 @@ import { computed, ref, watch } from 'vue'
 import VddSettings from './VddSettings.vue'
 import Welcome from './welcome.vue'
 import WebStreamSettings from './WebStreamSettings.vue'
+import AiAssistant from './AiAssistant.vue'
 import UpdateDialog from './UpdateDialog.vue'
 import { useSidebarState } from '../composables/useSidebarState.js'
 import { useWindowControls } from '../composables/useWindowControls.js'
@@ -182,6 +184,7 @@ import {
   Key,
   Download,
   Connection,
+  MagicStick,
 } from '@element-plus/icons-vue'
 
 const emit = defineEmits(['route-change'])
@@ -201,6 +204,7 @@ const {
   openVddSettings,
   openWelcome,
   openWebStream,
+  openAiAssistant,
   goHome,
   skipVersion,
   includePrerelease,
@@ -239,6 +243,7 @@ const managementMenuItems = computed(() => [
   ...((typeof __DEV__ !== 'undefined' && __DEV__) || (typeof __BETA__ !== 'undefined' && __BETA__) ? [
     { icon: Connection, label: 'Web 串流', action: openWebStream, isActive: () => router.isRoute(ROUTES.WEB_STREAM) },
   ] : []),
+  { icon: MagicStick, label: '米塔', action: openAiAssistant, isActive: () => router.isRoute(ROUTES.AI_ASSISTANT) },
   { icon: Delete, label: '卸载 VDD', action: uninstallVdd },
   { icon: RefreshRight, label: '重启显卡驱动', action: restartDriver },
   // { icon: Refresh, label: '使用WGC捕获', action: restartSunshineInUserMode },
@@ -246,7 +251,7 @@ const managementMenuItems = computed(() => [
 ])
 
 const toolsMenuItems = [
-  { icon: Link, label: '官方网站', action: () => openUrl('https://sunshine-foundation.vercel.app/') },
+  { icon: Link, label: '官方网站', action: () => openUrl('https://www.alkaidlab.com') },
   { icon: Timer, label: '串流计时器', action: openTimer },
   { icon: DataLine, label: '延迟测试', action: () => openUrl('https://yangkile.github.io/D-lay/') },
   { icon: Cpu, label: '手柄测试', action: () => openUrl('https://hardwaretester.com/gamepad') },
@@ -278,6 +283,7 @@ defineExpose({
   openVddSettings,
   openWelcome,
   openWebStream,
+  openAiAssistant,
   goHome,
   router,
 })

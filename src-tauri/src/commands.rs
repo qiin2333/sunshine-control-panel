@@ -3,7 +3,7 @@ use log::{info, warn};
 use crate::windows;
 use base64::Engine as _;
 use std::sync::OnceLock;
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 
 /// 共享的 CDN HTTP 客户端（连接池复用，避免频繁 TLS 握手被 CDN 拒绝）
 fn cdn_client() -> &'static reqwest::Client {
@@ -193,7 +193,7 @@ pub async fn launch_app(cmd: String, working_dir: Option<String>, elevated: Opti
                 return Ok(());
             }
             // 两次都失败，返回更有意义的那个错误
-            let (best_rc, context) = if rc1 == 2 || rc1 == 3 { (rc2, file) } else { (rc1, trimmed) };
+            let (best_rc, _context) = if rc1 == 2 || rc1 == 3 { (rc2, file) } else { (rc1, trimmed) };
             Err(format!("启动失败: {} (错误码: {})", error_desc(best_rc), best_rc))
         } else {
             Err(format!("启动失败: {} (错误码: {})", error_desc(rc1), rc1))
@@ -272,4 +272,63 @@ pub async fn fetch_remote_bytes(url: String, if_none_match: Option<String>) -> R
     
     info!("✅ 代理下载成功 ({} bytes)", bytes.len());
     Ok(Some(RemoteBytesResponse { data_url, etag }))
+}
+
+// ===== AI API 代理（绕过 CORS） =====
+
+/// AI API 代理专用 HTTP 客户端
+fn ai_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .pool_max_idle_per_host(3)
+            .timeout(std::time::Duration::from_secs(120))
+            .connect_timeout(std::time::Duration::from_secs(15))
+            .build()
+            .expect("Failed to create AI HTTP client")
+    })
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AiProxyRequest {
+    pub url: String,
+    pub method: String,  // "GET" or "POST"
+    pub headers: std::collections::HashMap<String, String>,
+    pub body: Option<String>,
+}
+
+/// 通用 AI API 代理：转发 HTTP 请求到外部 AI 服务，绕过 WebView CORS 限制
+#[tauri::command]
+pub async fn ai_api_proxy(request: AiProxyRequest) -> Result<String, String> {
+    let client = ai_client();
+
+    let mut req_builder = match request.method.to_uppercase().as_str() {
+        "GET" => client.get(&request.url),
+        "POST" => client.post(&request.url),
+        _ => return Err(format!("不支持的 HTTP 方法: {}", request.method)),
+    };
+
+    // 设置请求头
+    for (key, value) in &request.headers {
+        req_builder = req_builder.header(key.as_str(), value.as_str());
+    }
+
+    // 设置请求体
+    if let Some(body) = &request.body {
+        req_builder = req_builder.header("Content-Type", "application/json");
+        req_builder = req_builder.body(body.clone());
+    }
+
+    let response = req_builder.send().await
+        .map_err(|e| format!("AI API 请求失败: {}", e))?;
+
+    let status = response.status().as_u16();
+    let body = response.text().await
+        .map_err(|e| format!("读取 AI API 响应失败: {}", e))?;
+
+    if status >= 400 {
+        return Err(format!("{} - {}", status, &body[..body.len().min(500)]));
+    }
+
+    Ok(body)
 }

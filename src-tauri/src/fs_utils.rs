@@ -22,6 +22,23 @@ pub struct ScannedApp {
     pub is_game: Option<bool>,
 }
 
+/// 平台游戏库扫描结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlatformGame {
+    pub name: String,
+    pub app_id: String,
+    pub platform: String,        // "steam", "epic", "gog"
+    pub install_dir: String,
+    pub exe_path: String,
+    pub cmd: String,
+    #[serde(rename = "working-dir")]
+    pub working_dir: String,
+    #[serde(rename = "cover-url", skip_serializing_if = "Option::is_none")]
+    pub cover_url: Option<String>,
+    #[serde(rename = "size-on-disk", skip_serializing_if = "Option::is_none")]
+    pub size_on_disk: Option<u64>,
+}
+
 /// 快捷方式解析结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LnkInfo {
@@ -558,6 +575,23 @@ fn detect_if_game(file_path: &str, name: &str, target_path: Option<&str>) -> boo
         "redist", "redistributable", "vcredist", "directx",
         "launcher_helper", "bootstrapper",
         "ue4prereqsetup", "dxsetup", "dotnet",
+        // 常见非游戏应用
+        "chrome", "firefox", "edge", "opera", "brave",
+        "word", "excel", "powerpoint", "outlook", "onenote", "access",
+        "visual studio", "vscode", "code", "notepad", "sublime",
+        "git", "node", "python", "java", "ruby",
+        "adobe", "photoshop", "illustrator", "premiere", "after effects",
+        "spotify", "discord", "telegram", "wechat", "微信", "qq",
+        "obs", "vlc", "potplayer", "media player",
+        "7-zip", "winrar", "bandizip",
+        "driver", "nvidia", "amd ", "intel",
+        "antivirus", "defender", "kaspersky", "avast",
+        "office", "onedrive", "teams",
+        "terminal", "powershell", "cmd",
+        "control panel", "控制面板",
+        "explorer", "task manager", "任务管理器",
+        "calculator", "计算器", "paint", "画图",
+        "snipping", "截图",
     ];
     
     for keyword in &exclude_keywords {
@@ -595,14 +629,12 @@ fn detect_if_game(file_path: &str, name: &str, target_path: Option<&str>) -> boo
         "\\program files\\game\\",
         "\\program files (x86)\\games\\",
         "\\program files (x86)\\game\\",
-        "\\games\\",
-        "\\game\\",
     ];
     
     for keyword in &medium_confidence_paths {
         if path_lower.contains(keyword) || target_lower.contains(keyword) {
             // 额外检查：确保不是工具类应用
-            let tool_indicators = ["tool", "editor", "sdk", "dev", "debug"];
+            let tool_indicators = ["tool", "editor", "sdk", "dev", "debug", "server", "manager", "launcher"];
             let is_tool = tool_indicators.iter().any(|t| name_lower.contains(t));
             if !is_tool {
                 return true;
@@ -799,4 +831,455 @@ fn process_url_file(file_path: &str) -> Option<ScannedApp> {
         app_type: "url".to_string(),
         is_game: None, // URL 文件通常不是游戏
     })
+}
+
+// ======================================================================
+// 平台游戏库扫描
+// ======================================================================
+
+/// 扫描结果汇总
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GameLibraryScanResult {
+    pub steam: Vec<PlatformGame>,
+    pub epic: Vec<PlatformGame>,
+    pub gog: Vec<PlatformGame>,
+    pub total: usize,
+    pub scan_time_ms: u64,
+}
+
+/// 统一扫描所有游戏平台库
+#[tauri::command]
+pub async fn scan_game_libraries() -> Result<GameLibraryScanResult, String> {
+    use std::time::Instant;
+
+    let start = Instant::now();
+    info!("🎮 开始扫描游戏平台库...");
+
+    let steam = scan_steam_library();
+    let epic = scan_epic_library();
+    let gog = scan_gog_library();
+
+    let total = steam.len() + epic.len() + gog.len();
+    let elapsed = start.elapsed().as_millis() as u64;
+
+    info!("✅ 游戏库扫描完成: Steam={}, Epic={}, GOG={}, 总计={}, 耗时={}ms",
+        steam.len(), epic.len(), gog.len(), total, elapsed);
+
+    Ok(GameLibraryScanResult {
+        steam,
+        epic,
+        gog,
+        total,
+        scan_time_ms: elapsed,
+    })
+}
+
+// ==================== Steam ====================
+
+/// 扫描 Steam 游戏库
+fn scan_steam_library() -> Vec<PlatformGame> {
+    let mut games = Vec::new();
+
+    // 查找 Steam 安装路径
+    let steam_path = find_steam_path();
+    let steam_path = match steam_path {
+        Some(p) => p,
+        None => {
+            info!("Steam 未安装或未找到");
+            return games;
+        }
+    };
+
+    info!("📂 Steam 路径: {}", steam_path.display());
+
+    // 读取 libraryfolders.vdf 获取所有库路径
+    let library_folders = get_steam_library_folders(&steam_path);
+    info!("📚 找到 {} 个 Steam 库路径", library_folders.len());
+
+    for lib_path in &library_folders {
+        let steamapps = lib_path.join("steamapps");
+        if !steamapps.exists() {
+            continue;
+        }
+
+        // 扫描 appmanifest_*.acf
+        if let Ok(entries) = std::fs::read_dir(&steamapps) {
+            for entry in entries.flatten() {
+                let fname = entry.file_name();
+                let fname = fname.to_string_lossy();
+                if fname.starts_with("appmanifest_") && fname.ends_with(".acf") {
+                    if let Some(game) = parse_steam_acf(&entry.path(), &steamapps) {
+                        games.push(game);
+                    }
+                }
+            }
+        }
+    }
+
+    games
+}
+
+/// 查找 Steam 安装路径
+fn find_steam_path() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        // 尝试注册表
+        use winreg::RegKey;
+        use winreg::enums::HKEY_LOCAL_MACHINE;
+
+        if let Ok(hklm) = RegKey::predef(HKEY_LOCAL_MACHINE)
+            .open_subkey("SOFTWARE\\WOW6432Node\\Valve\\Steam")
+        {
+            if let Ok(path) = hklm.get_value::<String, _>("InstallPath") {
+                let p = PathBuf::from(&path);
+                if p.exists() {
+                    return Some(p);
+                }
+            }
+        }
+
+        // 备选：默认路径
+        let default = PathBuf::from("C:\\Program Files (x86)\\Steam");
+        if default.exists() {
+            return Some(default);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let home = std::env::var("HOME").ok()?;
+        let paths = [
+            format!("{}/.steam/steam", home),
+            format!("{}/.local/share/Steam", home),
+        ];
+        for p in &paths {
+            let path = PathBuf::from(p);
+            if path.exists() {
+                return Some(path);
+            }
+        }
+    }
+
+    None
+}
+
+/// 从 libraryfolders.vdf 读取所有 Steam 库路径
+fn get_steam_library_folders(steam_path: &PathBuf) -> Vec<PathBuf> {
+    let mut folders = Vec::new();
+    // Steam 自身路径永远是一个库
+    folders.push(steam_path.clone());
+
+    let vdf_path = steam_path.join("steamapps").join("libraryfolders.vdf");
+    if !vdf_path.exists() {
+        // 旧版本路径
+        let alt = steam_path.join("config").join("libraryfolders.vdf");
+        if alt.exists() {
+            parse_library_folders_vdf(&alt, &mut folders);
+        }
+        return folders;
+    }
+
+    parse_library_folders_vdf(&vdf_path, &mut folders);
+    folders
+}
+
+/// 简单的 VDF 解析器 — 提取 "path" 字段
+fn parse_library_folders_vdf(path: &PathBuf, folders: &mut Vec<PathBuf>) {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            warn!("读取 VDF 失败: {}: {}", path.display(), e);
+            return;
+        }
+    };
+
+    // VDF 格式: "path"		"D:\\SteamLibrary"
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("\"path\"") {
+            let value = rest.trim().trim_matches('"');
+            if !value.is_empty() {
+                let p = PathBuf::from(value);
+                if p.exists() && !folders.contains(&p) {
+                    folders.push(p);
+                }
+            }
+        }
+    }
+}
+
+/// 解析 Steam appmanifest ACF 文件
+fn parse_steam_acf(acf_path: &PathBuf, steamapps_dir: &PathBuf) -> Option<PlatformGame> {
+    let content = std::fs::read_to_string(acf_path).ok()?;
+
+    let app_id = extract_vdf_value(&content, "appid")?;
+    let name = extract_vdf_value(&content, "name")?;
+    let install_dir_name = extract_vdf_value(&content, "installdir")?;
+    let size_str = extract_vdf_value(&content, "SizeOnDisk");
+
+    // 排除 Steamworks 工具类
+    let app_id_num: u64 = app_id.parse().unwrap_or(0);
+    if app_id_num < 10 {
+        return None; // Steam 自身的工具
+    }
+
+    // 排除名称包含工具/SDK/运行时等关键词的条目
+    let name_lower = name.to_lowercase();
+    let exclude_keywords = [
+        "redistributable", " sdk", "dedicated server", "proton ",
+        "steam linux runtime", "steamworks",
+        "directx", "vcredist", "visual c++",
+        "common redist", "mod tool", "editor",
+        "soundtrack", "ost", "artbook", "art book",
+        "benchmark", "demo", " test",
+        "developer tool", "devkit",
+    ];
+    if exclude_keywords.iter().any(|kw| name_lower.contains(kw)) {
+        return None;
+    }
+
+    // 检查 Steam ACF 中的 apptype（如果有的话），排除 tool / demo / music 类型
+    let app_type = extract_vdf_value(&content, "apptype")
+        .unwrap_or_default()
+        .to_lowercase();
+    if matches!(app_type.as_str(), "tool" | "demo" | "music" | "dlc" | "config" | "media") {
+        return None;
+    }
+
+    let install_dir = steamapps_dir.join("common").join(&install_dir_name);
+    let install_dir_str = install_dir.to_string_lossy().to_string();
+
+    // 尝试找到主 exe
+    let exe_path = find_main_exe(&install_dir).unwrap_or_default();
+
+    // 使用 steam:// URL 启动（最可靠的方式）
+    let cmd = format!("steam://rungameid/{}", app_id);
+
+    let cover_url = Some(format!(
+        "https://cdn.akamai.steamstatic.com/steam/apps/{}/header.jpg",
+        app_id
+    ));
+
+    let size_on_disk = size_str.and_then(|s| s.parse::<u64>().ok());
+
+    Some(PlatformGame {
+        name,
+        app_id,
+        platform: "steam".to_string(),
+        install_dir: install_dir_str,
+        exe_path,
+        cmd,
+        working_dir: install_dir.to_string_lossy().to_string(),
+        cover_url,
+        size_on_disk,
+    })
+}
+
+/// 从 VDF/ACF 内容中提取键值对
+fn extract_vdf_value(content: &str, key: &str) -> Option<String> {
+    let pattern = format!("\"{}\"", key);
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix(&pattern) {
+            let value = rest.trim().trim_matches('"');
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// 在安装目录中查找主可执行文件
+fn find_main_exe(install_dir: &PathBuf) -> Option<String> {
+    if !install_dir.exists() {
+        return None;
+    }
+
+    // 只搜索根目录和一层子目录
+    let mut candidates: Vec<(PathBuf, u64)> = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(install_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    if ext.to_string_lossy().to_lowercase() == "exe" {
+                        let name_lower = path.file_name()
+                            .map(|n| n.to_string_lossy().to_lowercase())
+                            .unwrap_or_default();
+                        // 排除工具
+                        if !is_tool_exe(&name_lower) {
+                            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                            candidates.push((path, size));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 按大小排序，取最大的（通常是主程序）
+    candidates.sort_by(|a, b| b.1.cmp(&a.1));
+    candidates.first().map(|(p, _)| p.to_string_lossy().to_string())
+}
+
+/// 检查 exe 是否是工具/辅助程序
+fn is_tool_exe(name_lower: &str) -> bool {
+    let tools = [
+        "uninstall", "uninst", "setup", "install", "update", "updater",
+        "crash", "reporter", "helper", "service", "launcher_helper",
+        "redist", "vcredist", "dxsetup", "dotnet", "ue4prereq",
+        "bootstrapper", "cleanup", "repair",
+    ];
+    tools.iter().any(|t| name_lower.contains(t))
+}
+
+// ==================== Epic Games ====================
+
+/// 扫描 Epic Games 库
+fn scan_epic_library() -> Vec<PlatformGame> {
+    let mut games = Vec::new();
+
+    #[cfg(target_os = "windows")]
+    {
+        // Epic 清单目录
+        let manifests_dir = std::env::var("ProgramData")
+            .map(|pd| PathBuf::from(pd).join("Epic").join("EpicGamesLauncher").join("Data").join("Manifests"))
+            .unwrap_or_else(|_| PathBuf::from("C:\\ProgramData\\Epic\\EpicGamesLauncher\\Data\\Manifests"));
+
+        if !manifests_dir.exists() {
+            info!("Epic Games 清单目录不存在: {}", manifests_dir.display());
+            return games;
+        }
+
+        info!("📂 Epic Games 清单目录: {}", manifests_dir.display());
+
+        if let Ok(entries) = std::fs::read_dir(&manifests_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().map(|e| e == "item").unwrap_or(false) {
+                    if let Some(game) = parse_epic_manifest(&path) {
+                        games.push(game);
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        info!("Epic Games 扫描仅支持 Windows");
+    }
+
+    games
+}
+
+/// 解析 Epic Games .item 清单文件（JSON 格式）
+#[cfg(target_os = "windows")]
+fn parse_epic_manifest(manifest_path: &PathBuf) -> Option<PlatformGame> {
+    let content = std::fs::read_to_string(manifest_path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
+
+    let display_name = json.get("DisplayName")?.as_str()?.to_string();
+    let install_location = json.get("InstallLocation")?.as_str()?.to_string();
+    let app_name = json.get("AppName")?.as_str()?.to_string();
+    let launch_executable = json.get("LaunchExecutable")?.as_str()?.to_string();
+
+    let install_dir = PathBuf::from(&install_location);
+    let exe_path = install_dir.join(&launch_executable);
+    let exe_str = exe_path.to_string_lossy().to_string();
+
+    // Epic 启动命令
+    let cmd = format!("com.epicgames.launcher://apps/{}?action=launch&silent=true", app_name);
+
+    let size_on_disk = json.get("InstallSize").and_then(|v| v.as_u64());
+
+    Some(PlatformGame {
+        name: display_name,
+        app_id: app_name,
+        platform: "epic".to_string(),
+        install_dir: install_location,
+        exe_path: exe_str,
+        cmd,
+        working_dir: install_dir.to_string_lossy().to_string(),
+        cover_url: None, // Epic 没有简单的封面 URL
+        size_on_disk,
+    })
+}
+
+// ==================== GOG Galaxy ====================
+
+/// 扫描 GOG Galaxy 游戏库
+fn scan_gog_library() -> Vec<PlatformGame> {
+    #[cfg(target_os = "windows")]
+    {
+        // GOG Galaxy 数据库是加密的 SQLite，改用注册表方式
+        return scan_gog_from_registry();
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        info!("GOG 扫描仅支持 Windows");
+        return Vec::new();
+    }
+}
+
+/// 通过 Windows 注册表扫描 GOG 游戏
+#[cfg(target_os = "windows")]
+fn scan_gog_from_registry() -> Vec<PlatformGame> {
+    use winreg::RegKey;
+    use winreg::enums::HKEY_LOCAL_MACHINE;
+
+    let mut games = Vec::new();
+
+    let gog_key = match RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey("SOFTWARE\\WOW6432Node\\GOG.com\\Games")
+    {
+        Ok(key) => key,
+        Err(_) => {
+            info!("GOG 注册表键不存在");
+            return games;
+        }
+    };
+
+    if let Ok(subkeys) = gog_key.enum_keys().collect::<Result<Vec<String>, _>>() {
+        for game_id in &subkeys {
+            if let Ok(game_key) = gog_key.open_subkey(game_id) {
+                let name: String = game_key.get_value("gameName").unwrap_or_default();
+                let path: String = game_key.get_value("path").unwrap_or_default();
+                let exe: String = game_key.get_value("exe").unwrap_or_default();
+
+                if name.is_empty() || path.is_empty() {
+                    continue;
+                }
+
+                let exe_path = if exe.is_empty() {
+                    find_main_exe(&PathBuf::from(&path)).unwrap_or_default()
+                } else {
+                    exe.clone()
+                };
+
+                let cmd = if exe_path.is_empty() {
+                    format!("goggalaxy://openGameView/{}", game_id)
+                } else {
+                    format!("\"{}\"", exe_path)
+                };
+
+                games.push(PlatformGame {
+                    name,
+                    app_id: game_id.clone(),
+                    platform: "gog".to_string(),
+                    install_dir: path.clone(),
+                    exe_path,
+                    cmd,
+                    working_dir: path,
+                    cover_url: None,
+                    size_on_disk: None,
+                });
+            }
+        }
+    }
+
+    games
 }

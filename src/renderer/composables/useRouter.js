@@ -8,6 +8,7 @@ export const ROUTES = {
   VDD_SETTINGS: 'vdd-settings',
   WELCOME: 'welcome',
   WEB_STREAM: 'web-stream',
+  AI_ASSISTANT: 'ai-assistant',
 }
 
 /**
@@ -33,6 +34,11 @@ const routeConfig = {
     name: ROUTES.WEB_STREAM,
     component: 'WebStreamSettings',
     title: 'Web 串流',
+  },
+  [ROUTES.AI_ASSISTANT]: {
+    name: ROUTES.AI_ASSISTANT,
+    component: 'AiAssistant',
+    title: '米塔',
   },
 }
 

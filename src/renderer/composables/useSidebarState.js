@@ -101,6 +101,7 @@ export function useSidebarState() {
   const openVddSettings = () => router.navigate(ROUTES.VDD_SETTINGS)
   const openWelcome = () => router.navigate(ROUTES.WELCOME)
   const openWebStream = () => router.navigate(ROUTES.WEB_STREAM)
+  const openAiAssistant = () => router.navigate(ROUTES.AI_ASSISTANT)
   const goHome = () => router.goHome()
 
   /**
@@ -287,6 +288,7 @@ export function useSidebarState() {
     openVddSettings,
     openWelcome,
     openWebStream,
+    openAiAssistant,
     goHome,
     skipVersion,
     isVersionSkipped,

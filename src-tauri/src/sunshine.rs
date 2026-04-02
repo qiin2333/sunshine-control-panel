@@ -512,7 +512,7 @@ pub(crate) fn is_sunshine_running_in_user_mode_impl() -> Result<bool, String> {
             .args(&["/FI", "IMAGENAME eq sunshine.exe", "/FO", "CSV", "/NH"])
             .output()
         {
-            let output_str = String::from_utf8_lossy(&result.stdout);
+            let output_str = String::from_utf8_lossy(&result.stdout).to_lowercase();
             if output_str.contains("sunshine.exe") {
                 return Ok(true); // 用户模式
             }

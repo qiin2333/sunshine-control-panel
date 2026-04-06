@@ -10,10 +10,10 @@
       </el-tag>
     </div>
 
-    <div class="ai-content">
+    <div class="ai-content" :class="{ chatting: isChatting }">
       <!-- AI 配置区 -->
-      <div class="ai-section config-section">
-        <div class="section-header">
+      <div class="ai-section config-section" :class="{ collapsed: isChatting && !showConfigInChat }">
+        <div class="section-header" @click="isChatting && (showConfigInChat = !showConfigInChat)" :style="isChatting ? 'cursor: pointer' : ''">
           <span class="section-title">
             <el-icon><Setting /></el-icon>
             模型配置
@@ -155,7 +155,7 @@
       </div>
 
       <!-- 能力说明 -->
-      <div class="ai-section capability-section">
+      <div v-if="!isChatting" class="ai-section capability-section">
         <div class="section-header">
           <span class="section-title">
             <el-icon><Opportunity /></el-icon>
@@ -177,7 +177,7 @@
 </template>
 
 <script setup>
-import { ref, nextTick, watch } from 'vue'
+import { ref, nextTick, watch, computed } from 'vue'
 import {
   MagicStick,
   Promotion,
@@ -216,6 +216,9 @@ const {
 
 const providers = AI_PROVIDERS
 const chatContainer = ref(null)
+const showConfigInChat = ref(false)
+
+const isChatting = computed(() => chatHistory.value.length > 0 || isLoading.value)
 
 // 示例问题
 const exampleQueries = [
@@ -452,18 +455,36 @@ watch(
   }
 
   .welcome-hint {
-    color: rgba(230, 213, 184, 0.6);
+    color: rgba(230, 213, 184, 0.75);
+
+    p {
+      color: rgba(230, 213, 184, 0.85);
+    }
   }
 
   .chat-message {
     &.user .msg-bubble {
       background: rgba(212, 165, 165, 0.2);
       border: 1px solid rgba(212, 165, 165, 0.15);
+      color: #e6d5b8;
     }
 
     &.assistant .msg-bubble {
-      background: rgba(230, 213, 184, 0.08);
-      border: 1px solid rgba(230, 213, 184, 0.1);
+      background: rgba(230, 213, 184, 0.15);
+      border: 1px solid rgba(230, 213, 184, 0.15);
+      color: #e6d5b8;
+
+      .msg-content {
+        :deep(.code-block) {
+          background: rgba(0, 0, 0, 0.35);
+          color: #d4d4d4;
+        }
+
+        :deep(code) {
+          background: rgba(0, 0, 0, 0.25);
+          color: #f0d8c0;
+        }
+      }
     }
 
     .msg-time {
@@ -480,17 +501,17 @@ watch(
   }
 
   .cap-item {
-    background: rgba(230, 213, 184, 0.06);
-    border: 1px solid rgba(212, 165, 165, 0.1);
+    background: rgba(230, 213, 184, 0.08);
+    border: 1px solid rgba(212, 165, 165, 0.15);
     color: #e6d5b8;
 
     &:hover {
-      background: rgba(230, 213, 184, 0.12);
-      border-color: rgba(212, 165, 165, 0.25);
+      background: rgba(230, 213, 184, 0.14);
+      border-color: rgba(212, 165, 165, 0.3);
     }
 
     p {
-      color: rgba(230, 213, 184, 0.6);
+      color: rgba(230, 213, 184, 0.7);
     }
   }
 
@@ -802,6 +823,35 @@ watch(
 
     &:active {
       transform: translateY(0);
+    }
+  }
+}
+
+// ========== 聊天模式 ==========
+.ai-content.chatting {
+  overflow: hidden;
+
+  .config-section {
+    transition: all 0.3s ease;
+
+    &.collapsed {
+      .ai-form,
+      .form-actions {
+        display: none;
+      }
+    }
+  }
+
+  .chat-section {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+
+    .chat-messages {
+      max-height: none;
+      flex: 1;
+      min-height: 0;
     }
   }
 }

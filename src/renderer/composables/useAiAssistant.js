@@ -158,9 +158,25 @@ export function useAiAssistant() {
   const isConnected = ref(false)
   const isLoading = ref(false)
 
-  // 聊天记录
-  const chatHistory = ref([])
+  // 聊天记录（从 sessionStorage 恢复，切换页面不丢失）
+  const CHAT_STORAGE_KEY = 'sunshine-ai-chat-history'
+  const chatHistory = ref(loadChatHistory())
   const currentInput = ref('')
+
+  function loadChatHistory() {
+    try {
+      const saved = sessionStorage.getItem(CHAT_STORAGE_KEY)
+      return saved ? JSON.parse(saved) : []
+    } catch {
+      return []
+    }
+  }
+
+  function saveChatHistory() {
+    try {
+      sessionStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(chatHistory.value))
+    } catch { /* ignore quota errors */ }
+  }
 
   // 远程模型列表
   const remoteModels = ref([])
@@ -177,6 +193,53 @@ export function useAiAssistant() {
     }
   }
 
+  /**
+   * 从服务端拉取 AI 配置并合并到当前 config（服务端为真实来源）
+   * API key 在 GET 响应中是掩码的，用 localStorage 中的完整 key 填充
+   */
+  async function syncFromServer() {
+    try {
+      const resp = await fetch('/api/ai/config')
+      if (!resp.ok) return
+      const remote = await resp.json()
+      // 服务端 apiKey 带掩码(****), 保留本地完整 key
+      const localKey = config.apiKey || ''
+      if (remote.enabled !== undefined) config.enabled = remote.enabled
+      if (remote.provider) config.provider = remote.provider
+      if (remote.apiBase) config.apiBase = remote.apiBase
+      if (remote.model) config.model = remote.model
+      if (remote.apiKey && !remote.apiKey.includes('****')) {
+        config.apiKey = remote.apiKey
+      } else if (localKey && !localKey.includes('****')) {
+        config.apiKey = localKey
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...config }))
+    } catch (e) {
+      console.warn('从服务端同步 AI 配置失败:', e.message)
+    }
+  }
+
+  /**
+   * 将当前 config 推送到服务端保存
+   */
+  async function syncToServer() {
+    try {
+      await fetch('/api/ai/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: config.enabled,
+          provider: config.provider,
+          apiBase: config.apiBase,
+          apiKey: config.apiKey,
+          model: config.model,
+        }),
+      })
+    } catch (e) {
+      console.warn('同步 AI 配置到服务端失败:', e.message)
+    }
+  }
+
   let saveTimer = null
   function autoSaveConfig() {
     clearTimeout(saveTimer)
@@ -188,8 +251,12 @@ export function useAiAssistant() {
   function saveConfig() {
     clearTimeout(saveTimer)
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...config }))
-    ElMessage.success('配置已保存')
+    syncToServer()
+    ElMessage.success('配置已保存并同步到服务端')
   }
+
+  // 初始化时从服务端同步（不阻塞 UI）
+  syncFromServer()
 
   function onProviderChange(providerValue) {
     const provider = AI_PROVIDERS.find((p) => p.value === providerValue)
@@ -327,16 +394,21 @@ export function useAiAssistant() {
       const result = await executeAction(action)
       chatHistory.value.push({ role: 'assistant', content: result, timestamp: Date.now() })
     } catch (error) {
-      ElMessage.error(`操作失败: ${error.message}`)
+      const msg = error instanceof Error ? error.message : String(error)
+      ElMessage.error(`操作失败: ${msg}`)
     }
   }
 
   function clearHistory() {
     chatHistory.value = []
+    sessionStorage.removeItem(CHAT_STORAGE_KEY)
   }
 
   // 监听配置变化自动保存（已防抖）
   watch(config, autoSaveConfig, { deep: true })
+
+  // 监听聊天记录变化自动保存到 sessionStorage
+  watch(chatHistory, saveChatHistory, { deep: true })
 
   return {
     config,

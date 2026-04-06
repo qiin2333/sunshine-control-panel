@@ -190,14 +190,27 @@ async function applyPrepCmd(action) {
 async function applyConfigChange(action) {
   if (!action?.changes) throw new Error('无配置修改')
 
-  const { invoke } = await import('@tauri-apps/api/core')
+  const proxyUrl = await getProxyUrl()
+
+  // 获取当前配置
+  const getResp = await fetch(`${proxyUrl}/api/config`)
+  if (!getResp.ok) throw new Error(`获取配置失败: ${getResp.status}`)
+  const currentConfig = await getResp.json()
+
+  // 合并修改
+  const updates = {}
   for (const change of action.changes) {
-    await invoke('apply_ai_config_change', {
-      section: change.section,
-      key: change.key,
-      value: change.value,
-    })
+    updates[change.key] = change.value
   }
+
+  // 保存配置
+  const saveResp = await fetch(`${proxyUrl}/api/config`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...currentConfig, ...updates }),
+  })
+  if (!saveResp.ok) throw new Error(`保存配置失败: ${saveResp.status}`)
+
   ElMessage.success(action.explanation || '配置已更新')
   return `✅ 已应用修改：${action.explanation}`
 }

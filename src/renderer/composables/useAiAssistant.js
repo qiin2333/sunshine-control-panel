@@ -7,6 +7,15 @@ import { AI_PROVIDERS, DEFAULT_CONFIG, STORAGE_KEY } from './aiProviders.js'
 // 重新导出供外部使用
 export { AI_PROVIDERS }
 
+async function getProxyUrl() {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    return await invoke('get_proxy_url_command')
+  } catch {
+    return 'https://localhost:47990'
+  }
+}
+
 /**
  * 系统提示词：定义 AI 可以执行的 Sunshine 设置操作
  */
@@ -199,7 +208,8 @@ export function useAiAssistant() {
    */
   async function syncFromServer() {
     try {
-      const resp = await fetch('/api/ai/config')
+      const proxyUrl = await getProxyUrl()
+      const resp = await fetch(`${proxyUrl}/api/ai/config`)
       if (!resp.ok) return
       const remote = await resp.json()
       // 服务端 apiKey 带掩码(****), 保留本地完整 key
@@ -224,7 +234,8 @@ export function useAiAssistant() {
    */
   async function syncToServer() {
     try {
-      await fetch('/api/ai/config', {
+      const proxyUrl = await getProxyUrl()
+      await fetch(`${proxyUrl}/api/ai/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

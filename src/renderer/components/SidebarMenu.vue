@@ -251,7 +251,7 @@ const managementMenuItems = computed(() => [
 ])
 
 const toolsMenuItems = [
-  { icon: Link, label: '官方网站', action: () => openUrl('https://www.alkaidlab.com') },
+  { icon: Link, label: '官方网站', action: () => openUrl('https://www.alkaidlab.com/') },
   { icon: Timer, label: '串流计时器', action: openTimer },
   { icon: DataLine, label: '延迟测试', action: () => openUrl('https://yangkile.github.io/D-lay/') },
   { icon: Cpu, label: '手柄测试', action: () => openUrl('https://hardwaretester.com/gamepad') },

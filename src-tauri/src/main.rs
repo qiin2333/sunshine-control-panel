@@ -112,6 +112,7 @@ fn main() {
             fs_utils::resolve_lnk_target,
             fs_utils::scan_directory_for_apps,
             fs_utils::scan_game_libraries,
+            fs_utils::save_text_file,
             update::check_for_updates,
             update::get_include_prerelease_preference,
             update::set_include_prerelease_preference,

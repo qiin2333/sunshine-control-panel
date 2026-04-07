@@ -207,7 +207,7 @@ pub fn handle_tray_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) {
     match menu_id {
         "open_website" => {
             info!("🌐 托盘菜单：打开官网");
-            utils::open_url_in_browser("https://sunshine-foundation.vercel.app/");
+            utils::open_url_in_browser("https://www.alkaidlab.com/");
         }
         "open_desktop" => {
             info!("🖥️ 托盘菜单：打开桌面 UI");

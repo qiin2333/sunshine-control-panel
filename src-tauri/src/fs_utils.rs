@@ -50,6 +50,41 @@ pub struct LnkInfo {
     pub arguments: String,
 }
 
+/// 通用文本文件保存（弹出系统保存对话框）
+/// 供远程 WebUI 页面通过 __TAURI_INTERNALS__.invoke 调用
+#[tauri::command]
+pub async fn save_text_file(
+    app: tauri::AppHandle,
+    content: String,
+    default_name: String,
+    filter_name: String,
+    extensions: Vec<String>,
+) -> Result<String, String> {
+    use tauri_plugin_dialog::DialogExt;
+    use tokio::sync::oneshot;
+
+    let ext_refs: Vec<&str> = extensions.iter().map(|s| s.as_str()).collect();
+    let (tx, rx) = oneshot::channel();
+
+    app.dialog()
+        .file()
+        .set_file_name(&default_name)
+        .add_filter(&filter_name, &ext_refs)
+        .save_file(move |file_path_opt| {
+            let _ = tx.send(file_path_opt);
+        });
+
+    let file_path = rx.await
+        .map_err(|_| "dialog channel error".to_string())?
+        .ok_or_else(|| "cancelled".to_string())?;
+
+    let path_buf = std::path::PathBuf::from(file_path.to_string());
+    std::fs::write(&path_buf, &content)
+        .map_err(|e| format!("write failed: {}", e))?;
+
+    Ok(path_buf.display().to_string())
+}
+
 /// 获取 ICC 颜色配置文件列表
 #[tauri::command]
 pub async fn get_icc_file_list() -> Result<Vec<String>, String> {

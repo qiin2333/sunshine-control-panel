@@ -211,6 +211,24 @@ export const sunshine = {
       throw error
     }
   },
+
+  async getLocale() {
+    try {
+      return await invoke('get_sunshine_locale')
+    } catch (error) {
+      console.error('Failed to get Sunshine locale:', error)
+      return 'en'
+    }
+  },
+
+  async setLocale(locale) {
+    try {
+      return await invoke('set_sunshine_locale', { locale })
+    } catch (error) {
+      console.error('Failed to set Sunshine locale:', error)
+      throw error
+    }
+  },
 }
 
 // 系统工具相关

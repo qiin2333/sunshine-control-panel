@@ -89,6 +89,8 @@ fn main() {
             sunshine::parse_sunshine_config,
             sunshine::get_sunshine_url,
             sunshine::get_command_line_url,
+            sunshine::get_sunshine_locale,
+            sunshine::set_sunshine_locale,
             sunshine::get_active_sessions,
             sunshine::change_bitrate,
             sunshine::toggle_sunshine_mode,

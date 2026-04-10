@@ -239,7 +239,7 @@ fn verify_vdd_xml(vdd_xml_path: &PathBuf) -> Result<(), String> {
 }
 
 /// 读取完整的 sunshine.conf 配置文件为 Map
-async fn read_full_sunshine_config() -> Result<serde_json::Map<String, serde_json::Value>, String> {
+pub async fn read_full_sunshine_config() -> Result<serde_json::Map<String, serde_json::Value>, String> {
     let config_path = PathBuf::from(sunshine::get_sunshine_install_path())
         .join("config")
         .join("sunshine.conf");

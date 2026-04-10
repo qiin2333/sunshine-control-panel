@@ -100,10 +100,12 @@
 
         <!-- 配置区域 -->
         <template v-if="status.installed">
-          <el-divider content-position="left">
-            <el-icon><Setting /></el-icon>
-            <span style="margin-left: 6px;">{{ t.webStream.serviceConfig }}</span>
-          </el-divider>
+          <div class="section-divider">
+            <span class="section-divider-text">
+              <el-icon><Setting /></el-icon>
+              <span>{{ t.webStream.serviceConfig }}</span>
+            </span>
+          </div>
 
           <el-form :model="config" label-width="140px" class="config-form">
             <el-form-item :label="t.webStream.bindAddress">
@@ -134,7 +136,9 @@
               </el-form-item>
             </template>
 
-            <el-divider content-position="left">{{ t.webStream.defaultStreamSettings }}</el-divider>
+            <div class="section-divider">
+              <span class="section-divider-text">{{ t.webStream.defaultStreamSettings }}</span>
+            </div>
 
             <div class="two-column-layout">
               <el-form-item :label="t.webStream.videoCodec">
@@ -575,14 +579,15 @@ async function openInBrowser() {
     :deep(.el-switch.is-checked .el-switch__core) {
       background-color: @morandi-red;
     }
+  }
 
-    :deep(.el-divider__text) {
-      background: transparent;
+  .section-divider {
+    .section-divider-text {
       color: rgba(230, 213, 184, 0.7);
     }
 
-    :deep(.el-divider) {
-      border-color: rgba(230, 213, 184, 0.15);
+    &::after {
+      background: rgba(230, 213, 184, 0.15);
     }
   }
 
@@ -707,14 +712,15 @@ async function openInBrowser() {
     :deep(.el-switch.is-checked .el-switch__core) {
       background-color: @gura-blue;
     }
+  }
 
-    :deep(.el-divider__text) {
-      background: transparent;
+  .section-divider {
+    .section-divider-text {
       color: rgba(58, 126, 213, 0.7);
     }
 
-    :deep(.el-divider) {
-      border-color: rgba(74, 158, 255, 0.2);
+    &::after {
+      background: rgba(74, 158, 255, 0.2);
     }
   }
 
@@ -831,6 +837,30 @@ async function openInBrowser() {
 
   :deep(.el-select__wrapper) {
     box-shadow: none;
+  }
+}
+
+.section-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 24px 0 16px;
+
+  .section-divider-text {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    color: var(--el-text-color-secondary);
+  }
+
+  &::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--el-border-color-lighter);
   }
 }
 

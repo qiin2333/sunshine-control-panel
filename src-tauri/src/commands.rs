@@ -332,3 +332,43 @@ pub async fn ai_api_proxy(request: AiProxyRequest) -> Result<String, String> {
 
     Ok(body)
 }
+
+// ===== 桌面截屏（用于 AI 桌宠视觉识别） =====
+
+/// 截取主显示器画面，返回 base64 编码的 JPEG（质量 60，尺寸缩放到最大 1024px 宽）
+#[tauri::command]
+pub async fn capture_screenshot() -> Result<String, String> {
+    use xcap::Monitor;
+    use std::io::Cursor;
+
+    // 在阻塞线程中执行截屏（xcap 内部使用同步 API）
+    tokio::task::spawn_blocking(|| {
+        let monitors = Monitor::all().map_err(|e| format!("枚举显示器失败: {}", e))?;
+        let monitor = monitors.into_iter().next().ok_or("没有找到显示器")?;
+
+        let image = monitor.capture_image().map_err(|e| format!("截屏失败: {}", e))?;
+
+        // 缩放到最大 1024px 宽以减少 token 消耗
+        let (w, h) = (image.width(), image.height());
+        let max_width = 1024u32;
+        let resized = if w > max_width {
+            let new_h = (h as f64 * max_width as f64 / w as f64) as u32;
+            image::imageops::resize(&image, max_width, new_h, image::imageops::FilterType::Triangle)
+        } else {
+            image::imageops::resize(&image, w, h, image::imageops::FilterType::Triangle)
+        };
+
+        // RGBA → RGB (JPEG 不支持 alpha 通道)
+        let rgb_image = image::DynamicImage::ImageRgba8(resized).to_rgb8();
+
+        // 编码为 JPEG（质量 60）
+        let mut buf = Cursor::new(Vec::new());
+        let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 60);
+        rgb_image.write_with_encoder(encoder).map_err(|e| format!("JPEG 编码失败: {}", e))?;
+
+        let b64 = base64::engine::general_purpose::STANDARD.encode(buf.into_inner());
+        Ok(format!("data:image/jpeg;base64,{}", b64))
+    })
+    .await
+    .map_err(|e| format!("截屏任务失败: {}", e))?
+}

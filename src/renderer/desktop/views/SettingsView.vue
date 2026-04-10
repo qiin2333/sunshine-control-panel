@@ -210,6 +210,58 @@
       </div>
     </div>
 
+    <!-- 桌宠 -->
+    <div class="desktop-card fade-in">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="title-icon">🐾</span>
+          桌宠
+        </div>
+      </div>
+      <div class="card-content">
+        <div class="setting-item">
+          <div class="setting-info">
+            <div class="setting-name">桌面观察</div>
+            <div class="setting-desc">米塔会定时偷看你的桌面并发表评论（需要启用 AI 并配置支持视觉的模型如 GPT-4o）</div>
+          </div>
+          <div class="setting-control">
+            <label class="switch">
+              <input type="checkbox" v-model="petEnabled" @change="onPetToggle" />
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="setting-item" v-if="petEnabled">
+          <div class="setting-info">
+            <div class="setting-name">观察间隔（秒）</div>
+            <div class="setting-desc">每隔多少秒截取桌面并生成评论（最小 15 秒）</div>
+          </div>
+          <div class="setting-control">
+            <select v-model="petIntervalSec" class="select-control" @change="onPetIntervalChange">
+              <option :value="15">15 秒</option>
+              <option :value="30">30 秒</option>
+              <option :value="60">60 秒</option>
+              <option :value="120">2 分钟</option>
+              <option :value="300">5 分钟</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="setting-item" v-if="petEnabled">
+          <div class="setting-info">
+            <div class="setting-name">立即触发</div>
+            <div class="setting-desc">让米塔现在就看看你的桌面</div>
+          </div>
+          <div class="setting-control">
+            <button class="desktop-btn" :disabled="isObserving" @click="poke">
+              {{ isObserving ? '观察中...' : '戳一下' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- 关于 -->
     <div class="desktop-card about-card fade-in">
       <div class="about-content">
@@ -242,9 +294,35 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useLaunchHelpers } from '../composables/useLaunchHelpers'
+import { useDesktopPet } from '../../composables/useDesktopPet.js'
 
 const invoke = ref(null)
 const hasTauri = ref(false)
+
+// 桌宠设置
+const {
+  petEnabled,
+  isObserving,
+  observeInterval,
+  startObserving,
+  stopObserving,
+  setIntervalSeconds,
+  poke,
+} = useDesktopPet()
+
+const petIntervalSec = ref(Math.round(observeInterval.value / 1000))
+
+function onPetToggle() {
+  if (petEnabled.value) {
+    startObserving()
+  } else {
+    stopObserving()
+  }
+}
+
+function onPetIntervalChange() {
+  setIntervalSeconds(petIntervalSec.value)
+}
 
 const {
   templates: allTemplates,

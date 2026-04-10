@@ -72,6 +72,7 @@ fn main() {
             commands::fetch_speech_phrases,
             commands::fetch_remote_bytes,
             commands::ai_api_proxy,
+            commands::capture_screenshot,
             vdd::get_vdd_settings_file_path,
             vdd::get_vdd_tools_dir_path,
             vdd::get_vdd_edid_file_path,

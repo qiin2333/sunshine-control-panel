@@ -44,6 +44,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { PhysicalPosition } from '@tauri-apps/api/dpi'
 import * as PIXI from 'pixi.js'
+import { callVisionLLM } from '../composables/aiClient.js'
+import { STORAGE_KEY, DEFAULT_CONFIG } from '../composables/aiProviders.js'
 
 const menuVisible = ref(false)
 const speechVisible = ref(false)
@@ -187,16 +189,71 @@ const showSpeech = () => {
   }, 2600)
 }
 
+// ===== Vision 桌面观察 =====
+
+const VISION_PROMPT = `你是一个可爱但毒舌的桌面宠物"米塔"。你正在偷看用户的电脑屏幕。
+根据截图内容，假定用户正在做某件事，然后调戏用户。不要用"你是不是在..."这种猜测句式，而是直接断言"你又在..."来调侃。
+15-40字，雌小鬼风格，常用口癖：杂鱼♡、哼、切、笨蛋。
+示例风格：
+- 看到游戏→"又在打游戏偷懒了♡ 杂鱼的操作真是一言难尽呢～"
+- 看到代码→"写了半天bug又多了吧，杂鱼程序员～"
+- 看到摸鱼→"上班时间逛这个，被老板看到可就惨了呢♡"
+- 看到聊天→"跟谁聊得这么开心？哼，才不在意呢"
+只输出一句话，不要解释。用中文回复。`
+
+let visionCounter = 0
+
+const getAiConfig = () => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY)
+    return saved ? { ...DEFAULT_CONFIG, ...JSON.parse(saved) } : { ...DEFAULT_CONFIG }
+  } catch {
+    return { ...DEFAULT_CONFIG }
+  }
+}
+
+const isPetVisionEnabled = () => {
+  return localStorage.getItem('sunshine-pet-enabled') === 'true'
+}
+
+const tryVisionSpeech = async () => {
+  const config = getAiConfig()
+  if (!config.enabled || !config.apiKey || !isPetVisionEnabled()) return false
+
+  try {
+    const screenshot = await invoke('capture_screenshot')
+    const response = await callVisionLLM(config, VISION_PROMPT, '看看我的桌面，说点什么吧', screenshot, 150)
+    if (response && response.trim()) {
+      speechText.value = response.trim()
+      speechVisible.value = true
+      if (speechTimer) clearTimeout(speechTimer)
+      speechTimer = setTimeout(() => { speechVisible.value = false }, 5000)
+      return true
+    }
+  } catch (err) {
+    console.warn('[桌宠Vision] 失败:', typeof err === 'string' ? err : err?.message)
+  }
+  return false
+}
+
 const startSpeechLoop = () => {
   // 首次延迟随机出现
   const firstDelay = 4000 + Math.random() * 6000
   setTimeout(() => showSpeech(), firstDelay)
   // 后续固定间隔（启动时随机选择 15s~35s）
-  speechInterval = setInterval(() => {
+  speechInterval = setInterval(async () => {
     // 避免菜单展开时打断交互
-    if (!menuVisible.value) {
-      showSpeech()
+    if (menuVisible.value) return
+
+    // 每 3-5 次随机话术后尝试一次 vision 观察
+    visionCounter++
+    if (visionCounter >= 3 + Math.floor(Math.random() * 3)) {
+      visionCounter = 0
+      const used = await tryVisionSpeech()
+      if (used) return
     }
+
+    showSpeech()
   }, 15000 + Math.random() * 20000)
 }
 

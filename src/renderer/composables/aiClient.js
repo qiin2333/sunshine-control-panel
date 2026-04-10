@@ -84,12 +84,79 @@ export async function callAnthropic(apiBase, apiKey, model, messages, maxTokens 
 
 /**
  * 统一 LLM 调用入口
+ * @param {object} config - AI 配置
+ * @param {Array} messages - 消息列表
+ * @param {number} maxTokens - 最大 token 数
  */
 export async function callLLM(config, messages, maxTokens = 2048) {
   const apiType = getApiType(config.provider)
   if (apiType === 'anthropic') {
     return callAnthropic(config.apiBase, config.apiKey, config.model, messages, maxTokens)
   }
+  return callOpenAI(config.apiBase, config.apiKey, config.model, messages, maxTokens)
+}
+
+/**
+ * 构建带图片的 vision 消息内容（多模态）
+ * @param {string} text - 文本提示
+ * @param {string} imageDataUrl - data:image/jpeg;base64,... 格式的图片
+ * @returns 适用于 OpenAI/Anthropic vision API 的 content 数组
+ */
+export function buildVisionContent(text, imageDataUrl) {
+  // 从 data URL 提取 base64 和 media type
+  const match = imageDataUrl.match(/^data:(image\/\w+);base64,(.+)$/)
+  if (!match) return text // fallback to text-only
+
+  const [, mediaType, base64Data] = match
+
+  return [
+    { type: 'text', text },
+    {
+      type: 'image_url',
+      image_url: { url: imageDataUrl, detail: 'low' }, // low detail = fewer tokens
+    },
+  ]
+}
+
+/**
+ * 构建 Anthropic 格式的 vision 消息内容
+ */
+export function buildAnthropicVisionContent(text, imageDataUrl) {
+  const match = imageDataUrl.match(/^data:(image\/\w+);base64,(.+)$/)
+  if (!match) return text
+
+  const [, mediaType, base64Data] = match
+
+  return [
+    {
+      type: 'image',
+      source: { type: 'base64', media_type: mediaType, data: base64Data },
+    },
+    { type: 'text', text },
+  ]
+}
+
+/**
+ * 调用带视觉能力的 LLM（发送截屏 + 文本提示）
+ */
+export async function callVisionLLM(config, systemPrompt, userText, imageDataUrl, maxTokens = 512) {
+  const apiType = getApiType(config.provider)
+
+  if (apiType === 'anthropic') {
+    const content = buildAnthropicVisionContent(userText, imageDataUrl)
+    const messages = [{ role: 'user', content }]
+    return callAnthropic(config.apiBase, config.apiKey, config.model, [
+      { role: 'system', content: systemPrompt },
+      ...messages,
+    ], maxTokens)
+  }
+
+  // OpenAI 兼容（GPT-4o, Qwen-VL, GLM-4V 等）
+  const content = buildVisionContent(userText, imageDataUrl)
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content },
+  ]
   return callOpenAI(config.apiBase, config.apiKey, config.model, messages, maxTokens)
 }
 

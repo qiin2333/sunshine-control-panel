@@ -828,8 +828,16 @@ pub async fn uninstall_vdd_driver() -> Result<String, String> {
     {
         use std::process::Command;
         
-        // 从注册表动态获取 VDD 工具路径
-        let nefconw_exe = get_vdd_tools_path().join("nefconw.exe");
+        // 查找 nefconw.exe：先 tools/ 再 tools/vdd/
+        let tools_dir = get_sunshine_path().join("tools");
+        let nefconw_exe = {
+            let direct = tools_dir.join("nefconw.exe");
+            if direct.exists() {
+                direct
+            } else {
+                tools_dir.join("vdd").join("nefconw.exe")
+            }
+        };
         
         if !nefconw_exe.exists() {
             return Err("找不到 nefconw.exe".to_string());

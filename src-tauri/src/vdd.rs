@@ -300,10 +300,6 @@ pub async fn read_full_sunshine_config() -> Result<serde_json::Map<String, serde
 /// 调用 Sunshine Config API 保存 VDD 配置
 /// Sunshine 的 saveVddSettings() 会负责写入 vdd_settings.xml 文件
 async fn sync_vdd_config_to_sunshine(settings: &VddSettings) -> Result<(), String> {
-    // 从配置文件获取 Sunshine Web UI URL（动态读取端口）
-    let sunshine_url = sunshine::get_sunshine_url().await
-        .map_err(|e| format!("无法获取 Sunshine URL: {}", e))?;
-    
     // 读取完整的现有配置，然后更新 VDD 相关的配置项
     // 这样可以避免丢失其他配置
     let mut config_data = read_full_sunshine_config().await?;
@@ -344,32 +340,12 @@ async fn sync_vdd_config_to_sunshine(settings: &VddSettings) -> Result<(), Strin
     }
     
     // 调用 Sunshine Config API
-    let config_url = format!("{}/api/config", sunshine_url.trim_end_matches('/'));
-    
-    debug!("📡 调用 Sunshine Config API: {}", config_url);
+    debug!("📡 调用 Sunshine Config API");
     debug!("📝 配置数据: {:?}", config_data);
-    
-    // 使用 reqwest 发送 POST 请求
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true) // Sunshine 使用自签名证书
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
-    
-    let response = client.post(&config_url)
-        .json(&config_data)
-        .send()
-        .await
-        .map_err(|e| format!("调用 Sunshine Config API 失败: {}", e))?;
-    
-    if response.status().is_success() {
-        info!("✅ VDD 配置已通过 Sunshine API 保存 (状态: {})", response.status());
-        Ok(())
-    } else {
-        let status = response.status();
-        let error_body = response.text().await.unwrap_or_default();
-        Err(format!("Sunshine Config API 返回错误 (状态: {}): {}", status, error_body))
-    }
+
+    sunshine::post_sunshine_config(&config_data).await?;
+    info!("✅ VDD 配置已通过 Sunshine API 保存");
+    Ok(())
 }
 
 fn default_true() -> bool { true }

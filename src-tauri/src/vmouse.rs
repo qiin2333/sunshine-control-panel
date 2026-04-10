@@ -258,33 +258,9 @@ pub async fn uninstall_vmouse_driver() -> Result<String, String> {
 /// 设置 sunshine.conf 中的 virtual_mouse 配置
 #[tauri::command]
 pub async fn set_vmouse_config(enabled: bool) -> Result<String, String> {
-    let sunshine_url = sunshine::get_sunshine_url().await
-        .map_err(|e| format!("无法获取 Sunshine URL: {}", e))?;
-
     // 读取当前完整配置
-    let config_path = PathBuf::from(sunshine::get_sunshine_install_path())
-        .join("config")
-        .join("sunshine.conf");
-
-    let mut config_map = serde_json::Map::new();
-
-    if config_path.exists() {
-        let content = std::fs::read_to_string(&config_path)
-            .map_err(|e| format!("读取配置文件失败: {}", e))?;
-
-        for line in content.lines() {
-            let line = line.trim();
-            if line.starts_with('#') || line.is_empty() {
-                continue;
-            }
-            if let Some((key, value)) = line.split_once('=') {
-                config_map.insert(
-                    key.trim().to_string(),
-                    serde_json::json!(value.trim()),
-                );
-            }
-        }
-    }
+    let mut config_map = crate::vdd::read_full_sunshine_config().await
+        .unwrap_or_default();
 
     // 更新 virtual_mouse 字段
     let value_str = if enabled { "enabled" } else { "disabled" };
@@ -293,26 +269,7 @@ pub async fn set_vmouse_config(enabled: bool) -> Result<String, String> {
     debug!("📝 更新 virtual_mouse = {}", value_str);
 
     // 通过 Sunshine API 保存
-    let config_url = format!("{}/api/config", sunshine_url.trim_end_matches('/'));
-
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
-
-    let response = client.post(&config_url)
-        .json(&config_map)
-        .send()
-        .await
-        .map_err(|e| format!("保存配置失败: {}", e))?;
-
-    if response.status().is_success() {
-        info!("✅ virtual_mouse 配置已更新: {}", value_str);
-        Ok(format!("虚拟鼠标已{}", if enabled { "启用" } else { "禁用" }))
-    } else {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        Err(format!("保存配置失败 ({}): {}", status, body))
-    }
+    sunshine::post_sunshine_config(&config_map).await?;
+    info!("✅ virtual_mouse 配置已更新: {}", value_str);
+    Ok(format!("虚拟鼠标已{}", if enabled { "启用" } else { "禁用" }))
 }

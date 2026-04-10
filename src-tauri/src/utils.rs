@@ -1,46 +1,8 @@
-use reqwest;
-use serde_json::Value;
 use std::process::Command;
 use crate::sunshine;
 use std::env;
 use tauri::Manager;
 use log::{info, error, debug};
-
-#[allow(dead_code)]
-pub async fn send_http_request(
-    hostname: &str,
-    port: u16,
-    path: &str,
-    method: &str,
-    data: Option<Value>,
-) -> Result<String, String> {
-    let url = format!("https://{}:{}{}", hostname, port, path);
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| e.to_string())?;
-    
-    let request = match method.to_uppercase().as_str() {
-        "POST" => {
-            let mut req = client.post(&url);
-            if let Some(json_data) = data {
-                req = req.json(&json_data);
-            }
-            req
-        }
-        "GET" => client.get(&url),
-        _ => return Err("Unsupported HTTP method".to_string()),
-    };
-    
-    let response = request
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    
-    let text = response.text().await.map_err(|e| e.to_string())?;
-    Ok(text)
-}
 
 #[tauri::command]
 pub async fn restart_graphics_driver() -> Result<String, String> {

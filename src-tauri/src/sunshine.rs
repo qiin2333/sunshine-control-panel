@@ -318,12 +318,35 @@ impl SessionInfo {
     }
 }
 
-fn create_https_client() -> Result<reqwest::Client, String> {
+pub fn create_https_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .danger_accept_invalid_certs(true) // Sunshine 使用自签名证书
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))
+}
+
+/// POST 配置数据到 Sunshine Config API
+/// 封装了获取 URL、创建客户端、POST 请求和错误处理的完整流程
+pub async fn post_sunshine_config(config_data: &serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+    let sunshine_url = get_sunshine_url().await
+        .map_err(|e| format!("Cannot get Sunshine URL: {}", e))?;
+    let config_url = format!("{}/api/config", sunshine_url.trim_end_matches('/'));
+
+    let client = create_https_client()?;
+    let response = client.post(&config_url)
+        .json(config_data)
+        .send()
+        .await
+        .map_err(|e| format!("调用 Sunshine Config API 失败: {}", e))?;
+
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        let status = response.status();
+        let error_body = response.text().await.unwrap_or_default();
+        Err(format!("Sunshine Config API 返回错误 (状态: {}): {}", status, error_body))
+    }
 }
 
 #[tauri::command]
@@ -646,12 +669,7 @@ pub async fn get_sunshine_locale() -> Result<String, String> {
         .map_err(|e| format!("Cannot get Sunshine URL: {}", e))?;
 
     let locale_url = format!("{}/api/configLocale", sunshine_url.trim_end_matches('/'));
-
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .timeout(std::time::Duration::from_secs(5))
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let client = create_https_client()?;
 
     let response = client.get(&locale_url)
         .send()
@@ -673,34 +691,11 @@ pub async fn get_sunshine_locale() -> Result<String, String> {
 /// 先读取完整配置，合并 locale 字段后再写回，避免覆盖其他配置项
 #[tauri::command]
 pub async fn set_sunshine_locale(locale: String) -> Result<String, String> {
-    let sunshine_url = get_sunshine_url().await
-        .map_err(|e| format!("Cannot get Sunshine URL: {}", e))?;
-
-    let config_url = format!("{}/api/config", sunshine_url.trim_end_matches('/'));
-
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-
-    // 先读取完整配置，再合并 locale
     let mut config_data = crate::vdd::read_full_sunshine_config().await
         .unwrap_or_default();
     config_data.insert("locale".to_string(), serde_json::json!(locale));
 
-    let response = client.post(&config_url)
-        .json(&config_data)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to call Sunshine Config API: {}", e))?;
-
-    if response.status().is_success() {
-        info!("✅ Locale updated to '{}' via Sunshine API", locale);
-        Ok("success".to_string())
-    } else {
-        let status = response.status();
-        let error_body = response.text().await.unwrap_or_default();
-        Err(format!("Sunshine Config API error (status: {}): {}", status, error_body))
-    }
+    post_sunshine_config(&config_data).await?;
+    info!("✅ Locale updated to '{}' via Sunshine API", locale);
+    Ok("success".to_string())
 }

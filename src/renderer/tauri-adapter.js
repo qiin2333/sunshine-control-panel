@@ -6,18 +6,37 @@
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-shell'
 
-// 主题相关
-export const darkMode = {
-  async toggle() {
-    return await invoke('toggle_dark_mode')
-  },
-  async system() {
-    // Tauri 使用系统主题
-    return true
-  },
+// ─── Helpers ────────────────────────────────────────────
+
+/** 调用 command，返回 { success, data, message } */
+async function wrapResult(cmd, args) {
+  try {
+    const data = await invoke(cmd, args)
+    return { success: true, data }
+  } catch (error) {
+    return { success: false, message: error }
+  }
 }
 
-// 外部 URL
+/** 调用 command，失败时返回 fallback */
+async function wrapDefault(cmd, fallback, args) {
+  try {
+    return await invoke(cmd, args)
+  } catch (error) {
+    console.warn(`${cmd} failed:`, error)
+    return fallback
+  }
+}
+
+// ─── 主题 ────────────────────────────────────────────────
+
+export const darkMode = {
+  toggle: () => invoke('toggle_dark_mode'),
+  system: async () => true,
+}
+
+// ─── 外部 URL ────────────────────────────────────────────
+
 export async function openExternalUrl(url) {
   try {
     await open(url)
@@ -28,34 +47,16 @@ export async function openExternalUrl(url) {
   }
 }
 
-// VDD 设置相关
+// ─── VDD 设置 ────────────────────────────────────────────
+
 export const vdd = {
-  async getGPUs() {
-    try {
-      const gpus = await invoke('get_gpus')
-      return { success: true, data: gpus }
-    } catch (error) {
-      return { success: false, message: error }
-    }
-  },
-
-  async loadSettings() {
-    try {
-      const settings = await invoke('load_vdd_settings')
-      return { success: true, data: settings }
-    } catch (error) {
-      return { success: false, data: null, message: error }
-    }
-  },
-
-  async saveSettings(settings) {
-    try {
-      await invoke('save_vdd_settings', { settings })
-      return { success: true }
-    } catch (error) {
-      return { success: false, message: error }
-    }
-  },
+  getGPUs: () => wrapResult('get_gpus'),
+  loadSettings: () => wrapResult('load_vdd_settings'),
+  saveSettings: (settings) => wrapResult('save_vdd_settings', { settings }),
+  getEdidFilePath: () => wrapResult('get_vdd_edid_file_path'),
+  uploadEdidFile: (fileData) => wrapResult('upload_edid_file', { fileData }),
+  readEdidFile: () => wrapResult('read_edid_file'),
+  deleteEdidFile: () => wrapResult('delete_edid_file'),
 
   async execPipeCmd(command) {
     try {
@@ -66,266 +67,64 @@ export const vdd = {
       return false
     }
   },
-
-  async getEdidFilePath() {
-    try {
-      const path = await invoke('get_vdd_edid_file_path')
-      return { success: true, data: path }
-    } catch (error) {
-      return { success: false, message: error }
-    }
-  },
-
-  async uploadEdidFile(fileData) {
-    try {
-      const result = await invoke('upload_edid_file', { fileData })
-      return { success: true, data: result }
-    } catch (error) {
-      return { success: false, message: error }
-    }
-  },
-
-  async readEdidFile() {
-    try {
-      const data = await invoke('read_edid_file')
-      return { success: true, data }
-    } catch (error) {
-      return { success: false, message: error }
-    }
-  },
-
-  async deleteEdidFile() {
-    try {
-      const result = await invoke('delete_edid_file')
-      return { success: true, data: result }
-    } catch (error) {
-      return { success: false, message: error }
-    }
-  },
 }
 
-// Virtual Mouse 驱动管理
+// ─── Virtual Mouse ───────────────────────────────────────
+
 export const vmouse = {
-  async getStatus() {
-    try {
-      const status = await invoke('get_vmouse_status')
-      return { success: true, data: status }
-    } catch (error) {
-      return { success: false, message: error }
-    }
-  },
-
-  async install() {
-    try {
-      const result = await invoke('install_vmouse_driver')
-      return { success: true, data: result }
-    } catch (error) {
-      return { success: false, message: error }
-    }
-  },
-
-  async uninstall() {
-    try {
-      const result = await invoke('uninstall_vmouse_driver')
-      return { success: true, data: result }
-    } catch (error) {
-      return { success: false, message: error }
-    }
-  },
-
-  async setConfig(enabled) {
-    try {
-      const result = await invoke('set_vmouse_config', { enabled })
-      return { success: true, data: result }
-    } catch (error) {
-      return { success: false, message: error }
-    }
-  },
+  getStatus: () => wrapResult('get_vmouse_status'),
+  install: () => wrapResult('install_vmouse_driver'),
+  uninstall: () => wrapResult('uninstall_vmouse_driver'),
+  setConfig: (enabled) => wrapResult('set_vmouse_config', { enabled }),
 }
 
-// Sunshine 配置相关
+// ─── Sunshine 配置 ───────────────────────────────────────
+
 export const sunshine = {
-  async getVersion() {
-    try {
-      return await invoke('get_sunshine_version')
-    } catch (error) {
-      console.error('获取 Sunshine 版本失败:', error)
-      return 'Unknown'
-    }
-  },
-
-  async parseConfig() {
-    try {
-      return await invoke('parse_sunshine_config')
-    } catch (error) {
-      console.error('解析配置失败:', error)
-      return {}
-    }
-  },
-
-  async getUrl() {
-    try {
-      return await invoke('get_sunshine_url')
-    } catch (error) {
-      console.error('获取 Sunshine URL 失败:', error)
-      return 'https://localhost:47990/'
-    }
-  },
-
-  async getCommandLineUrl() {
-    try {
-      return await invoke('get_command_line_url')
-    } catch (error) {
-      console.error('获取命令行 URL 失败:', error)
-      return null
-    }
-  },
-
-  async getProxyUrl() {
-    try {
-      return await invoke('get_proxy_url_command')
-    } catch (error) {
-      console.error('获取代理 URL 失败:', error)
-      return 'http://localhost:48081' // 降级到默认端口
-    }
-  },
-
-  async getActiveSessions() {
-    try {
-      return await invoke('get_active_sessions')
-    } catch (error) {
-      console.error('获取活动会话失败:', error)
-      return []
-    }
-  },
-
-  async changeBitrate(clientName, bitrate) {
-    try {
-      console.log('📡 调用 change_bitrate API:', { clientName, bitrate })
-      // Tauri 会自动将驼峰命名 clientName 转换为蛇形命名 client_name
-      const result = await invoke('change_bitrate', { clientName: clientName, bitrate: bitrate })
-      console.log('✅ change_bitrate API 调用成功:', result)
-      return result
-    } catch (error) {
-      console.error('❌ 调整码率失败:', error)
-      throw error
-    }
-  },
-
-  async getLocale() {
-    try {
-      return await invoke('get_sunshine_locale')
-    } catch (error) {
-      console.error('Failed to get Sunshine locale:', error)
-      return 'en'
-    }
-  },
-
-  async setLocale(locale) {
-    try {
-      return await invoke('set_sunshine_locale', { locale })
-    } catch (error) {
-      console.error('Failed to set Sunshine locale:', error)
-      throw error
-    }
-  },
+  getVersion: () => wrapDefault('get_sunshine_version', 'Unknown'),
+  parseConfig: () => wrapDefault('parse_sunshine_config', {}),
+  getUrl: () => wrapDefault('get_sunshine_url', 'https://localhost:47990/'),
+  getCommandLineUrl: () => wrapDefault('get_command_line_url', null),
+  getProxyUrl: () => wrapDefault('get_proxy_url_command', 'http://localhost:48081'),
+  getActiveSessions: () => wrapDefault('get_active_sessions', []),
+  getLocale: () => wrapDefault('get_sunshine_locale', 'en'),
+  setLocale: (locale) => invoke('set_sunshine_locale', { locale }),
+  changeBitrate: (clientName, bitrate) => invoke('change_bitrate', { clientName, bitrate }),
 }
 
-// 系统工具相关
+// ─── 系统工具 ────────────────────────────────────────────
+
 export const tools = {
-  async restartGraphicsDriver() {
-    try {
-      return await invoke('restart_graphics_driver')
-    } catch (error) {
-      console.error('重启显卡驱动失败:', error)
-      throw error
-    }
-  },
-
-  async restartSunshineService() {
-    try {
-      return await invoke('restart_sunshine_service')
-    } catch (error) {
-      console.error('重启 Sunshine 服务失败:', error)
-      throw error
-    }
-  },
-
-  async restartSunshineInUserMode() {
-    try {
-      return await invoke('restart_sunshine_in_user_mode')
-    } catch (error) {
-      console.error('以用户模式重启 Sunshine 失败:', error)
-      throw error
-    }
-  },
-
-  async uninstallVddDriver() {
-    try {
-      return await invoke('uninstall_vdd_driver')
-    } catch (error) {
-      console.error('卸载 VDD 驱动失败:', error)
-      throw error
-    }
-  },
+  restartGraphicsDriver: () => invoke('restart_graphics_driver'),
+  restartSunshineService: () => invoke('restart_sunshine_service'),
+  restartSunshineInUserMode: () => invoke('restart_sunshine_in_user_mode'),
+  uninstallVddDriver: () => invoke('uninstall_vdd_driver'),
 }
 
-// Moonlight Web 串流服务管理
+// ─── Moonlight Web ───────────────────────────────────────
+
 export const moonlightWeb = {
-  async getStatus() {
-    try {
-      return await invoke('moonlight_web_get_status')
-    } catch (error) {
-      console.error('获取 Moonlight Web 状态失败:', error)
-      return { installed: false, running: false, install_path: '', version: '', access_url: '', port: 8080 }
-    }
-  },
-
-  async start() {
-    return await invoke('moonlight_web_start')
-  },
-
-  async stop() {
-    return await invoke('moonlight_web_stop')
-  },
-
-  async getConfig() {
-    try {
-      return await invoke('moonlight_web_get_config')
-    } catch (error) {
-      console.error('获取 Moonlight Web 配置失败:', error)
-      return { web_server: { bind_address: '0.0.0.0:8080' }, webrtc: null, default_settings: null }
-    }
-  },
-
-  async saveConfig(config) {
-    return await invoke('moonlight_web_save_config', { config })
-  },
-
-  async checkRelease() {
-    return await invoke('moonlight_web_check_release')
-  },
-
-  async download(url, version) {
-    return await invoke('moonlight_web_download', { url, version: version || '' })
-  },
-
-  async getInstallPath() {
-    return await invoke('moonlight_web_get_install_path')
-  },
-
-  async generateCert() {
-    return await invoke('moonlight_web_generate_cert')
-  },
+  getStatus: () => wrapDefault('moonlight_web_get_status',
+    { installed: false, running: false, install_path: '', version: '', access_url: '', port: 8080 }),
+  getConfig: () => wrapDefault('moonlight_web_get_config',
+    { web_server: { bind_address: '0.0.0.0:8080' }, webrtc: null, default_settings: null }),
+  start: () => invoke('moonlight_web_start'),
+  stop: () => invoke('moonlight_web_stop'),
+  saveConfig: (config) => invoke('moonlight_web_save_config', { config }),
+  checkRelease: () => invoke('moonlight_web_check_release'),
+  download: (url, version) => invoke('moonlight_web_download', { url, version: version || '' }),
+  getInstallPath: () => invoke('moonlight_web_get_install_path'),
+  generateCert: () => invoke('moonlight_web_generate_cert'),
 }
 
-// 文件系统相关（如果需要）
+// ─── 文件系统 ────────────────────────────────────────────
+
 export async function readDirectory(path) {
-  // Tauri 使用 fs API
   return []
 }
 
-// 导出统一的 API 对象
+// ─── 导出 ────────────────────────────────────────────────
+
 export default {
   darkMode,
   openExternalUrl,

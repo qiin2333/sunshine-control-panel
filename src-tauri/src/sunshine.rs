@@ -669,7 +669,8 @@ pub async fn get_sunshine_locale() -> Result<String, String> {
     }
 }
 
-/// 设置 Sunshine 配置中的 locale（部分更新，只发送 locale 字段）
+/// 设置 Sunshine 配置中的 locale
+/// 先读取完整配置，合并 locale 字段后再写回，避免覆盖其他配置项
 #[tauri::command]
 pub async fn set_sunshine_locale(locale: String) -> Result<String, String> {
     let sunshine_url = get_sunshine_url().await
@@ -683,10 +684,13 @@ pub async fn set_sunshine_locale(locale: String) -> Result<String, String> {
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
-    let payload = serde_json::json!({ "locale": locale });
+    // 先读取完整配置，再合并 locale
+    let mut config_data = crate::vdd::read_full_sunshine_config().await
+        .unwrap_or_default();
+    config_data.insert("locale".to_string(), serde_json::json!(locale));
 
     let response = client.post(&config_url)
-        .json(&payload)
+        .json(&config_data)
         .send()
         .await
         .map_err(|e| format!("Failed to call Sunshine Config API: {}", e))?;

@@ -48,6 +48,8 @@ async function syncLocaleToSunshine(locale) {
   try {
     const { sunshine } = await import('../../tauri-adapter.js')
     await sunshine.setLocale(locale)
+    // 通知 SunshineFrame 刷新 iframe 以应用新语言
+    window.dispatchEvent(new CustomEvent('locale-changed', { detail: { locale } }))
   } catch (e) {
     console.warn('Failed to sync locale to Sunshine:', e)
   }

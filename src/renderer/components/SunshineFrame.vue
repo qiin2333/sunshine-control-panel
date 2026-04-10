@@ -257,9 +257,21 @@ const setupWindowStateMonitor = async (currentWindow) => {
   return visibilityHandler
 }
 
+// 语言切换时刷新 iframe 以应用新 locale
+const handleLocaleChanged = () => {
+  if (sunshineUrl.value && sunshineUrl.value !== 'about:blank') {
+    loading.value = true
+    // 记住当前页面路径，通过 about:blank 中转刷新（避免跨域限制）
+    const targetUrl = proxyBase ? proxyBase + currentPath.value : sunshineUrl.value
+    sunshineUrl.value = 'about:blank'
+    setTimeout(() => { sunshineUrl.value = targetUrl }, 50)
+  }
+}
+
 // Lifecycle
 onUnmounted(() => {
   window.removeEventListener('navigate-frame', handleNavigateFrame)
+  window.removeEventListener('locale-changed', handleLocaleChanged)
   if (messageHandler) window.removeEventListener('message', messageHandler)
   if (visibilityHandlerRef) document.removeEventListener('visibilitychange', visibilityHandlerRef)
   if (pollTimer) clearInterval(pollTimer)
@@ -269,6 +281,7 @@ onUnmounted(() => {
 
 onMounted(async () => {
   window.addEventListener('navigate-frame', handleNavigateFrame)
+  window.addEventListener('locale-changed', handleLocaleChanged)
 
   try {
     const proxyBaseUrl = await sunshine.getProxyUrl()

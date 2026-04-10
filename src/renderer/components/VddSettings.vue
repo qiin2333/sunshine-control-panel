@@ -3,7 +3,7 @@
     <div class="vdd-header">
       <h2>
         <el-icon class="header-icon"><Monitor /></el-icon>
-        虚拟显示器设置
+        {{ t.vddSettings.title }}
       </h2>
     </div>
 
@@ -30,7 +30,7 @@
 
       <el-form :model="settings" label-width="120px" class="vdd-form">
         <!-- 分辨率设置 -->
-        <el-form-item label="分辨率预置">
+        <el-form-item :label="t.vddSettings.resolutionPresets">
           <div class="setting-content">
             <el-tag
               v-for="res in resolutionOptions"
@@ -50,18 +50,18 @@
               @keyup.enter="addResolution"
               @blur="handleResInputConfirm"
               size="small"
-              placeholder="例如: 1920x1080"
+              :placeholder="t.vddSettings.resPlaceholder"
               style="width: 140px"
             />
             <el-button v-else size="small" @click="showResolutionInput" class="add-btn">
               <el-icon><Plus /></el-icon>
-              新增分辨率
+              {{ t.vddSettings.addResolution }}
             </el-button>
           </div>
         </el-form-item>
 
         <!-- 显卡设置 -->
-        <el-form-item label="GPU绑定">
+        <el-form-item :label="t.vddSettings.gpuBinding">
           <div class="setting-content">
             <el-select
               v-model="gpuFriendlyName"
@@ -69,7 +69,7 @@
               allow-create
               default-first-option
               style="width: 100%; max-width: 400px"
-              placeholder="选择或输入GPU名称"
+              :placeholder="t.vddSettings.gpuPlaceholder"
               @blur="saveGpuEdit"
               @keyup.enter="saveGpuEdit"
             >
@@ -79,13 +79,13 @@
         </el-form-item>
 
         <!-- 显示器数量 -->
-        <el-form-item label="显示器数量">
+        <el-form-item :label="t.vddSettings.monitorCount">
           <el-input-number v-model="settings.monitors.count" :min="1" :max="1" disabled />
-          <span class="form-tip">当前版本仅支持1个虚拟显示器</span>
+          <span class="form-tip">{{ t.vddSettings.monitorCountTip }}</span>
         </el-form-item>
 
         <!-- 刷新率设置 -->
-        <el-form-item label="刷新率预置">
+        <el-form-item :label="t.vddSettings.refreshRatePresets">
           <div class="setting-content">
             <el-tag
               v-for="rate in refreshRateOptions"
@@ -105,12 +105,12 @@
               @keyup.enter="addRefreshRate"
               @blur="handleRateInputConfirm"
               size="small"
-              placeholder="例如: 120 或 119.88"
+              :placeholder="t.vddSettings.ratePlaceholder"
               style="width: 100px"
             />
             <el-button v-else size="small" @click="showRefreshRateInput" class="add-btn">
               <el-icon><Plus /></el-icon>
-              新增刷新率
+              {{ t.vddSettings.addRefreshRate }}
             </el-button>
           </div>
         </el-form-item>
@@ -118,20 +118,20 @@
         <!-- 两列布局容器 -->
         <div class="two-column-layout">
           <!-- SDR10 -->
-          <el-form-item label="SDR 10bit">
+          <el-form-item :label="t.vddSettings.sdr10bit">
             <el-switch v-model="settings.colour.SDR10bit" />
-            <span class="form-tip">启用10bit SDR色彩深度</span>
+            <span class="form-tip">{{ t.vddSettings.sdr10bitTip }}</span>
           </el-form-item>
 
           <!-- HDR+ -->
-          <el-form-item label="HDR 12bit">
+          <el-form-item :label="t.vddSettings.hdr12bit">
             <el-switch v-model="settings.colour.HDRPlus" />
-            <span class="form-tip">启用12bit HDR+色彩深度</span>
+            <span class="form-tip">{{ t.vddSettings.hdr12bitTip }}</span>
           </el-form-item>
 
           <!-- 色彩模式 -->
-          <el-form-item label="色彩模式">
-            <el-select v-model="settings.colour.ColourFormat" placeholder="请选择色彩模式" style="width: 180px">
+          <el-form-item :label="t.vddSettings.colorMode">
+            <el-select v-model="settings.colour.ColourFormat" :placeholder="t.vddSettings.selectColorMode" style="width: 180px">
               <el-option label="RGB" value="RGB" />
               <el-option label="YCbCr444" value="YCbCr444" />
               <el-option label="YCbCr422" value="YCbCr422" />
@@ -140,37 +140,37 @@
           </el-form-item>
 
           <!-- 日志 -->
-          <el-form-item label="日志记录">
+          <el-form-item :label="t.vddSettings.loggingLabel">
             <el-switch v-model="settings.logging.logging" />
-            <span class="form-tip">记录驱动运行关键事件（错误、状态变化）</span>
+            <span class="form-tip">{{ t.vddSettings.loggingTip }}</span>
           </el-form-item>
 
           <!-- 调试日志（仅在日志开启时显示） -->
-          <el-form-item label="详细调试" v-if="settings.logging.logging">
+          <el-form-item :label="t.vddSettings.debugLogging" v-if="settings.logging.logging">
             <el-switch v-model="settings.logging.debuglogging" />
-            <span class="form-tip">记录所有驱动内部调用（排障用，日志量极大）</span>
+            <span class="form-tip">{{ t.vddSettings.debugLoggingTip }}</span>
           </el-form-item>
         </div>
 
         <!-- 自定义 EDID -->
-        <el-form-item label="自定义EDID">
+        <el-form-item :label="t.vddSettings.customEdid">
           <el-switch v-model="settings.edid.CustomEdid" @change="handleEdidToggle" />
-          <span class="form-tip">使用自定义EDID文件，解锁隐藏玩法。</span>
+          <span class="form-tip">{{ t.vddSettings.customEdidTip }}</span>
         </el-form-item>
 
         <!-- EDID 文件管理 -->
-        <el-form-item label="EDID文件" v-if="settings.edid.CustomEdid">
+        <el-form-item :label="t.vddSettings.edidFile" v-if="settings.edid.CustomEdid">
           <div class="edid-file-manager">
             <el-alert type="warning" :closable="false" show-icon class="edid-warning">
               <template #title>
                 <span class="warning-text"
-                  >警告：请勿修改EDID文件中的显示器名字，否则可能导致驱动无法正常工作！<br />急救方式：删除EDID文件，找Doctor挂号。</span
+                  >{{ t.vddSettings.edidWarning }}</span
                 >
               </template>
             </el-alert>
             <div class="edid-status">
               <el-tag :type="edidFileExists ? 'success' : 'info'" effect="dark">
-                {{ edidFileExists ? '已上传' : '未上传' }}
+                {{ edidFileExists ? t.vddSettings.edidUploaded : t.vddSettings.edidNotUploaded }}
               </el-tag>
               <span class="edid-path" v-if="edidFilePath">{{ edidFilePath }}</span>
             </div>
@@ -189,18 +189,18 @@
               </el-upload>
               <el-button size="small" @click="downloadEdid" :disabled="!edidFileExists">
                 <el-icon><Download /></el-icon>
-                下载当前EDID
+                {{ t.vddSettings.edidDownload }}
               </el-button>
             </div>
             <div class="edid-info" v-if="edidInfo">
               <el-descriptions :column="2" size="small" border>
-                <el-descriptions-item label="文件大小">{{ edidInfo.size }} 字节</el-descriptions-item>
-                <el-descriptions-item label="格式">
-                  {{ edidInfo.size === 128 ? '基本EDID' : edidInfo.size === 256 ? 'EDID + CEA扩展' : '未知' }}
+                <el-descriptions-item :label="t.vddSettings.edidFileSize">{{ edidInfo.size }} {{ t.vddSettings.edidBytes }}</el-descriptions-item>
+                <el-descriptions-item :label="t.vddSettings.edidFormat">
+                  {{ edidInfo.size === 128 ? t.vddSettings.edidFormatBasic : edidInfo.size === 256 ? t.vddSettings.edidFormatCea : t.vddSettings.edidFormatUnknown }}
                 </el-descriptions-item>
                 <el-descriptions-item label="Checksum" :span="2">
                   <el-tag :type="edidInfo.checksumValid ? 'success' : 'danger'" size="small">
-                    {{ edidInfo.checksumValid ? '有效' : '无效' }}
+                    {{ edidInfo.checksumValid ? t.vddSettings.edidChecksumValid : t.vddSettings.edidChecksumInvalid }}
                   </el-tag>
                 </el-descriptions-item>
               </el-descriptions>
@@ -212,7 +212,7 @@
         <el-form-item class="form-actions">
           <el-button type="primary" @click="saveSettings" size="large">
             <el-icon><UploadFilled /></el-icon>
-            保存设置
+            {{ t.vddSettings.save }}
           </el-button>
         </el-form-item>
       </el-form>
@@ -225,6 +225,9 @@ import { ref, reactive, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Monitor, Plus, UploadFilled, Setting, Document, Upload, Download } from '@element-plus/icons-vue'
 import { vdd } from '../tauri-adapter.js'
+import { useI18n } from '../desktop/i18n/index.js'
+
+const { t } = useI18n()
 
 const resolutionOptions = ref(new Set())
 const gpuFriendlyName = ref('')
@@ -292,7 +295,7 @@ const loadSettings = async () => {
   try {
     const result = await vdd.loadSettings()
     if (!result?.success) {
-      ElMessage.warning('加载默认设置')
+      ElMessage.warning(t.value.vddSettings.loadDefault)
       return
     }
 
@@ -333,10 +336,10 @@ const loadSettings = async () => {
       refreshRateOptions.value = new Set(rateArray)
     }
 
-    ElMessage.success('设置加载成功')
+    ElMessage.success(t.value.vddSettings.loadSuccess)
   } catch (error) {
-    console.error('加载设置错误:', error)
-    ElMessage.error('加载设置失败')
+    console.error('Load settings error:', error)
+    ElMessage.error(t.value.vddSettings.loadFailed)
   }
 }
 
@@ -351,7 +354,7 @@ const loadGPUs = async () => {
       }
     }
   } catch (error) {
-    console.error('获取GPU列表失败:', error)
+    console.error('Failed to get GPU list:', error)
   }
 }
 
@@ -359,7 +362,7 @@ const loadGPUs = async () => {
 const saveSettings = async () => {
   try {
     if (CHINESE_PATTERN.test(gpuFriendlyName.value)) {
-      ElMessage.error('保存失败：GPU名称不能包含中文')
+      ElMessage.error(t.value.vddSettings.saveGpuError)
       return
     }
 
@@ -388,13 +391,13 @@ const saveSettings = async () => {
     const result = await vdd.saveSettings(payload)
 
     if (result?.success) {
-      ElMessage.success('设置已保存, 若设置未生效, 请手动在设备管理器中重启 VDD 适配器')
+      ElMessage.success(t.value.vddSettings.saveSuccessDetail)
     } else {
-      throw new Error(result?.message || '未知错误')
+      throw new Error(result?.message || t.value.vddSettings.unknownError)
     }
   } catch (error) {
-    console.error('保存设置错误:', error)
-    ElMessage.error(`保存失败: ${error.message}`)
+    console.error('Save settings error:', error)
+    ElMessage.error(t.value.vddSettings.saveFailed.replace('{error}', error.message))
   }
 }
 
@@ -404,23 +407,23 @@ const validateResolution = (value) => RESOLUTION_PATTERN.test(value)
 const addResolution = () => {
   const value = newResolution.value.trim()
   if (!validateResolution(value)) {
-    ElMessage.warning('请输入正确的分辨率格式，例如：1920x1080')
+    ElMessage.warning(t.value.vddSettings.resolutionFormatError)
     newResolution.value = ''
     return
   }
   resolutionOptions.value.add(value)
   newResolution.value = ''
   showResInput.value = false
-  ElMessage.success(`已添加分辨率 ${value}`)
+  ElMessage.success(t.value.vddSettings.resolutionAdded.replace('{value}', value))
 }
 
 const removeResolution = (value) => {
   if (resolutionOptions.value.size <= 1) {
-    ElMessage.error('必须至少保留一个分辨率')
+    ElMessage.error(t.value.vddSettings.resolutionMinOne)
     return
   }
   resolutionOptions.value.delete(value)
-  ElMessage.info(`已移除分辨率 ${value}`)
+  ElMessage.info(t.value.vddSettings.resolutionRemoved.replace('{value}', value))
 }
 
 const handleResInputConfirm = () => {
@@ -446,36 +449,36 @@ const validateRefreshRate = (value) => {
 const addRefreshRate = () => {
   const value = newRefreshRate.value.trim()
   if (!validateRefreshRate(value)) {
-    ElMessage.warning('请输入有效的刷新率（支持整数或小数，如 60 或 59.94）')
+    ElMessage.warning(t.value.vddSettings.refreshRateInvalidExt)
     newRefreshRate.value = ''
     return
   }
   const rate = parseFloat(value)
   // 检查范围（允许1-480，包括NTSC帧率）
   if (rate < 1 || rate > 480) {
-    ElMessage.warning('刷新率范围应在1-480之间')
+    ElMessage.warning(t.value.vddSettings.refreshRateRangeExt)
     return
   }
   // 使用字符串格式存储，支持分数格式
   const rateStr = value
   if (refreshRateOptions.value.has(rateStr)) {
-    ElMessage.warning('该刷新率已存在')
+    ElMessage.warning(t.value.vddSettings.refreshRateExists)
     newRefreshRate.value = ''
     return
   }
   refreshRateOptions.value.add(rateStr)
   newRefreshRate.value = ''
   showRateInput.value = false
-  ElMessage.success(`已添加刷新率 ${rateStr}Hz`)
+  ElMessage.success(t.value.vddSettings.refreshRateAdded.replace('{value}', rateStr))
 }
 
 const removeRefreshRate = (value) => {
   if (refreshRateOptions.value.size <= 1) {
-    ElMessage.error('必须至少保留一个刷新率')
+    ElMessage.error(t.value.vddSettings.refreshRateMinOne)
     return
   }
   refreshRateOptions.value.delete(value)
-  ElMessage.info(`已移除刷新率 ${value}Hz`)
+  ElMessage.info(t.value.vddSettings.refreshRateRemoved.replace('{value}', value))
 }
 
 const handleRateInputConfirm = () => {
@@ -488,7 +491,7 @@ const handleRateInputConfirm = () => {
 // GPU名称保存
 const saveGpuEdit = () => {
   if (CHINESE_PATTERN.test(gpuFriendlyName.value)) {
-    ElMessage.error('GPU名称不能包含中文')
+    ElMessage.error(t.value.vddSettings.gpuNameNoChinese)
     gpuFriendlyName.value = ''
     return
   }
@@ -498,7 +501,7 @@ const saveGpuEdit = () => {
   }
 
   settings.gpu.friendlyname = gpuFriendlyName.value
-  ElMessage.success('GPU名称已更新')
+  ElMessage.success(t.value.vddSettings.gpuUpdated)
 }
 
 // ========== EDID 管理功能 ==========
@@ -547,21 +550,21 @@ const validateEdidChecksum = (data) => {
 // 处理 EDID 开关切换
 const handleEdidToggle = (value) => {
   if (value && !edidFileExists.value) {
-    ElMessage.warning('请先上传 EDID 文件')
+    ElMessage.warning(t.value.vddSettings.edidUploadFirst)
   }
 }
 
 // 处理 EDID 文件选择
 const handleEdidFileChange = async (file) => {
   if (!file || !file.raw) {
-    ElMessage.warning('请选择有效的文件')
+    ElMessage.warning(t.value.vddSettings.edidSelectValid)
     return
   }
 
   // 检查文件大小
   const fileSize = file.raw.size
   if (fileSize !== 128 && fileSize !== 256) {
-    ElMessage.error(`EDID 文件大小无效: ${fileSize} 字节（必须是 128 或 256 字节）`)
+    ElMessage.error(t.value.vddSettings.edidSizeInvalid.replace('{size}', fileSize))
     return
   }
 
@@ -575,28 +578,28 @@ const handleEdidFileChange = async (file) => {
     const headerValid = expectedHeader.every((byte, index) => uint8Array[index] === byte)
 
     if (!headerValid) {
-      ElMessage.error('EDID 文件头部格式无效')
+      ElMessage.error(t.value.vddSettings.edidHeaderInvalid)
       return
     }
 
     // 验证 checksum
     const checksumValid = validateEdidChecksum(uint8Array)
     if (!checksumValid) {
-      ElMessage.error('EDID checksum 无效')
+      ElMessage.error(t.value.vddSettings.edidChecksumError)
       return
     }
 
     // 上传文件
     const result = await vdd.uploadEdidFile(Array.from(uint8Array))
     if (result?.success) {
-      ElMessage.success('EDID 文件上传成功')
+      ElMessage.success(t.value.vddSettings.edidUploadSuccess)
       await checkEdidFile()
     } else {
-      throw new Error(result?.message || '上传失败')
+      throw new Error(result?.message || t.value.vddSettings.uploadFailed)
     }
   } catch (error) {
-    console.error('上传 EDID 文件错误:', error)
-    ElMessage.error(`上传失败: ${error.message}`)
+    console.error('Upload EDID file error:', error)
+    ElMessage.error(t.value.vddSettings.uploadError.replace('{error}', error.message))
   }
 }
 
@@ -615,13 +618,13 @@ const downloadEdid = async () => {
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
-      ElMessage.success('EDID 文件成功下载到系统Downloads目录')
+      ElMessage.success(t.value.vddSettings.edidDownloadSuccess)
     } else {
-      throw new Error(result?.message || '读取失败')
+      throw new Error(result?.message || t.value.vddSettings.readFailed)
     }
   } catch (error) {
-    console.error('下载 EDID 文件错误:', error)
-    ElMessage.error(`下载失败: ${error.message}`)
+    console.error('Download EDID file error:', error)
+    ElMessage.error(t.value.vddSettings.downloadError.replace('{error}', error.message))
   }
 }
 

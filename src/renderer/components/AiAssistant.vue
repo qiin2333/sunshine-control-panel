@@ -3,10 +3,10 @@
     <div class="ai-header">
       <h2>
         <el-icon class="header-icon"><MagicStick /></el-icon>
-        米塔 AI 助手
+        {{ t.aiAssistant.title }}
       </h2>
       <el-tag :type="config.enabled ? 'success' : 'info'" size="small">
-        {{ config.enabled ? '已启用' : '未启用' }}
+        {{ config.enabled ? t.aiAssistant.enabled : t.aiAssistant.disabled }}
       </el-tag>
     </div>
 
@@ -16,23 +16,23 @@
         <div class="section-header" @click="isChatting && (showConfigInChat = !showConfigInChat)" :style="isChatting ? 'cursor: pointer' : ''">
           <span class="section-title">
             <el-icon><Setting /></el-icon>
-            模型配置
+            {{ t.aiAssistant.modelConfig }}
           </span>
           <el-switch v-model="config.enabled" />
         </div>
 
         <el-form :model="config" label-width="120px" class="ai-form">
-          <el-form-item label="AI 供应商">
+          <el-form-item :label="t.aiAssistant.provider">
             <el-select v-model="config.provider" @change="onProviderChange" style="width: 100%; max-width: 400px">
               <el-option v-for="p in providers" :key="p.value" :label="p.label" :value="p.value" />
             </el-select>
           </el-form-item>
 
-          <el-form-item label="API 地址">
+          <el-form-item :label="t.aiAssistant.apiUrl">
             <el-input v-model="config.apiBase" placeholder="https://api.openai.com/v1" style="max-width: 400px" />
           </el-form-item>
 
-          <el-form-item label="API Key">
+          <el-form-item :label="t.aiAssistant.apiKey">
             <el-input
               v-model="config.apiKey"
               type="password"
@@ -40,10 +40,10 @@
               placeholder="sk-..."
               style="max-width: 400px"
             />
-            <span class="form-tip">密钥仅保存在本地，不会上传</span>
+            <span class="form-tip">{{ t.aiAssistant.apiKeyHint }}</span>
           </el-form-item>
 
-          <el-form-item label="模型">
+          <el-form-item :label="t.aiAssistant.model">
             <div style="display: flex; gap: 8px; width: 100%; max-width: 400px">
               <el-select
                 v-model="config.model"
@@ -51,9 +51,9 @@
                 allow-create
                 default-first-option
                 style="flex: 1"
-                placeholder="选择或输入模型名称"
+                :placeholder="t.aiAssistant.modelPlaceholder"
               >
-                <el-option-group v-if="availableModels.length > 0" label="可用模型">
+                <el-option-group v-if="availableModels.length > 0" :label="t.aiAssistant.availableModels">
                   <el-option v-for="m in availableModels" :key="m" :label="m" :value="m" />
                 </el-option-group>
               </el-select>
@@ -61,17 +61,17 @@
                 :icon="Refresh"
                 :loading="isFetchingModels"
                 @click="fetchRemoteModels"
-                title="从 API 拉取模型列表"
+:title="t.aiAssistant.fetchModels"
                 circle
               />
             </div>
-            <span class="form-tip">可手动输入任意兼容模型名称，或点击刷新从 API 拉取</span>
+            <span class="form-tip">{{ t.aiAssistant.modelHint }}</span>
           </el-form-item>
 
           <div class="form-actions">
-            <el-button type="primary" @click="testConnection" :loading="isLoading"> 测试连接 </el-button>
-            <el-button @click="saveConfig">保存配置</el-button>
-            <el-tag v-if="isConnected" type="success" class="conn-status"> ✓ 已连接 </el-tag>
+            <el-button type="primary" @click="testConnection" :loading="isLoading"> {{ t.aiAssistant.testConnection }} </el-button>
+            <el-button @click="saveConfig">{{ t.aiAssistant.saveConfig }}</el-button>
+            <el-tag v-if="isConnected" type="success" class="conn-status"> {{ t.aiAssistant.connected }} </el-tag>
           </div>
         </el-form>
       </div>
@@ -81,16 +81,16 @@
         <div class="section-header">
           <span class="section-title">
             <el-icon><ChatDotRound /></el-icon>
-            智能对话
+            {{ t.aiAssistant.smartChat }}
           </span>
-          <el-button size="small" text @click="clearHistory">清空记录</el-button>
+          <el-button size="small" text @click="clearHistory">{{ t.aiAssistant.clearHistory }}</el-button>
         </div>
 
         <div class="chat-messages" ref="chatContainer">
           <div v-if="chatHistory.length === 0" class="welcome-hint">
-            <div class="hint-icon mita-avatar-lg"><img src="/mita-pixel.png" alt="米塔" class="mita-pixel-img-lg" /></div>
-            <p>哼，又是你啊~我是米塔♡ 你的 Sunshine 不会自己配吗，杂鱼~</p>
-            <p class="hint-sub">切、快说你想要什么吧，本小姐大发慈悲帮你生成命令：</p>
+            <div class="hint-icon mita-avatar-lg"><img src="/mita-pixel.png" :alt="t.aiAssistant.mitaName" class="mita-pixel-img-lg" /></div>
+            <p>{{ t.aiAssistant.welcomeMsg }}</p>
+            <p class="hint-sub">{{ t.aiAssistant.welcomeHint }}</p>
             <div class="hint-examples">
               <el-tag
                 v-for="example in exampleQueries"
@@ -107,7 +107,7 @@
           <div v-for="(msg, idx) in chatHistory" :key="idx" class="chat-message" :class="msg.role">
             <div class="msg-avatar">
               <template v-if="msg.role === 'user'">👤</template>
-              <img v-else src="/mita-pixel.png" alt="米塔" class="mita-avatar mita-pixel-img" />
+              <img v-else src="/mita-pixel.png" :alt="t.aiAssistant.mitaName" class="mita-avatar mita-pixel-img" />
             </div>
             <div class="msg-bubble">
               <div class="msg-content" v-html="formatMessage(msg.content)"></div>
@@ -121,13 +121,13 @@
               </div>
               <span class="msg-time">{{ formatTime(msg.timestamp) }}</span>
               <el-button v-if="msg.isError" class="retry-btn" type="warning" size="small" :icon="RefreshRight" @click="retryLastMessage" round>
-                重试
+                {{ t.aiAssistant.retry }}
               </el-button>
             </div>
           </div>
 
           <div v-if="isLoading" class="chat-message assistant">
-            <div class="msg-avatar"><img src="/mita-pixel.png" alt="米塔" class="mita-avatar mita-pixel-img" /></div>
+            <div class="msg-avatar"><img src="/mita-pixel.png" :alt="t.aiAssistant.mitaName" class="mita-avatar mita-pixel-img" /></div>
             <div class="msg-bubble loading">
               <span class="dot-loader"> <span></span><span></span><span></span> </span>
             </div>
@@ -137,7 +137,7 @@
         <div class="chat-input-area">
           <el-input
             v-model="currentInput"
-            placeholder="输入你的需求，例如：帮我把编码器切换到 HEVC..."
+:placeholder="t.aiAssistant.inputPlaceholder"
             @keydown.enter.exact.prevent="handleSend"
             :disabled="!config.enabled"
           />
@@ -149,7 +149,7 @@
             :disabled="!config.enabled || !currentInput.trim()"
             class="send-btn"
           >
-            发送
+            {{ t.aiAssistant.send }}
           </el-button>
         </div>
       </div>
@@ -159,7 +159,7 @@
         <div class="section-header">
           <span class="section-title">
             <el-icon><Opportunity /></el-icon>
-            米塔
+            {{ t.aiAssistant.mitaName }}
           </span>
         </div>
         <div class="capabilities">
@@ -193,6 +193,9 @@ import {
   RefreshRight,
 } from '@element-plus/icons-vue'
 import { useAiAssistant, AI_PROVIDERS } from '../composables/useAiAssistant.js'
+import { useI18n } from '../desktop/i18n/index.js'
+
+const { t } = useI18n()
 
 const emit = defineEmits(['close'])
 
@@ -221,38 +224,38 @@ const showConfigInChat = ref(false)
 const isChatting = computed(() => chatHistory.value.length > 0 || isLoading.value)
 
 // 示例问题
-const exampleQueries = [
-  '给 Desktop 添加一个打开触摸键盘的菜单命令',
-  '串流前关闭 Windows Game Bar，结束后恢复',
-  '串流前切换到高性能电源计划',
-  '帮我的游戏添加优化配置',
-  '添加一个切换 HDR 的菜单命令',
-  '帮我看看日志有没有报错',
-  '串流连接失败，帮我分析一下原因',
-]
+const exampleQueries = computed(() => [
+  t.value.aiAssistant.exampleQueries.addKeyboardCmd,
+  t.value.aiAssistant.exampleQueries.closeGameBar,
+  t.value.aiAssistant.exampleQueries.highPerfPlan,
+  t.value.aiAssistant.exampleQueries.optimizeGame,
+  t.value.aiAssistant.exampleQueries.toggleHdr,
+  t.value.aiAssistant.exampleQueries.checkLogs,
+  t.value.aiAssistant.exampleQueries.analyzeConnection,
+])
 
 // AI 能力列表
-const capabilities = [
-  { icon: Setting, title: '菜单命令生成', desc: '用自然语言描述需求，AI 自动生成可执行的菜单命令' },
-  { icon: VideoCamera, title: '预处理命令生成', desc: '串流前自动执行的 do/undo 命令对' },
-  { icon: Monitor, title: '游戏配置增强', desc: '为扫描到的游戏批量生成最佳 prep-cmd 和 menu-cmd' },
-  { icon: Connection, title: '串流优化', desc: '根据使用场景自动推荐最佳配置' },
-  { icon: Headset, title: '音视频调优', desc: '音频通道、采样率等音视频参数调优' },
-  { icon: Picture, title: '应用管理', desc: '添加、编辑串流应用程序配置' },
-  { icon: ChatDotRound, title: '日志诊断', desc: '分析 Sunshine 运行日志，诊断串流问题和报错原因' },
-]
+const capabilities = computed(() => [
+  { icon: Setting, title: t.value.aiAssistant.capabilities.menuCmdTitle, desc: t.value.aiAssistant.capabilities.menuCmdDesc },
+  { icon: VideoCamera, title: t.value.aiAssistant.capabilities.prepCmdTitle, desc: t.value.aiAssistant.capabilities.prepCmdDesc },
+  { icon: Monitor, title: t.value.aiAssistant.capabilities.gameConfigTitle, desc: t.value.aiAssistant.capabilities.gameConfigDesc },
+  { icon: Connection, title: t.value.aiAssistant.capabilities.streamOptTitle, desc: t.value.aiAssistant.capabilities.streamOptDesc },
+  { icon: Headset, title: t.value.aiAssistant.capabilities.audioTitle, desc: t.value.aiAssistant.capabilities.audioDesc },
+  { icon: Picture, title: t.value.aiAssistant.capabilities.appMgmtTitle, desc: t.value.aiAssistant.capabilities.appMgmtDesc },
+  { icon: ChatDotRound, title: t.value.aiAssistant.capabilities.logDiagTitle, desc: t.value.aiAssistant.capabilities.logDiagDesc },
+])
 
 /**
  * 获取操作按钮文案
  */
 function getActionButtonText(action) {
   const map = {
-    add_menu_cmd: '📋 添加这些菜单命令',
-    add_prep_cmd: '⚙️ 添加预处理命令',
-    enhance_apps: '🎮 增强应用配置',
-    modify_config: '✅ 应用此修改',
+    add_menu_cmd: t.value.aiAssistant.actions.addMenuCmd,
+    add_prep_cmd: t.value.aiAssistant.actions.addPrepCmd,
+    enhance_apps: t.value.aiAssistant.actions.enhanceApps,
+    modify_config: t.value.aiAssistant.actions.modifyConfig,
   }
-  return map[action.action] || '✅ 应用'
+  return map[action.action] || t.value.aiAssistant.actions.apply
 }
 
 /**
@@ -262,10 +265,10 @@ function getActionHint(action) {
   const appName = action.app_name || 'Desktop'
   const count = action.commands?.length || action.changes?.length || action.apps?.length || 0
   const map = {
-    add_menu_cmd: `将添加 ${count} 条菜单命令到 "${appName}"`,
-    add_prep_cmd: `将添加 ${count} 条预处理命令到 "${appName}"`,
-    enhance_apps: `将增强 ${count} 个应用的配置`,
-    modify_config: `将修改 ${count} 项配置`,
+    add_menu_cmd: t.value.aiAssistant.actionHints.addMenuCmd.replace('{count}', count).replace('{appName}', appName),
+    add_prep_cmd: t.value.aiAssistant.actionHints.addPrepCmd.replace('{count}', count).replace('{appName}', appName),
+    enhance_apps: t.value.aiAssistant.actionHints.enhanceApps.replace('{count}', count),
+    modify_config: t.value.aiAssistant.actionHints.modifyConfig.replace('{count}', count),
   }
   return map[action.action] || ''
 }

@@ -1,14 +1,14 @@
 <template>
   <div class="tool-container" :class="{ 'embedded': embedded }">
     <div v-if="!embedded" class="tool-header">
-      <h2>调整 DPI</h2>
+      <h2>{{ t.dpiTool.title }}</h2>
       <button class="close-btn" @click="$emit('close')">×</button>
     </div>
 
     <div class="tool-content">
       <div class="dpi-display">
         <span class="dpi-value" v-if="!loading">{{ dpiValue }}%</span>
-        <span class="dpi-value loading" v-else>加载中...</span>
+        <span class="dpi-value loading" v-else>{{ t.dpiTool.loading }}</span>
       </div>
 
       <div class="slider-container">
@@ -36,7 +36,7 @@
 
       <div class="actions">
         <button @click="applyDpi" class="apply-btn" :disabled="applying">
-          {{ applying ? '应用中...' : '应用' }}
+          {{ applying ? t.dpiTool.applying : t.dpiTool.apply }}
         </button>
       </div>
 
@@ -50,6 +50,9 @@
 <script setup>
 import { ref, onMounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
+import { useI18n } from '../../desktop/i18n/index.js';
+
+const { t } = useI18n();
 
 defineProps({
   embedded: {
@@ -86,14 +89,14 @@ const applyDpi = async () => {
   
   try {
     await invoke('set_desktop_dpi', { dpi: dpiValue.value });
-    message.value = `✅ DPI 已设置为 ${dpiValue.value}%`;
+    message.value = t.value.dpiTool.success.replace('{value}', dpiValue.value);
     messageType.value = 'success';
     
     setTimeout(async () => {
       try {
         const currentDpi = await invoke('get_current_dpi');
         if (currentDpi !== dpiValue.value) {
-          message.value = `⚠️ DPI 已设置，当前显示为 ${currentDpi}%（可能需要重启应用）`;
+          message.value = t.value.dpiTool.successPartial.replace('{value}', currentDpi);
           messageType.value = 'warning';
         }
       } catch (error) {
@@ -102,7 +105,7 @@ const applyDpi = async () => {
     }, 1000);
     
   } catch (error) {
-    message.value = `❌ 设置失败: ${error}`;
+    message.value = t.value.dpiTool.failed.replace('{error}', error);
     messageType.value = 'error';
   } finally {
     applying.value = false;

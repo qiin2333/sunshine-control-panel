@@ -1,21 +1,21 @@
 <template>
   <div class="tool-container" :class="{ 'embedded': embedded }">
     <div v-if="!embedded" class="tool-header">
-      <h2>码率调整</h2>
+      <h2>{{ t.bitrateTool.title }}</h2>
       <button class="close-btn" @click="$emit('close')">×</button>
     </div>
 
     <div class="tool-content">
       <!-- 客户端选择 -->
       <div class="section">
-        <label class="section-label">选择客户端</label>
+        <label class="section-label">{{ t.bitrateTool.selectClient }}</label>
         <select
           v-model="selectedClient"
           class="client-select"
           :disabled="isLoading || applying"
           @change="onClientChange"
         >
-          <option value="">-- 请选择客户端 --</option>
+          <option value="">{{ t.bitrateTool.selectClientPlaceholder }}</option>
           <option v-for="session in activeSessions" :key="session.client_name" :value="session.client_name">
             {{ session.client_name }} ({{ session.width }}x{{ session.height }}@{{ session.fps }}fps)
           </option>
@@ -25,7 +25,7 @@
           :class="{ refreshing }"
           @click="loadSessions(true)"
           :disabled="isLoading || applying"
-          title="刷新一下"
+          :title="t.bitrateTool.refresh"
         >
           <el-icon :size="18" :class="{ spinning: refreshing }">
             <RefreshRight />
@@ -35,17 +35,17 @@
 
       <!-- 加载状态（仅首次加载时显示） -->
       <div v-if="isLoading" class="loading-state">
-        <p>加载中...</p>
+        <p>{{ t.bitrateTool.loading }}</p>
       </div>
 
       <!-- 无会话提示 -->
       <template v-else-if="activeSessions.length === 0">
         <div class="empty-state">
           <div class="icon">📡</div>
-          <p>杂鱼~ 没有开始串流还在调码率呢</p>
-          <p class="subtitle">串流进来再说嘛</p>
+          <p>{{ t.bitrateTool.noStream }}</p>
+          <p class="subtitle">{{ t.bitrateTool.noStreamSub }}</p>
           <p v-if="allSessions.length > 0" class="subtitle warning-text">
-            检测到 {{ allSessions.length }} 个会话，但是它们好像都在摸鱼呢
+            {{ t.bitrateTool.sessionsIdle.replace('{count}', allSessions.length) }}
           </p>
         </div>
       </template>
@@ -56,9 +56,9 @@
           <!-- 当前码率显示 -->
           <div class="bitrate-display">
             <span class="bitrate-value">{{ formatBitrate(bitrateValue) }}</span>
-            <span class="bitrate-label">目标码率</span>
+            <span class="bitrate-label">{{ t.bitrateTool.targetBitrate }}</span>
             <div v-if="currentBitrate" class="current-bitrate">
-              <span class="current-bitrate-label">当前码率:</span>
+              <span class="current-bitrate-label">{{ t.bitrateTool.currentBitrate }}</span>
               <span class="current-bitrate-value">{{ formatBitrate(currentBitrate) }}</span>
             </div>
           </div>
@@ -104,7 +104,7 @@
               :step="BITRATE_LIMITS.STEP"
               class="bitrate-input"
               :disabled="applying"
-              placeholder="输入码率 (Kbps)"
+              :placeholder="t.bitrateTool.inputPlaceholder"
             />
             <span class="input-label">Kbps</span>
           </div>
@@ -112,7 +112,7 @@
           <!-- 应用按钮 -->
           <div class="actions">
             <button @click="applyBitrate" class="apply-btn" :disabled="applying || !selectedClient">
-              {{ applying ? '调整中...' : '应用码率' }}
+              {{ applying ? t.bitrateTool.applying : t.bitrateTool.apply }}
             </button>
           </div>
         </div>
@@ -121,7 +121,7 @@
       <!-- 未选择客户端提示 -->
       <div v-else class="empty-state">
         <div class="icon">👆</div>
-        <p>请先选择一个客户端</p>
+        <p>{{ t.bitrateTool.selectFirst }}</p>
       </div>
 
       <!-- 消息提示 -->
@@ -138,6 +138,9 @@
 import { ref, computed, onMounted } from 'vue'
 import { sunshine } from '../../tauri-adapter.js'
 import { RefreshRight } from '@element-plus/icons-vue'
+import { useI18n } from '../../desktop/i18n/index.js'
+
+const { t } = useI18n()
 
 // 常量定义
 const BITRATE_LIMITS = Object.freeze({

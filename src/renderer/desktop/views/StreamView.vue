@@ -1,14 +1,14 @@
 <template>
   <div class="stream-view">
     <div class="page-header fade-in">
-      <h1 class="page-title">串流配置</h1>
-      <p class="page-subtitle">快速调整 Sunshine 核心串流参数</p>
+      <h1 class="page-title">{{ t.stream.pageTitle }}</h1>
+      <p class="page-subtitle">{{ t.stream.pageSubtitle }}</p>
     </div>
 
     <!-- 加载状态 -->
     <div v-if="loading" class="loading-state fade-in">
       <div class="loading-spinner"></div>
-      <span>正在读取 Sunshine 配置…</span>
+      <span>{{ t.stream.loading }}</span>
     </div>
 
     <template v-else>
@@ -17,7 +17,7 @@
         <div class="card-header">
           <div class="card-title">
             <span class="title-icon">🎬</span>
-            编码格式
+            {{ t.stream.codec.format }}
           </div>
         </div>
         <div class="card-content">
@@ -32,7 +32,7 @@
               <div class="codec-header">
                 <span class="codec-name">{{ codec.name }}</span>
                 <span class="codec-toggle" :class="{ on: configData[codec.key] > 0 }">
-                  {{ configData[codec.key] > 0 ? '已启用' : '未启用' }}
+                  {{ configData[codec.key] > 0 ? t.stream.codec.enabled : t.stream.codec.disabled }}
                 </span>
               </div>
               <div class="codec-desc">{{ codec.desc }}</div>
@@ -50,7 +50,7 @@
           <div class="card-header">
             <div class="card-title">
               <span class="title-icon">📊</span>
-              码率上限
+              {{ t.stream.bitrateLimit }}
             </div>
             <div class="card-actions">
               <span class="bitrate-badge">{{ bitrateDisplay }}</span>
@@ -73,7 +73,7 @@
               <button class="preset-btn" @click="bitrateKbps = 20000">20 Mbps</button>
               <button class="preset-btn" @click="bitrateKbps = 50000">50 Mbps</button>
               <button class="preset-btn" @click="bitrateKbps = 100000">100 Mbps</button>
-              <button class="preset-btn" @click="bitrateKbps = 0">不限制</button>
+              <button class="preset-btn" @click="bitrateKbps = 0">{{ t.stream.bitrateUnlimited }}</button>
             </div>
           </div>
         </div>
@@ -82,21 +82,21 @@
           <div class="card-header">
             <div class="card-title">
               <span class="title-icon">🌈</span>
-              HDR
+              {{ t.stream.hdr }}
             </div>
           </div>
           <div class="card-content">
             <div class="toggle-row">
               <div class="toggle-info">
-                <div class="toggle-label">自动 HDR 切换</div>
-                <div class="toggle-desc">串流时自动开启/关闭 HDR</div>
+                <div class="toggle-label">{{ t.stream.hdrAutoSwitch }}</div>
+                <div class="toggle-desc">{{ t.stream.hdrAutoSwitchDesc }}</div>
               </div>
               <button 
                 class="toggle-btn" 
                 :class="{ on: configData.hdr_prep === 'automatic' }"
                 @click="configData.hdr_prep = configData.hdr_prep === 'automatic' ? 'no_operation' : 'automatic'"
               >
-                {{ configData.hdr_prep === 'automatic' ? '自动' : '手动' }}
+                {{ configData.hdr_prep === 'automatic' ? t.stream.hdrMode.auto : t.stream.hdrMode.manual }}
               </button>
             </div>
           </div>
@@ -108,31 +108,31 @@
         <div class="card-header">
           <div class="card-title">
             <span class="title-icon">🖥️</span>
-            显示与捕获
+            {{ t.stream.displayCapture }}
           </div>
         </div>
         <div class="card-content settings-list">
           <div class="setting-row">
             <div class="setting-info">
-              <div class="setting-label">输出显示器</div>
-              <div class="setting-desc">选择串流捕获的显示器</div>
+              <div class="setting-label">{{ t.stream.outputDisplay }}</div>
+              <div class="setting-desc">{{ t.stream.outputDisplayDesc }}</div>
             </div>
             <FdDropdown 
               v-model="configData.output_name" 
               :options="displayOptions" 
-              placeholder="自动选择" 
+              :placeholder="t.stream.outputDisplayAuto" 
             />
           </div>
           <div class="setting-row">
             <div class="setting-info">
-              <div class="setting-label">分辨率自适应</div>
-              <div class="setting-desc">根据客户端请求自动切换分辨率</div>
+              <div class="setting-label">{{ t.stream.resolutionAdapt }}</div>
+              <div class="setting-desc">{{ t.stream.resolutionAdaptDesc }}</div>
             </div>
             <PillGroup v-model="configData.resolution_change" :options="adaptModes" />
           </div>
           <div v-if="configData.resolution_change === 2" class="setting-row sub">
             <div class="setting-info">
-              <div class="setting-label">手动分辨率</div>
+              <div class="setting-label">{{ t.stream.manualResolution }}</div>
             </div>
             <input 
               v-model="configData.manual_resolution" 
@@ -142,14 +142,14 @@
           </div>
           <div class="setting-row">
             <div class="setting-info">
-              <div class="setting-label">刷新率自适应</div>
-              <div class="setting-desc">根据客户端请求自动切换刷新率</div>
+              <div class="setting-label">{{ t.stream.refreshRateAdapt }}</div>
+              <div class="setting-desc">{{ t.stream.refreshRateAdaptDesc }}</div>
             </div>
             <PillGroup v-model="configData.refresh_rate_change" :options="adaptModes" />
           </div>
           <div v-if="configData.refresh_rate_change === 2" class="setting-row sub">
             <div class="setting-info">
-              <div class="setting-label">手动刷新率</div>
+              <div class="setting-label">{{ t.stream.manualRefreshRate }}</div>
             </div>
             <input 
               v-model="configData.manual_refresh_rate" 
@@ -165,17 +165,16 @@
         <div class="card-header">
           <div class="card-title">
             <span class="title-icon">🚀</span>
-            启动模式
+            {{ t.stream.launchMode }}
           </div>
         </div>
         <div class="card-content">
           <div class="launch-mode-card" :class="{ active: autoLaunchDesktop }" @click="autoLaunchDesktop = !autoLaunchDesktop">
             <div class="launch-mode-main">
               <div class="launch-mode-info">
-                <div class="launch-mode-title">串流时自动打开 Desktop UI</div>
+                <div class="launch-mode-title">{{ t.stream.autoLaunchDesktopUI }}</div>
                 <div class="launch-mode-desc">
-                  Moonlight 连接「Desktop」后自动全屏启动本面板，
-                  提供游戏库、快捷工具等沉浸式桌面体验
+                  {{ t.stream.autoLaunchDesktopUIDesc }}
                 </div>
               </div>
               <button 
@@ -183,7 +182,7 @@
                 :class="{ on: autoLaunchDesktop }"
                 @click.stop="autoLaunchDesktop = !autoLaunchDesktop"
               >
-                {{ autoLaunchDesktop ? '已开启' : '未开启' }}
+                {{ autoLaunchDesktop ? t.stream.launchOn : t.stream.launchOff }}
               </button>
             </div>
           </div>
@@ -195,44 +194,44 @@
         <div class="card-header">
           <div class="card-title">
             <span class="title-icon">💻</span>
-            虚拟显示器 (VDD)
+            {{ t.stream.virtualDisplay }}
           </div>
         </div>
         <div class="card-content settings-list">
           <div class="setting-row">
             <div class="setting-info">
-              <div class="setting-label">物理显示器处理</div>
-              <div class="setting-desc">使用 VDD 时如何处理物理显示器</div>
+              <div class="setting-label">{{ t.stream.vddPhysicalHandling }}</div>
+              <div class="setting-desc">{{ t.stream.vddPhysicalHandlingDesc }}</div>
             </div>
             <PillGroup 
               v-model="configData.vdd_prep" 
-              :options="[{ value: 0, label: '不处理' }, { value: 1, label: '禁用物理显示器' }]" 
+              :options="[{ value: 0, label: t.stream.vddPhysicalMode.noAction }, { value: 1, label: t.stream.vddPhysicalMode.disable }]" 
             />
           </div>
           <div class="setting-row">
             <div class="setting-info">
-              <div class="setting-label">保持 VDD 启用</div>
-              <div class="setting-desc">串流结束后不销毁虚拟显示器</div>
+              <div class="setting-label">{{ t.stream.vddKeepEnabled }}</div>
+              <div class="setting-desc">{{ t.stream.vddKeepEnabledDesc }}</div>
             </div>
             <button 
               class="toggle-btn" 
               :class="{ on: configData.vdd_keep_enabled === 'enabled' }"
               @click="configData.vdd_keep_enabled = configData.vdd_keep_enabled === 'enabled' ? 'disabled' : 'enabled'"
             >
-              {{ configData.vdd_keep_enabled === 'enabled' ? '是' : '否' }}
+              {{ configData.vdd_keep_enabled === 'enabled' ? t.stream.yes : t.stream.no }}
             </button>
           </div>
           <div class="setting-row">
             <div class="setting-info">
-              <div class="setting-label">无头模式自动创建</div>
-              <div class="setting-desc">无物理显示器时自动创建 VDD</div>
+              <div class="setting-label">{{ t.stream.vddHeadlessCreate }}</div>
+              <div class="setting-desc">{{ t.stream.vddHeadlessCreateDesc }}</div>
             </div>
             <button 
               class="toggle-btn" 
               :class="{ on: configData.vdd_headless_create_enabled === 'enabled' }"
               @click="configData.vdd_headless_create_enabled = configData.vdd_headless_create_enabled === 'enabled' ? 'disabled' : 'enabled'"
             >
-              {{ configData.vdd_headless_create_enabled === 'enabled' ? '是' : '否' }}
+              {{ configData.vdd_headless_create_enabled === 'enabled' ? t.stream.yes : t.stream.no }}
             </button>
           </div>
         </div>
@@ -243,7 +242,7 @@
         <div class="card-header">
           <div class="card-title">
             <span class="title-icon">🖱️</span>
-            虚拟鼠标 (VMouse)
+            {{ t.stream.vmouse }}
           </div>
           <div class="card-actions">
             <span class="status-badge" :class="vmouseStatusClass">{{ vmouseStatusLabel }}</span>
@@ -252,8 +251,8 @@
         <div class="card-content settings-list">
           <div class="setting-row">
             <div class="setting-info">
-              <div class="setting-label">功能开关</div>
-              <div class="setting-desc">启用后使用 HID 虚拟鼠标代替 SendInput（需重启 Sunshine）</div>
+              <div class="setting-label">{{ t.stream.vmouseToggle }}</div>
+              <div class="setting-desc">{{ t.stream.vmouseToggleDesc }}</div>
             </div>
             <button 
               class="toggle-btn" 
@@ -261,13 +260,13 @@
               @click="toggleVmouse"
               :disabled="vmouseConfigSaving"
             >
-              {{ vmouseEnabled ? '已启用' : '未启用' }}
+              {{ vmouseEnabled ? t.stream.vmouseOn : t.stream.vmouseOff }}
             </button>
           </div>
           <div class="setting-row">
             <div class="setting-info">
-              <div class="setting-label">驱动状态</div>
-              <div class="setting-desc">{{ vmouseStatus.status_text || '检测中...' }}</div>
+              <div class="setting-label">{{ t.stream.vmouseDriverStatus }}</div>
+              <div class="setting-desc">{{ vmouseStatus.status_text || t.stream.vmouseDetecting }}</div>
             </div>
             <button 
               v-if="!vmouseStatus.installed"
@@ -275,7 +274,7 @@
               :disabled="vmouseInstalling"
               @click="installVmouse"
             >
-              {{ vmouseInstalling ? '安装中…' : '安装驱动' }}
+              {{ vmouseInstalling ? t.stream.vmouseInstalling : t.stream.vmouseInstall }}
             </button>
             <button 
               v-else
@@ -283,7 +282,7 @@
               :disabled="vmouseUninstalling"
               @click="uninstallVmouse"
             >
-              {{ vmouseUninstalling ? '卸载中…' : '卸载驱动' }}
+              {{ vmouseUninstalling ? t.stream.vmouseUninstalling : t.stream.vmouseUninstall }}
             </button>
           </div>
         </div>
@@ -293,7 +292,7 @@
       <div class="actions-bar fade-in">
         <span v-if="saveMsg" class="save-msg" :class="saveMsg.type">{{ saveMsg.text }}</span>
         <button class="desktop-btn primary" :disabled="saving" @click="saveSettings">
-          {{ saving ? '保存中…' : '保存设置' }}
+          {{ saving ? t.stream.saving : t.stream.saveSettings }}
         </button>
       </div>
 
@@ -306,6 +305,9 @@ import { ref, computed, onMounted } from 'vue'
 import PillGroup from '../components/PillGroup.vue'
 import FdDropdown from '../components/FdDropdown.vue'
 import { vmouse as vmouseApi } from '../../tauri-adapter.js'
+import { useI18n } from '../i18n/index.js'
+
+const { t } = useI18n()
 
 const invoke = ref(null)
 const proxyUrl = ref('http://localhost:48081')
@@ -338,29 +340,29 @@ const bitrateKbps = computed({
 
 const bitrateDisplay = computed(() => {
   const kbps = bitrateKbps.value
-  if (kbps <= 0) return '不限制'
+  if (kbps <= 0) return t.value.stream.bitrateUnlimited
   return kbps >= 1000 ? `${(kbps / 1000).toFixed(0)} Mbps` : `${kbps} Kbps`
 })
 
-const codecs = [
-  { key: 'hevc_mode', name: 'HEVC (H.265)', desc: '高效编码，主流设备广泛支持' },
-  { key: 'av1_mode', name: 'AV1', desc: '最新一代编码，需要较新硬件' },
-]
+const codecs = computed(() => [
+  { key: 'hevc_mode', name: t.value.stream.codec.hevc, desc: t.value.stream.codec.hevcDesc },
+  { key: 'av1_mode', name: t.value.stream.codec.av1, desc: t.value.stream.codec.av1Desc },
+])
 
-const codecModes = [
-  { value: 1, label: '允许' },
-  { value: 2, label: '始终' },
-  { value: 3, label: '始终+HDR' },
-]
+const codecModes = computed(() => [
+  { value: 1, label: t.value.stream.codec.allow },
+  { value: 2, label: t.value.stream.codec.always },
+  { value: 3, label: t.value.stream.codec.alwaysHdr },
+])
 
-const adaptModes = [
-  { value: 0, label: '不改变' },
-  { value: 1, label: '自动' },
-  { value: 2, label: '手动' },
-]
+const adaptModes = computed(() => [
+  { value: 0, label: t.value.stream.adaptMode.noChange },
+  { value: 1, label: t.value.stream.adaptMode.auto },
+  { value: 2, label: t.value.stream.adaptMode.manual },
+])
 
 const displayOptions = computed(() => {
-  const opts = [{ value: '', label: '自动选择' }]
+  const opts = [{ value: '', label: t.value.stream.outputDisplayAuto }]
   for (const d of displays.value) {
     opts.push({ value: d, label: d })
   }
@@ -442,7 +444,7 @@ async function saveSettings() {
     // 先获取当前完整配置，避免覆盖其他字段
     const current = await apiFetch('/api/config')
     if (current.status?.toString() !== 'true') {
-      saveMsg.value = { type: 'error', text: '读取当前配置失败' }
+      saveMsg.value = { type: 'error', text: t.value.stream.msg.readFailed }
       return
     }
 
@@ -463,7 +465,7 @@ async function saveSettings() {
       body: JSON.stringify(payload),
     })
     if (result.status?.toString() !== 'true') {
-      saveMsg.value = { type: 'error', text: result.error || '保存配置失败' }
+      saveMsg.value = { type: 'error', text: result.error || t.value.stream.msg.saveFailed }
       return
     }
 
@@ -471,10 +473,10 @@ async function saveSettings() {
     await saveDesktopLaunchMode()
 
     if (!saveMsg.value) {
-      saveMsg.value = { type: 'success', text: '已保存，部分设置需要重启 Sunshine 生效' }
+      saveMsg.value = { type: 'success', text: t.value.stream.msg.saveSuccess }
     }
   } catch (e) {
-    saveMsg.value = { type: 'error', text: '无法连接 Sunshine' }
+    saveMsg.value = { type: 'error', text: t.value.stream.msg.connectionError }
   } finally {
     saving.value = false
     setTimeout(() => { saveMsg.value = null }, 5000)
@@ -514,10 +516,10 @@ async function saveDesktopLaunchMode() {
       body: JSON.stringify({ apps: appsList, editApp }),
     })
     if (appsResult.status?.toString() !== 'true') {
-      saveMsg.value = { type: 'error', text: '启动模式保存失败: ' + (appsResult.error || '') }
+      saveMsg.value = { type: 'error', text: t.value.stream.msg.launchModeSaveFailed + ': ' + (appsResult.error || '') }
     }
   } catch (e) {
-    saveMsg.value = { type: 'error', text: '启动模式保存失败' }
+    saveMsg.value = { type: 'error', text: t.value.stream.msg.launchModeSaveFailed }
   }
 }
 
@@ -528,7 +530,7 @@ onMounted(async () => {
 })
 
 // ========== 虚拟鼠标驱动管理 ==========
-const vmouseStatus = ref({ installed: false, running: false, status_text: '检测中...', driver_path: '', config_enabled: true })
+const vmouseStatus = ref({ installed: false, running: false, status_text: t.value.stream.vmouseDetecting, driver_path: '', config_enabled: true })
 const vmouseEnabled = ref(true)
 const vmouseConfigSaving = ref(false)
 const vmouseInstalling = ref(false)
@@ -541,9 +543,9 @@ const vmouseStatusClass = computed(() => {
 })
 
 const vmouseStatusLabel = computed(() => {
-  if (vmouseStatus.value.running) return '运行中'
-  if (vmouseStatus.value.installed) return '已安装'
-  return '未安装'
+  if (vmouseStatus.value.running) return t.value.stream.vmouseStatusRunning
+  if (vmouseStatus.value.installed) return t.value.stream.vmouseStatusInstalled
+  return t.value.stream.vmouseStatusNotInstalled
 })
 
 async function loadVmouseStatus() {
@@ -576,7 +578,7 @@ async function toggleVmouse() {
 }
 
 async function installVmouse() {
-  if (!confirm('将安装虚拟鼠标驱动，需要管理员权限。\n\n是否继续？')) return
+  if (!confirm(t.value.stream.msg.vmouseInstallConfirm)) return
   vmouseInstalling.value = true
   try {
     const result = await vmouseApi.install()
@@ -584,17 +586,17 @@ async function installVmouse() {
       alert(result.data)
       setTimeout(() => loadVmouseStatus(), 2000)
     } else {
-      alert('安装失败: ' + (result?.message || '未知错误'))
+      alert(t.value.stream.msg.vmouseInstallFailed + (result?.message || ''))
     }
   } catch (e) {
-    alert('安装失败: ' + e)
+    alert(t.value.stream.msg.vmouseInstallFailed + e)
   } finally {
     vmouseInstalling.value = false
   }
 }
 
 async function uninstallVmouse() {
-  if (!confirm('确定要卸载虚拟鼠标驱动吗？\nSunshine 将回退到 SendInput 方式。')) return
+  if (!confirm(t.value.stream.msg.vmouseUninstallConfirm)) return
   vmouseUninstalling.value = true
   try {
     const result = await vmouseApi.uninstall()
@@ -602,10 +604,10 @@ async function uninstallVmouse() {
       alert(result.data)
       setTimeout(() => loadVmouseStatus(), 2000)
     } else {
-      alert('卸载失败: ' + (result?.message || '未知错误'))
+      alert(t.value.stream.msg.vmouseUninstallFailed + (result?.message || ''))
     }
   } catch (e) {
-    alert('卸载失败: ' + e)
+    alert(t.value.stream.msg.vmouseUninstallFailed + e)
   } finally {
     vmouseUninstalling.value = false
   }

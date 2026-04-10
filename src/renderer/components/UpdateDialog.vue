@@ -17,14 +17,14 @@
       <!-- 下载进度 (仅新版本) -->
       <div v-if="!isLatest && isDownloadInProgress" class="download-progress">
         <el-progress :percentage="downloadProgress" :stroke-width="8" />
-        <p class="progress-text">正在下载... {{ downloadProgress }}%</p>
+        <p class="progress-text">{{ t.updateDialog.downloading.replace('{progress}', downloadProgress) }}</p>
       </div>
 
       <!-- 安装提示 (仅新版本) -->
       <div v-if="!isLatest && isInstalling" class="install-notice">
         <el-alert type="warning" :closable="false" show-icon>
           <template #title>
-            <p>正在准备安装更新，系统将自动关闭服务并启动安装程序</p>
+            <p>{{ t.updateDialog.preparingInstall }}</p>
           </template>
         </el-alert>
       </div>
@@ -33,20 +33,20 @@
     <template #footer>
       <div class="dialog-footer">
         <template v-if="isLatest">
-          <el-button @click="handleOpenBrowser">在浏览器中查看</el-button>
-          <el-button type="primary" @click="handleCancel">关闭</el-button>
+          <el-button @click="handleOpenBrowser">{{ t.updateDialog.viewInBrowser }}</el-button>
+          <el-button type="primary" @click="handleCancel">{{ t.updateDialog.close }}</el-button>
         </template>
         <template v-else>
           <template v-if="showDownloadButtons">
-            <el-button @click="handleOpenBrowser">在浏览器中打开</el-button>
-            <el-button @click="handleSkipVersion">忽略此版本</el-button>
-            <el-button @click="handleCancel">稍后提醒</el-button>
+            <el-button @click="handleOpenBrowser">{{ t.updateDialog.openInBrowser }}</el-button>
+            <el-button @click="handleSkipVersion">{{ t.updateDialog.skipVersion }}</el-button>
+            <el-button @click="handleCancel">{{ t.updateDialog.remindLater }}</el-button>
             <el-button type="primary" :loading="isDownloading" @click="handleDownload">
               <el-icon><Download /></el-icon>
-              下载并安装
+              {{ t.updateDialog.downloadAndInstall }}
             </el-button>
           </template>
-          <el-button v-if="isInstalling" type="primary" disabled>正在安装...</el-button>
+          <el-button v-if="isInstalling" type="primary" disabled>{{ t.updateDialog.installing }}</el-button>
         </template>
       </div>
     </template>
@@ -58,6 +58,9 @@ import { ref, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
+import { useI18n } from '../desktop/i18n/index.js'
+
+const { t } = useI18n()
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -81,9 +84,9 @@ const isLatest = computed(() => !!props.updateInfo?.is_latest)
 const dialogTitle = computed(() => {
   const ver = props.updateInfo?.version || ''
   if (isLatest.value) {
-    return `已经是最新版本——此版本更新内容：${ver}`
+    return t.value.updateDialog.titleLatest.replace('{version}', ver)
   }
-  return `发现新版本：${ver} （当前版本: ${props.currentVersion}）`
+  return t.value.updateDialog.titleNew.replace('{version}', ver).replace('{current}', props.currentVersion)
 })
 
 const md = new MarkdownIt({ html: true, breaks: true, linkify: true })
@@ -112,7 +115,7 @@ const getTauriApis = async () => {
 const handleDownload = async () => {
   const downloadUrl = props.updateInfo?.download_url
   if (!downloadUrl) {
-    ElMessage.warning('未找到下载链接')
+    ElMessage.warning(t.value.updateDialog.noDownloadUrl)
     return
   }
 
@@ -135,14 +138,14 @@ const handleDownload = async () => {
 
     if (result.success) {
       downloadProgress.value = 100
-      ElMessage.success('下载完成，准备安装...')
+      ElMessage.success(t.value.updateDialog.downloadComplete)
       await new Promise((resolve) => setTimeout(resolve, 1000))
       await handleInstall(result.file_path)
     } else {
-      ElMessage.error(result.message || '下载失败')
+      ElMessage.error(result.message || t.value.updateDialog.downloadFailed)
     }
   } catch (error) {
-    ElMessage.error(`下载失败: ${error}`)
+    ElMessage.error(t.value.updateDialog.downloadError.replace('{error}', error))
   } finally {
     isDownloading.value = false
   }
@@ -151,22 +154,22 @@ const handleDownload = async () => {
 const handleInstall = async (filePath) => {
   try {
     await ElMessageBox.confirm(
-      '安装更新将关闭 Sunshine 服务和 GUI 窗口，然后启动安装程序。\n安装完成后请重新启动应用。是否继续？',
-      '准备安装更新',
-      { confirmButtonText: '确定安装', cancelButtonText: '取消', type: 'warning' }
+      t.value.updateDialog.installConfirm,
+      t.value.updateDialog.installTitle,
+      { confirmButtonText: t.value.updateDialog.installConfirmBtn, cancelButtonText: t.value.updateDialog.cancelBtn, type: 'warning' }
     )
 
     isInstalling.value = true
     const { invoke } = await getTauriApis()
     await invoke('install_update', { filePath })
 
-    ElMessage.success('安装程序已启动')
+    ElMessage.success(t.value.updateDialog.installStarted)
     setTimeout(() => {
       visible.value = false
     }, 2000)
   } catch (error) {
     if (error !== 'cancel') {
-      ElMessage.error(`安装失败: ${error}`)
+      ElMessage.error(t.value.updateDialog.installError.replace('{error}', error))
       isInstalling.value = false
     }
   }
@@ -175,7 +178,7 @@ const handleInstall = async (filePath) => {
 const handleOpenBrowser = async () => {
   const releasePage = props.updateInfo?.release_page
   if (!releasePage) {
-    ElMessage.warning('未找到发布页面链接')
+    ElMessage.warning(t.value.updateDialog.noReleasePage)
     return
   }
 
@@ -183,7 +186,7 @@ const handleOpenBrowser = async () => {
     const { invoke } = await getTauriApis()
     await invoke('open_external_url', { url: releasePage })
   } catch (error) {
-    ElMessage.error(`打开浏览器失败: ${error}`)
+    ElMessage.error(t.value.updateDialog.openBrowserError.replace('{error}', error))
   }
 }
 

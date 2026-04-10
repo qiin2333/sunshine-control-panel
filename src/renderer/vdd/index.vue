@@ -1,10 +1,10 @@
 <template>
   <div class="vdd-settings">
-    <h2>虚拟显示器设置</h2>
+    <h2>{{ t.vddSettings.title }}</h2>
 
     <el-form :model="settings" label-width="120px">
       <!-- 分辨率设置 -->
-      <el-form-item label="分辨率预置">
+      <el-form-item :label="t.vddSettings.resolutionPresets">
         <div class="setting-content">
           <el-tag v-for="res in resolutionOptions" :key="res" closable @close="removeResolution(res)" class="mx-1">
             {{ res }}
@@ -29,13 +29,13 @@
               }
             "
           >
-            + 新增分辨率
+            {{ t.vddSettings.addResolution }}
           </el-button>
         </div>
       </el-form-item>
 
       <!-- 显卡设置 -->
-      <el-form-item label="GPU绑定">
+      <el-form-item :label="t.vddSettings.gpuBinding">
         <div class="setting-content">
           <el-select
             v-model="gpuFriendlyName"
@@ -52,12 +52,12 @@
       </el-form-item>
 
       <!-- 显示器数量 -->
-      <el-form-item label="显示器数量">
+      <el-form-item :label="t.vddSettings.monitorCount">
         <el-input-number v-model="settings.monitors[0].count" :min="1" :max="1" />
       </el-form-item>
 
       <!-- 刷新率设置 -->
-      <el-form-item label="刷新率预置">
+      <el-form-item :label="t.vddSettings.refreshRatePresets">
         <div class="setting-content">
           <el-tag v-for="rate in refreshRateOptions" :key="rate" closable @close="removeRefreshRate(rate)" class="mx-1">
             {{ rate }}Hz
@@ -82,7 +82,7 @@
               }
             "
           >
-            + 新增刷新率
+            {{ t.vddSettings.addRefreshRate }}
           </el-button>
         </div>
       </el-form-item>
@@ -98,8 +98,8 @@
       </el-form-item>
 
       <!-- 色彩模式 -->
-      <el-form-item label="色彩模式">
-        <el-select v-model="settings.colour[0].ColourFormat" placeholder="请选择色彩模式" style="width: 160px">
+      <el-form-item :label="t.vddSettings.colorMode">
+        <el-select v-model="settings.colour[0].ColourFormat" :placeholder="t.vddSettings.selectColorMode" style="width: 160px">
           <el-option label="RGB" value="RGB" />
           <el-option label="YCbCr444" value="YCbCr444" />
           <el-option label="YCbCr422" value="YCbCr422" />
@@ -108,13 +108,13 @@
       </el-form-item>
 
       <!-- 日志 -->
-      <el-form-item label="日志">
+      <el-form-item :label="t.vddSettings.logging">
         <el-switch v-model="settings.logging[0].logging" />
       </el-form-item>
 
       <!-- 保存按钮 -->
       <el-form-item>
-        <el-button type="primary" @click="saveSettings">保存设置</el-button>
+        <el-button type="primary" @click="saveSettings">{{ t.vddSettings.save }}</el-button>
       </el-form-item>
     </el-form>
   </div>
@@ -124,6 +124,9 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { vdd } from '@/tauri-adapter.js'
+import { useI18n } from '../desktop/i18n/index.js'
+
+const { t } = useI18n()
 
 const resolutionOptions = ref(new Set())
 const gpuFriendlyName = ref('')
@@ -169,7 +172,7 @@ const loadSettings = async () => {
   try {
     const result = await vdd.loadSettings()
     if (!result?.success) {
-      ElMessage.warning('加载默认设置')
+      ElMessage.warning(t.value.vddSettings.loadDefault)
       return
     }
 
@@ -208,10 +211,10 @@ const loadSettings = async () => {
       refreshRateOptions.value = new Set(data.global.g_refresh_rate)
     }
 
-    ElMessage.success('设置加载成功')
+    ElMessage.success(t.value.vddSettings.loadSuccess)
   } catch (error) {
-    console.error('加载设置错误:', error)
-    ElMessage.error('加载设置失败')
+    console.error('Failed to load settings:', error)
+    ElMessage.error(t.value.vddSettings.loadFailed)
   }
 }
 
@@ -227,7 +230,7 @@ const loadGPUs = async () => {
       }
     }
   } catch (error) {
-    console.error('获取GPU列表失败:', error)
+    console.error('Failed to get GPUs:', error)
   }
 }
 
@@ -235,7 +238,7 @@ const loadGPUs = async () => {
 const saveSettings = async () => {
   try {
     if (CHINESE_PATTERN.test(gpuFriendlyName.value)) {
-      ElMessage.error('保存失败：GPU名称不能包含中文')
+      ElMessage.error(t.value.vddSettings.saveGpuError)
       return
     }
 
@@ -269,13 +272,13 @@ const saveSettings = async () => {
     const result = await vdd.saveSettings(payload)
 
     if (result?.success) {
-      ElMessage.success('设置已保存')
+      ElMessage.success(t.value.vddSettings.saveSuccess)
     } else {
-      throw new Error(result?.message || '未知错误')
+      throw new Error(result?.message || 'Unknown error')
     }
   } catch (error) {
-    console.error('保存设置错误:', error)
-    ElMessage.error(`保存失败: ${error.message}`)
+    console.error('Failed to save settings:', error)
+    ElMessage.error(t.value.vddSettings.saveFailed.replace('{error}', error.message))
   }
 }
 
@@ -287,23 +290,23 @@ const validateResolution = (value) => {
 const addResolution = () => {
   const value = newResolution.value.trim()
   if (!validateResolution(value)) {
-    ElMessage.warning('请输入正确的分辨率格式，例如：1920x1080')
+    ElMessage.warning(t.value.vddSettings.resolutionFormatError)
     newResolution.value = ''
     return
   }
   resolutionOptions.value.add(value)
   newResolution.value = ''
   showResInput.value = false
-  ElMessage.success(`已添加分辨率 ${value}`)
+  ElMessage.success(t.value.vddSettings.resolutionAdded.replace('{value}', value))
 }
 
 const removeResolution = (value) => {
   if (resolutionOptions.value.size <= 1) {
-    ElMessage.error('必须至少保留一个分辨率')
+    ElMessage.error(t.value.vddSettings.resolutionMinOne)
     return
   }
   resolutionOptions.value.delete(value)
-  ElMessage.info(`已移除分辨率 ${value}`)
+  ElMessage.info(t.value.vddSettings.resolutionRemoved.replace('{value}', value))
 }
 
 const handleResInputConfirm = () => {
@@ -321,33 +324,33 @@ const validateRefreshRate = (value) => {
 const addRefreshRate = () => {
   const value = newRefreshRate.value.trim()
   if (!validateRefreshRate(value)) {
-    ElMessage.warning('请输入有效的刷新率（30-240）')
+    ElMessage.warning(t.value.vddSettings.refreshRateInvalid)
     newRefreshRate.value = ''
     return
   }
   const rate = parseInt(value)
   if (rate < MIN_REFRESH_RATE || rate > MAX_REFRESH_RATE) {
-    ElMessage.warning('刷新率范围应在30-240之间')
+    ElMessage.warning(t.value.vddSettings.refreshRateRange)
     return
   }
   if (refreshRateOptions.value.has(rate)) {
-    ElMessage.warning('该刷新率已存在')
+    ElMessage.warning(t.value.vddSettings.refreshRateExists)
     newRefreshRate.value = ''
     return
   }
   refreshRateOptions.value.add(rate)
   newRefreshRate.value = ''
   showRateInput.value = false
-  ElMessage.success(`已添加刷新率 ${rate}Hz`)
+  ElMessage.success(t.value.vddSettings.refreshRateAdded.replace('{value}', rate))
 }
 
 const removeRefreshRate = (value) => {
   if (refreshRateOptions.value.size <= 1) {
-    ElMessage.error('必须至少保留一个刷新率')
+    ElMessage.error(t.value.vddSettings.refreshRateMinOne)
     return
   }
   refreshRateOptions.value.delete(value)
-  ElMessage.info(`已移除刷新率 ${value}Hz`)
+  ElMessage.info(t.value.vddSettings.refreshRateRemoved.replace('{value}', value))
 }
 
 const handleRateInputConfirm = () => {
@@ -360,7 +363,7 @@ const handleRateInputConfirm = () => {
 // 修改保存GPU设置方法
 const saveGpuEdit = () => {
   if (CHINESE_PATTERN.test(gpuFriendlyName.value)) {
-    ElMessage.error('GPU名称不能包含中文')
+    ElMessage.error(t.value.vddSettings.gpuNameNoChinese)
     gpuFriendlyName.value = ''
     return
   }

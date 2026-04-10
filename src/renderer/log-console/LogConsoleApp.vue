@@ -4,24 +4,27 @@
     <div class="header">
       <div class="title">
         <el-icon class="title-icon"><Document /></el-icon>
-        日志控制台
+        {{ t.logConsole.title }}
       </div>
       <div class="controls">
         <button class="btn" @click="loadLogs">
           <el-icon><RefreshRight /></el-icon>
-          刷新
+          {{ t.logConsole.refresh }}
         </button>
         <button class="btn" @click="exportLogs('txt')">
           <el-icon><Download /></el-icon>
-          导出TXT
+          {{ t.logConsole.exportTxt }}
         </button>
         <button class="btn" @click="exportLogs('json')">
           <el-icon><Download /></el-icon>
-          导出JSON
+          {{ t.logConsole.exportJson }}
         </button>
         <button class="btn danger" @click="clearLogs">
           <el-icon><Delete /></el-icon>
-          清空
+          {{ t.logConsole.clear }}
+        </button>
+        <button class="btn" @click="toggleLocale">
+          {{ locale === 'zh' ? 'EN' : '中文' }}
         </button>
       </div>
     </div>
@@ -29,32 +32,32 @@
     <!-- 过滤栏 -->
     <div class="filter-bar">
       <div class="filter-group">
-        <span class="filter-label">过滤级别:</span>
+        <span class="filter-label">{{ t.logConsole.filterLevel }}:</span>
         <label class="filter-checkbox">
           <input type="checkbox" v-model="filters.error" />
-          <span class="filter-label-error">错误</span>
+          <span class="filter-label-error">{{ t.logConsole.error }}</span>
         </label>
         <label class="filter-checkbox">
           <input type="checkbox" v-model="filters.warn" />
-          <span class="filter-label-warn">警告</span>
+          <span class="filter-label-warn">{{ t.logConsole.warn }}</span>
         </label>
         <label class="filter-checkbox">
           <input type="checkbox" v-model="filters.info" />
-          <span class="filter-label-info">信息</span>
+          <span class="filter-label-info">{{ t.logConsole.info }}</span>
         </label>
         <label class="filter-checkbox">
           <input type="checkbox" v-model="filters.debug" />
-          <span class="filter-label-debug">调试</span>
+          <span class="filter-label-debug">{{ t.logConsole.debug }}</span>
         </label>
         <label class="filter-checkbox">
           <input type="checkbox" v-model="filters.trace" />
-          <span class="filter-label-trace">追踪</span>
+          <span class="filter-label-trace">{{ t.logConsole.trace }}</span>
         </label>
       </div>
       <div class="filter-group">
-        <span class="filter-label">来源文件:</span>
+        <span class="filter-label">{{ t.logConsole.sourceFile }}:</span>
         <select v-model="filters.file" class="file-filter-select">
-          <option value="">全部文件</option>
+          <option value="">{{ t.logConsole.allFiles }}</option>
           <option v-for="file in availableFiles" :key="file" :value="file">{{ file }}</option>
         </select>
       </div>
@@ -68,16 +71,16 @@
           v-model="searchKeyword"
           type="text"
           class="search-input"
-          placeholder="搜索日志内容..."
+          :placeholder="t.logConsole.searchPlaceholder"
           @input="handleSearchInput"
         />
-        <button v-if="searchKeyword" class="search-clear-btn" @click="clearSearch" title="清除搜索">
+        <button v-if="searchKeyword" class="search-clear-btn" @click="clearSearch" :title="t.logConsole.clearSearch">
           <el-icon><Close /></el-icon>
         </button>
       </div>
       <div v-if="searchKeyword" class="search-info">
         <span class="search-info-icon">🔍</span>
-        找到 <span class="search-info-count">{{ filteredLogs.length }}</span> 条匹配结果
+        {{ t.logConsole.found }} <span class="search-info-count">{{ filteredLogs.length }}</span> {{ t.logConsole.matchResults }}
       </div>
     </div>
 
@@ -91,7 +94,7 @@
           <div class="sparkle sparkle-3">✨</div>
         </div>
         <div class="empty-state-text">
-          {{ loading ? '正在加载日志中...' : searchKeyword ? '没有找到匹配的日志呢~' : '还没有日志记录哦~' }}
+          {{ loading ? t.logConsole.loadingLogs : searchKeyword ? t.logConsole.noMatch : t.logConsole.noLogs }}
         </div>
       </div>
       <div v-for="log in filteredLogs" :key="`${log.timestamp}-${log.message}`" :class="['log-entry', log.level]">
@@ -105,19 +108,19 @@
     <!-- 统计栏 -->
     <div class="stats">
       <div class="stat-item">
-        <span>总计:</span>
+        <span>{{ t.logConsole.total }}:</span>
         <span class="stat-value">{{ stats.total }}</span>
       </div>
       <div class="stat-item">
-        <span class="stat-label-error">错误:</span>
+        <span class="stat-label-error">{{ t.logConsole.error }}:</span>
         <span class="stat-value">{{ stats.error }}</span>
       </div>
       <div class="stat-item">
-        <span class="stat-label-warn">警告:</span>
+        <span class="stat-label-warn">{{ t.logConsole.warn }}:</span>
         <span class="stat-value">{{ stats.warn }}</span>
       </div>
       <div class="stat-item">
-        <span class="stat-label-info">信息:</span>
+        <span class="stat-label-info">{{ t.logConsole.info }}:</span>
         <span class="stat-value">{{ stats.info }}</span>
       </div>
     </div>
@@ -129,6 +132,9 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { Document, RefreshRight, Delete, Search, Close, Download } from '@element-plus/icons-vue'
+import { useI18n } from '../desktop/i18n/index.js'
+
+const { t, locale, toggleLocale } = useI18n()
 
 // 响应式数据
 const allLogs = ref([])
@@ -244,7 +250,7 @@ async function loadLogs() {
     const logs = await invoke('get_all_logs')
     allLogs.value = logs.reverse() // 最新的在前
   } catch (error) {
-    console.error('加载日志失败:', error)
+    console.error('Failed to load logs:', error)
   } finally {
     loading.value = false
   }
@@ -252,13 +258,13 @@ async function loadLogs() {
 
 // 清空日志
 async function clearLogs() {
-  if (await confirm('确定要清空所有日志吗？')) {
+  if (await confirm(t.value.logConsole.confirmClear)) {
     try {
       await invoke('clear_logs')
       allLogs.value = []
     } catch (error) {
-      console.error('清空日志失败:', error)
-      alert('清空日志失败: ' + error)
+      console.error('Failed to clear logs:', error)
+      alert(t.value.logConsole.clearFailed + ': ' + error)
     }
   }
 }
@@ -267,11 +273,11 @@ async function clearLogs() {
 async function exportLogs(format) {
   try {
     const result = await invoke('export_logs', { format })
-    alert(result || '日志导出成功')
+    alert(result || t.value.logConsole.exportSuccess)
   } catch (error) {
-    console.error('导出日志失败:', error)
+    console.error('Failed to export logs:', error)
     if (error && !error.includes('用户取消了保存')) {
-      alert('导出日志失败: ' + error)
+      alert(t.value.logConsole.exportFailed + ': ' + error)
     }
   }
 }

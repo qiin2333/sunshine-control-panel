@@ -7,17 +7,20 @@
 <script setup>
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { tools } from '@/tauri-adapter.js'
+import { useI18n } from '../desktop/i18n/index.js'
+
+const { t } = useI18n()
 
 // 暴露给全局使用的函数
 defineExpose({
   async confirmAndUninstallVdd() {
     try {
       await ElMessageBox.confirm(
-        '确定要卸载虚拟显示器驱动吗？此操作需要管理员权限。',
-        '确认卸载',
+        t.value.systemTools.vddUninstallConfirm,
+        t.value.systemTools.vddUninstallTitle,
         {
-          confirmButtonText: '确定',
-          cancelButtonText: '取消',
+          confirmButtonText: t.value.systemTools.confirm,
+          cancelButtonText: t.value.systemTools.cancel,
           type: 'warning',
         }
       )
@@ -26,7 +29,7 @@ defineExpose({
       ElMessage.success(result)
     } catch (error) {
       if (error !== 'cancel') {
-        ElMessage.error('卸载失败: ' + error)
+        ElMessage.error(t.value.systemTools.vddUninstallFailed.replace('{error}', error))
       }
     }
   },
@@ -34,11 +37,11 @@ defineExpose({
   async confirmAndRestartDriver() {
     try {
       await ElMessageBox.confirm(
-        '确定要重启显卡驱动吗？这将暂时中断屏幕显示。',
-        '确认重启',
+        t.value.systemTools.restartGpuConfirm,
+        t.value.systemTools.restartGpuTitle,
         {
-          confirmButtonText: '确定',
-          cancelButtonText: '取消',
+          confirmButtonText: t.value.systemTools.confirm,
+          cancelButtonText: t.value.systemTools.cancel,
           type: 'warning',
         }
       )
@@ -47,7 +50,7 @@ defineExpose({
       ElMessage.success(result)
     } catch (error) {
       if (error !== 'cancel') {
-        ElMessage.error('重启失败: ' + error)
+        ElMessage.error(t.value.systemTools.restartGpuFailed?.replace('{error}', error) || String(error))
       }
     }
   },
@@ -55,11 +58,11 @@ defineExpose({
   async confirmAndRestartSunshine() {
     try {
       await ElMessageBox.confirm(
-        '确定要重启 Sunshine 服务吗？这将断开当前所有连接。',
-        '确认重启',
+        t.value.systemTools.restartSunshineConfirm,
+        t.value.systemTools.restartSunshineTitle,
         {
-          confirmButtonText: '确定',
-          cancelButtonText: '取消',
+          confirmButtonText: t.value.systemTools.confirm,
+          cancelButtonText: t.value.systemTools.cancel,
           type: 'warning',
         }
       )
@@ -68,10 +71,10 @@ defineExpose({
       
       // 显示详细的成功提示
       await ElMessageBox.alert(
-        '重启命令已发送！\n\n如果弹出 UAC 提示，请点击"是"以确认。\nSunshine 服务将在几秒钟内重启。',
-        '重启成功',
+        t.value.systemTools.restartSunshineMsg,
+        t.value.systemTools.restartSunshineSuccess,
         {
-          confirmButtonText: '确定',
+          confirmButtonText: t.value.systemTools.confirm,
           type: 'success',
         }
       )
@@ -84,7 +87,7 @@ defineExpose({
       }, 3000)
     } catch (error) {
       if (error !== 'cancel') {
-        ElMessage.error('重启失败: ' + error)
+        ElMessage.error(t.value.systemTools.restartSunshineFailed?.replace('{error}', error) || String(error))
       }
     }
   }

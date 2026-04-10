@@ -3,17 +3,17 @@
     <div class="vmouse-header">
       <h2>
         <el-icon class="header-icon"><Mouse /></el-icon>
-        虚拟鼠标驱动
+        {{ t.vmouseSettings.title }}
       </h2>
     </div>
 
     <div class="vmouse-content">
       <el-form label-width="130px" class="vmouse-form">
         <!-- 驱动状态 -->
-        <el-form-item label="驱动状态">
+        <el-form-item :label="t.vmouseSettings.driverStatus">
           <div class="status-row">
             <el-tag :type="statusTagType" effect="dark" size="large">
-              {{ status.installed ? (status.running ? '✓ 正常运行' : '⚠ 已安装') : '✗ 未安装' }}
+              {{ status.installed ? (status.running ? t.vmouseSettings.running : t.vmouseSettings.installed) : t.vmouseSettings.notInstalled }}
             </el-tag>
             <span class="status-detail" v-if="status.status_text">{{ status.status_text }}</span>
             <el-button size="small" circle :icon="Refresh" @click="refreshStatus" :loading="refreshing" />
@@ -21,28 +21,27 @@
         </el-form-item>
 
         <!-- 启用开关（sunshine.conf 中的 virtual_mouse） -->
-        <el-form-item label="功能开关">
+        <el-form-item :label="t.vmouseSettings.functionSwitch">
           <el-switch
             v-model="configEnabled"
             @change="handleConfigToggle"
             :loading="configSaving"
-            active-text="启用"
-            inactive-text="禁用"
+            :active-text="t.vmouseSettings.switchEnabled"
+            :inactive-text="t.vmouseSettings.switchDisabled"
           />
-          <span class="form-tip">控制 Sunshine 是否使用虚拟鼠标驱动（需重启 Sunshine 生效）</span>
+          <span class="form-tip">{{ t.vmouseSettings.switchTip }}</span>
         </el-form-item>
 
         <!-- 驱动路径 -->
-        <el-form-item label="驱动路径" v-if="status.driver_path">
+        <el-form-item :label="t.vmouseSettings.driverPath" v-if="status.driver_path">
           <span class="driver-path">{{ status.driver_path }}</span>
         </el-form-item>
 
         <!-- 说明 -->
-        <el-form-item label="说明">
+        <el-form-item :label="t.vmouseSettings.description">
           <div class="description">
-            <p>虚拟鼠标驱动（UMDF HID Minidriver）在系统层面创建一个虚拟鼠标设备，
-            使游戏可以通过 Raw Input / DirectInput 接收鼠标输入，绕过 SendInput 的限制。</p>
-            <p>适用于反作弊游戏或需要硬件级鼠标输入的场景。</p>
+            <p>{{ t.vmouseSettings.descText1 }}</p>
+            <p>{{ t.vmouseSettings.descText2 }}</p>
           </div>
         </el-form-item>
 
@@ -56,7 +55,7 @@
             size="large"
           >
             <el-icon><Download /></el-icon>
-            安装驱动
+            {{ t.vmouseSettings.installDriver }}
           </el-button>
           <el-button
             v-else
@@ -67,7 +66,7 @@
             plain
           >
             <el-icon><Delete /></el-icon>
-            卸载驱动
+            {{ t.vmouseSettings.uninstallDriver }}
           </el-button>
         </el-form-item>
       </el-form>
@@ -80,11 +79,14 @@ import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Mouse, Refresh, Download, Delete } from '@element-plus/icons-vue'
 import { vmouse } from '../tauri-adapter.js'
+import { useI18n } from '../desktop/i18n/index.js'
+
+const { t } = useI18n()
 
 const status = reactive({
   installed: false,
   running: false,
-  status_text: '检测中...',
+  status_text: t.value.vmouseSettings.detecting,
   driver_path: '',
   config_enabled: true,
 })
@@ -117,7 +119,7 @@ const refreshStatus = async () => {
       updateStatusTag()
     }
   } catch (error) {
-    console.error('获取 vmouse 状态失败:', error)
+    console.error('Failed to get vmouse status:', error)
   } finally {
     refreshing.value = false
   }
@@ -130,10 +132,10 @@ const handleConfigToggle = async (enabled) => {
     if (result?.success) {
       ElMessage.success(result.data)
     } else {
-      throw new Error(result?.message || '未知错误')
+      throw new Error(result?.message || t.value.vmouseSettings.unknownError)
     }
   } catch (error) {
-    ElMessage.error(`设置失败: ${error.message || error}`)
+    ElMessage.error(t.value.vmouseSettings.setFailed.replace('{error}', error.message || error))
     // 回滚开关
     configEnabled.value = !enabled
   } finally {
@@ -144,11 +146,11 @@ const handleConfigToggle = async (enabled) => {
 const installDriver = async () => {
   try {
     await ElMessageBox.confirm(
-      '将安装虚拟鼠标驱动，此操作需要管理员权限。\n\n安装后可能需要重启系统才能生效。',
-      '确认安装',
+      t.value.vmouseSettings.installConfirm,
+      t.value.vmouseSettings.installTitle,
       {
-        confirmButtonText: '安装',
-        cancelButtonText: '取消',
+        confirmButtonText: t.value.vmouseSettings.installBtn,
+        cancelButtonText: t.value.vmouseSettings.cancelBtn,
         type: 'info',
       }
     )
@@ -160,11 +162,11 @@ const installDriver = async () => {
       // 等一下再刷新状态
       setTimeout(() => refreshStatus(), 2000)
     } else {
-      throw new Error(result?.message || '安装失败')
+      throw new Error(result?.message || t.value.vmouseSettings.installFailed)
     }
   } catch (error) {
     if (error !== 'cancel') {
-      ElMessage.error(`安装失败: ${error.message || error}`)
+      ElMessage.error(t.value.vmouseSettings.installError.replace('{error}', error.message || error))
     }
   } finally {
     installing.value = false
@@ -174,11 +176,11 @@ const installDriver = async () => {
 const uninstallDriver = async () => {
   try {
     await ElMessageBox.confirm(
-      '确定要卸载虚拟鼠标驱动吗？此操作需要管理员权限。\n\nSunshine 将自动回退到 SendInput 方式。',
-      '确认卸载',
+      t.value.vmouseSettings.uninstallConfirm,
+      t.value.vmouseSettings.uninstallTitle,
       {
-        confirmButtonText: '卸载',
-        cancelButtonText: '取消',
+        confirmButtonText: t.value.vmouseSettings.uninstallBtn,
+        cancelButtonText: t.value.vmouseSettings.cancelBtn,
         type: 'warning',
       }
     )
@@ -189,11 +191,11 @@ const uninstallDriver = async () => {
       ElMessage.success(result.data)
       setTimeout(() => refreshStatus(), 2000)
     } else {
-      throw new Error(result?.message || '卸载失败')
+      throw new Error(result?.message || t.value.vmouseSettings.uninstallFailed)
     }
   } catch (error) {
     if (error !== 'cancel') {
-      ElMessage.error(`卸载失败: ${error.message || error}`)
+      ElMessage.error(t.value.vmouseSettings.uninstallError.replace('{error}', error.message || error))
     }
   } finally {
     uninstalling.value = false

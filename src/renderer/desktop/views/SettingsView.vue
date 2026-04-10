@@ -1,8 +1,8 @@
 <template>
   <div class="settings-view">
     <div class="page-header fade-in">
-      <h1 class="page-title">设置</h1>
-      <p class="page-subtitle">应用程序偏好设置</p>
+      <h1 class="page-title">{{ t.settings.pageTitle }}</h1>
+      <p class="page-subtitle">{{ t.settings.pageSubtitle }}</p>
     </div>
 
     <!-- 外观设置 —— 统一由主题编辑器管理 -->
@@ -10,17 +10,17 @@
       <div class="card-header">
         <div class="card-title">
           <span class="title-icon">🎨</span>
-          外观
+          {{ t.settings.appearance }}
         </div>
       </div>
       <div class="card-content">
         <div class="setting-item">
           <div class="setting-info">
             <div class="setting-name">主题编辑器</div>
-            <div class="setting-desc">自定义主题色、壁纸、预设和外观效果</div>
+            <div class="setting-desc">{{ t.settings.appearanceDesc }}</div>
           </div>
           <div class="setting-control">
-            <button class="desktop-btn" @click="$emit('openThemeEditor')">打开编辑器</button>
+            <button class="desktop-btn" @click="$emit('openThemeEditor')">{{ t.settings.themeEditor }}</button>
           </div>
         </div>
       </div>
@@ -31,14 +31,14 @@
       <div class="card-header">
         <div class="card-title">
           <span class="title-icon">🚀</span>
-          启动
+          {{ t.settings.startup }}
         </div>
       </div>
       <div class="card-content">
         <div class="setting-item">
           <div class="setting-info">
-            <div class="setting-name">开机自启动</div>
-            <div class="setting-desc">系统启动时自动运行应用程序</div>
+            <div class="setting-name">{{ t.settings.autoStart }}</div>
+            <div class="setting-desc">{{ t.settings.autoStartDesc }}</div>
           </div>
           <div class="setting-control">
             <label class="switch">
@@ -50,8 +50,8 @@
 
         <div class="setting-item">
           <div class="setting-info">
-            <div class="setting-name">启动时最小化</div>
-            <div class="setting-desc">启动后最小化到系统托盘</div>
+            <div class="setting-name">{{ t.settings.startMinimized }}</div>
+            <div class="setting-desc">{{ t.settings.startMinimizedDesc }}</div>
           </div>
           <div class="setting-control">
             <label class="switch">
@@ -63,8 +63,8 @@
 
         <div class="setting-item">
           <div class="setting-info">
-            <div class="setting-name">自动启动 Sunshine 服务</div>
-            <div class="setting-desc">应用启动时自动启动 Sunshine</div>
+            <div class="setting-name">{{ t.settings.autoStartSunshine }}</div>
+            <div class="setting-desc">{{ t.settings.autoStartSunshineDesc }}</div>
           </div>
           <div class="setting-control">
             <label class="switch">
@@ -81,12 +81,12 @@
       <div class="card-header">
         <div class="card-title">
           <span class="title-icon">⚡</span>
-          启动助手
+          {{ t.settings.launchAssistant }}
         </div>
       </div>
       <div class="card-content">
         <p class="section-desc">
-          在此设置常用工具路径，之后在应用右键菜单中一键启用即可。
+          {{ t.settings.launchAssistantDesc }}
         </p>
         <div
           v-for="tmpl in helperTemplates"
@@ -126,14 +126,14 @@
       <div class="card-header">
         <div class="card-title">
           <span class="title-icon">🔔</span>
-          通知
+          {{ t.settings.notifications }}
         </div>
       </div>
       <div class="card-content">
         <div class="setting-item">
           <div class="setting-info">
-            <div class="setting-name">桌面通知</div>
-            <div class="setting-desc">显示系统桌面通知</div>
+            <div class="setting-name">{{ t.settings.desktopNotifications }}</div>
+            <div class="setting-desc">{{ t.settings.desktopNotificationsDesc }}</div>
           </div>
           <div class="setting-control">
             <label class="switch">
@@ -145,8 +145,8 @@
 
         <div class="setting-item">
           <div class="setting-info">
-            <div class="setting-name">连接通知</div>
-            <div class="setting-desc">客户端连接/断开时通知</div>
+            <div class="setting-name">{{ t.settings.connectionNotify }}</div>
+            <div class="setting-desc">{{ t.settings.connectionNotifyDesc }}</div>
           </div>
           <div class="setting-control">
             <label class="switch">
@@ -158,8 +158,8 @@
 
         <div class="setting-item">
           <div class="setting-info">
-            <div class="setting-name">更新通知</div>
-            <div class="setting-desc">有新版本时通知</div>
+            <div class="setting-name">{{ t.settings.updateNotify }}</div>
+            <div class="setting-desc">{{ t.settings.updateNotifyDesc }}</div>
           </div>
           <div class="setting-control">
             <label class="switch">
@@ -176,14 +176,14 @@
       <div class="card-header">
         <div class="card-title">
           <span class="title-icon">⚙️</span>
-          高级
+          {{ t.settings.advanced }}
         </div>
       </div>
       <div class="card-content">
         <div class="setting-item">
           <div class="setting-info">
-            <div class="setting-name">开发者模式</div>
-            <div class="setting-desc">显示调试信息和开发者工具</div>
+            <div class="setting-name">{{ t.settings.devMode }}</div>
+            <div class="setting-desc">{{ t.settings.devModeDesc }}</div>
           </div>
           <div class="setting-control">
             <label class="switch">
@@ -195,15 +195,15 @@
 
         <div class="setting-item">
           <div class="setting-info">
-            <div class="setting-name">日志级别</div>
-            <div class="setting-desc">设置日志记录的详细程度</div>
+            <div class="setting-name">{{ t.settings.logLevel }}</div>
+            <div class="setting-desc">{{ t.settings.logLevelDesc }}</div>
           </div>
           <div class="setting-control">
             <select v-model="settings.logLevel" class="select-control">
-              <option value="error">仅错误</option>
-              <option value="warn">警告及以上</option>
-              <option value="info">信息及以上</option>
-              <option value="debug">调试（全部）</option>
+              <option value="error">{{ t.settings.logLevels.error }}</option>
+              <option value="warn">{{ t.settings.logLevels.warn }}</option>
+              <option value="info">{{ t.settings.logLevels.info }}</option>
+              <option value="debug">{{ t.settings.logLevels.debug }}</option>
             </select>
           </div>
         </div>
@@ -215,14 +215,14 @@
       <div class="card-header">
         <div class="card-title">
           <span class="title-icon">🐾</span>
-          桌宠
+          {{ t.settings.pet }}
         </div>
       </div>
       <div class="card-content">
         <div class="setting-item">
           <div class="setting-info">
-            <div class="setting-name">桌面观察</div>
-            <div class="setting-desc">米塔会定时偷看你的桌面并发表评论（需要启用 AI 并配置支持视觉的模型如 GPT-4o）</div>
+            <div class="setting-name">{{ t.settings.deskObserve }}</div>
+            <div class="setting-desc">{{ t.settings.deskObserveDesc }}</div>
           </div>
           <div class="setting-control">
             <label class="switch">
@@ -234,28 +234,28 @@
 
         <div class="setting-item" v-if="petEnabled">
           <div class="setting-info">
-            <div class="setting-name">观察间隔（秒）</div>
-            <div class="setting-desc">每隔多少秒截取桌面并生成评论（最小 15 秒）</div>
+            <div class="setting-name">{{ t.settings.observeInterval }}</div>
+            <div class="setting-desc">{{ t.settings.observeIntervalDesc }}</div>
           </div>
           <div class="setting-control">
             <select v-model="petIntervalSec" class="select-control" @change="onPetIntervalChange">
-              <option :value="15">15 秒</option>
-              <option :value="30">30 秒</option>
-              <option :value="60">60 秒</option>
-              <option :value="120">2 分钟</option>
-              <option :value="300">5 分钟</option>
+              <option :value="15">{{ t.settings.intervals.s15 }}</option>
+              <option :value="30">{{ t.settings.intervals.s30 }}</option>
+              <option :value="60">{{ t.settings.intervals.s60 }}</option>
+              <option :value="120">{{ t.settings.intervals.m2 }}</option>
+              <option :value="300">{{ t.settings.intervals.m5 }}</option>
             </select>
           </div>
         </div>
 
         <div class="setting-item" v-if="petEnabled">
           <div class="setting-info">
-            <div class="setting-name">立即触发</div>
-            <div class="setting-desc">让米塔现在就看看你的桌面</div>
+            <div class="setting-name">{{ t.settings.pokeMita }}</div>
+            <div class="setting-desc">{{ t.settings.pokeMitaDesc }}</div>
           </div>
           <div class="setting-control">
             <button class="desktop-btn" :disabled="isObserving" @click="poke">
-              {{ isObserving ? '观察中...' : '戳一下' }}
+              {{ isObserving ? t.settings.pokeBtnObserving : t.settings.pokeBtn }}
             </button>
           </div>
         </div>
@@ -268,25 +268,25 @@
         <div class="about-logo">☀️</div>
         <div class="about-info">
           <div class="about-name">Foundation Desktop</div>
-          <div class="about-version">版本 0.2.5</div>
+          <div class="about-version">{{ t.settings.version }} 0.2.5</div>
           <div class="about-links">
             <a href="#" @click.prevent="openLink('github')">GitHub</a>
             <span>•</span>
-            <a href="#" @click.prevent="openLink('docs')">文档</a>
+            <a href="#" @click.prevent="openLink('docs')">{{ t.settings.docs }}</a>
             <span>•</span>
             <a href="#" @click.prevent="openLink('discord')">Discord</a>
           </div>
         </div>
       </div>
       <button class="desktop-btn" :disabled="checking" @click="checkUpdate">
-        {{ checking ? '检查中...' : '检查更新' }}
+        {{ checking ? t.settings.checking : t.settings.checkUpdate }}
       </button>
     </div>
 
     <!-- 保存按钮 -->
     <div class="actions-bar fade-in">
-      <button class="desktop-btn" @click="resetSettings">恢复默认</button>
-      <button class="desktop-btn primary" @click="saveSettings">保存设置</button>
+      <button class="desktop-btn" @click="resetSettings">{{ t.settings.resetDefaults }}</button>
+      <button class="desktop-btn primary" @click="saveSettings">{{ t.settings.saveSettings }}</button>
     </div>
   </div>
 </template>
@@ -295,6 +295,9 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useLaunchHelpers } from '../composables/useLaunchHelpers'
 import { useDesktopPet } from '../../composables/useDesktopPet.js'
+import { useI18n } from '../i18n/index.js'
+
+const { t } = useI18n()
 
 const invoke = ref(null)
 const hasTauri = ref(false)
@@ -338,7 +341,7 @@ async function browseToolPath(templateId, paramKey) {
   try {
     const { open } = await import('@tauri-apps/plugin-dialog')
     const path = await open({
-      filters: [{ name: '可执行文件', extensions: ['exe', 'bat', 'cmd', 'lnk'] }],
+      filters: [{ name: 'Executable', extensions: ['exe', 'bat', 'cmd', 'lnk'] }],
     })
     if (path) {
       setGlobalToolPath(templateId, paramKey, path)
@@ -414,12 +417,12 @@ async function checkUpdate() {
   try {
     const update = await invoke.value('check_for_updates')
     if (update) {
-      updateStatus.value = { type: 'success', message: `发现新版本: ${update.version}` }
+      updateStatus.value = { type: 'success', message: `${t.value.settings.updateFound}${update.version}` }
     } else {
-      updateStatus.value = { type: 'info', message: '当前已是最新版本' }
+      updateStatus.value = { type: 'info', message: t.value.settings.updateLatest }
     }
   } catch (e) {
-    updateStatus.value = { type: 'error', message: '检查更新失败' }
+    updateStatus.value = { type: 'error', message: t.value.settings.updateError }
   } finally {
     checking.value = false
   }

@@ -6,7 +6,7 @@
         <h1 class="banner-title">
           <span class="gradient-text">Foundation</span> Desktop
         </h1>
-        <p class="banner-subtitle">高性能游戏串流解决方案</p>
+        <p class="banner-subtitle">{{ t.dashboard.subtitle }}</p>
       </div>
       <div class="banner-decoration">
         <div class="decoration-circle"></div>
@@ -23,7 +23,7 @@
           </svg>
         </div>
         <div class="stat-info">
-          <span class="stat-label">服务状态</span>
+          <span class="stat-label">{{ t.dashboard.serviceStatus }}</span>
           <span class="stat-value-text" :class="serviceStatus.class">{{ serviceStatus.text }}</span>
         </div>
       </div>
@@ -37,7 +37,7 @@
           </svg>
         </div>
         <div class="stat-info">
-          <span class="stat-label">已配对设备</span>
+          <span class="stat-label">{{ t.dashboard.pairedDevices }}</span>
           <span class="stat-value">{{ pairedDevices }}</span>
         </div>
       </div>
@@ -49,7 +49,7 @@
           </svg>
         </div>
         <div class="stat-info">
-          <span class="stat-label">活动会话</span>
+          <span class="stat-label">{{ t.dashboard.activeSessions }}</span>
           <span class="stat-value">{{ activeSessions }}</span>
         </div>
       </div>
@@ -62,7 +62,7 @@
           </svg>
         </div>
         <div class="stat-info">
-          <span class="stat-label">运行时间</span>
+          <span class="stat-label">{{ t.dashboard.uptime }}</span>
           <span class="stat-value-text">{{ uptime }}</span>
         </div>
       </div>
@@ -71,7 +71,7 @@
     <!-- 快捷操作 -->
     <div class="section-title fade-in">
       <span class="title-icon">⚡</span>
-      快捷操作
+      {{ t.dashboard.quickActions }}
     </div>
 
     <div class="desktop-grid cols-3">
@@ -84,8 +84,8 @@
           </svg>
         </div>
         <div class="action-info">
-          <span class="action-title">Web 控制台</span>
-          <span class="action-desc">打开 Sunshine Web 管理界面</span>
+          <span class="action-title">{{ t.dashboard.webConsole }}</span>
+          <span class="action-desc">{{ t.dashboard.webConsoleDesc }}</span>
         </div>
         <div class="action-arrow">→</div>
       </div>
@@ -97,8 +97,8 @@
           </svg>
         </div>
         <div class="action-info">
-          <span class="action-title">重启服务</span>
-          <span class="action-desc">重新启动 Sunshine 服务</span>
+          <span class="action-title">{{ t.dashboard.restartService }}</span>
+          <span class="action-desc">{{ t.dashboard.restartServiceDesc }}</span>
         </div>
         <div class="action-arrow">→</div>
       </div>
@@ -114,8 +114,8 @@
           </svg>
         </div>
         <div class="action-info">
-          <span class="action-title">查看日志</span>
-          <span class="action-desc">打开日志控制台</span>
+          <span class="action-title">{{ t.dashboard.viewLogs }}</span>
+          <span class="action-desc">{{ t.dashboard.viewLogsDesc }}</span>
         </div>
         <div class="action-arrow">→</div>
       </div>
@@ -124,25 +124,25 @@
     <!-- 系统信息 -->
     <div class="section-title fade-in">
       <span class="title-icon">💻</span>
-      系统信息
+      {{ t.dashboard.systemInfo }}
     </div>
 
     <div class="desktop-card system-info-card fade-in">
       <div class="info-grid">
         <div class="info-item">
-          <span class="info-label">Sunshine 版本</span>
+          <span class="info-label">{{ t.dashboard.sunshineVersion }}</span>
           <span class="info-value">{{ systemInfo.sunshineVersion }}</span>
         </div>
         <div class="info-item">
-          <span class="info-label">操作系统</span>
+          <span class="info-label">{{ t.dashboard.os }}</span>
           <span class="info-value">{{ systemInfo.os }}</span>
         </div>
         <div class="info-item">
-          <span class="info-label">显卡</span>
+          <span class="info-label">{{ t.dashboard.gpu }}</span>
           <span class="info-value">{{ systemInfo.gpu }}</span>
         </div>
         <div class="info-item">
-          <span class="info-label">编码器</span>
+          <span class="info-label">{{ t.dashboard.encoder }}</span>
           <span class="info-value">{{ systemInfo.encoder }}</span>
         </div>
       </div>
@@ -152,22 +152,25 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
+import { useI18n } from '../i18n/index.js'
+
+const { t } = useI18n()
 
 // Tauri 命令 - 使用 ref 存储
 const invoke = ref(null)
 const proxyUrl = ref('http://localhost:48081')
 
 // 状态数据
-const serviceStatus = ref({ text: '检测中...', class: 'connecting' })
+const serviceStatus = ref({ text: '', class: 'connecting' })
 const pairedDevices = ref(0)
 const activeSessions = ref(0)
 const uptime = ref('--:--:--')
 
 const systemInfo = ref({
-  sunshineVersion: '加载中...',
+  sunshineVersion: '...',
   os: 'Windows',
-  gpu: '加载中...',
-  encoder: '加载中...'
+  gpu: '...',
+  encoder: '...'
 })
 
 // 计时器
@@ -188,7 +191,7 @@ async function loadSystemInfo() {
   try {
     // 获取 Sunshine 版本
     const version = await invoke.value('get_sunshine_version')
-    systemInfo.value.sunshineVersion = version || '未知'
+    systemInfo.value.sunshineVersion = version || t.value.dashboard.status.unknown
 
     // 获取 GPU 信息（get_gpus 返回 Vec<String>，即 GPU 名称列表）
     const gpus = await invoke.value('get_gpus')
@@ -214,10 +217,10 @@ async function loadSystemInfo() {
       }
     } catch (_) { /* proxy not available */ }
 
-    serviceStatus.value = { text: '运行中', class: 'online' }
+    serviceStatus.value = { text: t.value.dashboard.status.online, class: 'online' }
   } catch (e) {
     console.error('Failed to load system info:', e)
-    serviceStatus.value = { text: '离线', class: 'offline' }
+    serviceStatus.value = { text: t.value.dashboard.status.offline, class: 'offline' }
   }
 }
 
@@ -237,9 +240,9 @@ async function restartService() {
   if (invoke.value) {
     try {
       await invoke.value('restart_sunshine_service')
-      serviceStatus.value = { text: '重启中...', class: 'connecting' }
+      serviceStatus.value = { text: t.value.dashboard.status.restarting, class: 'connecting' }
       setTimeout(() => {
-        serviceStatus.value = { text: '运行中', class: 'online' }
+        serviceStatus.value = { text: t.value.dashboard.status.online, class: 'online' }
       }, 3000)
     } catch (e) {
       console.error('Failed to restart service:', e)

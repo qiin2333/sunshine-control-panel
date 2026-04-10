@@ -1,8 +1,8 @@
 <template>
   <div class="devices-view">
     <div class="page-header fade-in">
-      <h1 class="page-title">设备管理</h1>
-      <p class="page-subtitle">配对 Moonlight 客户端并管理已连接设备</p>
+      <h1 class="page-title">{{ t.devices.pageTitle }}</h1>
+      <p class="page-subtitle">{{ t.devices.pageSubtitle }}</p>
     </div>
 
     <!-- 配对区域 - 双列布局 -->
@@ -13,7 +13,7 @@
           <div class="card-header">
             <div class="card-title">
               <span class="title-icon">📲</span>
-              扫码配对
+              {{ t.devices.qrCodePairing }}
             </div>
           </div>
           <div class="card-content">
@@ -30,8 +30,8 @@
                   ⏱ {{ qrRemaining }}s
                 </div>
                 <div class="qr-actions">
-                  <button class="desktop-btn" @click="generateQrCode">刷新</button>
-                  <button class="desktop-btn" @click="cancelQrCode">取消</button>
+                  <button class="desktop-btn" @click="generateQrCode">{{ t.devices.qrRefresh }}</button>
+                  <button class="desktop-btn" @click="cancelQrCode">{{ t.devices.qrCancel }}</button>
                 </div>
               </div>
             </div>
@@ -39,13 +39,13 @@
             <div v-else-if="qrError" class="qr-error">{{ qrError }}</div>
 
             <div v-else class="qr-idle">
-              <p>使用 Moonlight 客户端扫描二维码即可配对</p>
+              <p>{{ t.devices.qrDesc }}</p>
               <button
                 class="desktop-btn primary"
                 :disabled="qrLoading"
                 @click="generateQrCode"
               >
-                {{ qrLoading ? '生成中...' : '生成二维码' }}
+                {{ qrLoading ? t.devices.qrGenerating : t.devices.generateQrCode }}
               </button>
             </div>
           </div>
@@ -56,29 +56,29 @@
           <div class="card-header">
             <div class="card-title">
               <span class="title-icon">🔗</span>
-              PIN 配对
+              {{ t.devices.pinPairing }}
             </div>
           </div>
           <div class="card-content">
             <div class="pin-form">
               <div class="form-row">
-                <label class="form-label">PIN 码</label>
+                <label class="form-label">{{ t.devices.pinInput }}</label>
                 <input
                   v-model="pinInput"
                   class="form-input"
                   type="text"
                   pattern="\d*"
                   maxlength="4"
-                  placeholder="4 位数字"
+                  :placeholder="t.devices.pinPlaceholder"
                 />
               </div>
               <div class="form-row">
-                <label class="form-label">设备名称</label>
+                <label class="form-label">{{ t.devices.deviceName }}</label>
                 <input
                   v-model="deviceNameInput"
                   class="form-input"
                   type="text"
-                  placeholder="例如：iPhone 15 Pro"
+                  :placeholder="t.devices.deviceNamePlaceholder"
                 />
               </div>
               <button
@@ -86,7 +86,7 @@
                 :disabled="pinSubmitting || !pinInput || !deviceNameInput"
                 @click="submitPin"
               >
-                {{ pinSubmitting ? '配对中...' : '配对' }}
+                {{ pinSubmitting ? t.devices.pairing : t.devices.pairBtn }}
               </button>
               <div v-if="pinStatus" class="pin-status" :class="pinStatus.type">
                 {{ pinStatus.message }}
@@ -99,7 +99,7 @@
 
     <!-- 已配对设备 -->
     <div class="section-header fade-in">
-      <h2 class="section-title">已配对设备</h2>
+      <h2 class="section-title">{{ t.devices.pairedDevicesTitle }}</h2>
       <span class="section-count">{{ devices.length }}</span>
     </div>
 
@@ -122,7 +122,7 @@
             />
           </template>
           <template v-else>
-            <div class="device-name">{{ device.name || '未命名设备' }}</div>
+            <div class="device-name">{{ device.name || t.devices.unnamedDevice }}</div>
           </template>
           <div class="device-meta">
             <span class="device-uuid">{{ device.uuid }}</span>
@@ -130,23 +130,23 @@
         </div>
         <div class="device-actions">
           <template v-if="editingUuid === device.uuid">
-            <button class="desktop-btn" @click="saveRename(device)">保存</button>
-            <button class="desktop-btn" @click="cancelRename">取消</button>
+            <button class="desktop-btn" @click="saveRename(device)">{{ t.devices.saveBtn }}</button>
+            <button class="desktop-btn" @click="cancelRename">{{ t.devices.cancelBtn }}</button>
           </template>
           <template v-else>
-            <button class="desktop-btn" @click="startRename(device)">重命名</button>
-            <button class="desktop-btn danger" @click="unpairDevice(device)">取消配对</button>
+            <button class="desktop-btn" @click="startRename(device)">{{ t.devices.renameBtn }}</button>
+            <button class="desktop-btn danger" @click="unpairDevice(device)">{{ t.devices.unpairBtn }}</button>
           </template>
         </div>
       </div>
 
       <div v-if="!loading && devices.length === 0" class="empty-state fade-in">
         <div class="empty-icon">📱</div>
-        <p>暂无已配对设备，使用上方配对功能添加新设备</p>
+        <p>{{ t.devices.emptyState }}</p>
       </div>
 
       <div v-if="loading" class="empty-state fade-in">
-        <p>加载中...</p>
+        <p>{{ t.devices.loading }}</p>
       </div>
     </div>
   </div>
@@ -155,6 +155,9 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import QRCode from 'qrcode'
+import { useI18n } from '../i18n/index.js'
+
+const { t } = useI18n()
 
 // === Tauri invoke ===
 const invoke = ref(null)
@@ -234,7 +237,7 @@ async function saveRename(device) {
 // === 取消配对 ===
 async function unpairDevice(device) {
   const name = device.name || device.uuid
-  if (!confirm(`确定要取消与「${name}」的配对吗？`)) return
+  if (!confirm(t.value.devices.unpairConfirm.replace('{name}', name))) return
   try {
     const data = await apiFetch('/api/clients/unpair', {
       method: 'POST',
@@ -288,7 +291,7 @@ async function generateQrCode() {
     const data = await apiFetch('/api/qr-pair', { method: 'POST' })
 
     if (data.status?.toString() !== 'true') {
-      qrError.value = data.error || '生成二维码失败'
+      qrError.value = data.error || t.value.devices.qrGenerateFailed
       return
     }
 
@@ -305,7 +308,7 @@ async function generateQrCode() {
     startCountdown()
   } catch (e) {
     console.error('Failed to generate QR:', e)
-    qrError.value = `网络错误: ${e.message}`
+    qrError.value = `${t.value.devices.qrNetworkError}: ${e.message}`
   } finally {
     qrLoading.value = false
   }
@@ -334,15 +337,15 @@ async function submitPin() {
       body: JSON.stringify({ pin: pinInput.value, name: deviceNameInput.value }),
     })
     if (data.status?.toString() === 'true') {
-      pinStatus.value = { type: 'success', message: '配对成功！' }
+      pinStatus.value = { type: 'success', message: t.value.devices.pinStatus.success }
       pinInput.value = ''
       deviceNameInput.value = ''
       loadDevices()
     } else {
-      pinStatus.value = { type: 'error', message: '配对失败，请检查 PIN 码是否正确' }
+      pinStatus.value = { type: 'error', message: t.value.devices.pinStatus.error }
     }
   } catch (e) {
-    pinStatus.value = { type: 'error', message: '网络错误' }
+    pinStatus.value = { type: 'error', message: t.value.devices.pinStatus.networkError }
   } finally {
     pinSubmitting.value = false
   }

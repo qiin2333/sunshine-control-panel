@@ -1,17 +1,17 @@
 <template>
   <div class="tools-view">
     <div class="page-header fade-in">
-      <h1 class="page-title">实用工具</h1>
-      <p class="page-subtitle">系统诊断和优化工具集</p>
+      <h1 class="page-title">{{ t.tools.pageTitle }}</h1>
+      <p class="page-subtitle">{{ t.tools.pageSubtitle }}</p>
     </div>
 
     <!-- 工具网格 - 平铺所有工具 -->
     <DesktopGrid :cols="2" gap="lg" :responsive="true">
       <!-- 码率调节器 -->
-      <DesktopCard title="实时码率调节" variant="success" hoverable class="tool-panel-card">
+      <DesktopCard :title="t.tools.bitrateAdjust" variant="success" hoverable class="tool-panel-card">
         <template #title>
           <span class="title-icon">📊</span>
-          实时码率调节
+          {{ t.tools.bitrateAdjust }}
         </template>
 
         <div class="tool-panel-content">
@@ -20,10 +20,10 @@
       </DesktopCard>
 
       <!-- DPI 调节器 -->
-      <DesktopCard title="DPI 缩放调节" variant="secondary" hoverable class="tool-panel-card">
+      <DesktopCard :title="t.tools.dpiScaling" variant="secondary" hoverable class="tool-panel-card">
         <template #title>
           <span class="title-icon">🔍</span>
-          DPI 缩放调节
+          {{ t.tools.dpiScaling }}
         </template>
 
         <div class="tool-panel-content">
@@ -32,10 +32,10 @@
       </DesktopCard>
 
       <!-- 快捷键管理 -->
-      <DesktopCard title="快捷键手册" variant="warning" hoverable class="tool-panel-card">
+      <DesktopCard :title="t.tools.shortcutGuide" variant="warning" hoverable class="tool-panel-card">
         <template #title>
           <span class="title-icon">⌨️</span>
-          Moonlight 快捷键手册
+          {{ t.tools.shortcutGuide }}
         </template>
 
         <div class="tool-panel-content">
@@ -47,13 +47,13 @@
     <!-- 系统诊断 -->
     <div class="section-title fade-in">
       <span class="title-icon">🔍</span>
-      系统诊断
+      {{ t.tools.diagnostics }}
     </div>
 
     <DesktopCard class="diagnostics-card fade-in">
       <template #title>
         <span class="title-icon">💻</span>
-        系统状态
+        {{ t.tools.systemStatus }}
       </template>
 
       <div class="diagnostics-grid">
@@ -65,7 +65,7 @@
             </svg>
           </div>
           <div class="diagnostic-info">
-            <div class="diagnostic-name">GPU 状态</div>
+            <div class="diagnostic-name">{{ t.tools.gpu }}</div>
             <div class="diagnostic-value">{{ diagnostics.gpu.value }}</div>
           </div>
           <div class="diagnostic-status" :class="diagnostics.gpu.status">
@@ -81,7 +81,7 @@
             </svg>
           </div>
           <div class="diagnostic-info">
-            <div class="diagnostic-name">编码器</div>
+            <div class="diagnostic-name">{{ t.tools.encoder }}</div>
             <div class="diagnostic-value">{{ diagnostics.encoder.value }}</div>
           </div>
           <div class="diagnostic-status" :class="diagnostics.encoder.status">
@@ -99,7 +99,7 @@
             </svg>
           </div>
           <div class="diagnostic-info">
-            <div class="diagnostic-name">网络</div>
+            <div class="diagnostic-name">{{ t.tools.network }}</div>
             <div class="diagnostic-value">{{ diagnostics.network.value }}</div>
           </div>
           <div class="diagnostic-status" :class="diagnostics.network.status">
@@ -114,7 +114,7 @@
             </svg>
           </div>
           <div class="diagnostic-info">
-            <div class="diagnostic-name">防火墙</div>
+            <div class="diagnostic-name">{{ t.tools.firewall }}</div>
             <div class="diagnostic-value">{{ diagnostics.firewall.value }}</div>
           </div>
           <div class="diagnostic-status" :class="diagnostics.firewall.status">
@@ -124,17 +124,17 @@
       </div>
 
       <template #footer>
-        <button class="desktop-btn" @click="restartGraphicsDriver">
+        <!-- <button class="desktop-btn" @click="restartGraphicsDriver">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
             <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2" />
           </svg>
-          重启显卡驱动
-        </button>
+          {{ t.tools.restartGraphicsDriver }}
+        </button> -->
         <button class="desktop-btn" @click="runDiagnostics">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
             <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2" />
           </svg>
-          重新检测
+          {{ t.tools.rediagnose }}
         </button>
       </template>
     </DesktopCard>
@@ -143,6 +143,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useI18n } from '../i18n/index.js'
 
 // 桌面 UI 组件
 import DesktopCard from '../components/DesktopCard.vue'
@@ -153,18 +154,20 @@ import BitrateTool from '../../tool-window/tools/BitrateTool.vue'
 import DpiAdjusterTool from '../../tool-window/tools/DpiAdjusterTool.vue'
 import ShortcutsTool from '../../tool-window/tools/ShortcutsTool.vue'
 
+const { t } = useI18n()
+
 // Tauri 命令
 const invoke = ref(null)
 
 const diagnostics = ref({
-  gpu: { value: '检测中...', status: 'connecting', statusText: '检测中' },
-  encoder: { value: '检测中...', status: 'connecting', statusText: '检测中' },
-  network: { value: '检测中...', status: 'connecting', statusText: '检测中' },
-  firewall: { value: '检测中...', status: 'connecting', statusText: '检测中' },
+  gpu: { value: t.value.tools.status.detectingEllipsis, status: 'connecting', statusText: t.value.tools.status.detecting },
+  encoder: { value: t.value.tools.status.detectingEllipsis, status: 'connecting', statusText: t.value.tools.status.detecting },
+  network: { value: t.value.tools.status.detectingEllipsis, status: 'connecting', statusText: t.value.tools.status.detecting },
+  firewall: { value: t.value.tools.status.detectingEllipsis, status: 'connecting', statusText: t.value.tools.status.detecting },
 })
 
 async function restartGraphicsDriver() {
-  if (confirm('确定要重启显卡驱动吗？屏幕可能会短暂闪烁。')) {
+  if (confirm(t.value.tools.confirmRestartGraphics)) {
     if (invoke.value) {
       try {
         await invoke.value('restart_graphics_driver')
@@ -178,12 +181,12 @@ async function restartGraphicsDriver() {
 async function runDiagnostics() {
   // 重置为检测中
   for (const key of Object.keys(diagnostics.value)) {
-    diagnostics.value[key] = { value: '检测中...', status: 'connecting', statusText: '检测中' }
+    diagnostics.value[key] = { value: t.value.tools.status.detectingEllipsis, status: 'connecting', statusText: t.value.tools.status.detecting }
   }
 
   if (!invoke.value) {
     for (const key of Object.keys(diagnostics.value)) {
-      diagnostics.value[key] = { value: '未知', status: 'warning', statusText: '无法检测' }
+      diagnostics.value[key] = { value: t.value.tools.status.unknown, status: 'warning', statusText: t.value.tools.status.cannotDetect }
     }
     return
   }
@@ -192,19 +195,19 @@ async function runDiagnostics() {
   try {
     const gpus = await invoke.value('get_gpus')
     if (gpus && gpus.length > 0) {
-      diagnostics.value.gpu = { value: gpus[0], status: 'good', statusText: '正常' }
+      diagnostics.value.gpu = { value: gpus[0], status: 'good', statusText: t.value.tools.status.good }
       const gpuLower = gpus[0].toLowerCase()
       const encoderName = gpuLower.includes('nvidia') || gpuLower.includes('geforce') ? 'NVENC' :
                           gpuLower.includes('amd') || gpuLower.includes('radeon') ? 'AMF' :
-                          gpuLower.includes('intel') ? 'QuickSync' : '软件编码'
-      diagnostics.value.encoder = { value: encoderName, status: encoderName !== '软件编码' ? 'good' : 'warning', statusText: '可用' }
+                          gpuLower.includes('intel') ? 'QuickSync' : t.value.tools.status.softwareEncode
+      diagnostics.value.encoder = { value: encoderName, status: encoderName !== t.value.tools.status.softwareEncode ? 'good' : 'warning', statusText: t.value.tools.status.available }
     } else {
-      diagnostics.value.gpu = { value: '未检测到 GPU', status: 'error', statusText: '异常' }
-      diagnostics.value.encoder = { value: '软件编码', status: 'warning', statusText: '降级' }
+      diagnostics.value.gpu = { value: t.value.tools.status.noGPU, status: 'error', statusText: t.value.tools.status.abnormal }
+      diagnostics.value.encoder = { value: t.value.tools.status.softwareEncode, status: 'warning', statusText: t.value.tools.status.downgrade }
     }
   } catch (e) {
-    diagnostics.value.gpu = { value: '检测失败', status: 'error', statusText: '错误' }
-    diagnostics.value.encoder = { value: '未知', status: 'warning', statusText: '未知' }
+    diagnostics.value.gpu = { value: t.value.tools.status.detectFailed, status: 'error', statusText: t.value.tools.status.error }
+    diagnostics.value.encoder = { value: t.value.tools.status.unknown, status: 'warning', statusText: t.value.tools.status.unknown }
   }
 
   // 网络：测试代理服务器连通性
@@ -212,15 +215,15 @@ async function runDiagnostics() {
     const url = await invoke.value('get_proxy_url_command')
     const resp = await fetch(`${url}/api/config`, { signal: AbortSignal.timeout(3000) })
     if (resp.ok) {
-      diagnostics.value.network = { value: 'Sunshine 通信正常', status: 'good', statusText: '良好' }
-      diagnostics.value.firewall = { value: '端口可达', status: 'good', statusText: '已配置' }
+      diagnostics.value.network = { value: t.value.tools.status.commNormal, status: 'good', statusText: t.value.tools.status.great }
+      diagnostics.value.firewall = { value: t.value.tools.status.portReachable, status: 'good', statusText: t.value.tools.status.configured }
     } else {
-      diagnostics.value.network = { value: '连接异常', status: 'warning', statusText: '异常' }
-      diagnostics.value.firewall = { value: '可能受阻', status: 'warning', statusText: '请检查' }
+      diagnostics.value.network = { value: t.value.tools.status.connAbnormal, status: 'warning', statusText: t.value.tools.status.abnormal }
+      diagnostics.value.firewall = { value: t.value.tools.status.portMayBlocked, status: 'warning', statusText: t.value.tools.status.pleaseCheck }
     }
   } catch (_) {
-    diagnostics.value.network = { value: '无法连接 Sunshine', status: 'error', statusText: '不可达' }
-    diagnostics.value.firewall = { value: '无法确认', status: 'warning', statusText: '请检查' }
+    diagnostics.value.network = { value: t.value.tools.status.noConnection, status: 'error', statusText: t.value.tools.status.unreachable }
+    diagnostics.value.firewall = { value: t.value.tools.status.portUncertain, status: 'warning', statusText: t.value.tools.status.pleaseCheck }
   }
 }
 

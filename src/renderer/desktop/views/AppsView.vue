@@ -27,7 +27,7 @@
     <!-- 加载状态 -->
     <div v-if="loading" class="apps-loading">
       <div class="loading-spinner"></div>
-      <span>加载应用列表...</span>
+      <span>{{ t.apps.loading }}</span>
     </div>
 
     <!-- 空状态 -->
@@ -36,10 +36,10 @@
         <rect x="2" y="2" width="8" height="8" rx="2"/><rect x="14" y="2" width="8" height="8" rx="2"/>
         <rect x="2" y="14" width="8" height="8" rx="2"/><rect x="14" y="14" width="8" height="8" rx="2"/>
       </svg>
-      <p v-if="searchQuery">没有找到匹配的应用</p>
-      <p v-else-if="activeFilter === 'favorites'">还没有收藏的应用</p>
-      <p v-else>还没有配置任何应用</p>
-      <span class="empty-hint" v-if="!searchQuery && activeFilter === 'all'">在 Web 控制台中添加应用</span>
+      <p v-if="searchQuery">{{ t.apps.searchNoMatch }}</p>
+      <p v-else-if="activeFilter === 'favorites'">{{ t.apps.noFavorites }}</p>
+      <p v-else>{{ t.apps.noApps }}</p>
+      <span class="empty-hint" v-if="!searchQuery && activeFilter === 'all'">{{ t.apps.addHint }}</span>
     </div>
 
     <AppGridView
@@ -105,6 +105,9 @@
 import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useApps } from '../composables/useApps'
 import { useLaunchHelpers } from '../composables/useLaunchHelpers'
+import { useI18n } from '../i18n/index.js'
+
+const { t } = useI18n()
 import AppToolbar from '../components/AppToolbar.vue'
 import AppRecentStrip from '../components/AppRecentStrip.vue'
 import AppGridView from '../components/AppGridView.vue'

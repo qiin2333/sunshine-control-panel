@@ -50,6 +50,7 @@ import SplashScreen from './components/SplashScreen.vue'
 import { useGamepad, navigateFocus, confirmFocused } from './composables/useGamepad.js'
 import { useTheme } from './composables/useTheme.js'
 import { useLaunchHelpers } from './composables/useLaunchHelpers.js'
+import { useI18n } from './i18n/index.js'
 
 // 图标组件
 import IconApps from './icons/IconApps.vue'
@@ -60,6 +61,7 @@ import IconTools from './icons/IconTools.vue'
 import IconSettings from './icons/IconSettings.vue'
 import IconPower from './icons/IconPower.vue'
 import IconPalette from './icons/IconPalette.vue'
+import IconLang from './icons/IconLang.vue'
 
 // 视图组件
 import AppsView from './views/AppsView.vue'
@@ -71,6 +73,9 @@ import SettingsView from './views/SettingsView.vue'
 
 // 导入图标资源
 import sunshineIcon from '../../assets/sunshine.ico'
+
+// i18n
+const { t, locale, toggleLocale } = useI18n()
 
 // 应用配置
 const appTitle = 'FOUNDATION DESKTOP'
@@ -87,7 +92,7 @@ function handleThemeExport() {
 }
 
 function handleThemeImport() {
-  const json = prompt('粘贴主题 JSON:')
+  const json = prompt(t.value.nav.theme + ' JSON:')
   if (json) importTheme(json)
 }
 
@@ -95,60 +100,21 @@ function handleThemeImport() {
 const activeNav = ref('apps')
 
 // 主导航项
-const navItems = [
-  {
-    id: 'apps',
-    label: '应用',
-    icon: IconApps,
-    disabled: false,
-  },
-  {
-    id: 'dashboard',
-    label: '仪表盘',
-    icon: IconDashboard,
-    disabled: false,
-  },
-  {
-    id: 'devices',
-    label: '设备',
-    icon: IconDevices,
-    disabled: false,
-  },
-  {
-    id: 'stream',
-    label: '串流',
-    icon: IconStream,
-    disabled: false,
-  },
-  {
-    id: 'tools',
-    label: '工具',
-    icon: IconTools,
-    disabled: false,
-  },
-]
+const navItems = computed(() => [
+  { id: 'apps', label: t.value.nav.apps, icon: IconApps, disabled: false },
+  { id: 'dashboard', label: t.value.nav.dashboard, icon: IconDashboard, disabled: false },
+  { id: 'devices', label: t.value.nav.devices, icon: IconDevices, disabled: false },
+  { id: 'stream', label: t.value.nav.stream, icon: IconStream, disabled: false },
+  { id: 'tools', label: t.value.nav.tools, icon: IconTools, disabled: false },
+])
 
 // 底部导航项
-const bottomNavItems = [
-  {
-    id: 'theme',
-    label: '主题',
-    icon: IconPalette,
-    disabled: false,
-  },
-  {
-    id: 'settings',
-    label: '设置',
-    icon: IconSettings,
-    disabled: false,
-  },
-  {
-    id: 'exit',
-    label: '退出',
-    icon: IconPower,
-    disabled: false,
-  },
-]
+const bottomNavItems = computed(() => [
+  { id: 'lang', label: locale.value === 'zh' ? 'EN' : '中文', icon: IconLang, disabled: false },
+  { id: 'theme', label: t.value.nav.theme, icon: IconPalette, disabled: false },
+  { id: 'settings', label: t.value.nav.settings, icon: IconSettings, disabled: false },
+  { id: 'exit', label: t.value.nav.exit, icon: IconPower, disabled: false },
+])
 
 // 视图映射
 const viewMap = {
@@ -190,6 +156,10 @@ async function handleNavClick(item) {
   }
   if (item.id === 'theme') {
     themeEditorOpen.value = !themeEditorOpen.value
+    return
+  }
+  if (item.id === 'lang') {
+    toggleLocale()
     return
   }
   activeNav.value = item.id

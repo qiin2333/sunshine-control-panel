@@ -5,7 +5,7 @@
 
       <div v-else class="loading-state">
         <div class="spinner"></div>
-        <p>加载中...</p>
+        <p>{{ t.toolWindow.loading }}</p>
       </div>
     </div>
   </div>
@@ -14,6 +14,9 @@
 <script setup>
 import { shallowRef, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { useI18n } from '../desktop/i18n/index.js'
+
+const { t } = useI18n()
 
 const currentTool = shallowRef(null)
 

@@ -3,7 +3,7 @@
     <div class="webstream-header">
       <h2>
         <el-icon class="header-icon"><Connection /></el-icon>
-        Web 串流服务
+        {{ t.webStream.title }}
       </h2>
     </div>
 
@@ -11,7 +11,7 @@
       <div class="webstream-form">
         <!-- 描述 -->
         <p class="section-desc">
-          通过浏览器远程串流，无需安装客户端。基于
+          {{ t.webStream.desc }}
           <el-link type="primary" href="https://github.com/MrCreativ3001/moonlight-web-stream" target="_blank">
             Moonlight Web
           </el-link>
@@ -22,7 +22,7 @@
           <div class="status-row">
             <div class="status-info">
               <span class="status-dot" :class="status.running ? 'dot-running' : 'dot-stopped'" />
-              <span class="status-label">{{ status.running ? '运行中' : (status.installed ? '已停止' : '未安装') }}</span>
+              <span class="status-label">{{ status.running ? t.webStream.statusRunning : (status.installed ? t.webStream.statusStopped : t.webStream.statusNotInstalled) }}</span>
               <span v-if="status.version" class="status-version">v{{ status.version }}</span>
             </div>
             <div class="status-actions">
@@ -34,7 +34,7 @@
                 round
               >
                 <el-icon><Download /></el-icon>
-                安装
+                {{ t.webStream.install }}
               </el-button>
               <template v-else>
                 <el-button
@@ -45,7 +45,7 @@
                   round
                 >
                   <el-icon><VideoPlay /></el-icon>
-                  启动
+                  {{ t.webStream.start }}
                 </el-button>
                 <el-button
                   v-else
@@ -55,11 +55,11 @@
                   round
                 >
                   <el-icon><VideoPause /></el-icon>
-                  停止
+                  {{ t.webStream.stop }}
                 </el-button>
                 <el-button @click="handleCheckUpdate" round>
                   <el-icon><Refresh /></el-icon>
-                  检查更新
+                  {{ t.webStream.checkUpdate }}
                 </el-button>
               </template>
             </div>
@@ -78,7 +78,7 @@
         <div v-if="status.running" class="access-section">
           <div class="section-title">
             <el-icon><Link /></el-icon>
-            <span>访问链接</span>
+            <span>{{ t.webStream.accessLink }}</span>
           </div>
           <div class="access-url-row">
             <el-input :model-value="status.access_url" readonly class="url-input">
@@ -86,15 +86,15 @@
             </el-input>
             <el-button type="primary" @click="copyUrl" round>
               <el-icon><CopyDocument /></el-icon>
-              复制
+              {{ t.webStream.copy }}
             </el-button>
             <el-button @click="openInBrowser" round>
               <el-icon><Position /></el-icon>
-              打开
+              {{ t.webStream.open }}
             </el-button>
           </div>
           <p class="form-tip">
-            将此链接发送给远程用户，在浏览器中打开即可串流。外网需放行端口 {{ status.port }}。
+            {{ t.webStream.accessTip.replace('{port}', status.port) }}
           </p>
         </div>
 
@@ -102,51 +102,51 @@
         <template v-if="status.installed">
           <el-divider content-position="left">
             <el-icon><Setting /></el-icon>
-            <span style="margin-left: 6px;">服务配置</span>
+            <span style="margin-left: 6px;">{{ t.webStream.serviceConfig }}</span>
           </el-divider>
 
           <el-form :model="config" label-width="140px" class="config-form">
-            <el-form-item label="绑定地址">
+            <el-form-item :label="t.webStream.bindAddress">
               <el-input v-model="config.web_server.bind_address" placeholder="0.0.0.0:8080" />
-              <span class="form-tip"><code>0.0.0.0:端口</code> 监听所有网卡，<code>127.0.0.1:端口</code> 仅本机</span>
+              <span class="form-tip" v-html="t.webStream.bindAddressTip.replace('{allIp}', '<code>0.0.0.0:port</code>').replace('{localhost}', '<code>127.0.0.1:port</code>')"></span>
             </el-form-item>
 
-            <el-form-item label="HTTPS 证书">
+            <el-form-item :label="t.webStream.httpsCert">
               <div class="setting-content">
                 <el-switch v-model="httpsEnabled" />
-                <span class="form-tip">{{ httpsEnabled ? '已启用（需要证书文件）' : '未启用（HTTP 明文）' }}</span>
+                <span class="form-tip">{{ httpsEnabled ? t.webStream.httpsEnabled : t.webStream.httpsDisabled }}</span>
               </div>
             </el-form-item>
 
             <template v-if="httpsEnabled">
-              <el-form-item label="私钥文件">
+              <el-form-item :label="t.webStream.privateKey">
                 <el-input v-model="certKeyPath" placeholder="./server/key.pem" />
               </el-form-item>
-              <el-form-item label="证书文件">
+              <el-form-item :label="t.webStream.certFile">
                 <el-input v-model="certPemPath" placeholder="./server/cert.pem" />
               </el-form-item>
               <el-form-item>
                 <el-button @click="handleGenerateCert" :loading="generatingCert" round>
                   <el-icon><Key /></el-icon>
-                  自动生成自签名证书
+                  {{ t.webStream.generateCert }}
                 </el-button>
-                <span class="form-tip">生成的证书有效期 10 年，浏览器会提示不安全但可正常使用</span>
+                <span class="form-tip">{{ t.webStream.generateCertTip }}</span>
               </el-form-item>
             </template>
 
-            <el-divider content-position="left">默认串流设置</el-divider>
+            <el-divider content-position="left">{{ t.webStream.defaultStreamSettings }}</el-divider>
 
             <div class="two-column-layout">
-              <el-form-item label="视频编码">
+              <el-form-item :label="t.webStream.videoCodec">
                 <el-select v-model="defaultVideoCodec" style="width: 100%">
-                  <el-option label="H.264 (兼容最好)" value="h264" />
+                  <el-option :label="t.webStream.h264Label" value="h264" />
                   <el-option label="H.265 / HEVC" value="h265" />
                   <el-option label="AV1" value="av1" />
-                  <el-option label="自动" value="auto" />
+                  <el-option :label="t.webStream.autoLabel" value="auto" />
                 </el-select>
               </el-form-item>
 
-              <el-form-item label="默认帧率">
+              <el-form-item :label="t.webStream.defaultFps">
                 <el-select v-model="defaultFps" style="width: 100%">
                   <el-option :label="30" :value="30" />
                   <el-option :label="60" :value="60" />
@@ -154,13 +154,13 @@
                 </el-select>
               </el-form-item>
 
-              <el-form-item label="码率 (Kbps)">
+              <el-form-item :label="t.webStream.bitrate">
                 <el-input-number v-model="defaultBitrate" :min="1000" :max="150000" :step="1000" style="width: 100%" />
               </el-form-item>
 
-              <el-form-item label="传输模式">
+              <el-form-item :label="t.webStream.transportMode">
                 <el-select v-model="defaultTransport" style="width: 100%">
-                  <el-option label="自动 (WebRTC 优先)" value="auto" />
+                  <el-option :label="t.webStream.transportAuto" value="auto" />
                   <el-option label="WebRTC" value="webrtc" />
                   <el-option label="WebSocket" value="websocket" />
                 </el-select>
@@ -170,12 +170,12 @@
             <div class="form-actions">
               <el-form-item>
                 <el-button type="primary" @click="handleSaveConfig" :loading="saving" round>
-                  保存配置
+                  {{ t.webStream.saveConfig }}
                 </el-button>
                 <el-button @click="loadConfig" round>
-                  重新加载
+                  {{ t.webStream.reload }}
                 </el-button>
-                <span v-if="configDirty" class="unsaved-hint">⚠ 有未保存的更改</span>
+                <span v-if="configDirty" class="unsaved-hint">{{ t.webStream.unsavedChanges }}</span>
               </el-form-item>
             </div>
           </el-form>
@@ -184,7 +184,7 @@
         <!-- 安装路径 -->
         <div v-if="status.installed" class="install-path">
           <el-icon><Folder /></el-icon>
-          <span>安装路径: {{ status.install_path }}</span>
+          <span>{{ t.webStream.installPath.replace('{path}', status.install_path) }}</span>
         </div>
       </div>
     </div>
@@ -199,6 +199,9 @@ import {
   Link, CopyDocument, Position, Setting, Folder, Key,
 } from '@element-plus/icons-vue'
 import { moonlightWeb } from '../tauri-adapter.js'
+import { useI18n } from '../desktop/i18n/index.js'
+
+const { t } = useI18n()
 
 const emit = defineEmits(['close'])
 
@@ -257,7 +260,7 @@ onMounted(async () => {
       unlisten()
     })
   } catch (e) {
-    console.warn('无法监听下载进度事件:', e)
+    console.warn('Cannot listen to download progress event:', e)
   }
 })
 
@@ -277,7 +280,7 @@ async function refreshStatus() {
     const s = await moonlightWeb.getStatus()
     Object.assign(status, s)
   } catch (e) {
-    console.error('获取状态失败:', e)
+    console.error('Failed to get status:', e)
   }
 }
 
@@ -307,7 +310,7 @@ async function loadConfig() {
 
     configDirty.value = false
   } catch (e) {
-    console.error('加载配置失败:', e)
+    console.error('Failed to load config:', e)
   }
 }
 
@@ -329,7 +332,7 @@ async function handleStart() {
     ElMessage.success(msg)
     await refreshStatus()
   } catch (e) {
-    ElMessage.error('启动失败: ' + e)
+    ElMessage.error(t.value.webStream.startFailed.replace('{error}', e))
   } finally {
     starting.value = false
   }
@@ -342,7 +345,7 @@ async function handleStop() {
     ElMessage.success(msg)
     await refreshStatus()
   } catch (e) {
-    ElMessage.error('停止失败: ' + e)
+    ElMessage.error(t.value.webStream.stopFailed.replace('{error}', e))
   } finally {
     stopping.value = false
   }
@@ -355,25 +358,25 @@ async function handleInstall() {
     // 先检查最新版
     const release = await moonlightWeb.checkRelease()
     if (!release.download_url) {
-      ElMessage.error('未找到适用于 Windows x86_64 的下载文件')
+      ElMessage.error(t.value.webStream.noWindowsDownload)
       return
     }
 
     await ElMessageBox.confirm(
-      `即将下载 Moonlight Web ${release.version}\n文件: ${release.download_name}`,
-      '确认安装',
-      { confirmButtonText: '下载安装', cancelButtonText: '取消' }
+      t.value.webStream.downloadConfirm.replace('{version}', release.version).replace('{filename}', release.download_name),
+      t.value.webStream.installTitle,
+      { confirmButtonText: t.value.webStream.downloadInstall, cancelButtonText: t.value.webStream.cancelBtn }
     )
 
     await moonlightWeb.download(release.download_url, release.version)
-    ElMessage.success('安装完成!')
+    ElMessage.success(t.value.webStream.installComplete)
     await refreshStatus()
     if (status.installed) {
       await loadConfig()
     }
   } catch (e) {
     if (e !== 'cancel') {
-      ElMessage.error('安装失败: ' + e)
+      ElMessage.error(t.value.webStream.installFailed.replace('{error}', e))
     }
   } finally {
     downloading.value = false
@@ -387,12 +390,12 @@ async function handleCheckUpdate() {
     const latestVersion = release.version?.replace(/^v/, '') || '0.0.0'
 
     if (latestVersion === currentVersion) {
-      ElMessage.info('已是最新版本')
+      ElMessage.info(t.value.webStream.alreadyLatest)
     } else {
       await ElMessageBox.confirm(
-        `发现新版本: ${release.version}\n当前版本: ${status.version}\n\n是否下载更新？`,
-        '更新可用',
-        { confirmButtonText: '下载更新', cancelButtonText: '稍后' }
+        t.value.webStream.newVersionFound.replace('{version}', release.version).replace('{current}', status.version),
+        t.value.webStream.updateAvailable,
+        { confirmButtonText: t.value.webStream.downloadUpdate, cancelButtonText: t.value.webStream.laterBtn }
       )
 
       downloading.value = true
@@ -403,12 +406,12 @@ async function handleCheckUpdate() {
         await moonlightWeb.stop()
       }
       await moonlightWeb.download(release.download_url, release.version)
-      ElMessage.success('更新完成!')
+      ElMessage.success(t.value.webStream.updateComplete)
       await refreshStatus()
     }
   } catch (e) {
     if (e !== 'cancel') {
-      ElMessage.error('检查更新失败: ' + e)
+      ElMessage.error(t.value.webStream.checkUpdateFailed.replace('{error}', e))
     }
   } finally {
     downloading.value = false
@@ -427,23 +430,23 @@ async function handleGenerateCert() {
     if (status.running) {
       try {
         await ElMessageBox.confirm(
-          '证书已生成并保存。需要重启服务才能生效，是否立即重启？',
-          'HTTPS 证书',
-          { confirmButtonText: '重启服务', cancelButtonText: '稍后手动重启' }
+          t.value.webStream.certGenRestart,
+          t.value.webStream.certTitle,
+          { confirmButtonText: t.value.webStream.restartService, cancelButtonText: t.value.webStream.laterManualRestart }
         )
         await moonlightWeb.stop()
         await new Promise(resolve => setTimeout(resolve, 500))
         await moonlightWeb.start()
         await refreshStatus()
-        ElMessage.success('服务已重启，HTTPS 已生效')
+        ElMessage.success(t.value.webStream.serviceRestarted)
       } catch {
-        ElMessage.info('请稍后手动重启服务以启用 HTTPS')
+        ElMessage.info(t.value.webStream.manualRestartHint)
       }
     } else {
-      ElMessage.success('自签名证书已生成并保存，启动服务即可使用 HTTPS')
+      ElMessage.success(t.value.webStream.certGenSuccess)
     }
   } catch (e) {
-    ElMessage.error('证书生成失败: ' + e)
+    ElMessage.error(t.value.webStream.certGenFailed.replace('{error}', e))
   } finally {
     generatingCert.value = false
   }
@@ -478,10 +481,10 @@ async function handleSaveConfig() {
     }
 
     await moonlightWeb.saveConfig(saveConfig)
-    ElMessage.success('配置已保存。如服务正在运行，需重启生效。')
+    ElMessage.success(t.value.webStream.configSaved)
     configDirty.value = false
   } catch (e) {
-    ElMessage.error('保存配置失败: ' + e)
+    ElMessage.error(t.value.webStream.configSaveFailed.replace('{error}', e))
   } finally {
     saving.value = false
   }
@@ -489,9 +492,9 @@ async function handleSaveConfig() {
 
 function copyUrl() {
   navigator.clipboard.writeText(status.access_url).then(() => {
-    ElMessage.success('已复制到剪贴板')
+    ElMessage.success(t.value.webStream.copied)
   }).catch(() => {
-    ElMessage.warning('复制失败，请手动复制')
+    ElMessage.warning(t.value.webStream.copyFailed)
   })
 }
 

@@ -18,7 +18,7 @@
       </div>
 
       <!-- 折叠按钮 -->
-      <div class="collapse-btn" @click="toggleCollapse" aria-label="折叠菜单">
+      <div class="collapse-btn" @click="toggleCollapse" :aria-label="t.sidebar.collapse">
         <img
           :class="['clip-icon', { collapsed: isCollapsed }]"
           src="../public/gura-clip.svg"
@@ -32,7 +32,7 @@
       <!-- 菜单列表 -->
       <el-scrollbar class="menu-scrollbar">
         <div class="menu-section">
-          <p v-if="!isCollapsed" class="section-title">管理</p>
+          <p v-if="!isCollapsed" class="section-title">{{ t.sidebar.sectionManage }}</p>
           <div
             v-for="item in managementMenuItems"
             :key="item.label"
@@ -62,7 +62,7 @@
 
         <!-- 工具菜单 -->
         <div class="menu-section">
-          <p v-if="!isCollapsed" class="section-title">工具</p>
+          <p v-if="!isCollapsed" class="section-title">{{ t.sidebar.sectionTools }}</p>
           <div v-for="item in toolsMenuItems" :key="item.label" class="menu-item" @click="item.action">
             <el-icon :size="20"><component :is="item.icon" /></el-icon>
             <transition name="fade">
@@ -96,19 +96,19 @@
 
       <!-- Windows 经典窗口控制按钮 -->
       <div class="window-controls">
-        <el-tooltip content="最小化" placement="bottom">
+        <el-tooltip :content="t.sidebar.minimize" placement="bottom">
           <div class="control-btn minimize" @click="minimizeWindow">
-            <img class="control-icon" src="../public/icons/btn-minimize-buoy.svg" alt="最小化" width="20" height="20" />
+            <img class="control-icon" src="../public/icons/btn-minimize-buoy.svg" :alt="t.sidebar.minimize" width="20" height="20" />
           </div>
         </el-tooltip>
 
-        <el-tooltip :content="isMaximized ? '还原' : '最大化'" placement="bottom">
+        <el-tooltip :content="isMaximized ? t.sidebar.restore : t.sidebar.maximize" placement="bottom">
           <div class="control-btn maximize" @click="toggleMaximize">
             <img
               v-if="isMaximized"
               class="control-icon"
               src="../public/icons/btn-restore-buoy.svg"
-              alt="还原"
+              :alt="t.sidebar.restore"
               width="20"
               height="20"
             />
@@ -116,16 +116,16 @@
               v-else
               class="control-icon"
               src="../public/icons/btn-maximize-buoy.svg"
-              alt="最大化"
+              :alt="t.sidebar.maximize"
               width="20"
               height="20"
             />
           </div>
         </el-tooltip>
 
-        <el-tooltip content="关闭" placement="bottom">
+        <el-tooltip :content="t.sidebar.close" placement="bottom">
           <div class="control-btn close" @click="closeWindow">
-            <img class="control-icon" src="../public/icons/btn-close-buoy.svg" alt="关闭" width="20" height="20" />
+            <img class="control-icon" src="../public/icons/btn-close-buoy.svg" :alt="t.sidebar.close" width="20" height="20" />
           </div>
         </el-tooltip>
       </div>
@@ -166,6 +166,8 @@ import { useSidebarState } from '../composables/useSidebarState.js'
 import { useWindowControls } from '../composables/useWindowControls.js'
 import { useTools } from '../composables/useTools.js'
 import { ROUTES } from '../composables/useRouter.js'
+import { useI18n } from '../desktop/i18n/index.js'
+import IconLang from '../desktop/icons/IconLang.vue'
 import {
   Monitor,
   Delete,
@@ -188,6 +190,8 @@ import {
 } from '@element-plus/icons-vue'
 
 const emit = defineEmits(['route-change'])
+
+const { t, locale, toggleLocale } = useI18n()
 
 // Composables
 const {
@@ -237,36 +241,37 @@ const handleSkipVersion = (version) => skipVersion(version)
 
 // 菜单配置
 const managementMenuItems = computed(() => [
-  { icon: Setting, label: '高级设置', action: goHome, isActive: () => router.isRoute(ROUTES.HOME) },
-  { icon: Monitor, label: '虚拟显示器', action: openVddSettings, isActive: () => router.isRoute(ROUTES.VDD_SETTINGS) },
+  { icon: Setting, label: t.value.sidebar.advancedSettings, action: goHome, isActive: () => router.isRoute(ROUTES.HOME) },
+  { icon: Monitor, label: t.value.sidebar.virtualDisplay, action: openVddSettings, isActive: () => router.isRoute(ROUTES.VDD_SETTINGS) },
   // Web 串流（内测功能，仅开发/内测模式可见）
   ...((typeof __DEV__ !== 'undefined' && __DEV__) || (typeof __BETA__ !== 'undefined' && __BETA__) ? [
-    { icon: Connection, label: 'Web 串流', action: openWebStream, isActive: () => router.isRoute(ROUTES.WEB_STREAM) },
+    { icon: Connection, label: t.value.sidebar.webStream, action: openWebStream, isActive: () => router.isRoute(ROUTES.WEB_STREAM) },
   ] : []),
-  { icon: MagicStick, label: '米塔', action: openAiAssistant, isActive: () => router.isRoute(ROUTES.AI_ASSISTANT) },
-  { icon: Delete, label: '卸载 VDD', action: uninstallVdd },
-  { icon: RefreshRight, label: '重启显卡驱动', action: restartDriver },
+  { icon: MagicStick, label: t.value.sidebar.aiAssistant, action: openAiAssistant, isActive: () => router.isRoute(ROUTES.AI_ASSISTANT) },
+  // { icon: Delete, label: t.value.sidebar.uninstallVdd, action: uninstallVdd },
+  // { icon: RefreshRight, label: t.value.sidebar.restartGpu, action: restartDriver },
   // { icon: Refresh, label: '使用WGC捕获', action: restartSunshineInUserMode },
-  { icon: Download, label: '检查更新', action: handleCheckForUpdates, hasSwitch: true },
+  { icon: Download, label: t.value.sidebar.checkUpdate, action: handleCheckForUpdates, hasSwitch: true },
 ])
 
-const toolsMenuItems = [
-  { icon: Link, label: '官方网站', action: () => openUrl('https://www.alkaidlab.com/') },
-  { icon: Timer, label: '串流计时器', action: openTimer },
-  { icon: DataLine, label: '延迟测试', action: () => openUrl('https://yangkile.github.io/D-lay/') },
-  { icon: Cpu, label: '手柄测试', action: () => openUrl('https://hardwaretester.com/gamepad') },
-  { icon: CopyDocument, label: '剪贴板同步', action: () => openUrl('https://gcopy.rutron.net/zh') },
-  { icon: Delete, label: '清理临时文件', action: cleanupCovers },
-]
+const toolsMenuItems = computed(() => [
+  { icon: Link, label: t.value.sidebar.officialWebsite, action: () => openUrl('https://www.alkaidlab.com/') },
+  { icon: Timer, label: t.value.sidebar.streamTimer, action: openTimer },
+  { icon: DataLine, label: t.value.sidebar.latencyTest, action: () => openUrl('https://yangkile.github.io/D-lay/') },
+  { icon: Cpu, label: t.value.sidebar.gamepadTest, action: () => openUrl('https://hardwaretester.com/gamepad') },
+  { icon: CopyDocument, label: t.value.sidebar.clipboardSync, action: () => openUrl('https://gcopy.rutron.net/zh') },
+  { icon: Delete, label: t.value.sidebar.cleanTemp, action: cleanupCovers },
+])
 
 const footerMenuItems = computed(() => {
   const items = [
-    { icon: isDark.value ? Sunny : Moon, label: isDark.value ? '浅色模式' : '深色模式', action: toggleTheme },
-    { icon: Minus, label: '最小化', action: minimizeWindow },
-    { icon: Close, label: '隐藏窗口', action: closeWindow, class: 'danger' },
+    { icon: isDark.value ? Sunny : Moon, label: isDark.value ? t.value.sidebar.lightMode : t.value.sidebar.darkMode, action: toggleTheme },
+    { icon: IconLang, label: locale.value === 'zh' ? 'EN' : '中文', action: toggleLocale },
+    { icon: Minus, label: t.value.sidebar.minimize, action: minimizeWindow },
+    { icon: Close, label: t.value.sidebar.hideWindow, action: closeWindow, class: 'danger' },
   ]
   if (!isAdmin.value) {
-    items.push({ icon: Key, label: '以管理员重启', action: restartAsAdmin, class: 'warning' })
+    items.push({ icon: Key, label: t.value.sidebar.restartAsAdmin, action: restartAsAdmin, class: 'warning' })
   }
   return items
 })

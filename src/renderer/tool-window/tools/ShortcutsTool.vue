@@ -1,7 +1,7 @@
 <template>
   <div class="tool-container" :class="{ 'embedded': embedded }">
     <div v-if="!embedded" class="tool-header">
-      <h2>Moonlight 串流快捷键手册</h2>
+      <h2>{{ t.shortcutsTool.title }}</h2>
       <button class="close-btn" @click="$emit('close')">×</button>
     </div>
 
@@ -13,6 +13,9 @@
 import { ref, onMounted } from 'vue'
 import MarkdownIt from 'markdown-it'
 import shortcutsMd from './shortcuts.md?raw'
+import { useI18n } from '../../desktop/i18n/index.js'
+
+const { t } = useI18n()
 
 defineProps({
   embedded: {

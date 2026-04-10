@@ -39,13 +39,16 @@
 </template>
 
 <script setup>
-import { ref, onUnmounted, onMounted } from 'vue'
+import { ref, computed, onUnmounted, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { PhysicalPosition } from '@tauri-apps/api/dpi'
+import { useI18n } from '../desktop/i18n/index.js'
 import * as PIXI from 'pixi.js'
 import { callVisionLLM } from '../composables/aiClient.js'
 import { STORAGE_KEY, DEFAULT_CONFIG } from '../composables/aiProviders.js'
+
+const { t, locale, toggleLocale } = useI18n()
 
 const menuVisible = ref(false)
 const speechVisible = ref(false)
@@ -257,39 +260,44 @@ const startSpeechLoop = () => {
   }, 15000 + Math.random() * 20000)
 }
 
-const menuItems = [
+const menuItems = computed(() => [
   {
     id: 'main',
-    label: '控制面板',
+    label: t.value.toolbar.controlPanel,
     icon: '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path fill="white" d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>',
   },
   {
     id: 'vdd',
-    label: '虚拟显示器',
+    label: t.value.toolbar.virtualDisplay,
     icon: '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path fill="white" d="M20 18c1.1 0 1.99-.9 1.99-2L22 6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z"/></svg>',
   },
   {
     id: 'dpi',
-    label: '调整 DPI',
+    label: t.value.toolbar.adjustDpi,
     icon: '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path fill="white" d="M21 3H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14zM5 7h5v5H5zm6 0h8v2h-8zm0 3h8v2h-8zM5 13h5v5H5zm6 0h8v2h-8z"/></svg>',
   },
   {
     id: 'bitrate',
-    label: '码率调整',
+    label: t.value.toolbar.bitrateAdjust,
     icon: '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path fill="white" d="M9 3L5 6.99h3V14h2V6.99h3L9 3zm7 14.01V10h-2v7.01h-3L15 21l4-3.99h-3z"/></svg>',
   },
   {
     id: 'shortcuts',
-    label: '快捷键手册',
+    label: t.value.toolbar.shortcutGuide,
     icon: '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path fill="white" d="M20 5H4c-1.1 0-1.99.9-1.99 2L2 17c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-9 3h2v2h-2V8zm0 3h2v2h-2v-2zM8 8h2v2H8V8zm0 3h2v2H8v-2zm-1 2H5v-2h2v2zm0-3H5V8h2v2zm9 7H8v-2h8v2zm0-4h-2v-2h2v2zm0-3h-2V8h2v2zm3 3h-2v-2h2v2zm0-3h-2V8h2v2z"/></svg>',
   },
   {
+    id: 'lang',
+    label: locale.value === 'zh' ? 'English' : '中文',
+    icon: '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="10" fill="none" stroke="white" stroke-width="2"/><line x1="2" y1="12" x2="22" y2="12" stroke="white" stroke-width="2"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" fill="none" stroke="white" stroke-width="2"/></svg>',
+  },
+  {
     id: 'close',
-    label: '关闭',
+    label: t.value.toolbar.close,
     icon: '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path fill="white" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>',
     danger: true,
   },
-]
+])
 
 const toggleMenu = () => {
   menuVisible.value = !menuVisible.value
@@ -305,10 +313,15 @@ const handleOutsideClick = () => {
 const handleMenuItem = async (action) => {
   menuVisible.value = false
 
+  if (action === 'lang') {
+    toggleLocale()
+    return
+  }
+
   try {
     await invoke('handle_toolbar_menu_action', { action })
   } catch (error) {
-    console.error('菜单操作失败:', error)
+    console.error('Menu action failed:', error)
   }
 }
 

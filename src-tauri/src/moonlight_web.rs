@@ -160,8 +160,12 @@ fn default_bind_address() -> String {
 
 // ========== 路径工具 ==========
 
-/// 获取 moonlight-web 安装目录（与控制面板同级）
+/// 获取 moonlight-web 安装目录（%LOCALAPPDATA%\Sunshine\moonlight-web）
 fn get_install_dir() -> PathBuf {
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        return PathBuf::from(local_app_data).join("Sunshine").join("moonlight-web");
+    }
+    // fallback: 与控制面板同级
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(parent) = exe_path.parent() {
             return parent.join("moonlight-web");
@@ -425,17 +429,14 @@ pub async fn moonlight_web_download(url: String, version: String, app_handle: ta
     let total_size = response.content_length().unwrap_or(0);
     let install_dir = get_install_dir();
 
-    // 确保安装目录存在
-    std::fs::create_dir_all(&install_dir)
-        .map_err(|e| format!("创建安装目录失败: {}", e))?;
-
-    // 根据 URL 确定临时文件扩展名
+    // 使用系统临时目录下载，避免安装目录权限问题
+    let temp_dir = std::env::temp_dir();
     let temp_ext = if url.to_lowercase().ends_with(".tar.gz") || url.to_lowercase().ends_with(".tgz") {
         ".tar.gz"
     } else {
         ".zip"
     };
-    let temp_path = install_dir.join(format!("_download{}", temp_ext));
+    let temp_path = temp_dir.join(format!("moonlight-web_download{}", temp_ext));
     let mut file = std::fs::File::create(&temp_path)
         .map_err(|e| format!("创建临时文件失败: {}", e))?;
 
@@ -466,11 +467,35 @@ pub async fn moonlight_web_download(url: String, version: String, app_handle: ta
 
     info!("✅ 下载完成 ({} bytes), 开始解压...", downloaded);
 
-    // 解压
-    extract_archive(&temp_path, &install_dir)?;
+    // 解压到临时目录，避免直接在安装目录操作导致权限问题
+    let extract_dir = temp_dir.join("moonlight-web-extract");
+    if extract_dir.exists() {
+        let _ = std::fs::remove_dir_all(&extract_dir);
+    }
+    std::fs::create_dir_all(&extract_dir)
+        .map_err(|e| format!("创建解压临时目录失败: {}", e))?;
 
-    // 清理临时文件
+    extract_archive(&temp_path, &extract_dir)?;
+
+    // 清理下载的压缩包
     let _ = std::fs::remove_file(&temp_path);
+
+    // 在临时解压目录中查找 web-server.exe 所在目录
+    let source_dir = if let Some(found) = find_file_recursive(&extract_dir, SERVER_BINARY_NAME) {
+        found.parent().unwrap_or(&extract_dir).to_path_buf()
+    } else {
+        extract_dir.clone()
+    };
+
+    // 确保安装目录存在
+    std::fs::create_dir_all(&install_dir)
+        .map_err(|e| format!("创建安装目录失败: {}", e))?;
+
+    // 使用 robocopy 将文件复制到安装目录（更可靠，处理权限和覆盖）
+    copy_dir_contents(&source_dir, &install_dir)?;
+
+    // 清理临时解压目录
+    let _ = std::fs::remove_dir_all(&extract_dir);
 
     // 保存版本号
     if !version.is_empty() {
@@ -712,6 +737,70 @@ fn has_https_certificate() -> bool {
         }
     }
     false
+}
+
+/// 递归复制目录内容到目标目录
+fn copy_dir_contents(src: &PathBuf, dest: &PathBuf) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        // robocopy 返回值 < 8 表示成功（0=无变化, 1=新文件复制, 2=额外文件等）
+        let output = std::process::Command::new("robocopy")
+            .args([
+                &src.to_string_lossy().to_string(),
+                &dest.to_string_lossy().to_string(),
+                "/E",    // 递归包括空目录
+                "/NFL",  // 不列出文件名
+                "/NDL",  // 不列出目录名
+                "/NJH",  // 无 Job Header
+                "/NJS",  // 无 Job Summary
+                "/NC",   // 无文件类
+                "/NS",   // 无文件大小
+                "/NP",   // 无进度
+            ])
+            .creation_flags(0x08000000)
+            .output()
+            .map_err(|e| format!("执行 robocopy 失败: {}", e))?;
+
+        let exit_code = output.status.code().unwrap_or(-1);
+        if exit_code >= 8 {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("robocopy 失败 (exit {}): {}", exit_code, stderr));
+        }
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        // Unix: use cp -a
+        let output = std::process::Command::new("cp")
+            .args(["-a", "-T", &src.to_string_lossy(), &dest.to_string_lossy()])
+            .output()
+            .map_err(|e| format!("执行 cp 失败: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("cp 失败: {}", stderr));
+        }
+        Ok(())
+    }
+}
+
+/// 递归搜索文件
+fn find_file_recursive(dir: &PathBuf, filename: &str) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path.is_file() && entry.file_name().to_string_lossy() == filename {
+            return Some(path);
+        }
+        if path.is_dir() {
+            if let Some(found) = find_file_recursive(&path, filename) {
+                return Some(found);
+            }
+        }
+    }
+    None
 }
 
 /// 解压下载的压缩包

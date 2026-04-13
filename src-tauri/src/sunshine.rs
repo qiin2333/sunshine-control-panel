@@ -101,6 +101,26 @@ pub fn get_sunshine_install_path() -> String {
         .to_string()
 }
 
+/// 获取 Sunshine 安装路径（内部使用，返回 PathBuf）
+pub fn install_dir() -> PathBuf {
+    get_sunshine_path()
+}
+
+/// 获取 config 目录（install_dir/config）
+pub fn config_dir() -> PathBuf {
+    get_sunshine_path().join("config")
+}
+
+/// 获取 covers 目录（config/covers）
+pub fn covers_dir() -> PathBuf {
+    config_dir().join("covers")
+}
+
+/// 获取 assets 目录（install_dir/assets）
+pub fn assets_dir() -> PathBuf {
+    get_sunshine_path().join("assets")
+}
+
 #[tauri::command]
 pub async fn get_sunshine_version() -> Result<String, String> {
     let sunshine_exe = get_sunshine_path().join("sunshine.exe");

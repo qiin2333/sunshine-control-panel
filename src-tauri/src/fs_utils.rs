@@ -193,9 +193,7 @@ pub async fn copy_image_to_assets(source_path: String) -> Result<String, String>
         return Err(format!("源文件不存在: {}", source_path));
     }
     
-    // 获取 Sunshine 安装路径
-    let sunshine_path = PathBuf::from(sunshine::get_sunshine_install_path());
-    let assets_dir = sunshine_path.join("assets");
+    let assets_dir = sunshine::assets_dir();
     
     // 创建 assets 目录（如果不存在）
     fs::create_dir_all(&assets_dir)
@@ -240,10 +238,8 @@ pub async fn cleanup_unused_covers() -> Result<serde_json::Value, String> {
     
     info!("🧹 开始清理无用封面...");
     
-    // 获取 Sunshine config 目录
-    let sunshine_path = PathBuf::from(sunshine::get_sunshine_install_path()).join("config");
-    let covers_dir = sunshine_path.join("covers");
-    let apps_json_path = sunshine_path.join("apps.json");
+    let covers_dir = sunshine::covers_dir();
+    let apps_json_path = sunshine::config_dir().join("apps.json");
     
     debug!("📂 使用 covers 目录: {:?}", covers_dir);
     debug!("📄 使用 apps.json 路径: {:?}", apps_json_path);
@@ -369,9 +365,10 @@ pub async fn cleanup_unused_covers() -> Result<serde_json::Value, String> {
     }
     
     // === 2. 清理 config 目录中的 temp_ 临时文件 ===
+    let config_dir = sunshine::config_dir();
     debug!("\n📂 扫描 config 目录中的临时文件...");
-    if sunshine_path.exists() {
-        match fs::read_dir(&sunshine_path) {
+    if config_dir.exists() {
+        match fs::read_dir(&config_dir) {
             Ok(entries) => {
                 for entry in entries {
                     if let Ok(entry) = entry {
@@ -1317,4 +1314,145 @@ fn scan_gog_from_registry() -> Vec<PlatformGame> {
     }
 
     games
+}
+
+/// Steam Store 搜索结果（返回给前端选择）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SteamCoverCandidate {
+    pub steam_id: u64,
+    pub name: String,
+    /// header.jpg 完整 URL
+    pub header_url: String,
+    /// 小缩略图 URL（适用于列表预览）
+    pub tiny_image: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SteamSearchResponse {
+    items: Vec<SteamSearchItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SteamSearchItem {
+    id: u64,
+    name: String,
+    #[serde(default)]
+    tiny_image: String,
+}
+
+/// 通过 Steam Store 搜索 API 按名称查找游戏，返回候选列表供用户选择
+#[tauri::command]
+pub async fn search_steam_covers(query: String) -> Result<Vec<SteamCoverCandidate>, String> {
+    if query.is_empty() {
+        return Err("搜索关键词不能为空".to_string());
+    }
+
+    let client = crate::commands::cdn_client();
+
+    let search_url = format!(
+        "https://store.steampowered.com/api/storesearch/?term={}&l=english&cc=US",
+        url_percent_encode(&query)
+    );
+    info!("🔍 搜索 Steam Store: {}", search_url);
+
+    let resp = client.get(&search_url).send().await
+        .map_err(|e| format!("Steam 搜索失败: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Steam 搜索失败, HTTP {}", resp.status()));
+    }
+
+    let data: SteamSearchResponse = resp.json().await
+        .map_err(|e| format!("解析搜索结果失败: {}", e))?;
+
+    if data.items.is_empty() {
+        return Err(format!("在 Steam 上未找到 \"{}\"", query));
+    }
+
+    let candidates: Vec<SteamCoverCandidate> = data.items.into_iter().take(6).map(|item| {
+        SteamCoverCandidate {
+            header_url: format!(
+                "https://cdn.akamai.steamstatic.com/steam/apps/{}/header.jpg",
+                item.id
+            ),
+            steam_id: item.id,
+            name: item.name,
+            tiny_image: item.tiny_image,
+        }
+    }).collect();
+
+    info!("✅ 找到 {} 个候选封面", candidates.len());
+    Ok(candidates)
+}
+
+/// URL percent encoding（与 JS encodeURIComponent 行为一致）
+fn url_percent_encode(input: &str) -> String {
+    let mut result = String::with_capacity(input.len() * 3);
+    for byte in input.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9'
+            | b'-' | b'_' | b'.' | b'~' | b'!' | b'\'' | b'(' | b')' | b'*' => {
+                result.push(byte as char);
+            }
+            _ => {
+                result.push_str(&format!("%{:02X}", byte));
+            }
+        }
+    }
+    result
+}
+
+/// 下载指定 Steam 封面并通过 Sunshine HTTP API 上传
+/// 通过 Sunshine 服务进程写入 covers 目录（解决权限问题）
+#[tauri::command]
+pub async fn upload_steam_cover(
+    header_url: String,
+    app_name: String,
+    proxy_url: String,
+) -> Result<String, String> {
+    use base64::Engine as _;
+
+    // 安全检查：仅允许 Steam CDN
+    if !header_url.starts_with("https://cdn.akamai.steamstatic.com/") {
+        return Err(format!("不允许从此域名下载: {}", header_url));
+    }
+
+    let client = crate::commands::cdn_client();
+
+    // 1. 下载封面图片
+    let resp = client.get(&header_url).send().await
+        .map_err(|e| format!("下载封面失败: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("下载失败, HTTP {}", resp.status()));
+    }
+
+    let bytes = resp.bytes().await
+        .map_err(|e| format!("读取封面失败: {}", e))?;
+
+    if bytes.is_empty() {
+        return Err("下载的封面为空".to_string());
+    }
+
+    // 2. 转 base64
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+    // 3. 通过 Sunshine API 上传
+    let upload_url = format!("{}/api/covers/upload", proxy_url);
+    let payload = serde_json::json!({
+        "key": app_name,
+        "data": b64,
+    });
+
+    let upload_resp = client.post(&upload_url)
+        .json(&payload)
+        .send().await
+        .map_err(|e| format!("上传封面失败: {}", e))?;
+
+    if !upload_resp.status().is_success() {
+        return Err(format!("上传失败, HTTP {}", upload_resp.status()));
+    }
+
+    info!("✅ 封面已上传: {} ({} bytes)", app_name, bytes.len());
+    Ok(app_name)
 }

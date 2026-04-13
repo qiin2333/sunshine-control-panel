@@ -1,4 +1,5 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { tauriInvoke } from './useTauri'
 
 const STORAGE_KEY = 'foundation-desktop-apps'
 
@@ -9,6 +10,7 @@ export function useApps() {
   const searchQuery = ref('')
   const launchingApp = ref(null)
   const failedImages = ref(new Set())
+  const coverVersions = ref({}) // 封面版本号，用于强制刷新图片缓存
 
   // 视图选项（持久化）
   const viewMode = ref(localStorage.getItem(`${STORAGE_KEY}-view`) || 'grid')
@@ -140,22 +142,36 @@ export function useApps() {
 
   function getAppImageUrl(app) {
     if (failedImages.value.has(app.name)) return null
+    const ver = coverVersions.value[app.name]
+    // 如果刚上传了新封面，直接用 appName.png（上传 API 按 app name 保存）
+    if (ver) {
+      return `${proxyUrl.value}/boxart/${encodeURIComponent(app.name)}.png?v=${ver}`
+    }
     const imagePath = app['image-path']
+    let url
     if (!imagePath) {
-      return `${proxyUrl.value}/boxart/${encodeURIComponent(app.name)}.png`
+      url = `${proxyUrl.value}/boxart/${encodeURIComponent(app.name)}.png`
+    } else if (imagePath === 'desktop') {
+      url = `${proxyUrl.value}/boxart/desktop.png`
+    } else if (!/[/\\]/.test(imagePath)) {
+      url = `${proxyUrl.value}/boxart/${encodeURIComponent(imagePath)}`
+    } else {
+      url = `${proxyUrl.value}/boxart/${encodeURIComponent(imagePath.split(/[/\\]/).pop())}`
     }
-    if (imagePath === 'desktop') {
-      return `${proxyUrl.value}/boxart/desktop.png`
-    }
-    if (!/[/\\]/.test(imagePath)) {
-      return `${proxyUrl.value}/boxart/${encodeURIComponent(imagePath)}`
-    }
-    return `${proxyUrl.value}/boxart/${encodeURIComponent(imagePath.split(/[/\\]/).pop())}`
+    return url
   }
 
   function handleImageError(event, app) {
     failedImages.value.add(app.name)
     failedImages.value = new Set(failedImages.value)
+  }
+
+  function invalidateAppImage(appName) {
+    failedImages.value.delete(appName)
+    failedImages.value = new Set(failedImages.value)
+    coverVersions.value = { ...coverVersions.value, [appName]: Date.now() }
+    // 浅拷贝 apps 触发子组件重新渲染（getAppImageUrl 作为 Function prop 不会触发更新）
+    apps.value = [...apps.value]
   }
 
   async function loadApps() {
@@ -190,8 +206,7 @@ export function useApps() {
     addToRecent(app.name)
 
     try {
-      const tauri = await import('@tauri-apps/api/core')
-      await tauri.invoke('launch_app', {
+      await tauriInvoke('launch_app', {
         cmd: app.cmd,
         workingDir: app['working-dir'] || null,
         elevated: app.elevated === true || app.elevated === 'true',
@@ -207,8 +222,7 @@ export function useApps() {
 
   async function initProxy() {
     try {
-      const tauri = await import('@tauri-apps/api/core')
-      const url = await tauri.invoke('get_proxy_url_command')
+      const url = await tauriInvoke('get_proxy_url_command')
       if (url) proxyUrl.value = url
     } catch (e) {
       console.log('Tauri invoke not available:', e)
@@ -222,6 +236,7 @@ export function useApps() {
     searchQuery,
     launchingApp,
     launchError,
+    failedImages,
     viewMode,
     gridSize,
     sortMode,
@@ -238,6 +253,7 @@ export function useApps() {
     cycleGridSize,
     getAppImageUrl,
     handleImageError,
+    invalidateAppImage,
     loadApps,
     launchApp,
     initProxy,

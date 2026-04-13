@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 use serde::{Serialize, Deserialize};
 
 /// 共享的 CDN HTTP 客户端（连接池复用，避免频繁 TLS 握手被 CDN 拒绝）
-fn cdn_client() -> &'static reqwest::Client {
+pub fn cdn_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()

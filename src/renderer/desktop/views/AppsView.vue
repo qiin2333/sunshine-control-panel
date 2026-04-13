@@ -79,6 +79,7 @@
       @copyCmd="ctxCopyCmd"
       @openDir="ctxOpenDir"
       @configHelpers="ctxConfigHelpers"
+      @updateCover="ctxUpdateCover"
     />
 
     <LaunchHelperPanel
@@ -88,6 +89,14 @@
       :proxyUrl="proxyUrl"
       @close="helperPanel.open = false"
       @saved="loadApps"
+    />
+
+    <CoverPickerModal
+      :open="coverPicker.open"
+      :appName="coverPicker.appName"
+      :proxyUrl="proxyUrl"
+      @close="coverPicker.open = false"
+      @updated="onCoverUpdated"
     />
 
     <!-- 启动错误提示 -->
@@ -105,6 +114,7 @@
 import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useApps } from '../composables/useApps'
 import { useLaunchHelpers } from '../composables/useLaunchHelpers'
+import { tauriInvoke } from '../composables/useTauri'
 import { useI18n } from '../i18n/index.js'
 
 const { t } = useI18n()
@@ -114,6 +124,7 @@ import AppGridView from '../components/AppGridView.vue'
 import AppListView from '../components/AppListView.vue'
 import AppContextMenu from '../components/AppContextMenu.vue'
 import LaunchHelperPanel from '../components/LaunchHelperPanel.vue'
+import CoverPickerModal from '../components/CoverPickerModal.vue'
 
 const {
   loading,
@@ -133,6 +144,7 @@ const {
   cycleGridSize,
   getAppImageUrl,
   handleImageError,
+  invalidateAppImage,
   loadApps,
   launchApp,
   initProxy,
@@ -199,13 +211,27 @@ async function ctxOpenDir() {
   const dir = contextMenu.value.app?.['working-dir']
   if (dir) {
     try {
-      const tauri = await import('@tauri-apps/api/core')
-      await tauri.invoke('open_external_url', { url: dir })
+      await tauriInvoke('open_external_url', { url: dir })
     } catch (e) {
       console.error('Open dir failed:', e)
     }
   }
   closeContextMenu()
+}
+
+// 封面选择弹窗
+const coverPicker = ref({ open: false, appName: '' })
+
+async function ctxUpdateCover() {
+  const app = contextMenu.value.app
+  closeContextMenu()
+  if (!app) return
+
+  coverPicker.value = { open: true, appName: app.name }
+}
+
+function onCoverUpdated(appName) {
+  invalidateAppImage(appName)
 }
 
 function onDocClick() {

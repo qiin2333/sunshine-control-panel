@@ -38,6 +38,19 @@ export const zh = {
       loading: '加载中...',
       unknown: '未知',
     },
+    // 内存监控
+    memoryMonitor: '内存监控',
+    totalWorkingSet: '总工作集',
+    totalPrivateWorkingSet: '总私有工作集',
+    systemMemory: '系统内存',
+    systemUsed: '其他占用',
+    free: '空闲',
+    processName: '进程名',
+    workingSet: '工作集',
+    peakWorkingSet: '峰值工作集',
+    privateWS: '私有工作集',
+    noSunshineProcess: 'Sunshine 进程未运行',
+    memoryTrend: '内存趋势（最近 3 分钟）',
   },
 
   // === 串流配置 ===

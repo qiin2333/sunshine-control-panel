@@ -38,6 +38,19 @@ export const en = {
       loading: 'Loading...',
       unknown: 'Unknown',
     },
+    // Memory Monitor
+    memoryMonitor: 'Memory Monitor',
+    totalWorkingSet: 'Total Working Set',
+    totalPrivateWorkingSet: 'Total Private Working Set',
+    systemMemory: 'System Memory',
+    systemUsed: 'Other Used',
+    free: 'Free',
+    processName: 'Process',
+    workingSet: 'Working Set',
+    peakWorkingSet: 'Peak Working Set',
+    privateWS: 'Private WS',
+    noSunshineProcess: 'Sunshine process not running',
+    memoryTrend: 'Memory Trend (last 3 min)',
   },
 
   // === Stream Configuration ===

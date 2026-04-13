@@ -1,11 +1,56 @@
 use serde::{Deserialize, Serialize};
-use log::{info, error, debug};
+use log::{info, error, debug, warn};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct GpuInfo {
     pub model: String,
     pub vram: u64,
+}
+
+/// Sunshine 进程内存使用信息
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ProcessMemoryInfo {
+    /// 进程名
+    pub process_name: String,
+    /// 进程 PID
+    pub pid: u32,
+    /// 工作集大小 (bytes) - 当前使用的物理内存
+    pub working_set: u64,
+    /// 峰值工作集 (bytes) - 历史最高物理内存
+    pub peak_working_set: u64,
+    /// 私有工作集 (bytes) - 不与其他进程共享的物理内存
+    pub private_working_set: u64,
+    /// 提交内存 (bytes) - 虚拟内存中实际使用的页面
+    pub commit_size: u64,
+}
+
+/// 内存监控快照，包含所有 Sunshine 相关进程
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MemoryMonitorSnapshot {
+    /// 各进程内存详情
+    pub processes: Vec<ProcessMemoryInfo>,
+    /// 所有进程工作集总和 (bytes)
+    pub total_working_set: u64,
+    /// 所有进程私有工作集总和 (bytes)
+    pub total_private_working_set: u64,
+    /// 系统总物理内存 (bytes)
+    pub system_total_memory: u64,
+    /// 系统可用物理内存 (bytes)
+    pub system_available_memory: u64,
+    /// 采样时间戳 (ISO 8601)
+    pub timestamp: String,
+}
+
+/// Sunshine 进程的启动时间信息
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ProcessStartInfo {
+    /// 进程启动时间（Unix 毫秒时间戳），0 表示未找到
+    pub start_time_ms: u64,
+    /// 进程名
+    pub process_name: String,
+    /// 进程 PID
+    pub pid: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -207,12 +252,10 @@ pub async fn set_desktop_dpi(dpi: u32) -> Result<(), String> {
     
     #[cfg(target_os = "windows")]
     {
-        use std::path::PathBuf;
         use crate::sunshine;
         
         // 从 Sunshine 安装目录获取路径
-        let install_path = sunshine::get_sunshine_install_path();
-        let setdpi_path = PathBuf::from(&install_path).join("tools").join("SetDpi.exe");
+        let setdpi_path = sunshine::install_dir().join("tools").join("SetDpi.exe");
         
         debug!("🔍 SetDpi.exe 路径: {:?}", setdpi_path);
         
@@ -239,5 +282,321 @@ pub async fn set_desktop_dpi(dpi: u32) -> Result<(), String> {
     {
         Err("DPI 调整功能仅在 Windows 上可用".to_string())
     }
+}
+
+/// 获取 Sunshine 相关进程的内存使用信息
+#[tauri::command]
+pub async fn get_process_memory_info() -> Result<MemoryMonitorSnapshot, String> {
+    tokio::task::spawn_blocking(get_process_memory_info_impl)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[cfg(target_os = "windows")]
+fn get_process_memory_info_impl() -> Result<MemoryMonitorSnapshot, String> {
+    // 用 tasklist 查找 Sunshine 相关进程的 PID
+    let pids = find_sunshine_pids()?;
+
+    let mut processes = Vec::new();
+
+    for (pid, name) in &pids {
+        match get_single_process_memory(*pid) {
+            Ok(info) => processes.push(ProcessMemoryInfo {
+                process_name: name.clone(),
+                pid: *pid,
+                working_set: info.0,
+                peak_working_set: info.1,
+                private_working_set: info.2,
+                commit_size: info.3,
+            }),
+            Err(e) => {
+                // WinAPI 失败（权限不足等），尝试 WMI 获取基础内存信息
+                warn!("WinAPI 获取进程 {} (PID {}) 内存失败: {}，回退 WMI", name, pid, e);
+                if let Ok(ws) = get_process_memory_via_wmi(*pid) {
+                    processes.push(ProcessMemoryInfo {
+                        process_name: name.clone(),
+                        pid: *pid,
+                        working_set: ws,
+                        peak_working_set: 0,
+                        private_working_set: 0,
+                        commit_size: 0,
+                    });
+                }
+            }
+        }
+    }
+
+    let total_working_set: u64 = processes.iter().map(|p| p.working_set).sum();
+    let total_private_working_set: u64 = processes.iter().map(|p| p.private_working_set).sum();
+
+    // 获取系统内存信息
+    let (sys_total, sys_available) = get_system_memory_status().unwrap_or((0, 0));
+
+    Ok(MemoryMonitorSnapshot {
+        processes,
+        total_working_set,
+        total_private_working_set,
+        system_total_memory: sys_total,
+        system_available_memory: sys_available,
+        timestamp: chrono::Local::now().to_rfc3339(),
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn find_sunshine_pids() -> Result<Vec<(u32, String)>, String> {
+    use wmi::WMIConnection;
+
+    #[derive(Deserialize)]
+    #[serde(rename = "Win32_Process")]
+    #[serde(rename_all = "PascalCase")]
+    struct ProcessInfo {
+        name: String,
+        process_id: u32,
+    }
+
+    let wmi_con = WMIConnection::new().map_err(|e| e.to_string())?;
+
+    // 查询所有 sunshine 相关进程（不区分大小写）
+    let results: Vec<ProcessInfo> = wmi_con
+        .raw_query("SELECT Name, ProcessId FROM Win32_Process WHERE Name LIKE '%sunshine%'")
+        .map_err(|e| e.to_string())?;
+
+    let pids: Vec<(u32, String)> = results
+        .into_iter()
+        .filter(|p| {
+            let lower = p.name.to_lowercase();
+            // 排除 GUI 自身进程
+            !lower.contains("sunshine-gui") && !lower.contains("sunshine_gui")
+        })
+        .map(|p| (p.process_id, p.name))
+        .collect();
+
+    debug!("找到 {} 个 Sunshine 相关进程: {:?}", pids.len(), pids);
+    Ok(pids)
+}
+
+/// 通过 WMI 获取进程工作集（fallback，权限不足时使用）
+#[cfg(target_os = "windows")]
+fn get_process_memory_via_wmi(pid: u32) -> Result<u64, String> {
+    use wmi::WMIConnection;
+
+    #[derive(Deserialize)]
+    #[serde(rename = "Win32_Process")]
+    #[serde(rename_all = "PascalCase")]
+    struct ProcMem {
+        working_set_size: Option<u64>,
+    }
+
+    let wmi_con = WMIConnection::new().map_err(|e| e.to_string())?;
+    let query = format!("SELECT WorkingSetSize FROM Win32_Process WHERE ProcessId = {}", pid);
+    let results: Vec<ProcMem> = wmi_con.raw_query(&query).map_err(|e| e.to_string())?;
+
+    results
+        .first()
+        .and_then(|p| p.working_set_size)
+        .ok_or_else(|| "WMI 未返回工作集数据".to_string())
+}
+
+/// 通过 Windows API 获取单个进程的精确内存信息
+/// 返回 (working_set, peak_working_set, private_working_set, commit_size)
+#[cfg(target_os = "windows")]
+fn get_single_process_memory(pid: u32) -> Result<(u64, u64, u64, u64), String> {
+    use std::mem;
+    use windows::Win32::System::ProcessStatus::{K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS_EX};
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
+    use windows::Win32::Foundation::CloseHandle;
+
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid)
+            .map_err(|e| format!("OpenProcess 失败: {}", e))?;
+
+        let mut counters: PROCESS_MEMORY_COUNTERS_EX = mem::zeroed();
+        counters.cb = mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32;
+
+        let result = K32GetProcessMemoryInfo(
+            handle,
+            &mut counters as *mut PROCESS_MEMORY_COUNTERS_EX as *mut _,
+            mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32,
+        );
+
+        let _ = CloseHandle(handle);
+
+        if result.as_bool() {
+            Ok((
+                counters.WorkingSetSize as u64,
+                counters.PeakWorkingSetSize as u64,
+                counters.PrivateUsage as u64,
+                counters.PagefileUsage as u64,
+            ))
+        } else {
+            Err("K32GetProcessMemoryInfo 失败".to_string())
+        }
+    }
+}
+
+/// 获取系统总内存和可用内存
+#[cfg(target_os = "windows")]
+fn get_system_memory_status() -> Result<(u64, u64), String> {
+    use wmi::WMIConnection;
+
+    #[derive(Deserialize)]
+    #[serde(rename = "Win32_OperatingSystem")]
+    #[serde(rename_all = "PascalCase")]
+    struct OsMemory {
+        total_visible_memory_size: Option<u64>,
+        free_physical_memory: Option<u64>,
+    }
+
+    let wmi_con = WMIConnection::new().map_err(|e| e.to_string())?;
+    let results: Vec<OsMemory> = wmi_con
+        .raw_query("SELECT TotalVisibleMemorySize, FreePhysicalMemory FROM Win32_OperatingSystem")
+        .map_err(|e| e.to_string())?;
+
+    if let Some(info) = results.first() {
+        Ok((
+            info.total_visible_memory_size.unwrap_or(0) * 1024, // KB → bytes
+            info.free_physical_memory.unwrap_or(0) * 1024,
+        ))
+    } else {
+        Err("无法获取系统内存信息".to_string())
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn get_process_memory_info_impl() -> Result<MemoryMonitorSnapshot, String> {
+    Ok(MemoryMonitorSnapshot {
+        processes: vec![],
+        total_working_set: 0,
+        total_private_working_set: 0,
+        system_total_memory: 0,
+        system_available_memory: 0,
+        timestamp: chrono::Local::now().to_rfc3339(),
+    })
+}
+
+/// 获取 Sunshine 主进程的启动时间
+#[tauri::command]
+pub async fn get_sunshine_start_time() -> Result<ProcessStartInfo, String> {
+    tokio::task::spawn_blocking(get_sunshine_start_time_impl)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[cfg(target_os = "windows")]
+fn get_sunshine_start_time_impl() -> Result<ProcessStartInfo, String> {
+    use wmi::WMIConnection;
+
+    #[derive(Deserialize, Debug)]
+    #[serde(rename = "Win32_Process")]
+    #[serde(rename_all = "PascalCase")]
+    struct ProcTime {
+        name: String,
+        process_id: u32,
+        // WMI CIM_DATETIME 可能被 wmi crate 反序列化为多种类型
+        // 使用 serde_json::Value 来灵活处理
+        creation_date: Option<serde_json::Value>,
+    }
+
+    let wmi_con = WMIConnection::new().map_err(|e| e.to_string())?;
+
+    // 查找 Sunshine 相关进程，在 Rust 端过滤 GUI 进程
+    let results: Vec<ProcTime> = wmi_con
+        .raw_query(
+            "SELECT Name, ProcessId, CreationDate FROM Win32_Process \
+             WHERE Name LIKE '%sunshine%'"
+        )
+        .map_err(|e| format!("WMI query failed: {}", e))?;
+
+    debug!("WMI 进程查询结果: {:?}", results);
+
+    // 过滤掉 GUI 自身进程，取第一个 Sunshine 主进程
+    let proc = results.iter().find(|p| {
+        let lower = p.name.to_lowercase();
+        !lower.contains("sunshine-gui") && !lower.contains("sunshine_gui")
+    });
+
+    if let Some(proc) = proc {
+        let start_ms = match &proc.creation_date {
+            Some(serde_json::Value::String(s)) => {
+                debug!("CreationDate (String): {}", s);
+                parse_wmi_datetime(s).unwrap_or(0)
+            }
+            Some(serde_json::Value::Number(n)) => {
+                // 可能直接是时间戳
+                debug!("CreationDate (Number): {}", n);
+                n.as_u64().unwrap_or(0)
+            }
+            Some(other) => {
+                // 尝试将其他类型转为字符串后解析
+                let s = other.to_string().replace('"', "");
+                debug!("CreationDate (Other): {} -> {}", other, s);
+                parse_wmi_datetime(&s).unwrap_or(0)
+            }
+            None => {
+                debug!("CreationDate is None");
+                0
+            }
+        };
+
+        info!("Sunshine 进程 {} (PID {}) 启动时间: {} ms", proc.name, proc.process_id, start_ms);
+
+        Ok(ProcessStartInfo {
+            start_time_ms: start_ms,
+            process_name: proc.name.clone(),
+            pid: proc.process_id,
+        })
+    } else {
+        debug!("未找到 Sunshine 进程");
+        Ok(ProcessStartInfo {
+            start_time_ms: 0,
+            process_name: String::new(),
+            pid: 0,
+        })
+    }
+}
+
+/// 解析 WMI datetime 格式 "20260413175200.123456+480" → Unix 毫秒时间戳
+#[cfg(target_os = "windows")]
+fn parse_wmi_datetime(wmi_dt: &str) -> Option<u64> {
+    // WMI datetime format: "YYYYMMDDHHmmss.ffffff±UUU"
+    // 例: "20260413175200.123456+480"
+    if wmi_dt.len() < 14 {
+        return None;
+    }
+
+    let year: i32 = wmi_dt[0..4].parse().ok()?;
+    let month: u32 = wmi_dt[4..6].parse().ok()?;
+    let day: u32 = wmi_dt[6..8].parse().ok()?;
+    let hour: u32 = wmi_dt[8..10].parse().ok()?;
+    let min: u32 = wmi_dt[10..12].parse().ok()?;
+    let sec: u32 = wmi_dt[12..14].parse().ok()?;
+
+    // 获取 UTC 偏移分钟
+    let offset_minutes: i32 = if let Some(pos) = wmi_dt.find('+') {
+        wmi_dt[pos + 1..].parse().unwrap_or(0)
+    } else if let Some(pos) = wmi_dt.rfind('-') {
+        if pos > 14 {
+            -(wmi_dt[pos + 1..].parse::<i32>().unwrap_or(0))
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+
+    use chrono::{FixedOffset, TimeZone};
+    let offset = FixedOffset::east_opt(offset_minutes * 60)?;
+    let dt = offset.with_ymd_and_hms(year, month, day, hour, min, sec).single()?;
+
+    Some(dt.timestamp_millis() as u64)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn get_sunshine_start_time_impl() -> Result<ProcessStartInfo, String> {
+    Ok(ProcessStartInfo {
+        start_time_ms: 0,
+        process_name: String::new(),
+        pid: 0,
+    })
 }
 

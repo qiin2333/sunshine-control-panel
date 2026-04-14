@@ -243,7 +243,7 @@ const handleSkipVersion = (version) => skipVersion(version)
 const managementMenuItems = computed(() => [
   { icon: Setting, label: t.value.sidebar.advancedSettings, action: goHome, isActive: () => router.isRoute(ROUTES.HOME) },
   { icon: Monitor, label: t.value.sidebar.virtualDisplay, action: openVddSettings, isActive: () => router.isRoute(ROUTES.VDD_SETTINGS) },
-  { icon: Connection, label: t.value.sidebar.webStream, action: openWebStream, isActive: () => router.isRoute(ROUTES.WEB_STREAM) },
+  ...(import.meta.env.DEV ? [{ icon: Connection, label: t.value.sidebar.webStream, action: openWebStream, isActive: () => router.isRoute(ROUTES.WEB_STREAM) }] : []),
   { icon: MagicStick, label: t.value.sidebar.aiAssistant, action: openAiAssistant, isActive: () => router.isRoute(ROUTES.AI_ASSISTANT) },
   // { icon: Delete, label: t.value.sidebar.uninstallVdd, action: uninstallVdd },
   // { icon: RefreshRight, label: t.value.sidebar.restartGpu, action: restartDriver },

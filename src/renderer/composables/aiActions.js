@@ -56,7 +56,7 @@ function generateId() {
 export async function getLogsContext(maxLines = 150) {
   try {
     const proxyUrl = await getProxyUrl()
-    const resp = await fetch(`${proxyUrl}/api/logs`)
+    const resp = await fetch(`${proxyUrl}/api/logs`, { headers: { 'X-Log-Offset': '0' } })
     if (!resp.ok) return ''
     const text = await resp.text()
     const lines = text.split('\n')

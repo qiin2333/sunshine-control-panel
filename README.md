@@ -1,6 +1,81 @@
 # Sunshine Control Panel (Tauri)
 
-基于 Tauri 2.8.4 的 Sunshine 控制面板 GUI。
+基于 Tauri 2 + Vue 3 的 Sunshine Foundation 大屏桌面管理器，提供游戏库管理、系统监控、AI 助手等功能。
+
+## 架构
+
+```mermaid
+flowchart LR
+    subgraph Client["WebView2 Client"]
+        direction TB
+        Vue["Vue 3 + Vite"]
+        Composables["Composables<br/>useApps · useTauri · useTheme"]
+        Vue --> Composables
+    end
+
+    subgraph Core["Tauri 2 · Rust"]
+        direction TB
+        IPC["IPC Bridge<br/>invoke · events"]
+        Axum["Axum Proxy :48081"]
+        Sys["WMI COM · winreg"]
+        AI["AI Proxy · reqwest"]
+        IPC --> Axum & Sys & AI
+    end
+
+    subgraph Services["External Services"]
+        direction TB
+        Sunshine["☀️ Sunshine<br/>HTTPS :47990"]
+        Steam["Steam Store API"]
+        LLM["LLM API · OpenAI"]
+        GitHub["GitHub Releases"]
+        VDD["IddCx VDD Driver"]
+    end
+
+    Composables -- "Tauri invoke()" --> IPC
+    Axum -- "HTTPS · reqwest" --> Sunshine
+    Sys -. "WMI Query" .-> Sunshine
+    Sys -. "Registry" .-> VDD
+    AI -- "HTTP" --> LLM
+    AI -- "HTTP" --> Steam & GitHub
+```
+
+## 功能特性
+
+### 核心能力
+
+- 🔄 **更新管理** — 自动检查更新、下载进度、一键安装，支持 Beta/预发布版本切换
+- ⚡ **运行模式切换** — 服务模式 ↔ 用户模式一键切换
+- 🔌 **服务管理** — Sunshine 启停、重启、运行状态监控、配对设备管理
+- 📊 **内存监控** — 进程内存/工作集实时趋势图、子进程列表、运行时间统计
+
+### 游戏库
+
+- 🎮 **应用管理** — 网格/列表视图、搜索过滤、收藏置顶、最近使用、排序
+- 🖼️ **Steam 封面搜索** — 右键更新封面，Steam Store API 搜索候选，一键上传
+- 🚀 **一键启动** — 右键启动游戏/应用，支持管理员权限、工作目录
+- 🔧 **启动助手** — 为应用配置前置/后置脚本（虚拟显示器、分辨率切换等）
+- 📚 **游戏库扫描** — 自动扫描 Steam/Epic 已安装游戏
+
+### 串流与驱动
+
+- 🎬 **串流配置** — 编码器选择 (H.264/H.265/AV1)、码率调节、HDR 自动切换
+- 📺 **VDD 驱动管理** — 虚拟显示驱动安装/配置/EDID 管理
+- 🖱️ **虚拟鼠标** — 驱动安装与状态管理
+- 🌙 **Moonlight Web** — 浏览器串流服务管理
+
+### 智能与工具
+
+- 🤖 **米塔 AI** — 为 Sunshine 及客户端提供大模型能力，多模型配置、桌面宠物
+- 🛠️ **工具箱** — 码率调节器、DPI 缩放、键盘快捷键指南、系统诊断
+- 📋 **日志管理** — 实时日志查看、导出、过滤
+
+### 桌面体验
+
+- 🎨 **主题切换** — 亮色/暗色/自定义背景
+- 🌍 **中英双语** — 即时切换
+- 🪟 **多窗口** — 主窗口 + 浮动工具栏 + 日志控制台
+- ☀️ **防休眠** — 串流期间保持屏幕/系统唤醒
+- 🔑 **全局快捷键** — Ctrl+Shift+Alt+T 切换工具栏
 
 ## 前置要求
 
@@ -58,43 +133,36 @@ npm run build:win
 ```
 src-tauri/           # Tauri 后端 (Rust)
   ├── src/
-  │   ├── main.rs            # 主入口
-  │   ├── proxy_server.rs    # 本地代理服务器
-  │   ├── sunshine.rs        # Sunshine 相关功能
-  │   ├── vdd.rs            # VDD 驱动管理
-  │   ├── utils.rs          # 工具函数
-  │   ├── system.rs         # 系统信息
-  │   └── fs_utils.rs       # 文件系统工具
-  ├── inject-script.js      # 注入到 Sunshine Web UI 的脚本
-  └── Cargo.toml            # Rust 依赖配置
+  │   ├── main.rs            # 主入口、命令注册
+  │   ├── proxy_server.rs    # Axum 本地代理 (Sunshine/Steam API/CORS)
+  │   ├── sunshine.rs        # Sunshine 进程管理、路径工具
+  │   ├── system.rs          # 系统信息 (WMI 进程查询、内存统计)
+  │   ├── fs_utils.rs        # 文件系统、游戏扫描、Steam 封面搜索/上传
+  │   ├── commands.rs        # HTTP 客户端、应用启动
+  │   ├── vdd.rs             # VDD 驱动管理
+  │   └── windows.rs         # Windows 注册表/autostart
+  ├── inject-script.js       # 注入到 Sunshine Web UI 的脚本
+  └── Cargo.toml
 
 src/renderer/        # 前端 (Vue 3)
-  ├── components/           # Vue 组件
-  │   ├── SidebarMenu.vue   # 侧边栏菜单
-  │   ├── SunshineFrame.vue # Sunshine Web UI iframe
-  │   └── ...
-  ├── styles/              # Less 样式
-  └── ...
+  ├── desktop/              # Desktop UI (独立 SPA)
+  │   ├── views/            # 页面视图 (Dashboard、Apps、Settings...)
+  │   ├── components/       # 组件 (AppGrid、ContextMenu、CoverPicker...)
+  │   ├── composables/      # 组合式函数 (useApps、useTauri...)
+  │   └── i18n/             # 国际化 (zh、en)
+  ├── components/           # 共享组件
+  └── styles/               # Less 样式
 
 vite.config.js       # Vite 构建配置
-package.json         # NPM 依赖配置
+package.json         # NPM 依赖
 ```
-
-## 特性
-
-- 🎨 现代化 UI，基于 Element Plus
-- 🌐 本地代理服务器，解决跨域问题
-- 🎭 主题同步 (亮色/暗色)
-- 🖼️ 拖放背景图片
-- 📊 VDD 驱动管理
-- 🔧 Sunshine 配置管理
-- 🪟 Windows 风格窗口控件
 
 ## 技术栈
 
-- **前端**: Vue 3 + Element Plus + Less
-- **后端**: Rust + Tauri 2.8.4
-- **HTTP**: Axum (代理服务器)
+- **前端**: Vue 3 + Less + 自定义组件
+- **后端**: Rust + Tauri 2
+- **HTTP**: Axum (代理)、reqwest (HTTP 客户端)
+- **系统**: WMI (进程查询)、Win32 API (内存统计)、Windows Registry
 - **构建**: Vite
 
 ## 集成到 Sunshine

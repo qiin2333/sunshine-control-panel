@@ -33,6 +33,10 @@
           <RtssMonitoring
             @message="showMessage"
           />
+
+          <HwInfoMonitor
+            @message="showMessage"
+          />
         </div>
       </template>
 
@@ -54,6 +58,7 @@ import RtssFpsSection from './rtss/RtssFpsSection.vue'
 import RtssOsdEditor from './rtss/RtssOsdEditor.vue'
 import RtssOsdSettings from './rtss/RtssOsdSettings.vue'
 import RtssMonitoring from './rtss/RtssMonitoring.vue'
+import HwInfoMonitor from './rtss/HwInfoMonitor.vue'
 
 const { t } = useI18n()
 

@@ -4,6 +4,7 @@
 mod vdd;
 mod vmouse;
 mod rtss;
+mod hwinfo;
 mod system;
 mod sunshine;
 mod utils;
@@ -154,6 +155,9 @@ fn main() {
             rtss::rtss_get_monitoring_status,
             rtss::rtss_get_osd_properties,
             rtss::rtss_set_osd_property,
+            hwinfo::hwinfo_get_sensors,
+            hwinfo::hwinfo_get_readings,
+            hwinfo::hwinfo_check_available,
             tray::set_tray_locale,
             tray::get_tray_locale,
         ])

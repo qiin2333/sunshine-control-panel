@@ -383,6 +383,22 @@ export const en = {
     propApplied: '✅ Property updated',
   },
 
+  hwinfo: {
+    title: 'HWiNFO Hardware Monitor',
+    unavailable: 'HWiNFO is not running or shared memory is disabled',
+    enableHint: 'Enable Shared Memory Support in HWiNFO settings',
+    loading: 'Loading sensors...',
+    searchPlaceholder: 'Search sensors...',
+    selectedCount: '{count} selected',
+    injectOsd: 'Inject to OSD',
+    injecting: 'Injecting...',
+    injected: '✅ Injected to OSD',
+    injectFailed: 'Injection failed',
+    refreshSensors: 'Refresh',
+    noSensors: 'No sensors found',
+    noMatch: 'No match',
+  },
+
   // === Toolbar ===
   toolbar: {
     controlPanel: 'Control Panel',

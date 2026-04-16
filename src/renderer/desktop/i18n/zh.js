@@ -383,6 +383,22 @@ export const zh = {
     propApplied: '✅ 属性已更新',
   },
 
+  hwinfo: {
+    title: 'HWiNFO 硬件监控',
+    unavailable: 'HWiNFO 未运行或未启用共享内存',
+    enableHint: '请在 HWiNFO 设置中启用 Shared Memory Support',
+    loading: '加载传感器中...',
+    searchPlaceholder: '搜索传感器...',
+    selectedCount: '已选 {count} 项',
+    injectOsd: '注入 OSD',
+    injecting: '注入中...',
+    injected: '✅ 已注入 OSD',
+    injectFailed: '注入失败',
+    refreshSensors: '刷新',
+    noSensors: '未找到传感器',
+    noMatch: '无匹配结果',
+  },
+
   // === 工具栏 ===
   toolbar: {
     controlPanel: '控制面板',

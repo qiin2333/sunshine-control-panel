@@ -2,74 +2,114 @@ import { ref, computed, watch } from 'vue'
 
 const STORAGE_KEY = 'foundation-launch-helpers'
 
-// 内置工具模板
+// Template ID 到 i18n key 的映射
+const TEMPLATE_I18N_MAP = {
+  'controller-mapper': 'controllerMapper',
+  'locale-emulator': 'localeEmulator',
+  'translator': 'translator',
+  'game-trainer': 'gameTrainer',
+  'rtss-fps-limiter': 'rtssLimiter',
+  'custom': 'custom',
+}
+
+// 内置工具模板（仅保留结构性数据，用户可见文字通过 i18n 覆盖）
 const BUILTIN_TEMPLATES = [
   {
     id: 'controller-mapper',
-    name: '手柄映射',
     icon: '🎮',
-    description: '启动手柄按键映射工具（如 JoyToKey、antimicro）',
     type: 'prep',
     defaultDoCmd: '"{path}" "{profile}"',
     defaultUndoCmd: 'taskkill /im "{exe}" /f',
     params: [
-      { key: 'path', label: '程序路径', placeholder: 'C:\\Tools\\JoyToKey.exe', required: true },
-      { key: 'profile', label: '配置文件（可选）', placeholder: '默认配置' },
-      { key: 'extraArgs', label: '附加参数', placeholder: '-minimized --profile xxx' },
+      { key: 'path', placeholder: 'C:\\Tools\\JoyToKey.exe', required: true },
+      { key: 'profile', placeholder: '' },
+      { key: 'extraArgs', placeholder: '-minimized --profile xxx' },
     ],
   },
   {
     id: 'locale-emulator',
-    name: '区域模拟',
     icon: '🌐',
-    description: '用 Locale Emulator 转区启动（日文游戏常用）',
     type: 'wrapper',
     wrapTemplate: '"{path}" /runas',
     params: [
-      { key: 'path', label: 'LEProc 路径', placeholder: 'C:\\Tools\\Locale Emulator\\LEProc.exe', required: true },
-      { key: 'extraArgs', label: '附加参数', placeholder: '/runas /profile xxx' },
+      { key: 'path', placeholder: 'C:\\Tools\\Locale Emulator\\LEProc.exe', required: true },
+      { key: 'extraArgs', placeholder: '/runas /profile xxx' },
     ],
   },
   {
     id: 'translator',
-    name: '实时翻译',
     icon: '📝',
-    description: '启动翻译工具（如 Textractor）并在游戏结束后关闭',
     type: 'prep',
     defaultDoCmd: '"{path}"',
     defaultUndoCmd: 'taskkill /im "{exe}" /f',
     params: [
-      { key: 'path', label: '程序路径', placeholder: 'C:\\Tools\\Textractor\\x86\\Textractor.exe', required: true },
-      { key: 'extraArgs', label: '附加参数', placeholder: '--lang=ja' },
+      { key: 'path', placeholder: 'C:\\Tools\\Textractor\\x86\\Textractor.exe', required: true },
+      { key: 'extraArgs', placeholder: '--lang=ja' },
     ],
   },
   {
     id: 'game-trainer',
-    name: '游戏修改器',
     icon: '🔧',
-    description: '启动修改器/Trainer（如 WeMod、FLiNG）并在游戏结束后关闭',
     type: 'prep',
     defaultDoCmd: '"{path}"',
     defaultUndoCmd: 'taskkill /im "{exe}" /f',
     params: [
-      { key: 'path', label: '修改器路径', placeholder: 'C:\\Tools\\WeMod\\WeMod.exe', required: true },
-      { key: 'extraArgs', label: '附加参数', placeholder: '--minimized' },
+      { key: 'path', placeholder: 'C:\\Tools\\WeMod\\WeMod.exe', required: true },
+      { key: 'extraArgs', placeholder: '--minimized' },
+    ],
+  },
+  {
+    id: 'rtss-fps-limiter',
+    icon: '🎯',
+    type: 'prep',
+    defaultDoCmd: '"{path}" limit:set {fps}',
+    defaultUndoCmd: '"{path}" limit:set 0',
+    elevated: true,
+    params: [
+      { key: 'path', placeholder: 'C:\\Program Files (x86)\\RivaTuner Statistics Server\\rtss-cli.exe', required: true },
+      { key: 'fps', placeholder: '60', required: true },
+      { key: 'extraArgs', placeholder: '' },
     ],
   },
   {
     id: 'custom',
-    name: '自定义工具',
     icon: '⚙️',
-    description: '自定义启动前/后执行的命令',
     type: 'prep',
     defaultDoCmd: '',
     defaultUndoCmd: '',
     params: [
-      { key: 'doCmd', label: '启动命令', placeholder: '游戏启动前执行', required: true },
-      { key: 'undoCmd', label: '关闭命令', placeholder: '游戏退出后执行' },
+      { key: 'doCmd', placeholder: '', required: true },
+      { key: 'undoCmd', placeholder: '' },
     ],
   },
 ]
+
+/**
+ * 用 i18n 文本填充模板的用户可见字段
+ * @param {object} t - i18n translation object (t.launchHelper.templates.*)
+ */
+function resolveTemplateI18n(templates, t) {
+  if (!t?.launchHelper?.templates) return templates
+  return templates.map(tmpl => {
+    const i18nKey = TEMPLATE_I18N_MAP[tmpl.id]
+    const tr = t.launchHelper.templates[i18nKey]
+    if (!tr) return tmpl
+    const resolved = { ...tmpl, name: tr.name, description: tr.description }
+    if (tr.typeLabel) resolved.typeLabel = tr.typeLabel
+    if (tr.typeDesc) resolved.typeDesc = tr.typeDesc
+    // 解析 params 的 label/placeholder
+    resolved.params = tmpl.params.map(p => {
+      const paramTr = tr[`${p.key}Label`]
+      const placeholderTr = tr[`${p.key}Placeholder`]
+      return {
+        ...p,
+        label: paramTr || p.label || p.key,
+        ...(placeholderTr ? { placeholder: placeholderTr } : {}),
+      }
+    })
+    return resolved
+  })
+}
 
 /**
  * 从路径提取 exe 文件名
@@ -147,10 +187,13 @@ function saveState() {
   }))
 }
 
-export function useLaunchHelpers() {
+export function useLaunchHelpers(t) {
   loadState()
 
-  const templates = computed(() => BUILTIN_TEMPLATES)
+  const templates = computed(() => {
+    const tVal = t?.value || t
+    return resolveTemplateI18n(BUILTIN_TEMPLATES, tVal)
+  })
 
   /**
    * 获取全局工具路径
@@ -198,6 +241,35 @@ export function useLaunchHelpers() {
   }
 
   /**
+   * 验证助手配置，返回错误列表
+   * @param {Array} helpers - editingHelpers 数组
+   * @returns {{ templateId: string, paramKey: string, message: string }[]}
+   */
+  function validateHelpers(helpers) {
+    const tVal = t?.value || t
+    const requiredMsg = tVal?.launchHelper?.fieldRequired || '不能为空'
+    const resolvedTemplates = templates.value
+    const errors = []
+    for (const helper of helpers) {
+      if (!helper.enabled) continue
+      const tmpl = resolvedTemplates.find(tt => tt.id === helper.templateId)
+      if (!tmpl) continue
+      for (const p of tmpl.params) {
+        if (!p.required) continue
+        const val = helper.params?.[p.key] || getGlobalPath(tmpl.id, p.key)
+        if (!val || !val.trim()) {
+          errors.push({
+            templateId: helper.templateId,
+            paramKey: p.key,
+            message: `${tmpl.name}: "${p.label}" ${requiredMsg}`,
+          })
+        }
+      }
+    }
+    return errors
+  }
+
+  /**
    * 获取某应用启用的助手图标列表
    */
   function getActiveHelperIcons(appName) {
@@ -234,7 +306,7 @@ export function useLaunchHelpers() {
         const doCmd = buildDoCmd(template, mergedParams)
         const undoCmd = buildUndoCmd(template, mergedParams)
         if (doCmd) {
-          prepCmds.push({ do: doCmd, undo: undoCmd, elevated: false })
+          prepCmds.push({ do: doCmd, undo: undoCmd, elevated: !!template.elevated })
         }
       } else if (template.type === 'wrapper') {
         const wrapperPath = mergedParams.path
@@ -286,6 +358,47 @@ export function useLaunchHelpers() {
     return result
   }
 
+  /**
+   * 构建预览命令列表（供面板显示）
+   */
+  function buildPreviewCommands(helpers) {
+    const tVal = t?.value || t
+    const lh = tVal?.launchHelper || {}
+    const resolvedTemplates = templates.value
+    const cmds = []
+    for (const helper of helpers) {
+      if (!helper.enabled) continue
+      const tmpl = resolvedTemplates.find(tt => tt.id === helper.templateId)
+      if (!tmpl) continue
+
+      const mergedParams = {}
+      const rawTmpl = BUILTIN_TEMPLATES.find(tt => tt.id === helper.templateId)
+      for (const p of (rawTmpl || tmpl).params) {
+        mergedParams[p.key] = helper.params?.[p.key] || getGlobalPath(tmpl.id, p.key) || ''
+      }
+
+      if (tmpl.type === 'wrapper') {
+        const wrapPath = mergedParams.path
+        if (wrapPath) {
+          let wrapCmd = (rawTmpl || tmpl).wrapTemplate || ''
+          wrapCmd = wrapCmd.split('{path}').join(wrapPath)
+          if (mergedParams.extraArgs) wrapCmd = `${wrapCmd} ${mergedParams.extraArgs}`
+          cmds.push({ label: `${tmpl.icon} ${tmpl.name} ${lh.previewWrapper || '(包装启动命令)'}`, value: `${wrapCmd} <游戏命令>` })
+        }
+      } else if (tmpl.id === 'custom') {
+        if (mergedParams.doCmd) cmds.push({ label: `${tmpl.icon} ${lh.previewBefore || '(启动前)'}`, value: mergedParams.doCmd })
+        if (mergedParams.undoCmd) cmds.push({ label: `${tmpl.icon} ${lh.previewAfter || '(退出后)'}`, value: mergedParams.undoCmd })
+      } else {
+        const doCmd = buildDoCmd(rawTmpl || tmpl, mergedParams)
+        const undoCmd = buildUndoCmd(rawTmpl || tmpl, mergedParams)
+        const elevatedTag = tmpl.elevated ? ' 🛡️' : ''
+        if (doCmd) cmds.push({ label: `${tmpl.icon} ${tmpl.name} ${lh.previewBefore || '(启动前)'}${elevatedTag}`, value: doCmd })
+        if (undoCmd) cmds.push({ label: `${tmpl.icon} ${tmpl.name} ${lh.previewAfter || '(退出后)'}${elevatedTag}`, value: undoCmd })
+      }
+    }
+    return cmds
+  }
+
   return {
     templates,
     globalToolPaths,
@@ -295,8 +408,10 @@ export function useLaunchHelpers() {
     getAppHelpers,
     setAppHelpers,
     hasActiveHelpers,
+    validateHelpers,
     getActiveHelperIcons,
     generateAppCommands,
     applyHelpersToApp,
+    buildPreviewCommands,
   }
 }

@@ -156,7 +156,7 @@ const contextMenu = ref({ visible: false, x: 0, y: 0, app: null })
 // 启动助手面板
 const helperPanel = ref({ open: false, appName: '', app: null })
 const { proxyUrl } = useApps()
-const { getActiveHelperIcons, helperPanelOpen } = useLaunchHelpers()
+const { getActiveHelperIcons, helperPanelOpen } = useLaunchHelpers(t)
 
 // 同步面板状态到共享 composable（供 DesktopApp 控制器返回使用）
 watch(() => helperPanel.value.open, (v) => { helperPanelOpen.value = v })

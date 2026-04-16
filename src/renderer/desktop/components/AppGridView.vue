@@ -35,18 +35,21 @@
         <!-- 启动动画 -->
         <div v-if="launchingApp === app.name" class="launch-overlay">
           <div class="launch-spinner"></div>
-          <span>启动中...</span>
+          <span>{{ t.appContext.launching }}</span>
         </div>
       </div>
       <div class="tile-info">
         <span class="tile-name" :title="app.name">{{ app.name }}</span>
-        <span v-if="app.elevated && app.elevated !== 'false'" class="tile-badge admin">管理员</span>
+        <span v-if="app.elevated && app.elevated !== 'false'" class="tile-badge admin">{{ t.appContext.admin }}</span>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
+import { useI18n } from '../i18n/index.js'
+const { t } = useI18n()
+
 const props = defineProps({
   apps: { type: Array, required: true },
   gridSize: { type: String, required: true },

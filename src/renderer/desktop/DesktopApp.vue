@@ -84,7 +84,7 @@ const appTitle = 'FOUNDATION DESKTOP'
 const { themeVars, activePreset, presets, setVar, applyPreset, exportTheme, importTheme, wallpaper, wallpaperColors, setWallpaper, removeWallpaper } = useTheme()
 const themeEditorOpen = ref(false)
 const showSplash = ref(true)
-const { helperPanelOpen } = useLaunchHelpers()
+const { helperPanelOpen } = useLaunchHelpers(t)
 
 function handleThemeExport() {
   const json = exportTheme()

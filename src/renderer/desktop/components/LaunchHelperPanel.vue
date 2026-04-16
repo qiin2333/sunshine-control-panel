@@ -7,14 +7,14 @@
     <Transition name="slide">
       <div v-if="open" class="helper-panel" @click.stop @keydown.escape="$emit('close')">
         <div class="panel-header">
-          <h2>⚡ 启动助手</h2>
+          <h2>{{ t.launchHelper.title }}</h2>
           <span class="app-name-tag">{{ appName }}</span>
           <button class="close-btn" @click="$emit('close')">✕</button>
         </div>
 
         <div class="panel-body">
-          <p class="panel-desc">为此应用配置自动启动的辅助工具，保存后将同步到服务器。<br/>
-            <small>启用后可用 ▲▼ 调整执行顺序（启动时从上到下，退出时反序）</small>
+          <p class="panel-desc">{{ t.launchHelper.description }}<br/>
+            <small>{{ t.launchHelper.orderHint }}</small>
           </p>
 
           <div
@@ -30,14 +30,14 @@
                   class="order-btn"
                   :disabled="idx === 0"
                   @click.stop="moveHelper(idx, -1)"
-                  title="上移"
+                  :title="t.launchHelper.moveUp"
                   data-focusable
                 >▲</button>
                 <button
                   class="order-btn"
                   :disabled="idx === editingHelpers.length - 1"
                   @click.stop="moveHelper(idx, 1)"
-                  title="下移"
+                  :title="t.launchHelper.moveDown"
                   data-focusable
                 >▼</button>
               </div>
@@ -45,7 +45,12 @@
 
               <span class="helper-icon" @click="toggleHelper(helper.templateId)">{{ getTemplate(helper.templateId)?.icon }}</span>
               <div class="helper-info" @click="toggleHelper(helper.templateId)">
-                <span class="helper-name">{{ getTemplate(helper.templateId)?.name }}</span>
+                <span class="helper-name">
+                  {{ getTemplate(helper.templateId)?.name }}
+                  <span v-if="getTemplate(helper.templateId)?.typeLabel" class="type-badge" :class="{ elevated: getTemplate(helper.templateId)?.elevated }" :title="getTemplate(helper.templateId)?.typeDesc">
+                    {{ getTemplate(helper.templateId)?.typeLabel }}
+                  </span>
+                </span>
                 <span class="helper-desc">{{ getTemplate(helper.templateId)?.description }}</span>
               </div>
               <div class="helper-switch" :class="{ on: helper.enabled }" @click="toggleHelper(helper.templateId)">
@@ -68,6 +73,10 @@
                     <input
                       type="text"
                       class="field-input"
+                      :class="{
+                        'field-error': hasFieldError(helper.templateId, param.key),
+                        'field-warn': pathWarnings[`${helper.templateId}.${param.key}`]
+                      }"
                       :placeholder="param.placeholder || ''"
                       :value="getParamValue(helper.templateId, param.key)"
                       @input="setParamValue(helper.templateId, param.key, $event.target.value)"
@@ -77,12 +86,18 @@
                       v-if="param.key === 'path' && hasTauri"
                       class="browse-btn"
                       @click="browseFile(helper.templateId, param.key)"
-                      title="浏览..."
+                      :title="t.launchHelper.browse"
                       data-focusable
                     >📂</button>
                   </div>
-                  <div v-if="getGlobalHint(helper.templateId, param.key)" class="field-hint">
-                    全局默认: {{ getGlobalHint(helper.templateId, param.key) }}
+                  <div v-if="hasFieldError(helper.templateId, param.key)" class="field-error-msg">
+                    ⚠ {{ getFieldError(helper.templateId, param.key) }}
+                  </div>
+                  <div v-else-if="pathWarnings[`${helper.templateId}.${param.key}`]" class="field-path-warn">
+                    ⚠ {{ pathWarnings[`${helper.templateId}.${param.key}`] }}
+                  </div>
+                  <div v-else-if="getGlobalHint(helper.templateId, param.key)" class="field-hint">
+                    {{ t.launchHelper.globalDefault }}{{ getGlobalHint(helper.templateId, param.key) }}
                   </div>
                 </div>
               </div>
@@ -91,8 +106,15 @@
 
           <!-- 预览生成的命令 -->
           <div v-if="hasAnyEnabled" class="preview-section">
+
+          <!-- 全局路径保存通知 -->
+          <Transition name="fade">
+            <div v-if="globalSaveNotice" class="global-save-notice">
+              ✓ {{ globalSaveNotice }}
+            </div>
+          </Transition>
             <div class="preview-header" @click="showPreview = !showPreview">
-              <span>📋 预览生成的命令</span>
+              <span>{{ t.launchHelper.preview }}</span>
               <span class="preview-toggle">{{ showPreview ? '▼' : '▶' }}</span>
             </div>
             <div v-if="showPreview" class="preview-content">
@@ -105,9 +127,9 @@
         </div>
 
         <div class="panel-footer">
-          <button class="btn-secondary" @click="$emit('close')">取消</button>
+          <button class="btn-secondary" @click="$emit('close')">{{ t.launchHelper.cancel }}</button>
           <button class="btn-primary" @click="handleSave" :disabled="saving">
-            {{ saving ? '保存中...' : '💾 保存到服务器' }}
+            {{ saving ? t.launchHelper.saving : t.launchHelper.save }}
           </button>
         </div>
       </div>
@@ -118,6 +140,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useLaunchHelpers } from '../composables/useLaunchHelpers.js'
+import { useI18n } from '../i18n/index.js'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -128,18 +151,25 @@ const props = defineProps({
 
 const emit = defineEmits(['close', 'saved'])
 
+const { t } = useI18n()
+
 const {
   templates,
   getGlobalPath,
   setGlobalPath,
   getAppHelpers,
   setAppHelpers,
+  validateHelpers,
   generateAppCommands,
-} = useLaunchHelpers()
+  buildPreviewCommands,
+} = useLaunchHelpers(t)
 
 const hasTauri = ref(false)
 const saving = ref(false)
 const showPreview = ref(false)
+const validationErrors = ref([]) // { templateId, paramKey, message }[]
+const pathWarnings = ref({}) // { "templateId.paramKey": "message" }
+const globalSaveNotice = ref('') // 全局路径自动保存通知
 
 // 编辑中的助手列表（本地副本）
 const editingHelpers = ref([])
@@ -194,8 +224,42 @@ function setParamValue(templateId, paramKey, value) {
     // 仅当全局路径为空时才自动回写，避免 app 级修改污染其他应用
     if (paramKey === 'path' && value && !getGlobalPath(templateId, paramKey)) {
       setGlobalPath(templateId, paramKey, value)
+      const tmpl = getTemplate(templateId)
+      globalSaveNotice.value = (t.launchHelper.globalSaved || '').replace('{name}', tmpl?.name || templateId)
+      setTimeout(() => { globalSaveNotice.value = '' }, 3000)
+    }
+    // 清除该字段的验证错误
+    validationErrors.value = validationErrors.value.filter(
+      e => !(e.templateId === templateId && e.paramKey === paramKey)
+    )
+    // 异步校验路径是否存在
+    if (paramKey === 'path' && value) {
+      checkPathExists(templateId, paramKey, value)
+    } else if (paramKey === 'path') {
+      delete pathWarnings.value[`${templateId}.${paramKey}`]
     }
   }
+}
+
+let _pathCheckTimer = null
+async function checkPathExists(templateId, paramKey, filePath) {
+  clearTimeout(_pathCheckTimer)
+  const key = `${templateId}.${paramKey}`
+  _pathCheckTimer = setTimeout(async () => {
+    if (!hasTauri.value) return
+    try {
+      const { exists } = await import('@tauri-apps/plugin-fs')
+      const found = await exists(filePath)
+      if (!found) {
+        pathWarnings.value = { ...pathWarnings.value, [key]: t.launchHelper.fileNotFound || '文件不存在' }
+      } else {
+        const { [key]: _, ...rest } = pathWarnings.value
+        pathWarnings.value = rest
+      }
+    } catch {
+      // fs plugin 不可用，忽略
+    }
+  }, 500) // 延迟 500ms 防抖
 }
 
 function getGlobalHint(templateId, paramKey) {
@@ -207,11 +271,22 @@ function getGlobalHint(templateId, paramKey) {
   return ''
 }
 
+function hasFieldError(templateId, paramKey) {
+  return validationErrors.value.some(e => e.templateId === templateId && e.paramKey === paramKey)
+}
+
+function getFieldError(templateId, paramKey) {
+  return validationErrors.value.find(e => e.templateId === templateId && e.paramKey === paramKey)?.message || ''
+}
+
 async function browseFile(templateId, paramKey) {
   try {
     const { open } = await import('@tauri-apps/plugin-dialog')
     const path = await open({
-      filters: [{ name: '可执行文件', extensions: ['exe', 'bat', 'cmd', 'lnk'] }],
+      filters: [
+        { name: t.launchHelper.executableFiles || 'Executables', extensions: ['exe', 'bat', 'cmd', 'lnk', 'com', 'scr'] },
+        { name: t.launchHelper.allFiles || 'All Files', extensions: ['*'] },
+      ],
     })
     if (path) {
       setParamValue(templateId, paramKey, path)
@@ -224,56 +299,17 @@ async function browseFile(templateId, paramKey) {
 const hasAnyEnabled = computed(() => editingHelpers.value.some(h => h.enabled))
 
 const previewCommands = computed(() => {
-  // 临时保存到 composable 生成命令
-  const tmpHelpers = editingHelpers.value.filter(h => h.enabled)
-  const cmds = []
-
-  for (const helper of tmpHelpers) {
-    const tmpl = templates.value.find(t => t.id === helper.templateId)
-    if (!tmpl) continue
-
-    const mergedParams = {}
-    for (const p of tmpl.params) {
-      mergedParams[p.key] = helper.params?.[p.key] || getGlobalPath(tmpl.id, p.key) || ''
-    }
-
-    if (tmpl.type === 'wrapper') {
-      const wrapPath = mergedParams.path
-      if (wrapPath) {
-        let wrapCmd = tmpl.wrapTemplate?.replaceAll('{path}', wrapPath) || ''
-        if (mergedParams.extraArgs) wrapCmd = `${wrapCmd} ${mergedParams.extraArgs}`
-        cmds.push({
-          label: `${tmpl.icon} ${tmpl.name} (包装启动命令)`,
-          value: `${wrapCmd} <游戏命令>`,
-        })
-      }
-    } else if (tmpl.id === 'custom') {
-      if (mergedParams.doCmd) {
-        cmds.push({ label: `${tmpl.icon} 启动前`, value: mergedParams.doCmd })
-      }
-      if (mergedParams.undoCmd) {
-        cmds.push({ label: `${tmpl.icon} 退出后`, value: mergedParams.undoCmd })
-      }
-    } else {
-      const exe = mergedParams.path?.replace(/\\/g, '/').split('/').pop() || ''
-      let doCmd = tmpl.defaultDoCmd || ''
-      let undoCmd = tmpl.defaultUndoCmd || ''
-      for (const p of tmpl.params) {
-        if (p.key === 'extraArgs') continue
-        doCmd = doCmd.replaceAll(`{${p.key}}`, mergedParams[p.key] || '')
-        undoCmd = undoCmd.replaceAll(`{${p.key}}`, mergedParams[p.key] || '')
-      }
-      doCmd = doCmd.replaceAll('{exe}', exe).replace(/""\s*/g, '').trim()
-      undoCmd = undoCmd.replaceAll('{exe}', exe).replace(/""\s*/g, '').trim()
-      if (mergedParams.extraArgs) doCmd = `${doCmd} ${mergedParams.extraArgs}`.trim()
-      if (doCmd) cmds.push({ label: `${tmpl.icon} ${tmpl.name} (启动前)`, value: doCmd })
-      if (undoCmd) cmds.push({ label: `${tmpl.icon} ${tmpl.name} (退出后)`, value: undoCmd })
-    }
-  }
-  return cmds
+  return buildPreviewCommands(editingHelpers.value)
 })
 
 async function handleSave() {
+  // 验证必填字段
+  const errors = validateHelpers(editingHelpers.value)
+  validationErrors.value = errors
+  if (errors.length > 0) {
+    return
+  }
+
   saving.value = true
   try {
     // 1. 保存到本地
@@ -330,7 +366,7 @@ async function handleSave() {
     emit('close')
   } catch (e) {
     console.error('Failed to save launch helpers:', e)
-    alert(`保存失败: ${e.message}`)
+    alert(`${t.launchHelper.saveFailed || 'Save failed: '}${e.message}`)
   } finally {
     saving.value = false
   }
@@ -529,6 +565,25 @@ onUnmounted(() => {
       color: var(--fd-text-primary, #fff);
     }
 
+    .type-badge {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 500;
+      padding: 1px 6px;
+      border-radius: 4px;
+      margin-left: 6px;
+      vertical-align: middle;
+      background: rgba(var(--fd-accent-rgb, 0, 255, 245), 0.12);
+      color: var(--fd-accent, #00fff5);
+      border: 1px solid rgba(var(--fd-accent-rgb, 0, 255, 245), 0.2);
+
+      &.elevated {
+        background: rgba(251, 191, 36, 0.12);
+        color: #fbbf24;
+        border-color: rgba(251, 191, 36, 0.3);
+      }
+    }
+
     .helper-desc {
       display: block;
       font-size: 11px;
@@ -637,12 +692,43 @@ onUnmounted(() => {
   font-style: italic;
 }
 
+.field-error-msg {
+  font-size: 11px;
+  color: #ff6b6b;
+  margin-top: 4px;
+}
+
+.field-input.field-error {
+  border-color: rgba(255, 107, 107, 0.6);
+  box-shadow: 0 0 0 2px rgba(255, 107, 107, 0.1);
+}
+
+.field-path-warn {
+  font-size: 11px;
+  color: #fbbf24;
+  margin-top: 4px;
+}
+
+.field-input.field-warn {
+  border-color: rgba(251, 191, 36, 0.5);
+}
+
 // 命令预览
 .preview-section {
   margin-top: 20px;
   border: 1px solid rgba(var(--fd-accent-rgb, 0, 255, 245), 0.08);
   border-radius: 10px;
   overflow: hidden;
+}
+
+.global-save-notice {
+  padding: 8px 14px;
+  background: rgba(74, 222, 128, 0.12);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+  border-radius: 8px;
+  font-size: 12px;
+  color: #4ade80;
+  margin-top: 12px;
 }
 
 .preview-header {

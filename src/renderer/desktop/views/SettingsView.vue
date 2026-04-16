@@ -331,7 +331,7 @@ const {
   templates: allTemplates,
   getGlobalPath: getGlobalToolPath,
   setGlobalPath: setGlobalToolPath,
-} = useLaunchHelpers()
+} = useLaunchHelpers(t)
 
 const helperTemplates = computed(() =>
   allTemplates.value.filter(t => t.id !== 'custom')
@@ -341,7 +341,10 @@ async function browseToolPath(templateId, paramKey) {
   try {
     const { open } = await import('@tauri-apps/plugin-dialog')
     const path = await open({
-      filters: [{ name: 'Executable', extensions: ['exe', 'bat', 'cmd', 'lnk'] }],
+      filters: [
+        { name: t.launchHelper?.executableFiles || 'Executables', extensions: ['exe', 'bat', 'cmd', 'lnk', 'com', 'scr'] },
+        { name: t.launchHelper?.allFiles || 'All Files', extensions: ['*'] },
+      ],
     })
     if (path) {
       setGlobalToolPath(templateId, paramKey, path)

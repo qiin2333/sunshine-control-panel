@@ -19,8 +19,8 @@
         <span class="list-cmd" v-if="app.cmd">{{ app.cmd }}</span>
       </div>
       <div class="list-tags">
-        <span v-if="isFavorite(app.name)" class="list-tag fav">★ 收藏</span>
-        <span v-if="app.elevated && app.elevated !== 'false'" class="list-tag admin">管理员</span>
+        <span v-if="isFavorite(app.name)" class="list-tag fav">★ {{ t.appContext.favorite }}</span>
+        <span v-if="app.elevated && app.elevated !== 'false'" class="list-tag admin">{{ t.appContext.admin }}</span>
       </div>
       <button class="list-play" tabindex="-1">▶</button>
     </div>
@@ -28,6 +28,9 @@
 </template>
 
 <script setup>
+import { useI18n } from '../i18n/index.js'
+const { t } = useI18n()
+
 defineProps({
   apps: { type: Array, required: true },
   launchingApp: { type: String, default: null },

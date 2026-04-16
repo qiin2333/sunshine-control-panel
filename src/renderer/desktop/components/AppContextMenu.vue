@@ -7,30 +7,33 @@
       @click.stop
     >
       <div class="menu-item" @click="$emit('launch')">
-        <span class="menu-icon">▶</span> 启动
+        <span class="menu-icon">▶</span> {{ t.appContext.launch }}
       </div>
       <div class="menu-item" @click="$emit('toggleFavorite')">
         <span class="menu-icon">{{ isFavorited ? '★' : '☆' }}</span>
-        {{ isFavorited ? '取消收藏' : '收藏' }}
+        {{ isFavorited ? t.appContext.unfavorite : t.appContext.favorite }}
       </div>
       <div class="menu-divider"></div>
       <div class="menu-item" @click="$emit('updateCover')">
-        <span class="menu-icon">🖼</span> 更新封面
+        <span class="menu-icon">🖼</span> {{ t.appContext.updateCover }}
       </div>
       <div class="menu-item" @click="$emit('configHelpers')">
-        <span class="menu-icon">⚡</span> 启动助手
+        <span class="menu-icon">⚡</span> {{ t.appContext.launchHelper }}
       </div>
       <div class="menu-item" @click="$emit('copyCmd')" v-if="hasCmd">
-        <span class="menu-icon">📋</span> 复制命令
+        <span class="menu-icon">📋</span> {{ t.appContext.copyCommand }}
       </div>
       <div class="menu-item" @click="$emit('openDir')" v-if="hasWorkingDir">
-        <span class="menu-icon">📁</span> 打开目录
+        <span class="menu-icon">📁</span> {{ t.appContext.openDirectory }}
       </div>
     </div>
   </Teleport>
 </template>
 
 <script setup>
+import { useI18n } from '../i18n/index.js'
+const { t } = useI18n()
+
 defineProps({
   visible: { type: Boolean, required: true },
   x: { type: Number, default: 0 },

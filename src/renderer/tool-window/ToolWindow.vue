@@ -59,6 +59,9 @@ onMounted(async () => {
       case 'shortcuts':
         currentTool.value = defineAsyncComponent(() => import('./tools/ShortcutsTool.vue'))
         break
+      case 'rtss':
+        currentTool.value = defineAsyncComponent(() => import('./tools/RtssOsdTool.vue'))
+        break
       default:
         console.error('未知的工具类型:', toolType)
     }
@@ -97,8 +100,8 @@ onUnmounted(() => {
 }
 
 .tool-panel {
-  max-width: 90vw;
-  max-height: 90vh;
+  max-width: 96vw;
+  max-height: 96vh;
   background: linear-gradient(135deg, #2b7fd9 0%, #5a9fe6 100%);
   border-radius: 20px;
   box-shadow: 0 20px 60px rgba(43, 127, 217, 0.5);

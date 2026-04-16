@@ -12,7 +12,7 @@
         <div class="desktop-card pairing-card">
           <div class="card-header">
             <div class="card-title">
-              <span class="title-icon">📲</span>
+              <span class="title-icon"><Iphone /></span>
               {{ t.devices.qrCodePairing }}
             </div>
           </div>
@@ -55,7 +55,7 @@
         <div class="desktop-card pairing-card">
           <div class="card-header">
             <div class="card-title">
-              <span class="title-icon">🔗</span>
+              <span class="title-icon"><Link /></span>
               {{ t.devices.pinPairing }}
             </div>
           </div>
@@ -110,7 +110,7 @@
         class="desktop-card device-card fade-in"
         :style="{ animationDelay: `${index * 0.1}s` }"
       >
-        <div class="device-icon">📱</div>
+        <div class="device-icon"><Iphone /></div>
         <div class="device-info">
           <template v-if="editingUuid === device.uuid">
             <input
@@ -141,7 +141,7 @@
       </div>
 
       <div v-if="!loading && devices.length === 0" class="empty-state fade-in">
-        <div class="empty-icon">📱</div>
+        <div class="empty-icon"><Iphone /></div>
         <p>{{ t.devices.emptyState }}</p>
       </div>
 
@@ -154,6 +154,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { Iphone, Link } from '@element-plus/icons-vue'
 import QRCode from 'qrcode'
 import { useI18n } from '../i18n/index.js'
 

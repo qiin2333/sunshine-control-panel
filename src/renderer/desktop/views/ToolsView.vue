@@ -10,7 +10,7 @@
       <!-- 码率调节器 -->
       <DesktopCard :title="t.tools.bitrateAdjust" variant="success" hoverable class="tool-panel-card">
         <template #title>
-          <span class="title-icon">📊</span>
+          <span class="title-icon"><DataAnalysis /></span>
           {{ t.tools.bitrateAdjust }}
         </template>
 
@@ -22,7 +22,7 @@
       <!-- DPI 调节器 -->
       <DesktopCard :title="t.tools.dpiScaling" variant="secondary" hoverable class="tool-panel-card">
         <template #title>
-          <span class="title-icon">🔍</span>
+          <span class="title-icon"><Search /></span>
           {{ t.tools.dpiScaling }}
         </template>
 
@@ -46,13 +46,13 @@
 
     <!-- 系统诊断 -->
     <div class="section-title fade-in">
-      <span class="title-icon">🔍</span>
+      <span class="title-icon"><Search /></span>
       {{ t.tools.diagnostics }}
     </div>
 
     <DesktopCard class="diagnostics-card fade-in">
       <template #title>
-        <span class="title-icon">💻</span>
+        <span class="title-icon"><Monitor /></span>
         {{ t.tools.systemStatus }}
       </template>
 
@@ -143,6 +143,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { DataAnalysis, Search, Monitor } from '@element-plus/icons-vue'
 import { useI18n } from '../i18n/index.js'
 
 // 桌面 UI 组件

@@ -9,7 +9,7 @@
     <Transition name="slide">
       <div v-if="open" class="theme-editor" @click.stop>
         <div class="editor-header">
-          <h2>🎨 主题编辑</h2>
+          <h2><Brush /> 主题编辑</h2>
           <button class="close-btn" @click="$emit('close')">✕</button>
         </div>
 
@@ -28,12 +28,12 @@
               <template v-if="wallpaper">
                 <img :src="wallpaper" class="wallpaper-preview" />
                 <div class="wallpaper-actions">
-                  <button class="wp-btn" @click.stop="triggerFileInput">🔄 更换</button>
+                  <button class="wp-btn" @click.stop="triggerFileInput"><Refresh /> 更换</button>
                   <button class="wp-btn danger" @click.stop="$emit('removeWallpaper')">✕ 移除</button>
                 </div>
               </template>
               <template v-else>
-                <div class="drop-icon">🖼️</div>
+                <div class="drop-icon"><Picture /></div>
                 <div class="drop-text">拖拽图片到此处<br/><small>或点击选择文件</small></div>
               </template>
             </div>
@@ -132,8 +132,8 @@
           <section class="editor-section">
             <label class="section-title">数据</label>
             <div class="action-row">
-              <button class="action-btn" @click="handleExport">📤 导出主题</button>
-              <button class="action-btn" @click="handleImport">📥 导入主题</button>
+              <button class="action-btn" @click="handleExport"><Upload /> 导出主 题</button>
+              <button class="action-btn" @click="handleImport"><Download /> 导入主 题</button>
             </div>
           </section>
         </div>
@@ -144,6 +144,7 @@
 
 <script setup>
 import { ref } from 'vue'
+import { Brush, Refresh, Picture, Upload, Download } from '@element-plus/icons-vue'
 
 const props = defineProps({
   open: { type: Boolean, required: true },

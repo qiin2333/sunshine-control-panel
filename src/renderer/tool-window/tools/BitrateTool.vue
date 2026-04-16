@@ -41,7 +41,7 @@
       <!-- 无会话提示 -->
       <template v-else-if="activeSessions.length === 0">
         <div class="empty-state">
-          <div class="icon">📡</div>
+          <div class="icon"><Connection /></div>
           <p>{{ t.bitrateTool.noStream }}</p>
           <p class="subtitle">{{ t.bitrateTool.noStreamSub }}</p>
           <p v-if="allSessions.length > 0" class="subtitle warning-text">
@@ -120,7 +120,7 @@
 
       <!-- 未选择客户端提示 -->
       <div v-else class="empty-state">
-        <div class="icon">👆</div>
+        <div class="icon"><Top /></div>
         <p>{{ t.bitrateTool.selectFirst }}</p>
       </div>
 
@@ -137,7 +137,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { sunshine } from '../../tauri-adapter.js'
-import { RefreshRight } from '@element-plus/icons-vue'
+import { RefreshRight, Connection, Top } from '@element-plus/icons-vue'
 import { useI18n } from '../../desktop/i18n/index.js'
 
 const { t } = useI18n()

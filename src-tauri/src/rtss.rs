@@ -1239,8 +1239,14 @@ pub async fn rtss_get_osd_properties(profile: Option<String>) -> Result<OsdPrope
             }
         };
 
+        // OSD 使用专用 overlay 命令获取
+        let osd_enabled = match run_rtss_cli(&["overlay:get"]) {
+            Ok(v) => v.trim().parse().ok(),
+            Err(_) => read_prop("OSD"),
+        };
+
         Ok(OsdProperties {
-            osd_enabled: read_prop("OSD"),
+            osd_enabled,
             show_own_stats: read_prop("OSDShowOwnStatistics"),
             position_x: read_prop("OnScreenDisplayX"),
             position_y: read_prop("OnScreenDisplayY"),
@@ -1267,7 +1273,32 @@ pub async fn rtss_set_osd_property(
         let prof = profile.unwrap_or_else(|| "Global".into());
         info!("🎯 RTSS property:set {} {} = {}", prof, key, value);
 
-        // 尝试普通权限
+        // OSD 属性使用专用 overlay 命令
+        if key == "OSD" {
+            let target = &value;
+            // 先检查当前状态
+            let current = run_rtss_cli(&["overlay:get"])?;
+            if current.trim() == target.as_str() {
+                return Ok("OK".to_string());
+            }
+            // 使用 overlay:set
+            run_rtss_cli(&["overlay:set", target])?;
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            let actual = run_rtss_cli(&["overlay:get"])?;
+            if actual.trim() == target.as_str() {
+                return Ok("OK".to_string());
+            }
+            // 提权重试
+            run_rtss_cli_elevated(&["overlay:set", target])?;
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            let actual2 = run_rtss_cli(&["overlay:get"])?;
+            if actual2.trim() == target.as_str() {
+                return Ok("OK".to_string());
+            }
+            return Err(format!("OSD 设置失败: 期望={}, 实际={}", target, actual2.trim()));
+        }
+
+        // 其他属性使用 property:set
         run_rtss_cli(&["property:set", &prof, &key, &value])?;
 
         // 验证
@@ -1280,13 +1311,18 @@ pub async fn rtss_set_osd_property(
         info!("🎯 普通权限 property:set 失败, 尝试管理员权限...");
         run_rtss_cli_elevated(&["property:set", &prof, &key, &value])?;
 
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let actual2 = run_rtss_cli(&["property:get", &prof, &key])?;
-        if actual2 == value {
-            Ok("OK".to_string())
-        } else {
-            Err(format!("属性设置失败: 需要管理员权限 ({} 期望={}, 实际={})", key, value, actual2))
+        // 等待并多次验证（提权操作可能有延迟）
+        for i in 0..5 {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            let actual2 = run_rtss_cli(&["property:get", &prof, &key])?;
+            if actual2 == value {
+                return Ok("OK".to_string());
+            }
+            debug!("🎯 验证第{}次: 期望={}, 实际={}", i + 1, value, actual2);
         }
+
+        let final_val = run_rtss_cli(&["property:get", &prof, &key])?;
+        Err(format!("属性设置失败: RTSS 可能未以管理员权限运行，或该属性被锁定 ({} 期望={}, 实际={})", key, value, final_val))
     }
 
     #[cfg(not(target_os = "windows"))]

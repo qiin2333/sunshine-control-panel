@@ -16,7 +16,7 @@
       <div class="desktop-card fade-in">
         <div class="card-header">
           <div class="card-title">
-            <span class="title-icon">🎬</span>
+            <span class="title-icon"><Film /></span>
             {{ t.stream.codec.format }}
           </div>
         </div>
@@ -49,7 +49,7 @@
         <div class="desktop-card">
           <div class="card-header">
             <div class="card-title">
-              <span class="title-icon">📊</span>
+              <span class="title-icon"><DataAnalysis /></span>
               {{ t.stream.bitrateLimit }}
             </div>
             <div class="card-actions">
@@ -107,7 +107,7 @@
       <div class="desktop-card fade-in">
         <div class="card-header">
           <div class="card-title">
-            <span class="title-icon">🖥️</span>
+            <span class="title-icon"><Monitor /></span>
             {{ t.stream.displayCapture }}
           </div>
         </div>
@@ -164,7 +164,7 @@
       <div class="desktop-card fade-in">
         <div class="card-header">
           <div class="card-title">
-            <span class="title-icon">🚀</span>
+            <span class="title-icon"><Promotion /></span>
             {{ t.stream.launchMode }}
           </div>
         </div>
@@ -193,7 +193,7 @@
       <div class="desktop-card fade-in">
         <div class="card-header">
           <div class="card-title">
-            <span class="title-icon">💻</span>
+            <span class="title-icon"><Monitor /></span>
             {{ t.stream.virtualDisplay }}
           </div>
         </div>
@@ -241,7 +241,7 @@
       <div class="desktop-card fade-in">
         <div class="card-header">
           <div class="card-title">
-            <span class="title-icon">🖱️</span>
+            <span class="title-icon"><Mouse /></span>
             {{ t.stream.vmouse }}
           </div>
           <div class="card-actions">
@@ -302,6 +302,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { Film, DataAnalysis, Monitor, Promotion, Mouse } from '@element-plus/icons-vue'
 import PillGroup from '../components/PillGroup.vue'
 import FdDropdown from '../components/FdDropdown.vue'
 import { vmouse as vmouseApi } from '../../tauri-adapter.js'

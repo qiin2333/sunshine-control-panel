@@ -811,13 +811,13 @@ export const en = {
 
   // === App Context Menu ===
   appContext: {
-    launch: '▶ Launch',
+    launch: 'Launch',
     favorite: 'Favorite',
     unfavorite: 'Unfavorite',
-    updateCover: '🖼 Update Cover',
-    launchHelper: '⚡ Launch Helper',
-    copyCommand: '📋 Copy Command',
-    openDirectory: '📁 Open Directory',
+    updateCover: 'Update Cover',
+    launchHelper: 'Launch Helper',
+    copyCommand: 'Copy Command',
+    openDirectory: 'Open Directory',
     admin: 'Admin',
     launching: 'Launching...',
   },

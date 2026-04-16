@@ -15,16 +15,16 @@
       </div>
       <div class="menu-divider"></div>
       <div class="menu-item" @click="$emit('updateCover')">
-        <span class="menu-icon">🖼</span> {{ t.appContext.updateCover }}
+        <span class="menu-icon"><Picture /></span> {{ t.appContext.updateCover }}
       </div>
       <div class="menu-item" @click="$emit('configHelpers')">
-        <span class="menu-icon">⚡</span> {{ t.appContext.launchHelper }}
+        <span class="menu-icon"><Lightning /></span> {{ t.appContext.launchHelper }}
       </div>
       <div class="menu-item" @click="$emit('copyCmd')" v-if="hasCmd">
-        <span class="menu-icon">📋</span> {{ t.appContext.copyCommand }}
+        <span class="menu-icon"><DocumentCopy /></span> {{ t.appContext.copyCommand }}
       </div>
       <div class="menu-item" @click="$emit('openDir')" v-if="hasWorkingDir">
-        <span class="menu-icon">📁</span> {{ t.appContext.openDirectory }}
+        <span class="menu-icon"><Folder /></span> {{ t.appContext.openDirectory }}
       </div>
     </div>
   </Teleport>
@@ -32,6 +32,7 @@
 
 <script setup>
 import { useI18n } from '../i18n/index.js'
+import { Picture, Lightning, DocumentCopy, Folder } from '@element-plus/icons-vue'
 const { t } = useI18n()
 
 defineProps({
@@ -67,7 +68,15 @@ defineEmits(['launch', 'toggleFavorite', 'copyCmd', 'openDir', 'configHelpers', 
     gap: 10px;
     transition: background 0.1s ease;
 
-    .menu-icon { width: 16px; text-align: center; }
+    .menu-icon {
+      width: 18px;
+      text-align: center;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
 
     &:hover {
       background: rgba(var(--fd-accent-rgb, 0, 255, 245), 0.1);

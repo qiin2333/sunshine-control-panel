@@ -1,5 +1,6 @@
 <template>
-  <SectionPanel icon="💬" :title="t.rtssTool.osdControl">
+  <SectionPanel :title="t.rtssTool.osdControl">
+    <template #icon><ChatDotRound /></template>
     <template #actions>
       <button v-if="hasCli" class="overlay-btn" @click="onToggleOverlay">
         {{ t.rtssTool.toggleOverlay }}
@@ -18,7 +19,7 @@
           <span>A</span>
           <input type="color" :value="'#' + color" @input="onColorPick" class="hidden-input" />
         </label>
-        <button class="fmt-btn" @click="insertColorTag" :title="t.rtssTool.insertColor">🎨</button>
+        <button class="fmt-btn" @click="insertColorTag" :title="t.rtssTool.insertColor"><Brush /></button>
       </div>
       <div class="format-group">
         <select v-model="fontSize" class="fmt-select" @change="insertSizeTag" :title="t.rtssTool.fontSize">
@@ -62,6 +63,7 @@
 
 <script setup>
 import { ref } from 'vue'
+import { ChatDotRound, Brush } from '@element-plus/icons-vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from '../../../desktop/i18n/index.js'
 import SectionPanel from '../../components/SectionPanel.vue'

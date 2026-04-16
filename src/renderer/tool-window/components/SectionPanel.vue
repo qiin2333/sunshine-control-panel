@@ -1,7 +1,9 @@
 <template>
   <div class="section-panel">
     <div class="section-header">
-      <span v-if="icon" class="section-icon">{{ icon }}</span>
+      <span v-if="icon || $slots.icon" class="section-icon">
+        <slot name="icon">{{ icon }}</slot>
+      </span>
       <span class="section-title">{{ title }}</span>
       <div class="section-actions">
         <slot name="actions" />

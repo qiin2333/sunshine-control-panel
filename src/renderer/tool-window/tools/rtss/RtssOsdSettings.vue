@@ -1,5 +1,6 @@
 <template>
-  <SectionPanel icon="⚙️" :title="t.rtssTool.osdSettings">
+  <SectionPanel :title="t.rtssTool.osdSettings">
+    <template #icon><Setting /></template>
     <template #actions>
       <button class="refresh-btn" @click="load" :title="t.rtssTool.refresh">↻</button>
     </template>
@@ -69,6 +70,7 @@
 
 <script setup>
 import { reactive, onMounted } from 'vue'
+import { Setting } from '@element-plus/icons-vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from '../../../desktop/i18n/index.js'
 import SectionPanel from '../../components/SectionPanel.vue'

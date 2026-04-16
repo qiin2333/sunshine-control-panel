@@ -4,7 +4,7 @@
       <div v-if="open" class="cover-modal-mask" @click.self="$emit('close')">
         <div class="cover-modal">
           <div class="modal-header">
-            <h3>🖼 更新封面 — {{ appName }}</h3>
+            <h3><Picture /> 更新封面 — {{ appName }}</h3>
             <button class="modal-close" @click="$emit('close')">✕</button>
           </div>
 
@@ -51,6 +51,7 @@
 
 <script setup>
 import { ref, watch } from 'vue'
+import { Picture } from '@element-plus/icons-vue'
 import { tauriInvoke } from '../composables/useTauri'
 
 const props = defineProps({

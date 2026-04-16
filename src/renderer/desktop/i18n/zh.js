@@ -811,13 +811,13 @@ export const zh = {
 
   // === 应用右键菜单 ===
   appContext: {
-    launch: '▶ 启动',
+    launch: '启动',
     favorite: '收藏',
     unfavorite: '取消收藏',
-    updateCover: '🖼 更新封面',
-    launchHelper: '⚡ 启动助手',
-    copyCommand: '📋 复制命令',
-    openDirectory: '📁 打开目录',
+    updateCover: '更新封面',
+    launchHelper: '启动助手',
+    copyCommand: '复制命令',
+    openDirectory: '打开目录',
     admin: '管理员',
     launching: '启动中...',
   },

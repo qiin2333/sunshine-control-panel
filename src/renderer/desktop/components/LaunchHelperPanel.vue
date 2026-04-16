@@ -88,7 +88,7 @@
                       @click="browseFile(helper.templateId, param.key)"
                       :title="t.launchHelper.browse"
                       data-focusable
-                    >📂</button>
+                    ><FolderOpened /></button>
                   </div>
                   <div v-if="hasFieldError(helper.templateId, param.key)" class="field-error-msg">
                     ⚠ {{ getFieldError(helper.templateId, param.key) }}
@@ -139,6 +139,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { FolderOpened } from '@element-plus/icons-vue'
 import { useLaunchHelpers } from '../composables/useLaunchHelpers.js'
 import { useI18n } from '../i18n/index.js'
 

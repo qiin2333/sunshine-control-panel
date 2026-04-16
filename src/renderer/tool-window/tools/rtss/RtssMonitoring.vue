@@ -1,5 +1,6 @@
 <template>
-  <SectionPanel icon="📊" :title="t.rtssTool.monitoring">
+  <SectionPanel :title="t.rtssTool.monitoring">
+    <template #icon><DataAnalysis /></template>
     <template #actions>
       <ToggleSwitch :modelValue="active" @update:modelValue="toggleMonitoring" />
     </template>
@@ -63,6 +64,7 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { DataAnalysis } from '@element-plus/icons-vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from '../../../desktop/i18n/index.js'
 import SectionPanel from '../../components/SectionPanel.vue'

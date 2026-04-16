@@ -70,7 +70,7 @@
 
     <!-- 快捷操作 -->
     <div class="section-title fade-in">
-      <span class="title-icon">⚡</span>
+      <span class="title-icon"><Lightning /></span>
       {{ t.dashboard.quickActions }}
     </div>
 
@@ -123,7 +123,7 @@
 
     <!-- 系统信息 -->
     <div class="section-title fade-in">
-      <span class="title-icon">💻</span>
+      <span class="title-icon"><Monitor /></span>
       {{ t.dashboard.systemInfo }}
     </div>
 
@@ -150,7 +150,7 @@
 
     <!-- 内存监控 -->
     <div class="section-title fade-in">
-      <span class="title-icon">📊</span>
+      <span class="title-icon"><DataAnalysis /></span>
       {{ t.dashboard.memoryMonitor }}
     </div>
 
@@ -235,6 +235,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { Lightning, Monitor, DataAnalysis } from '@element-plus/icons-vue'
 import { useI18n } from '../i18n/index.js'
 
 const { t } = useI18n()

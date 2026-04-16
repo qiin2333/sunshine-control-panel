@@ -9,7 +9,7 @@
     <div class="desktop-card fade-in">
       <div class="card-header">
         <div class="card-title">
-          <span class="title-icon">🎨</span>
+          <span class="title-icon"><Brush /></span>
           {{ t.settings.appearance }}
         </div>
       </div>
@@ -30,7 +30,7 @@
     <div class="desktop-card fade-in">
       <div class="card-header">
         <div class="card-title">
-          <span class="title-icon">🚀</span>
+          <span class="title-icon"><Promotion /></span>
           {{ t.settings.startup }}
         </div>
       </div>
@@ -80,7 +80,7 @@
     <div class="desktop-card fade-in">
       <div class="card-header">
         <div class="card-title">
-          <span class="title-icon">⚡</span>
+          <span class="title-icon"><Lightning /></span>
           {{ t.settings.launchAssistant }}
         </div>
       </div>
@@ -114,7 +114,7 @@
                 v-if="hasTauri"
                 class="browse-btn-small"
                 @click="browseToolPath(tmpl.id, param.key)"
-              >📂</button>
+              ><FolderOpened /></button>
             </div>
           </div>
         </div>
@@ -125,7 +125,7 @@
     <div class="desktop-card fade-in">
       <div class="card-header">
         <div class="card-title">
-          <span class="title-icon">🔔</span>
+          <span class="title-icon"><Bell /></span>
           {{ t.settings.notifications }}
         </div>
       </div>
@@ -175,7 +175,7 @@
     <div class="desktop-card fade-in">
       <div class="card-header">
         <div class="card-title">
-          <span class="title-icon">⚙️</span>
+          <span class="title-icon"><Setting /></span>
           {{ t.settings.advanced }}
         </div>
       </div>
@@ -293,6 +293,7 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
+import { Brush, Promotion, Lightning, FolderOpened, Bell, Setting } from '@element-plus/icons-vue'
 import { useLaunchHelpers } from '../composables/useLaunchHelpers'
 import { useDesktopPet } from '../../composables/useDesktopPet.js'
 import { useI18n } from '../i18n/index.js'

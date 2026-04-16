@@ -3,6 +3,7 @@
 
 mod vdd;
 mod vmouse;
+mod rtss;
 mod system;
 mod sunshine;
 mod utils;
@@ -138,6 +139,23 @@ fn main() {
             moonlight_web::moonlight_web_get_install_path,
             moonlight_web::moonlight_web_generate_cert,
             windows::_webview_heartbeat,
+            rtss::get_rtss_status,
+            rtss::rtss_set_osd,
+            rtss::rtss_clear_osd,
+            rtss::rtss_set_framerate_limit,
+            rtss::rtss_get_framerate_limit,
+            rtss::rtss_toggle_limiter,
+            rtss::rtss_get_limiter_status,
+            rtss::rtss_toggle_overlay,
+            rtss::rtss_download_cli,
+            rtss::rtss_get_available_metrics,
+            rtss::rtss_start_monitoring,
+            rtss::rtss_stop_monitoring,
+            rtss::rtss_get_monitoring_status,
+            rtss::rtss_get_osd_properties,
+            rtss::rtss_set_osd_property,
+            tray::set_tray_locale,
+            tray::get_tray_locale,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

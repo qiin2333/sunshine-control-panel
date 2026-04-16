@@ -1,5 +1,5 @@
 use tauri::{
-    menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
+    menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, Runtime,
 };
@@ -20,6 +20,79 @@ static TOOLBAR_VISIBLE_STATE: Mutex<bool> = Mutex::new(false);
 // Sunshine 用户模式状态管理
 #[cfg(target_os = "windows")]
 static SUNSHINE_USER_MODE_STATE: Mutex<bool> = Mutex::new(false);
+
+// 当前语言状态管理 ("zh" 或 "en")
+static CURRENT_LOCALE: Mutex<Option<String>> = Mutex::new(None);
+
+/// 托盘菜单翻译结构
+struct TrayStrings {
+    open_website: &'static str,
+    vdd_settings: &'static str,
+    restart_user_mode: &'static str,
+    show_toolbar: &'static str,
+    prevent_sleep: &'static str,
+    rtss_control: &'static str,
+    log_console: &'static str,
+    open_desktop: &'static str,
+    web_stream: &'static str,
+    debug_page: &'static str,
+    check_update: &'static str,
+    about: &'static str,
+    quit: &'static str,
+    language: &'static str,
+    tooltip: &'static str,
+    tooltip_admin: &'static str,
+}
+
+const ZH_STRINGS: TrayStrings = TrayStrings {
+    open_website: "🌐 打开官网",
+    vdd_settings: "📱 设置虚拟显示器（VDD）",
+    restart_user_mode: "☀ 用户模式运行 Sunshine",
+    show_toolbar: "🐾 显示工具栏",
+    prevent_sleep: "💤 不许睡",
+    rtss_control: "🎯 RTSS 控制",
+    log_console: "🔍 打开日志控制台",
+    open_desktop: "🖥️ 打开桌面 UI",
+    web_stream: "🌙 Web 串流服务",
+    debug_page: "🐛 打开调试页面",
+    check_update: "🔄 检查更新",
+    about: "ℹ️ 关于",
+    quit: "退出程序",
+    language: "🌍 语言 / Language",
+    tooltip: "Sunshine GUI",
+    tooltip_admin: "Sunshine GUI (管理员)",
+};
+
+const EN_STRINGS: TrayStrings = TrayStrings {
+    open_website: "🌐 Open Website",
+    vdd_settings: "📱 Virtual Display (VDD)",
+    restart_user_mode: "☀ Run Sunshine in User Mode",
+    show_toolbar: "🐾 Show Toolbar",
+    prevent_sleep: "💤 Prevent Sleep",
+    rtss_control: "🎯 RTSS Control",
+    log_console: "🔍 Log Console",
+    open_desktop: "🖥️ Desktop UI",
+    web_stream: "🌙 Web Streaming",
+    debug_page: "🐛 Debug Page",
+    check_update: "🔄 Check for Updates",
+    about: "ℹ️ About",
+    quit: "Quit",
+    language: "🌍 语言 / Language",
+    tooltip: "Sunshine GUI",
+    tooltip_admin: "Sunshine GUI (Admin)",
+};
+
+fn get_tray_strings() -> &'static TrayStrings {
+    let locale = CURRENT_LOCALE.lock().unwrap();
+    match locale.as_deref() {
+        Some("en") => &EN_STRINGS,
+        _ => &ZH_STRINGS,
+    }
+}
+
+fn get_current_locale() -> String {
+    CURRENT_LOCALE.lock().unwrap().clone().unwrap_or_else(|| "zh".to_string())
+}
 
 #[cfg(target_os = "windows")]
 mod power {
@@ -57,6 +130,14 @@ pub fn create_system_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     #[cfg(target_os = "windows")]
     init_sunshine_user_mode_state(app);
 
+    // 初始化语言状态（从 localStorage 无法直接读取，先用默认值，前端初始化后会同步）
+    {
+        let mut locale = CURRENT_LOCALE.lock().unwrap();
+        if locale.is_none() {
+            *locale = Some("zh".to_string());
+        }
+    }
+
     // 初始化工具栏状态
     let is_toolbar_visible = app.get_webview_window("toolbar")
         .and_then(|w| w.is_visible().ok())
@@ -64,10 +145,11 @@ pub fn create_system_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     *TOOLBAR_VISIBLE_STATE.lock().unwrap() = is_toolbar_visible;
 
     let menu = build_tray_menu(app)?;
+    let s = get_tray_strings();
     let tooltip = if utils::is_running_as_admin().unwrap_or(false) {
-        "Sunshine GUI (管理员)"
+        s.tooltip_admin
     } else {
-        "Sunshine GUI"
+        s.tooltip
     };
 
     TrayIconBuilder::with_id(TRAY_ID)
@@ -114,19 +196,28 @@ fn init_sunshine_user_mode_state<R: Runtime>(app: &AppHandle<R>) {
 
 /// 构建托盘菜单
 fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
-    let open_website = MenuItem::with_id(app, "open_website", "🌐 打开官网", true, None::<&str>)?;
-    let vdd_settings = MenuItem::with_id(app, "vdd_settings", "📱 设置虚拟显示器（VDD）", true, None::<&str>)?;
+    let s = get_tray_strings();
+    let current_locale = get_current_locale();
+
+    let open_website = MenuItem::with_id(app, "open_website", s.open_website, true, None::<&str>)?;
+    let vdd_settings = MenuItem::with_id(app, "vdd_settings", s.vdd_settings, true, None::<&str>)?;
     
     // 从状态获取工具栏是否显示
     let is_toolbar_visible = *TOOLBAR_VISIBLE_STATE.lock().unwrap();
-    let show_toolbar = CheckMenuItem::with_id(app, "show_toolbar", "🐾 显示工具栏", true, is_toolbar_visible, None::<&str>)?;
+    let show_toolbar = CheckMenuItem::with_id(app, "show_toolbar", s.show_toolbar, true, is_toolbar_visible, None::<&str>)?;
     
-    let log_console = MenuItem::with_id(app, "log_console", "🔍 打开日志控制台", true, None::<&str>)?;
+    let rtss_control = MenuItem::with_id(app, "rtss_control", s.rtss_control, true, None::<&str>)?;
+    let log_console = MenuItem::with_id(app, "log_console", s.log_console, true, None::<&str>)?;
     #[cfg(any(debug_assertions, feature = "beta"))]
-    let web_stream = MenuItem::with_id(app, "web_stream", "🌙 Web 串流服务", true, None::<&str>)?;
-    let check_update = MenuItem::with_id(app, "check_update", "🔄 检查更新", true, None::<&str>)?;
-    let about = MenuItem::with_id(app, "about", "ℹ️ 关于", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "退出程序", true, None::<&str>)?;
+    let web_stream = MenuItem::with_id(app, "web_stream", s.web_stream, true, None::<&str>)?;
+    let check_update = MenuItem::with_id(app, "check_update", s.check_update, true, None::<&str>)?;
+    let about = MenuItem::with_id(app, "about", s.about, true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", s.quit, true, None::<&str>)?;
+
+    // 语言子菜单
+    let lang_zh = CheckMenuItem::with_id(app, "lang_zh", "中文", true, current_locale == "zh", None::<&str>)?;
+    let lang_en = CheckMenuItem::with_id(app, "lang_en", "English", true, current_locale == "en", None::<&str>)?;
+    let lang_submenu = Submenu::with_id_and_items(app, "language", s.language, true, &[&lang_zh, &lang_en])?;
 
     let separator1 = PredefinedMenuItem::separator(app)?;
     let separator2 = PredefinedMenuItem::separator(app)?;
@@ -135,15 +226,18 @@ fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     #[cfg(target_os = "windows")]
     let restart_user_mode = {
         let is_user_mode = *SUNSHINE_USER_MODE_STATE.lock().unwrap();
-        CheckMenuItem::with_id(app, "restart_user_mode", "☀ 用户模式运行 Sunshine", true, is_user_mode, None::<&str>)?
+        CheckMenuItem::with_id(app, "restart_user_mode", s.restart_user_mode, true, is_user_mode, None::<&str>)?
     };
 
     #[cfg(target_os = "windows")]
-    let prevent_sleep = CheckMenuItem::with_id(app, "prevent_sleep", "💤 不许睡", true, false, None::<&str>)?;
+    let prevent_sleep = {
+        let is_preventing = *PREVENT_SLEEP_STATE.lock().unwrap();
+        CheckMenuItem::with_id(app, "prevent_sleep", s.prevent_sleep, true, is_preventing, None::<&str>)?
+    };
 
-    let open_desktop = MenuItem::with_id(app, "open_desktop", "🖥️ 打开桌面 UI", true, None::<&str>)?;
+    let open_desktop = MenuItem::with_id(app, "open_desktop", s.open_desktop, true, None::<&str>)?;
     #[cfg(debug_assertions)]
-    let debug_page = MenuItem::with_id(app, "debug_page", "🐛 打开调试页面", true, None::<&str>)?;
+    let debug_page = MenuItem::with_id(app, "debug_page", s.debug_page, true, None::<&str>)?;
     #[cfg(debug_assertions)]
     let separator_debug = PredefinedMenuItem::separator(app)?;
 
@@ -157,6 +251,7 @@ fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     #[cfg(target_os = "windows")]
     items.push(&prevent_sleep);
 
+    items.push(&rtss_control);
     items.push(&log_console);
     items.push(&open_desktop);
     #[cfg(any(debug_assertions, feature = "beta"))]
@@ -165,7 +260,7 @@ fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     #[cfg(debug_assertions)]
     items.extend([&separator_debug as &dyn tauri::menu::IsMenuItem<R>, &debug_page]);
 
-    items.extend([&separator2 as &dyn tauri::menu::IsMenuItem<R>, &check_update, &about, &separator3, &quit]);
+    items.extend([&separator2 as &dyn tauri::menu::IsMenuItem<R>, &check_update, &about, &lang_submenu, &separator3, &quit]);
 
     Menu::with_items(app, &items)
 }
@@ -219,6 +314,10 @@ pub fn handle_tray_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) {
         #[cfg(target_os = "windows")]
         "restart_user_mode" => toggle_sunshine_mode(app),
         "show_toolbar" => toggle_toolbar(app),
+        "rtss_control" => {
+            info!("🎯 托盘菜单：打开 RTSS 控制");
+            toolbar::create_tool_window_internal(app, "rtss");
+        }
         "log_console" => windows::open_log_console(app),
         "web_stream" => open_web_stream_settings(app),
         #[cfg(target_os = "windows")]
@@ -240,6 +339,8 @@ pub fn handle_tray_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) {
             moonlight_web::cleanup();
             std::process::exit(0);
         }
+        "lang_zh" => switch_tray_locale(app, "zh"),
+        "lang_en" => switch_tray_locale(app, "en"),
         _ => warn!("⚠️ 未知的托盘菜单事件: {}", menu_id),
     }
 }
@@ -398,4 +499,55 @@ pub fn cleanup_prevent_sleep() {
             Err(e) => error!("❌ 清理防止睡眠状态失败: {}", e),
         }
     }
+}
+
+/// 从托盘菜单切换语言
+fn switch_tray_locale<R: Runtime>(app: &AppHandle<R>, locale: &str) {
+    info!("🌍 托盘菜单：切换语言为 {}", locale);
+    *CURRENT_LOCALE.lock().unwrap() = Some(locale.to_string());
+    rebuild_tray_menu(app);
+    // 通知前端同步语言
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.emit("tray-locale-changed", locale);
+    }
+    // 同时通知 desktop 窗口
+    if let Some(window) = app.get_webview_window("desktop") {
+        let _ = window.emit("tray-locale-changed", locale);
+    }
+}
+
+/// 重建托盘菜单（语言切换后调用）
+fn rebuild_tray_menu<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        match build_tray_menu(app) {
+            Ok(menu) => {
+                if let Err(e) = tray.set_menu(Some(menu)) {
+                    error!("❌ 重建托盘菜单失败: {}", e);
+                }
+                // 更新 tooltip
+                let s = get_tray_strings();
+                let tooltip = if utils::is_running_as_admin().unwrap_or(false) {
+                    s.tooltip_admin
+                } else {
+                    s.tooltip
+                };
+                let _ = tray.set_tooltip(Some(tooltip));
+            }
+            Err(e) => error!("❌ 构建托盘菜单失败: {}", e),
+        }
+    }
+}
+
+/// Tauri 命令：前端通知 tray 同步语言
+#[tauri::command]
+pub fn set_tray_locale(app: AppHandle, locale: String) {
+    info!("🌍 前端同步语言到托盘: {}", locale);
+    *CURRENT_LOCALE.lock().unwrap() = Some(locale);
+    rebuild_tray_menu(&app);
+}
+
+/// Tauri 命令：前端获取当前 tray 语言
+#[tauri::command]
+pub fn get_tray_locale() -> String {
+    get_current_locale()
 }

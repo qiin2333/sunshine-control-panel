@@ -234,6 +234,118 @@ fn get_rtss_cli_path() -> Result<std::path::PathBuf, String> {
     Ok(cli_path)
 }
 
+/// 获取 RTSS profile 文件路径
+#[cfg(target_os = "windows")]
+fn get_rtss_profile_path(profile: &str) -> Result<std::path::PathBuf, String> {
+    let install_dir = detect_rtss_install_dir()
+        .ok_or("未检测到 RTSS 安装路径")?;
+    let path = std::path::Path::new(&install_dir).join("Profiles").join(profile);
+    if !path.exists() {
+        return Err(format!("RTSS profile 不存在: {}", path.display()));
+    }
+    Ok(path)
+}
+
+/// 读取 INI 文件中的值
+#[cfg(target_os = "windows")]
+fn get_ini_value(path: &std::path::Path, section: &str, key: &str) -> Result<String, String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("读取 profile 失败: {}", e))?;
+
+    let section_header = format!("[{}]", section);
+    let mut in_section = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_section = trimmed == section_header;
+            continue;
+        }
+        if in_section {
+            if let Some(eq_pos) = trimmed.find('=') {
+                let k = trimmed[..eq_pos].trim();
+                if k == key {
+                    return Ok(trimmed[eq_pos + 1..].trim().to_string());
+                }
+            }
+        }
+    }
+
+    Err(format!("在 [{}] 中未找到 {} 键", section, key))
+}
+
+/// 修改 INI 文件中的值（支持 section）
+#[cfg(target_os = "windows")]
+fn set_ini_value(path: &std::path::Path, section: &str, key: &str, value: &str) -> Result<(), String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("读取 profile 失败: {}", e))?;
+
+    let section_header = format!("[{}]", section);
+    let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+    let mut in_section = false;
+    let mut found = false;
+
+    for line in lines.iter_mut() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_section = trimmed == section_header;
+            continue;
+        }
+        if in_section {
+            if let Some(eq_pos) = trimmed.find('=') {
+                let k = trimmed[..eq_pos].trim();
+                if k == key {
+                    *line = format!("{}={}", key, value);
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    if !found {
+        return Err(format!("在 [{}] 中未找到 {} 键", section, key));
+    }
+
+    let new_content = lines.join("\r\n") + "\r\n";
+
+    // 尝试普通权限写入
+    match std::fs::write(path, &new_content) {
+        Ok(_) => {
+            info!("🎯 RTSS profile 已更新: [{}] {}={}", section, key, value);
+            Ok(())
+        }
+        Err(_) => {
+            // 使用 PowerShell 提权写入
+            info!("🎯 普通权限写入失败, 尝试管理员权限...");
+            let tmp = std::env::temp_dir().join("rtss_profile_tmp");
+            std::fs::write(&tmp, &new_content)
+                .map_err(|e| format!("写入临时文件失败: {}", e))?;
+
+            let ps_cmd = format!(
+                "Copy-Item -Path '{}' -Destination '{}' -Force",
+                tmp.display(), path.display()
+            );
+            let output = std::process::Command::new("powershell")
+                .args(["-Command", &format!(
+                    "Start-Process powershell -Verb RunAs -WindowStyle Hidden -ArgumentList '-Command {}' -Wait",
+                    ps_cmd.replace('\'', "''")
+                )])
+                .output()
+                .map_err(|e| format!("提权写入失败: {}", e))?;
+
+            let _ = std::fs::remove_file(&tmp);
+
+            if output.status.success() {
+                info!("🎯 RTSS profile 管理员权限更新成功");
+                Ok(())
+            } else {
+                Err("写入 RTSS profile 失败: 需要管理员权限".to_string())
+            }
+        }
+    }
+}
+
 /// 以管理员权限执行 rtss-cli 并捕获 stdout
 fn run_rtss_cli_elevated(args: &[&str]) -> Result<String, String> {
     use windows::Win32::UI::Shell::ShellExecuteW;
@@ -1232,26 +1344,28 @@ pub async fn rtss_get_osd_properties(profile: Option<String>) -> Result<OsdPrope
     #[cfg(target_os = "windows")]
     {
         let prof = profile.unwrap_or_else(|| "Global".into());
-        let read_prop = |key: &str| -> Option<i32> {
-            match run_rtss_cli(&["property:get", &prof, key]) {
-                Ok(v) => v.trim().parse().ok(),
-                Err(_) => None,
-            }
-        };
 
         // OSD 使用专用 overlay 命令获取
         let osd_enabled = match run_rtss_cli(&["overlay:get"]) {
             Ok(v) => v.trim().parse().ok(),
-            Err(_) => read_prop("OSD"),
+            Err(_) => None,
+        };
+
+        // 其他属性从 profile 文件读取
+        let profile_path = get_rtss_profile_path(&prof)?;
+        let read_ini = |section: &str, key: &str| -> Option<i32> {
+            get_ini_value(&profile_path, section, key)
+                .ok()
+                .and_then(|v| v.parse().ok())
         };
 
         Ok(OsdProperties {
             osd_enabled,
-            show_own_stats: read_prop("OSDShowOwnStatistics"),
-            position_x: read_prop("OnScreenDisplayX"),
-            position_y: read_prop("OnScreenDisplayY"),
-            zoom: read_prop("OnScreenDisplayZoom"),
-            coordinate_space: read_prop("OSDCoordinateSpace"),
+            show_own_stats: read_ini("OSD", "EnableStat"),
+            position_x: read_ini("OSD", "PositionX"),
+            position_y: read_ini("OSD", "PositionY"),
+            zoom: read_ini("OSD", "ZoomRatio"),
+            coordinate_space: read_ini("OSD", "CoordinateSpace"),
         })
     }
 
@@ -1298,31 +1412,20 @@ pub async fn rtss_set_osd_property(
             return Err(format!("OSD 设置失败: 期望={}, 实际={}", target, actual2.trim()));
         }
 
-        // 其他属性使用 property:set
-        run_rtss_cli(&["property:set", &prof, &key, &value])?;
+        // 其他属性通过修改 profile 文件实现
+        let profile_key = match key.as_str() {
+            "OSDShowOwnStatistics" => ("OSD", "EnableStat"),
+            "OnScreenDisplayX" => ("OSD", "PositionX"),
+            "OnScreenDisplayY" => ("OSD", "PositionY"),
+            "OnScreenDisplayZoom" => ("OSD", "ZoomRatio"),
+            "OSDCoordinateSpace" => ("OSD", "CoordinateSpace"),
+            _ => return Err(format!("未知的 OSD 属性: {}", key)),
+        };
 
-        // 验证
-        let actual = run_rtss_cli(&["property:get", &prof, &key])?;
-        if actual == value {
-            return Ok("OK".to_string());
-        }
+        let profile_path = get_rtss_profile_path(&prof)?;
+        set_ini_value(&profile_path, profile_key.0, profile_key.1, &value)?;
 
-        // 提升权限重试
-        info!("🎯 普通权限 property:set 失败, 尝试管理员权限...");
-        run_rtss_cli_elevated(&["property:set", &prof, &key, &value])?;
-
-        // 等待并多次验证（提权操作可能有延迟）
-        for i in 0..5 {
-            std::thread::sleep(std::time::Duration::from_millis(300));
-            let actual2 = run_rtss_cli(&["property:get", &prof, &key])?;
-            if actual2 == value {
-                return Ok("OK".to_string());
-            }
-            debug!("🎯 验证第{}次: 期望={}, 实际={}", i + 1, value, actual2);
-        }
-
-        let final_val = run_rtss_cli(&["property:get", &prof, &key])?;
-        Err(format!("属性设置失败: RTSS 可能未以管理员权限运行，或该属性被锁定 ({} 期望={}, 实际={})", key, value, final_val))
+        Ok("OK".to_string())
     }
 
     #[cfg(not(target_os = "windows"))]

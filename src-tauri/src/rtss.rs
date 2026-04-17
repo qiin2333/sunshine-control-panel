@@ -1111,41 +1111,34 @@ async fn fetch_session_info() -> std::collections::HashMap<String, String> {
     match client.get(&url).send().await {
         Ok(resp) => {
             if let Ok(body) = resp.json::<serde_json::Value>().await {
-                // 解析会话列表
-                if let Some(sessions) = body.as_array() {
-                    if let Some(session) = sessions.first() {
-                        if let Some(state) = session.get("state").and_then(|v| v.as_str()) {
-                            map.insert("session_state".into(), state.to_string());
-                        }
-                        if let Some(client) = session.get("client_name").and_then(|v| v.as_str()) {
-                            map.insert("stream_client".into(), client.to_string());
-                        }
-                        if let Some(w) = session.get("width").and_then(|v| v.as_i64()) {
-                            if let Some(h) = session.get("height").and_then(|v| v.as_i64()) {
-                                map.insert("stream_resolution".into(), format!("{}x{}", w, h));
-                            }
-                        }
-                        if let Some(fps) = session.get("fps").and_then(|v| v.as_i64()) {
-                            map.insert("stream_fps".into(), format!("{}", fps));
-                        }
-                        if let Some(bitrate) = session.get("bitrate").and_then(|v| v.as_i64()) {
-                            map.insert("stream_bitrate".into(), format!("{} Kbps", bitrate));
-                        }
-                        if let Some(app) = session.get("app_name").and_then(|v| v.as_str()) {
-                            map.insert("app_name".into(), app.to_string());
-                        }
-                        if let Some(hdr) = session.get("enable_hdr").and_then(|v| v.as_bool()) {
-                            map.insert("stream_hdr".into(), if hdr { "ON" } else { "OFF" }.into());
-                        }
-                        // codec 可能在其他字段中
-                        if let Some(codec) = session.get("codec").and_then(|v| v.as_str()) {
-                            map.insert("stream_codec".into(), codec.to_string());
+                // API 返回结构: {success, total_sessions, sessions: [...]}
+                let sessions = body.get("sessions").and_then(|v| v.as_array());
+                if let Some(session) = sessions.and_then(|arr| arr.first()) {
+                    if let Some(state) = session.get("state").and_then(|v| v.as_str()) {
+                        map.insert("session_state".into(), state.to_string());
+                    }
+                    if let Some(client) = session.get("client_name").and_then(|v| v.as_str()) {
+                        map.insert("stream_client".into(), client.to_string());
+                    }
+                    if let Some(w) = session.get("width").and_then(|v| v.as_i64()) {
+                        if let Some(h) = session.get("height").and_then(|v| v.as_i64()) {
+                            map.insert("stream_resolution".into(), format!("{}x{}", w, h));
                         }
                     }
-                } else if body.is_object() {
-                    // 可能是单个会话对象
-                    if let Some(state) = body.get("state").and_then(|v| v.as_str()) {
-                        map.insert("session_state".into(), state.to_string());
+                    if let Some(fps) = session.get("fps").and_then(|v| v.as_i64()) {
+                        map.insert("stream_fps".into(), format!("{}", fps));
+                    }
+                    if let Some(bitrate) = session.get("bitrate").and_then(|v| v.as_i64()) {
+                        map.insert("stream_bitrate".into(), format!("{} Kbps", bitrate));
+                    }
+                    if let Some(app) = session.get("app_name").and_then(|v| v.as_str()) {
+                        map.insert("app_name".into(), app.to_string());
+                    }
+                    if let Some(hdr) = session.get("enable_hdr").and_then(|v| v.as_bool()) {
+                        map.insert("stream_hdr".into(), if hdr { "ON" } else { "OFF" }.into());
+                    }
+                    if let Some(codec) = session.get("codec").and_then(|v| v.as_str()) {
+                        map.insert("stream_codec".into(), codec.to_string());
                     }
                 }
 

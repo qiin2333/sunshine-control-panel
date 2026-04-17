@@ -63,7 +63,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { DataAnalysis } from '@element-plus/icons-vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from '../../../desktop/i18n/index.js'
@@ -73,9 +73,9 @@ import ToggleSwitch from '../../components/ToggleSwitch.vue'
 const { t, locale } = useI18n()
 const emit = defineEmits(['message'])
 
-const active = ref(false)
-const snapshot = reactive({ active: false, osd_text: '', metrics: {} })
-const config = reactive({
+const STORAGE_KEY = 'rtss-monitoring-config'
+
+const DEFAULT_CONFIG = {
   interval_ms: 1000,
   metrics: ['session_state', 'stream_fps', 'stream_bitrate'],
   title_color: 'FFD700',
@@ -83,10 +83,30 @@ const config = reactive({
   value_color: '00FF00',
   font_size: 0,
   header_text: '☀ Foundation Sunshine',
-})
+}
+
+function loadPersistedConfig() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      return { ...DEFAULT_CONFIG, ...parsed }
+    }
+  } catch {}
+  return { ...DEFAULT_CONFIG }
+}
+
+const active = ref(false)
+const snapshot = reactive({ active: false, osd_text: '', metrics: {} })
+const config = reactive(loadPersistedConfig())
 
 const availableMetrics = ref([])
 let pollTimer = null
+
+// 持久化 config 到 localStorage
+watch(config, (v) => {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(v)) } catch {}
+}, { deep: true })
 
 const metricGroups = computed(() => {
   const isZh = locale.value === 'zh'
@@ -162,6 +182,10 @@ async function loadState() {
     if (snap.active) {
       active.value = true
       Object.assign(snapshot, snap)
+      // 同步后端运行中的 config（若存在）
+      if (snap.config) {
+        Object.assign(config, snap.config)
+      }
       startPoll()
     }
   } catch (e) { /* ignore */ }

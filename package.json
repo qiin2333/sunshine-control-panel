@@ -27,9 +27,7 @@
     "@vitejs/plugin-vue": "^6.0.4",
     "cross-env": "^7.0.3",
     "less": "^4.2.2",
-    "less-loader": "^12.2.0",
-    "rollup": "^4.22.4",
-    "vite": "^7.3.1"
+    "vite": "^8.0.8"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
@@ -41,9 +39,7 @@
     "markdown-it": "^14.1.0",
     "pixi.js": "^8.6.6",
     "qrcode": "^1.5.4",
-    "systeminformation": "^5.25.11",
     "vue": "^3.5.4",
-    "vue-i18n": "^11.2.2",
-    "xml2js": "^0.6.2"
+    "vue-i18n": "^11.2.2"
   }
 }

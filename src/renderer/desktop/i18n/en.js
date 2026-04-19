@@ -365,6 +365,8 @@ export const en = {
     defaultSize: 'Default',
     monitoring: 'Live Monitoring',
     headerText: 'Header',
+    cjkFont: 'CJK Vector Font',
+    cjkFontDisabled: 'Disabled (ASCII only)',
     updateInterval: 'Interval',
     titleColor: 'Title',
     labelColor: 'Label',

@@ -27,7 +27,17 @@
     <div class="monitor-style">
       <div class="style-row">
         <label>{{ t.rtssTool.headerText }}</label>
-        <input v-model="config.header_text" class="style-input" placeholder="☀  Foundation Sunshine" />
+        <input v-model="config.header_text" class="style-input" placeholder="☀ Foundation Sunshine" />
+      </div>
+      <div class="style-row">
+        <label>{{ t.rtssTool.cjkFont || 'CJK 矢量字体' }}</label>
+        <select v-model="config.cjk_font" class="fmt-select wide">
+          <option value="">{{ t.rtssTool.cjkFontDisabled || '不启用（仅 ASCII）' }}</option>
+          <option value="Microsoft YaHei">微软雅黑</option>
+          <option value="SimHei">黑体</option>
+          <option value="SimSun">宋体</option>
+          <option value="KaiTi">楷体</option>
+        </select>
       </div>
       <div class="style-row">
         <label>{{ t.rtssTool.updateInterval }}</label>
@@ -83,6 +93,7 @@ const DEFAULT_CONFIG = {
   value_color: '00FF00',
   font_size: 0,
   header_text: '☀ Foundation Sunshine',
+  cjk_font: '',
 }
 
 function loadPersistedConfig() {
@@ -136,7 +147,9 @@ async function toggleMonitoring(val) {
 
 async function startMonitoring() {
   try {
-    await invoke('rtss_start_monitoring', { config: { ...config } })
+    // 深拷贝 config，避免 reactive Proxy 序列化问题
+    const rawConfig = JSON.parse(JSON.stringify(config))
+    await invoke('rtss_start_monitoring', { config: rawConfig })
     active.value = true
     startPoll()
     emit('message', t.value.rtssTool.monitoringStarted, 'success')

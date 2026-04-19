@@ -56,6 +56,9 @@ pub struct MonitoringConfig {
     pub font_size: u32,
     /// 自定义头部文本
     pub header_text: String,
+    /// CJK 矢量字体名（为空则不启用，推荐 "Microsoft YaHei"）
+    #[serde(default)]
+    pub cjk_font: String,
 }
 
 impl Default for MonitoringConfig {
@@ -72,6 +75,7 @@ impl Default for MonitoringConfig {
             value_color: "00FF00".into(),
             font_size: 0, // 0 = RTSS 默认
             header_text: "☀ Foundation Sunshine".into(),
+            cjk_font: String::new(),
         }
     }
 }
@@ -554,12 +558,18 @@ pub async fn rtss_set_osd(text: String, owner: Option<String>) -> Result<(), Str
             let text_bytes = text_cstr.as_bytes_with_nul();
             let owner_bytes = owner_cstr.as_bytes_with_nul();
 
-            // 清空并写入 OSD 文本 (256 bytes)
-            std::ptr::write_bytes(slot, 0, 256);
-            std::ptr::copy_nonoverlapping(text_bytes.as_ptr(), slot, text_bytes.len().min(255));
+            // RTSS OSD entry 布局: [text ... | owner (256 bytes at end)]
+            // text 区域大小 = entry_size - 256 (owner 固定 256 字节)
+            let entry_size = header.dwOSDEntrySize as usize;
+            let owner_offset = entry_size.saturating_sub(256);
+            let text_max = if owner_offset > 0 { owner_offset - 1 } else { 255 };
 
-            // 清空并写入 Owner (256 bytes, offset +256)
-            let owner_ptr = slot.add(256);
+            // 清空并写入 OSD 文本
+            std::ptr::write_bytes(slot, 0, owner_offset);
+            std::ptr::copy_nonoverlapping(text_bytes.as_ptr(), slot, text_bytes.len().min(text_max));
+
+            // 清空并写入 Owner (256 bytes, 在 entry 末尾)
+            let owner_ptr = slot.add(owner_offset);
             std::ptr::write_bytes(owner_ptr, 0, 256);
             std::ptr::copy_nonoverlapping(owner_bytes.as_ptr(), owner_ptr, owner_bytes.len().min(255));
         }
@@ -1145,11 +1155,28 @@ async fn fetch_session_info() -> std::collections::HashMap<String, String> {
                 if !map.contains_key("session_state") {
                     map.insert("session_state".into(), "IDLE".into());
                 }
+                // 无活跃会话时，为所有 session 指标填充默认值
+                if map.get("session_state").map_or(false, |s| s == "IDLE") {
+                    map.entry("stream_client".into()).or_insert_with(|| "-".into());
+                    map.entry("stream_resolution".into()).or_insert_with(|| "-".into());
+                    map.entry("stream_fps".into()).or_insert_with(|| "-".into());
+                    map.entry("stream_bitrate".into()).or_insert_with(|| "-".into());
+                    map.entry("stream_codec".into()).or_insert_with(|| "-".into());
+                    map.entry("stream_hdr".into()).or_insert_with(|| "-".into());
+                    map.entry("app_name".into()).or_insert_with(|| "-".into());
+                }
             }
         }
         Err(e) => {
             debug!("获取 Sunshine 会话信息失败: {}", e);
             map.insert("session_state".into(), "N/A".into());
+            map.insert("stream_client".into(), "N/A".into());
+            map.insert("stream_resolution".into(), "N/A".into());
+            map.insert("stream_fps".into(), "N/A".into());
+            map.insert("stream_bitrate".into(), "N/A".into());
+            map.insert("stream_codec".into(), "N/A".into());
+            map.insert("stream_hdr".into(), "N/A".into());
+            map.insert("app_name".into(), "N/A".into());
         }
     }
 
@@ -1163,10 +1190,19 @@ fn format_osd_text(
 ) -> String {
     let mut parts = Vec::new();
 
+    // 矢量字体前缀（支持 CJK 字符）
+    let vf_prefix = if !config.cjk_font.is_empty() {
+        format!("<VF={}>", config.cjk_font)
+    } else {
+        String::new()
+    };
+
     // 标题
     if !config.header_text.is_empty() {
         let size_tag = if config.font_size > 0 { format!("<S={}>", config.font_size) } else { String::new() };
-        parts.push(format!("{}<C={}>{}<C>", size_tag, config.title_color, config.header_text));
+        parts.push(format!("{}{}<C={}>{}<C>", vf_prefix, size_tag, config.title_color, config.header_text));
+    } else if !vf_prefix.is_empty() {
+        parts.push(vf_prefix);
     }
 
     // 标签映射
@@ -1199,7 +1235,14 @@ fn format_osd_text(
         }
     }
 
-    parts.join("\n")
+    let result = parts.join("\n");
+
+    // 无矢量字体时过滤非 ASCII 字符，避免 RTSS 光栅字体乱码
+    if config.cjk_font.is_empty() {
+        result.chars().map(|c| if c.is_ascii() { c } else { '*' }).collect()
+    } else {
+        result
+    }
 }
 
 /// 监控循环主体

@@ -365,6 +365,8 @@ export const zh = {
     defaultSize: '默认',
     monitoring: '实时监控',
     headerText: '标题',
+    cjkFont: 'CJK 矢量字体',
+    cjkFontDisabled: '不启用（仅 ASCII）',
     updateInterval: '刷新间隔',
     titleColor: '标题色',
     labelColor: '标签色',

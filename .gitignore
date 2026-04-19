@@ -18,3 +18,7 @@ src-tauri/icons/*.png
 !src-tauri/icons/32x32.png
 !src-tauri/icons/128x128.png
 !src-tauri/icons/128x128@2x.png
+
+# Installer 构建产物
+src-tauri/installer/staging/
+src-tauri/installer/dist/

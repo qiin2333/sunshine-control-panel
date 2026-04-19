@@ -1,16 +1,50 @@
 // RTSS (RivaTuner Statistics Server) 集成模块
 // 提供帧率限制控制、OSD 文字显示和实时监控功能
 
-use serde::{Deserialize, Serialize};
-use log::{info, debug, warn};
-use std::ffi::CString;
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use log::{debug, info, warn};
 use once_cell::sync::Lazy;
+use serde::{Deserialize, Serialize};
+use std::ffi::CString;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use tokio::sync::Mutex;
+
+// ─── Busy flag RAII guard ─────────────────────────────────────
+
+/// RAII guard: 进入 unsafe 区域时置 dwBusy=1，离开（含 panic）时自动置 0
+#[cfg(target_os = "windows")]
+struct BusyGuard {
+    busy_ptr: *mut u32,
+}
+
+#[cfg(target_os = "windows")]
+impl BusyGuard {
+    /// # Safety
+    /// `busy_ptr` 必须指向 RTSS 共享内存中有效的 `dwBusy` 字段。
+    unsafe fn new(busy_ptr: *mut u32) -> Self {
+        unsafe { std::ptr::write_volatile(busy_ptr, 1) };
+        Self { busy_ptr }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for BusyGuard {
+    fn drop(&mut self) {
+        unsafe {
+            std::ptr::write_volatile(self.busy_ptr, 0);
+        }
+    }
+}
 
 // ─── RTSS 共享内存结构 ────────────────────────────────────────
 
 const RTSS_SHARED_MEMORY_SIGNATURE: u32 = 0x52545353; // 'RTSS'
+const RTSS_OSD_TEXT_OFFSET: usize = 0;
+const RTSS_OSD_TEXT_LEN: usize = 256;
+const RTSS_OSD_OWNER_OFFSET: usize = 256;
+const RTSS_OSD_OWNER_LEN: usize = 256;
 
 /// RTSS 共享内存头部 (映射部分关键字段)
 #[repr(C)]
@@ -24,6 +58,7 @@ struct RtssSharedMemoryHeader {
     dwOSDEntrySize: u32,
     dwOSDArrOffset: u32,
     dwOSDArrSize: u32,
+    dwBusy: u32,
 }
 
 // ─── 返回给前端的数据结构 ────────────────────────────────────
@@ -99,8 +134,12 @@ pub struct MonitoringSnapshot {
 
 // 全局监控状态
 static MONITORING_ACTIVE: Lazy<Arc<AtomicBool>> = Lazy::new(|| Arc::new(AtomicBool::new(false)));
-static MONITORING_CONFIG: Lazy<Arc<Mutex<MonitoringConfig>>> =
-    Lazy::new(|| Arc::new(Mutex::new(MonitoringConfig::default())));
+
+/// CPU 采样历史 (prev_cpu_time, prev_sys_time)，用于计算瞬时 CPU 使用率
+#[cfg(target_os = "windows")]
+static PREV_CPU_SAMPLE: Lazy<std::sync::Mutex<std::collections::HashMap<u32, (u64, u64)>>> =
+    Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
 static MONITORING_SNAPSHOT: Lazy<Arc<Mutex<MonitoringSnapshot>>> =
     Lazy::new(|| Arc::new(Mutex::new(MonitoringSnapshot::default())));
 
@@ -351,6 +390,7 @@ fn set_ini_value(path: &std::path::Path, section: &str, key: &str, value: &str) 
 }
 
 /// 以管理员权限执行 rtss-cli 并捕获 stdout
+#[cfg(target_os = "windows")]
 fn run_rtss_cli_elevated(args: &[&str]) -> Result<String, String> {
     use windows::Win32::UI::Shell::ShellExecuteW;
     use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
@@ -358,8 +398,9 @@ fn run_rtss_cli_elevated(args: &[&str]) -> Result<String, String> {
 
     let cli_path = get_rtss_cli_path()?;
 
-    // 通过临时文件捕获 stdout
+    // 通过临时文件捕获 stdout；先清理上次可能残留的旧文件
     let tmp_out = std::env::temp_dir().join("rtss_cli_elevated_out.txt");
+    let _ = std::fs::remove_file(&tmp_out);
     // cmd /c "rtss-cli.exe arg1 arg2 > tmpfile 2>&1"
     let args_str = args.iter()
         .map(|a| if a.contains(' ') { format!("\"{}\"", a) } else { a.to_string() })
@@ -415,7 +456,7 @@ fn run_rtss_cli_elevated(args: &[&str]) -> Result<String, String> {
     Err("管理员权限执行超时".to_string())
 }
 
-// ─── Tauri 命令 ────────────────────────────────────────────
+// ─── RTSS 状态查询 ─────────────────────────────────────────
 
 /// 获取 RTSS 运行状态
 #[tauri::command]
@@ -474,16 +515,80 @@ pub async fn get_rtss_status() -> Result<RtssStatus, String> {
     }
 }
 
+// ─── OSD 写入与释放 ─────────────────────────────────────────
+
+/// 释放指定 owner 的所有 OSD 槽位（零填整个 entry，包括 owner）
+#[cfg(target_os = "windows")]
+fn release_osd_slots(owner_name: &str) -> Result<u32, String> {
+    let shm = win::SharedMemoryHandle::open()?;
+    let mut released = 0u32;
+
+    unsafe {
+        let header_ptr = shm.ptr as *mut RtssSharedMemoryHeader;
+        let header = &*header_ptr;
+
+        if header.dwSignature != RTSS_SHARED_MEMORY_SIGNATURE {
+            return Err("RTSS 共享内存签名不匹配".to_string());
+        }
+
+        let entry_size = header.dwOSDEntrySize as usize;
+        if entry_size == 0 { return Ok(0); }
+        let osd_arr_base = (shm.ptr as *mut u8).add(header.dwOSDArrOffset as usize);
+        let owner_offset = RTSS_OSD_OWNER_OFFSET.min(entry_size);
+        let owner_field_len = RTSS_OSD_OWNER_LEN.min(entry_size.saturating_sub(owner_offset));
+        let text_field_len = RTSS_OSD_TEXT_LEN.min(entry_size);
+
+        // RAII busy guard: drop 时自动清 busy flag（含 panic）
+        let _busy = BusyGuard::new(&mut (*header_ptr).dwBusy);
+
+        for i in 0..header.dwOSDArrSize {
+            let entry_ptr = osd_arr_base.add((i as usize) * entry_size);
+            let owner_ptr = entry_ptr.add(owner_offset);
+
+            let first_byte = std::ptr::read_volatile(owner_ptr);
+            if first_byte == 0 { continue; }
+
+            let owner_slice = std::slice::from_raw_parts(owner_ptr, owner_field_len);
+            let nul_pos = owner_slice.iter().position(|&b| b == 0).unwrap_or(owner_field_len.saturating_sub(1));
+            let existing = String::from_utf8_lossy(&owner_slice[..nul_pos]);
+
+            if existing == owner_name {
+                // 仅清理 text/owner 区，避免破坏 RTSS entry 其余元数据/缓冲区
+                std::ptr::write_bytes(entry_ptr.add(RTSS_OSD_TEXT_OFFSET), 0, text_field_len);
+                if owner_field_len > 0 {
+                    std::ptr::write_bytes(entry_ptr.add(owner_offset), 0, owner_field_len);
+                }
+                released += 1;
+                debug!("🎯 RTSS OSD slot {} released (owner: {})", i, owner_name);
+            }
+        }
+
+        // busy flag 由 _busy guard 的 Drop 自动清除
+    }
+
+    if released > 0 {
+        info!("✅ Released {} RTSS OSD slot(s) for '{}'", released, owner_name);
+    }
+    Ok(released)
+}
+
 /// 写入 OSD 文本到 RTSS 共享内存
 #[tauri::command]
 pub async fn rtss_set_osd(text: String, owner: Option<String>) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         let owner_name = owner.unwrap_or_else(|| "Sunshine".to_string());
+
+        // 空文本 → 释放所有该 owner 的 OSD 槽位
+        if text.is_empty() {
+            return release_osd_slots(&owner_name).map(|_| ());
+        }
+
         let shm = win::SharedMemoryHandle::open()?;
 
         unsafe {
-            let header = &*(shm.ptr as *const RtssSharedMemoryHeader);
+            let header_ptr = shm.ptr as *mut RtssSharedMemoryHeader;
+            let header = &*header_ptr;
 
             if header.dwSignature != RTSS_SHARED_MEMORY_SIGNATURE {
                 return Err("RTSS 共享内存签名不匹配".to_string());
@@ -496,85 +601,113 @@ pub async fn rtss_set_osd(text: String, owner: Option<String>) -> Result<(), Str
                 0
             };
 
-            debug!(
-                "🎯 RTSS SHM: OSDEntrySize={} OSDCount={} OSDOffset={}",
-                header.dwOSDEntrySize, osd_count, header.dwOSDArrOffset
-            );
-
             if osd_count == 0 {
                 return Err("RTSS OSD 槽位数量为 0".to_string());
             }
 
-            let owner_cstr = CString::new(owner_name.as_str()).unwrap();
-            let text_cstr = CString::new(text.as_str()).unwrap();
-            let mut target_slot: Option<*mut u8> = None;
-            let mut first_empty_slot: Option<*mut u8> = None;
-            let mut dead_process_slot: Option<*mut u8> = None;
+            let owner_cstr = CString::new(owner_name.as_str())
+                .map_err(|e| format!("owner 名称含非法 NUL 字节: {}", e))?;
+            let text_cstr = CString::new(text.as_str())
+                .map_err(|e| format!("OSD 文本含非法 NUL 字节: {}", e))?;
+
+            let entry_size = header.dwOSDEntrySize as usize;
+            let text_offset = RTSS_OSD_TEXT_OFFSET.min(entry_size);
+            let text_field_len = RTSS_OSD_TEXT_LEN.min(entry_size.saturating_sub(text_offset));
+            let owner_offset = RTSS_OSD_OWNER_OFFSET.min(entry_size);
+            let owner_field_len = RTSS_OSD_OWNER_LEN.min(entry_size.saturating_sub(owner_offset));
+
+            // ── 扫描槽位：找到已有的、记录空闲的、清理重复的 ──
+            let mut target_slot: Option<(u32, *mut u8)> = None;
+            let mut empty_slots: Vec<(u32, *mut u8)> = Vec::new();
+            let mut last_foreign_occupied_idx: Option<u32> = None;
+
+            // RAII busy guard: drop 时自动清 busy flag（含 panic）
+            let _busy = BusyGuard::new(&mut (*header_ptr).dwBusy);
 
             for i in 0..osd_count {
-                let entry_ptr = osd_arr_base.add((i * header.dwOSDEntrySize) as usize);
-                let osd_owner_ptr = entry_ptr.add(256);
+                let entry_ptr = osd_arr_base.add((i as usize) * entry_size);
+                let osd_owner_ptr = entry_ptr.add(owner_offset);
 
-                // 安全读取 owner 字符串（可能包含垃圾数据）
-                let first_byte = *osd_owner_ptr;
-                if first_byte == 0 {
-                    // 真正的空槽位
-                    if first_empty_slot.is_none() {
-                        first_empty_slot = Some(entry_ptr);
+                let text_first_byte = std::ptr::read_volatile(entry_ptr.add(text_offset));
+                let first_byte = std::ptr::read_volatile(osd_owner_ptr);
+                if first_byte == 0 && text_first_byte == 0 {
+                    empty_slots.push((i, entry_ptr));
+                    continue;
+                }
+
+                let existing_owner = if first_byte != 0 {
+                    let owner_slice = std::slice::from_raw_parts(osd_owner_ptr, owner_field_len);
+                    let nul_pos = owner_slice.iter().position(|&b| b == 0).unwrap_or(owner_field_len.saturating_sub(1));
+                    String::from_utf8_lossy(&owner_slice[..nul_pos]).to_string()
+                } else {
+                    String::new()
+                };
+
+                if !existing_owner.is_empty() && existing_owner == owner_name.as_str() {
+                    if target_slot.is_none() {
+                        // 第一个匹配的 → 复用
+                        target_slot = Some((i, entry_ptr));
+                    } else {
+                        // 后续重复的 → 仅清理 text/owner 区释放
+                        std::ptr::write_bytes(entry_ptr.add(text_offset), 0, text_field_len);
+                        if owner_field_len > 0 {
+                            std::ptr::write_bytes(entry_ptr.add(owner_offset), 0, owner_field_len);
+                        }
+                        debug!("🎯 cleaned up duplicate OSD slot {} for '{}'", i, owner_name);
                     }
                     continue;
                 }
 
-                // 读取 owner 名称，限制长度防止越界
-                let owner_slice = std::slice::from_raw_parts(osd_owner_ptr, 256);
-                let nul_pos = owner_slice.iter().position(|&b| b == 0).unwrap_or(255);
-                let existing_owner = String::from_utf8_lossy(&owner_slice[..nul_pos]);
-
-                if existing_owner == owner_name.as_str() {
-                    target_slot = Some(entry_ptr);
-                    break;
-                }
-
-                // 检查该 owner 进程是否还存活（可能是已退出的游戏留下的僵尸槽）
-                if dead_process_slot.is_none() {
-                    let osd_text_first_byte = *entry_ptr;
-                    if osd_text_first_byte == 0 {
-                        // OSD 文本为空的占用槽，可能已废弃
-                        dead_process_slot = Some(entry_ptr);
-                    }
-                }
+                last_foreign_occupied_idx = Some(i);
             }
 
-            let slot = target_slot
-                .or(first_empty_slot)
-                .or(dead_process_slot)
+            let preferred_empty_slot = if let Some(last_idx) = last_foreign_occupied_idx {
+                empty_slots.iter().find(|(idx, _)| *idx > last_idx).copied()
+            } else {
+                empty_slots.first().copied()
+            };
+
+            let fallback_empty_slot = empty_slots.first().copied();
+
+            let (slot_idx, slot) = target_slot
+                .or(preferred_empty_slot)
+                .or(fallback_empty_slot)
                 .ok_or_else(|| {
-                    format!(
-                        "没有可用的 RTSS OSD 槽位（共 {} 个槽位均被占用）",
-                        osd_count
-                    )
+                    // busy flag 由 _busy guard 的 Drop 自动清除
+                    format!("没有可用的 RTSS OSD 槽位（共 {} 个均被占用）", osd_count)
                 })?;
 
             let text_bytes = text_cstr.as_bytes_with_nul();
             let owner_bytes = owner_cstr.as_bytes_with_nul();
+            let text_max = text_field_len;
 
-            // RTSS OSD entry 布局: [text ... | owner (256 bytes at end)]
-            // text 区域大小 = entry_size - 256 (owner 固定 256 字节)
-            let entry_size = header.dwOSDEntrySize as usize;
-            let owner_offset = entry_size.saturating_sub(256);
-            let text_max = if owner_offset > 0 { owner_offset - 1 } else { 255 };
+            // 只清理 text/owner 区，避免伤及 RTSS entry 其余数据
+            std::ptr::write_bytes(slot.add(text_offset), 0, text_field_len);
+            if owner_field_len > 0 {
+                std::ptr::write_bytes(slot.add(owner_offset), 0, owner_field_len);
+            }
+            std::ptr::copy_nonoverlapping(
+                text_bytes.as_ptr(),
+                slot.add(text_offset),
+                text_bytes.len().min(text_max.saturating_sub(1).max(1))
+            );
 
-            // 清空并写入 OSD 文本
-            std::ptr::write_bytes(slot, 0, owner_offset);
-            std::ptr::copy_nonoverlapping(text_bytes.as_ptr(), slot, text_bytes.len().min(text_max));
-
-            // 清空并写入 Owner (256 bytes, 在 entry 末尾)
+            // 写入 Owner
             let owner_ptr = slot.add(owner_offset);
-            std::ptr::write_bytes(owner_ptr, 0, 256);
-            std::ptr::copy_nonoverlapping(owner_bytes.as_ptr(), owner_ptr, owner_bytes.len().min(255));
+            if owner_field_len > 0 {
+                std::ptr::copy_nonoverlapping(
+                    owner_bytes.as_ptr(),
+                    owner_ptr,
+                    owner_bytes.len().min(owner_field_len.saturating_sub(1).max(1))
+                );
+            }
+
+            // busy flag 由 _busy guard 的 Drop 自动清除
+
+            debug!("🎯 RTSS OSD using slot {} (last foreign occupied: {:?})", slot_idx, last_foreign_occupied_idx);
         }
 
-        info!("✅ RTSS OSD 已更新: {}", text);
+        debug!("✅ RTSS OSD updated");
         Ok(())
     }
 
@@ -584,10 +717,46 @@ pub async fn rtss_set_osd(text: String, owner: Option<String>) -> Result<(), Str
     }
 }
 
-/// 清除 Sunshine 的 OSD 文本
+/// 清除 Sunshine 的 OSD 文本（释放槽位）
 #[tauri::command]
 pub async fn rtss_clear_osd(owner: Option<String>) -> Result<(), String> {
     rtss_set_osd(String::new(), owner).await
+}
+
+// ─── 帧率限制与 OSD 开关 ────────────────────────────────────
+
+/// 通过 rtss-cli 切换功能（try normal → verify → try elevated → verify）
+#[cfg(target_os = "windows")]
+fn toggle_rtss_feature(feature: &str, label: &str) -> Result<String, String> {
+    let get_cmd = format!("{}:get", feature);
+    let toggle_cmd = format!("{}:toggle", feature);
+
+    let before = run_rtss_cli(&[&get_cmd])?
+        .parse::<i32>().unwrap_or(-1);
+
+    let result = run_rtss_cli(&[&toggle_cmd])?;
+
+    let after = run_rtss_cli(&[&get_cmd])?
+        .parse::<i32>().unwrap_or(-1);
+
+    if before != after {
+        info!("🎯 RTSS {}: {}", label, if after == 1 { "启用" } else { "禁用" });
+        return Ok(after.to_string());
+    }
+
+    info!("🎯 普通权限切换 {} 失败, 尝试管理员权限...", label);
+    run_rtss_cli_elevated(&[&toggle_cmd])?;
+
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let final_state = run_rtss_cli(&[&get_cmd])?
+        .parse::<i32>().unwrap_or(-1);
+
+    if before != final_state {
+        info!("🎯 RTSS {} (提升权限): {}", label, if final_state == 1 { "启用" } else { "禁用" });
+        Ok(final_state.to_string())
+    } else {
+        Ok(result)
+    }
 }
 
 /// 通过 rtss-cli 设置帧率限制
@@ -675,46 +844,10 @@ pub async fn rtss_get_framerate_limit(profile: Option<String>) -> Result<i32, St
 #[tauri::command]
 pub async fn rtss_toggle_limiter() -> Result<String, String> {
     #[cfg(target_os = "windows")]
-    {
-        // 读取切换前状态
-        let before = run_rtss_cli(&["limiter:get"])?
-            .parse::<i32>().unwrap_or(-1);
-
-        // 尝试普通权限切换
-        let result = run_rtss_cli(&["limiter:toggle"])?;
-
-        // 验证是否真的切换了
-        let after = run_rtss_cli(&["limiter:get"])?
-            .parse::<i32>().unwrap_or(-1);
-
-        if before != after {
-            let state = if after == 1 { "已启用" } else { "已禁用" };
-            info!("🎯 RTSS 帧率限制器: {}", state);
-            return Ok(after.to_string());
-        }
-
-        // 没变化 → 提升权限重试
-        info!("🎯 普通权限切换失败, 尝试管理员权限...");
-        run_rtss_cli_elevated(&["limiter:toggle"])?;
-
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let final_state = run_rtss_cli(&["limiter:get"])?
-            .parse::<i32>().unwrap_or(-1);
-
-        if before != final_state {
-            let state = if final_state == 1 { "已启用" } else { "已禁用" };
-            info!("🎯 RTSS 帧率限制器 (提升权限): {}", state);
-            Ok(final_state.to_string())
-        } else {
-            // 仍然可能成功，返回 toggle 返回值
-            Ok(result)
-        }
-    }
+    { toggle_rtss_feature("limiter", "帧率限制器") }
 
     #[cfg(not(target_os = "windows"))]
-    {
-        Err("RTSS 仅在 Windows 上可用".to_string())
-    }
+    { Err("RTSS 仅在 Windows 上可用".to_string()) }
 }
 
 /// 获取 RTSS 帧率限制器当前状态 (1=启用, 0=禁用)
@@ -736,42 +869,10 @@ pub async fn rtss_get_limiter_status() -> Result<i32, String> {
 #[tauri::command]
 pub async fn rtss_toggle_overlay() -> Result<String, String> {
     #[cfg(target_os = "windows")]
-    {
-        let before = run_rtss_cli(&["overlay:get"])?
-            .parse::<i32>().unwrap_or(-1);
-
-        let result = run_rtss_cli(&["overlay:toggle"])?;
-
-        let after = run_rtss_cli(&["overlay:get"])?
-            .parse::<i32>().unwrap_or(-1);
-
-        if before != after {
-            let state = if after == 1 { "显示" } else { "隐藏" };
-            info!("🎯 RTSS OSD: {}", state);
-            return Ok(after.to_string());
-        }
-
-        // 提升权限重试
-        info!("🎯 普通权限切换 OSD 失败, 尝试管理员权限...");
-        run_rtss_cli_elevated(&["overlay:toggle"])?;
-
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let final_state = run_rtss_cli(&["overlay:get"])?
-            .parse::<i32>().unwrap_or(-1);
-
-        if before != final_state {
-            let state = if final_state == 1 { "显示" } else { "隐藏" };
-            info!("🎯 RTSS OSD (提升权限): {}", state);
-            Ok(final_state.to_string())
-        } else {
-            Ok(result)
-        }
-    }
+    { toggle_rtss_feature("overlay", "OSD") }
 
     #[cfg(not(target_os = "windows"))]
-    {
-        Err("RTSS 仅在 Windows 上可用".to_string())
-    }
+    { Err("RTSS 仅在 Windows 上可用".to_string()) }
 }
 
 // ─── 自动下载 rtss-cli ────────────────────────────────────
@@ -965,6 +1066,13 @@ struct ProcessStats {
     thread_count: u32,
 }
 
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone)]
+struct SunshineProcessRef {
+    pid: u32,
+    name: String,
+}
+
 /// 获取 Sunshine 进程统计
 #[cfg(target_os = "windows")]
 fn get_sunshine_process_stats() -> Option<ProcessStats> {
@@ -974,63 +1082,119 @@ fn get_sunshine_process_stats() -> Option<ProcessStats> {
     use windows::Win32::System::SystemInformation::GetSystemTimeAsFileTime;
     use std::mem;
 
-    // 通过 WMI 或 toolhelp 查找 sunshine.exe PID
-    let pid = find_sunshine_pid()?;
-
-    unsafe {
-        let handle = OpenProcess(
-            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ,
-            false,
-            pid,
-        ).ok()?;
-
-        // CPU 使用率 - 需要两次采样
-        let mut creation = FILETIME::default();
-        let mut exit = FILETIME::default();
-        let mut kernel = FILETIME::default();
-        let mut user = FILETIME::default();
-        let _ = GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user);
-
-        let kernel_time = filetime_to_u64(&kernel);
-        let user_time = filetime_to_u64(&user);
-        let total_cpu_time = kernel_time + user_time;
-
-        // 系统时间
-        let sys_time = GetSystemTimeAsFileTime();
-        let sys_now = filetime_to_u64(&sys_time);
-        let start_time = filetime_to_u64(&creation);
-        let wall_time = sys_now.saturating_sub(start_time);
-
-        let num_cpus = std::thread::available_parallelism()
-            .map(|n| n.get() as f64)
-            .unwrap_or(1.0);
-
-        let cpu_percent = if wall_time > 0 {
-            (total_cpu_time as f64 / wall_time as f64 * 100.0 / num_cpus).min(100.0)
-        } else {
-            0.0
-        };
-
-        // 内存
-        let mut pmc: PROCESS_MEMORY_COUNTERS = mem::zeroed();
-        pmc.cb = mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
-        let mem_mb = if GetProcessMemoryInfo(
-            handle,
-            &mut pmc,
-            mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
-        ).is_ok() {
-            pmc.WorkingSetSize as f64 / 1024.0 / 1024.0
-        } else {
-            0.0
-        };
-
-        // 线程数 (通过 toolhelp)
-        let thread_count = count_process_threads(pid);
-
-        let _ = CloseHandle(handle);
-
-        Some(ProcessStats { cpu_percent, mem_mb, thread_count })
+    let processes = find_sunshine_processes();
+    if processes.is_empty() {
+        debug!("⚠ no Sunshine process found via WMI or ToolHelp");
+        return None;
     }
+
+    debug!("📊 aggregating process stats from: {:?}", processes);
+
+    let num_cpus = std::thread::available_parallelism()
+        .map(|n| n.get() as f64)
+        .unwrap_or(1.0);
+
+    let mut total_cpu_percent = 0.0;
+    let mut total_mem_mb = 0.0;
+    let mut total_thread_count = 0u32;
+    let mut sampled_any = false;
+    let current_pids: std::collections::HashSet<u32> =
+        processes.iter().map(|proc| proc.pid).collect();
+
+    let mut prev_samples = PREV_CPU_SAMPLE.lock().unwrap();
+
+    for process in &processes {
+        total_thread_count += count_process_threads(process.pid);
+
+        unsafe {
+            // Sunshine 可能同时有 GUI / 服务 / 会话进程，权限拿不到时也尽量保留内存和线程数据
+            let handle_result = if let Ok(h) = OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ,
+                false,
+                process.pid,
+            ) {
+                debug!("📊 OpenProcess OK (full access): {} ({})", process.name, process.pid);
+                Some((h, true))
+            } else if let Ok(h) = OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION,
+                false,
+                process.pid,
+            ) {
+                debug!("📊 OpenProcess OK (limited): {} ({})", process.name, process.pid);
+                Some((h, false))
+            } else {
+                debug!("⚠ OpenProcess failed: {} ({})", process.name, process.pid);
+                None
+            };
+
+            if let Some((handle, can_read_mem)) = handle_result {
+                sampled_any = true;
+
+                let mut creation = FILETIME::default();
+                let mut exit = FILETIME::default();
+                let mut kernel = FILETIME::default();
+                let mut user = FILETIME::default();
+
+                if GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user).is_ok() {
+                    let kernel_time = filetime_to_u64(&kernel);
+                    let user_time = filetime_to_u64(&user);
+                    let total_cpu_time = kernel_time + user_time;
+
+                    let sys_time = GetSystemTimeAsFileTime();
+                    let sys_now = filetime_to_u64(&sys_time);
+
+                    let cpu_percent = if let Some((prev_cpu, prev_sys)) = prev_samples.get(&process.pid).copied() {
+                        let cpu_delta = total_cpu_time.saturating_sub(prev_cpu);
+                        let sys_delta = sys_now.saturating_sub(prev_sys);
+                        if sys_delta > 0 {
+                            (cpu_delta as f64 / sys_delta as f64 * 100.0 / num_cpus).max(0.0)
+                        } else {
+                            0.0
+                        }
+                    } else {
+                        0.0
+                    };
+
+                    prev_samples.insert(process.pid, (total_cpu_time, sys_now));
+                    total_cpu_percent += cpu_percent;
+                }
+
+                let mem_mb = if can_read_mem {
+                    let mut pmc: PROCESS_MEMORY_COUNTERS = mem::zeroed();
+                    pmc.cb = mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+                    if GetProcessMemoryInfo(
+                        handle,
+                        &mut pmc,
+                        mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+                    ).is_ok() {
+                        pmc.WorkingSetSize as f64 / 1024.0 / 1024.0
+                    } else {
+                        get_process_memory_wmi(process.pid)
+                    }
+                } else {
+                    get_process_memory_wmi(process.pid)
+                };
+
+                total_mem_mb += mem_mb;
+                let _ = CloseHandle(handle);
+            } else {
+                total_mem_mb += get_process_memory_wmi(process.pid);
+            }
+        }
+    }
+
+    prev_samples.retain(|pid, _| current_pids.contains(pid));
+
+    if !sampled_any && total_mem_mb <= 0.0 && total_thread_count == 0 {
+        debug!("⚠ Sunshine processes found but no accessible stats were collected");
+        return None;
+    }
+
+    Some(ProcessStats {
+        cpu_percent: total_cpu_percent.min(100.0),
+        mem_mb: total_mem_mb,
+        thread_count: total_thread_count,
+    })
 }
 
 #[cfg(target_os = "windows")]
@@ -1038,9 +1202,53 @@ fn filetime_to_u64(ft: &windows::Win32::Foundation::FILETIME) -> u64 {
     ((ft.dwHighDateTime as u64) << 32) | (ft.dwLowDateTime as u64)
 }
 
-/// 查找 sunshine.exe 进程 ID
+/// 查找所有 Sunshine 相关进程（优先复用 desktop UI 已验证的 WMI 路径）
 #[cfg(target_os = "windows")]
-fn find_sunshine_pid() -> Option<u32> {
+fn find_sunshine_processes() -> Vec<SunshineProcessRef> {
+    use serde::Deserialize;
+    use wmi::WMIConnection;
+
+    #[derive(Deserialize)]
+    #[serde(rename = "Win32_Process")]
+    #[serde(rename_all = "PascalCase")]
+    struct ProcessInfo {
+        name: String,
+        process_id: u32,
+    }
+
+    if let Ok(wmi_con) = WMIConnection::new() {
+        if let Ok(results) = wmi_con
+            .raw_query::<ProcessInfo>("SELECT Name, ProcessId FROM Win32_Process WHERE Name LIKE '%sunshine%'")
+        {
+            let processes: Vec<SunshineProcessRef> = results
+                .into_iter()
+                .filter(|p| {
+                    let lower = p.name.to_lowercase();
+                    !lower.contains("sunshine-gui") && !lower.contains("sunshine_gui")
+                })
+                .map(|p| SunshineProcessRef {
+                    pid: p.process_id,
+                    name: p.name,
+                })
+                .collect();
+
+            if !processes.is_empty() {
+                return processes;
+            }
+        }
+    }
+
+    find_sunshine_pid_toolhelp()
+        .map(|pid| vec![SunshineProcessRef {
+            pid,
+            name: "sunshine.exe".to_string(),
+        }])
+        .unwrap_or_default()
+}
+
+/// ToolHelp fallback：查找 sunshine.exe 进程 ID
+#[cfg(target_os = "windows")]
+fn find_sunshine_pid_toolhelp() -> Option<u32> {
     use windows::Win32::System::Diagnostics::ToolHelp::*;
 
     unsafe {
@@ -1100,6 +1308,35 @@ fn count_process_threads(pid: u32) -> u32 {
         count
     }
 }
+
+/// 通过 WMI 获取进程工作集内存（MB）—— 无需 PROCESS_VM_READ 权限
+#[cfg(target_os = "windows")]
+fn get_process_memory_wmi(pid: u32) -> f64 {
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    #[serde(rename = "Win32_Process")]
+    #[serde(rename_all = "PascalCase")]
+    struct ProcMem {
+        working_set_size: Option<u64>,
+    }
+
+    let wmi_con = match wmi::WMIConnection::new() {
+        Ok(c) => c,
+        Err(_) => return 0.0,
+    };
+    let query = format!("SELECT WorkingSetSize FROM Win32_Process WHERE ProcessId = {}", pid);
+    let results: Vec<ProcMem> = match wmi_con.raw_query(&query) {
+        Ok(r) => r,
+        Err(_) => return 0.0,
+    };
+    results.first()
+        .and_then(|p| p.working_set_size)
+        .map(|ws| ws as f64 / 1024.0 / 1024.0)
+        .unwrap_or(0.0)
+}
+
+// ─── 会话信息与 OSD 格式化 ──────────────────────────────────
 
 /// 从 Sunshine API 获取串流会话信息
 async fn fetch_session_info() -> std::collections::HashMap<String, String> {
@@ -1190,19 +1427,25 @@ fn format_osd_text(
 ) -> String {
     let mut parts = Vec::new();
 
-    // 矢量字体前缀（支持 CJK 字符）
-    let vf_prefix = if !config.cjk_font.is_empty() {
-        format!("<VF={}>", config.cjk_font)
+    // 矢量字体前缀（RTSS Extended OSD 使用 <FR=fontname,height> 标签）
+    // 如果用户没有设置 font_size，使用 -1 表示保持 RTSS 默认大小
+    let font_prefix = if !config.cjk_font.is_empty() {
+        let h = if config.font_size > 0 { config.font_size as i32 } else { -1 };
+        format!("<FR={},{}>", config.cjk_font, h)
     } else {
         String::new()
     };
 
     // 标题
     if !config.header_text.is_empty() {
-        let size_tag = if config.font_size > 0 { format!("<S={}>", config.font_size) } else { String::new() };
-        parts.push(format!("{}{}<C={}>{}<C>", vf_prefix, size_tag, config.title_color, config.header_text));
-    } else if !vf_prefix.is_empty() {
-        parts.push(vf_prefix);
+        let size_tag = if config.font_size > 0 && config.cjk_font.is_empty() {
+            format!("<S={}>", config.font_size)
+        } else {
+            String::new()
+        };
+        parts.push(format!("{}{}<C={}>{}<C>", font_prefix, size_tag, config.title_color, config.header_text));
+    } else if !font_prefix.is_empty() {
+        parts.push(font_prefix);
     }
 
     // 标签映射
@@ -1274,15 +1517,20 @@ async fn monitoring_loop(config: MonitoringConfig) {
             });
 
             if needs_process {
-                if let Some(stats) = get_sunshine_process_stats() {
-                    if config.metrics.contains(&"process_cpu".to_string()) {
-                        metrics.insert("process_cpu".into(), format!("{:.1}%", stats.cpu_percent));
+                match get_sunshine_process_stats() {
+                    Some(stats) => {
+                        if config.metrics.contains(&"process_cpu".to_string()) {
+                            metrics.insert("process_cpu".into(), format!("{:.1}%", stats.cpu_percent));
+                        }
+                        if config.metrics.contains(&"process_mem".to_string()) {
+                            metrics.insert("process_mem".into(), format!("{:.0} MB", stats.mem_mb));
+                        }
+                        if config.metrics.contains(&"process_threads".to_string()) {
+                            metrics.insert("process_threads".into(), format!("{}", stats.thread_count));
+                        }
                     }
-                    if config.metrics.contains(&"process_mem".to_string()) {
-                        metrics.insert("process_mem".into(), format!("{:.0} MB", stats.mem_mb));
-                    }
-                    if config.metrics.contains(&"process_threads".to_string()) {
-                        metrics.insert("process_threads".into(), format!("{}", stats.thread_count));
+                    None => {
+                        debug!("⚠ get_sunshine_process_stats() returned None (pid not found or access denied)");
                     }
                 }
             }
@@ -1307,8 +1555,15 @@ async fn monitoring_loop(config: MonitoringConfig) {
         tokio::time::sleep(interval).await;
     }
 
-    // 清理 OSD
-    let _ = rtss_set_osd(String::new(), Some(owner)).await;
+    // 释放 OSD 槽位（零填整个 entry）
+    #[cfg(target_os = "windows")]
+    {
+        let _ = release_osd_slots(&owner);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = rtss_set_osd(String::new(), Some(owner)).await;
+    }
 
     {
         let mut snapshot = MONITORING_SNAPSHOT.lock().await;
@@ -1331,12 +1586,6 @@ pub async fn rtss_start_monitoring(config: MonitoringConfig) -> Result<(), Strin
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 
-    // 保存配置
-    {
-        let mut cfg = MONITORING_CONFIG.lock().await;
-        *cfg = config.clone();
-    }
-
     MONITORING_ACTIVE.store(true, Ordering::Relaxed);
 
     tokio::spawn(async move {
@@ -1350,7 +1599,22 @@ pub async fn rtss_start_monitoring(config: MonitoringConfig) -> Result<(), Strin
 #[tauri::command]
 pub async fn rtss_stop_monitoring() -> Result<(), String> {
     MONITORING_ACTIVE.store(false, Ordering::Relaxed);
-    info!("🎯 RTSS 监控已请求停止");
+
+    // 立即释放 OSD 槽位，不等后台循环
+    #[cfg(target_os = "windows")]
+    {
+        let _ = release_osd_slots("Foundation Sunshine");
+    }
+
+    // 清除快照
+    {
+        let mut snapshot = MONITORING_SNAPSHOT.lock().await;
+        snapshot.active = false;
+        snapshot.osd_text.clear();
+        snapshot.metrics.clear();
+    }
+
+    info!("🎯 RTSS 监控已停止并清除 OSD");
     Ok(())
 }
 

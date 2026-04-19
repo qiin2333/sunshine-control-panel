@@ -14,6 +14,7 @@
     "dev:home": "vite --config vite.home.config.js --mode development",
     "preview:home": "vite preview --config vite.home.config.js",
     "build:win": "npm run build:renderer && tauri build --target x86_64-pc-windows-msvc --bundles nsis",
+    "build:overlay:win": "powershell -ExecutionPolicy Bypass -File ./scripts/build-gui-overlay-installer.ps1",
     "build:beta": "cross-env BETA=true npm run build:renderer && tauri build --features beta",
     "build:beta:win": "cross-env BETA=true npm run build:renderer && tauri build --features beta --target x86_64-pc-windows-msvc --bundles nsis"
   },

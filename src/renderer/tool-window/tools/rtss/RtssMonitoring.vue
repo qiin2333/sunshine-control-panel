@@ -243,7 +243,13 @@ defineExpose({ loadState })
   transition: all 0.2s;
 
   &:hover { background: rgba(255, 255, 255, 0.14); color: white; }
-  &.active { background: rgba(147, 197, 253, 0.2); border-color: rgba(147, 197, 253, 0.5); color: #93c5fd; }
+  &.active {
+    background: rgba(96, 165, 250, 0.35);
+    border-color: rgba(96, 165, 250, 0.7);
+    color: #60a5fa;
+    font-weight: 600;
+    box-shadow: 0 0 6px rgba(96, 165, 250, 0.25);
+  }
 }
 
 .monitor-style {

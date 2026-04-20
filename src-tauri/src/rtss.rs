@@ -41,10 +41,17 @@ impl Drop for BusyGuard {
 // ─── RTSS 共享内存结构 ────────────────────────────────────────
 
 const RTSS_SHARED_MEMORY_SIGNATURE: u32 = 0x52545353; // 'RTSS'
+// RTSS_SHARED_MEMORY_OSD_ENTRY 布局 (RTSS 7.x 共享内存 v2.12+)：
+//   offset    0, len  256: szOSD       — 旧格式文本（光栅渲染使用，仅 ASCII）
+//   offset  256, len  256: szOSDOwner  — 拥有者进程/插件名
+//   offset  512, len 4096: szOSDEx     — 扩展文本（矢量渲染使用，UTF-8，支持 CJK）
+//   offset 4608, len ...: 其他字段
 const RTSS_OSD_TEXT_OFFSET: usize = 0;
 const RTSS_OSD_TEXT_LEN: usize = 256;
 const RTSS_OSD_OWNER_OFFSET: usize = 256;
 const RTSS_OSD_OWNER_LEN: usize = 256;
+const RTSS_OSD_TEXT_EX_OFFSET: usize = 512;
+const RTSS_OSD_TEXT_EX_LEN: usize = 4096;
 
 /// RTSS 共享内存头部 (映射部分关键字段)
 #[repr(C)]
@@ -91,9 +98,6 @@ pub struct MonitoringConfig {
     pub font_size: u32,
     /// 自定义头部文本
     pub header_text: String,
-    /// CJK 矢量字体名（为空则不启用，推荐 "Microsoft YaHei"）
-    #[serde(default)]
-    pub cjk_font: String,
 }
 
 impl Default for MonitoringConfig {
@@ -110,7 +114,6 @@ impl Default for MonitoringConfig {
             value_color: "00FF00".into(),
             font_size: 0, // 0 = RTSS 默认
             header_text: "☀ Foundation Sunshine".into(),
-            cjk_font: String::new(),
         }
     }
 }
@@ -517,7 +520,129 @@ pub async fn get_rtss_status() -> Result<RtssStatus, String> {
 
 // ─── OSD 写入与释放 ─────────────────────────────────────────
 
-/// 释放指定 owner 的所有 OSD 槽位（零填整个 entry，包括 owner）
+/// RTSS OSD 槽位条目内部布局 (字段偏移与可写长度)
+///
+/// 一次性从共享内存头部派生所有偏移并 clamp 到 entry_size，
+/// 避免每个调用点重复 saturating_sub 计算。
+#[cfg(target_os = "windows")]
+#[derive(Clone, Copy)]
+struct OsdEntryLayout {
+    entry_size: usize,
+    text: (usize, usize),              // szOSD       (offset, len)
+    owner: (usize, usize),             // szOSDOwner  (offset, len)
+    text_ex: Option<(usize, usize)>,   // szOSDEx     (v2.7+ 才存在)
+}
+
+#[cfg(target_os = "windows")]
+impl OsdEntryLayout {
+    fn from_header(header: &RtssSharedMemoryHeader) -> Self {
+        let entry_size = header.dwOSDEntrySize as usize;
+        let clamp = |off: usize, len: usize| {
+            let off = off.min(entry_size);
+            (off, len.min(entry_size.saturating_sub(off)))
+        };
+        let text_ex = if entry_size >= RTSS_OSD_TEXT_EX_OFFSET + RTSS_OSD_TEXT_EX_LEN {
+            Some(clamp(RTSS_OSD_TEXT_EX_OFFSET, RTSS_OSD_TEXT_EX_LEN))
+        } else {
+            None
+        };
+        Self {
+            entry_size,
+            text: clamp(RTSS_OSD_TEXT_OFFSET, RTSS_OSD_TEXT_LEN),
+            owner: clamp(RTSS_OSD_OWNER_OFFSET, RTSS_OSD_OWNER_LEN),
+            text_ex,
+        }
+    }
+
+    /// 读取槽位 owner 字符串（NUL 截断）
+    /// SAFETY: slot 必须指向至少 entry_size 字节有效内存
+    unsafe fn read_owner(&self, slot: *const u8) -> String {
+        let (off, len) = self.owner;
+        if len == 0 { return String::new(); }
+        let bytes = unsafe { std::slice::from_raw_parts(slot.add(off), len) };
+        let nul = bytes.iter().position(|&b| b == 0).unwrap_or(len);
+        String::from_utf8_lossy(&bytes[..nul]).to_string()
+    }
+
+    /// 槽位是否完全空闲（owner 与 text 首字节均为 0）
+    unsafe fn is_empty(&self, slot: *const u8) -> bool {
+        unsafe {
+            std::ptr::read_volatile(slot.add(self.text.0)) == 0
+                && std::ptr::read_volatile(slot.add(self.owner.0)) == 0
+        }
+    }
+
+    /// 清零槽位的 text/owner/textEx 字段（保留其余 RTSS 元数据/buffer）
+    unsafe fn clear(&self, slot: *mut u8) {
+        let zero = |off: usize, len: usize| {
+            if len > 0 { unsafe { std::ptr::write_bytes(slot.add(off), 0, len); } }
+        };
+        zero(self.text.0, self.text.1);
+        zero(self.owner.0, self.owner.1);
+        if let Some((off, len)) = self.text_ex { zero(off, len); }
+    }
+
+    /// 写入 text + owner 到槽位（自动同时写 szOSD 和 szOSDEx）
+    /// `text` / `owner` 应包含 NUL 终止符
+    unsafe fn write(&self, slot: *mut u8, text: &[u8], owner: &[u8]) {
+        unsafe { self.clear(slot); }
+        let copy = |dst_off: usize, dst_len: usize, src: &[u8]| {
+            if dst_len == 0 { return; }
+            let n = src.len().min(dst_len.saturating_sub(1).max(1));
+            unsafe { std::ptr::copy_nonoverlapping(src.as_ptr(), slot.add(dst_off), n); }
+        };
+        copy(self.text.0, self.text.1, text);
+        copy(self.owner.0, self.owner.1, owner);
+        if let Some((off, len)) = self.text_ex { copy(off, len, text); }
+    }
+}
+
+/// 在 OSD 数组中扫描并选择目标槽位
+///
+/// 优先级：复用同 owner 槽位 > last_foreign 之后的空槽（避免被覆盖）> 任意空槽
+/// 副作用：清理同 owner 的重复槽位
+#[cfg(target_os = "windows")]
+unsafe fn find_or_alloc_slot(
+    base: *mut u8,
+    layout: &OsdEntryLayout,
+    osd_count: u32,
+    owner_name: &str,
+) -> Result<u32, String> {
+    let mut target: Option<u32> = None;
+    let mut empty_slots: Vec<u32> = Vec::new();
+    let mut last_foreign: Option<u32> = None;
+
+    for i in 0..osd_count {
+        unsafe {
+            let slot = base.add((i as usize) * layout.entry_size);
+            if layout.is_empty(slot) {
+                empty_slots.push(i);
+                continue;
+            }
+            let existing = layout.read_owner(slot);
+            if existing == owner_name {
+                if target.is_none() {
+                    target = Some(i);
+                } else {
+                    layout.clear(slot);
+                    debug!("🎯 cleaned duplicate OSD slot {} for '{}'", i, owner_name);
+                }
+            } else {
+                last_foreign = Some(i);
+            }
+        }
+    }
+
+    target
+        .or_else(|| match last_foreign {
+            Some(last) => empty_slots.iter().find(|&&i| i > last).copied(),
+            None => empty_slots.first().copied(),
+        })
+        .or_else(|| empty_slots.first().copied())
+        .ok_or_else(|| format!("没有可用的 RTSS OSD 槽位（共 {} 个均被占用）", osd_count))
+}
+
+/// 释放指定 owner 的所有 OSD 槽位（清理 text/owner/textEx 字段）
 #[cfg(target_os = "windows")]
 fn release_osd_slots(owner_name: &str) -> Result<u32, String> {
     let shm = win::SharedMemoryHandle::open()?;
@@ -531,39 +656,20 @@ fn release_osd_slots(owner_name: &str) -> Result<u32, String> {
             return Err("RTSS 共享内存签名不匹配".to_string());
         }
 
-        let entry_size = header.dwOSDEntrySize as usize;
-        if entry_size == 0 { return Ok(0); }
-        let osd_arr_base = (shm.ptr as *mut u8).add(header.dwOSDArrOffset as usize);
-        let owner_offset = RTSS_OSD_OWNER_OFFSET.min(entry_size);
-        let owner_field_len = RTSS_OSD_OWNER_LEN.min(entry_size.saturating_sub(owner_offset));
-        let text_field_len = RTSS_OSD_TEXT_LEN.min(entry_size);
+        let layout = OsdEntryLayout::from_header(header);
+        if layout.entry_size == 0 { return Ok(0); }
 
-        // RAII busy guard: drop 时自动清 busy flag（含 panic）
+        let base = (shm.ptr as *mut u8).add(header.dwOSDArrOffset as usize);
         let _busy = BusyGuard::new(&mut (*header_ptr).dwBusy);
 
         for i in 0..header.dwOSDArrSize {
-            let entry_ptr = osd_arr_base.add((i as usize) * entry_size);
-            let owner_ptr = entry_ptr.add(owner_offset);
-
-            let first_byte = std::ptr::read_volatile(owner_ptr);
-            if first_byte == 0 { continue; }
-
-            let owner_slice = std::slice::from_raw_parts(owner_ptr, owner_field_len);
-            let nul_pos = owner_slice.iter().position(|&b| b == 0).unwrap_or(owner_field_len.saturating_sub(1));
-            let existing = String::from_utf8_lossy(&owner_slice[..nul_pos]);
-
-            if existing == owner_name {
-                // 仅清理 text/owner 区，避免破坏 RTSS entry 其余元数据/缓冲区
-                std::ptr::write_bytes(entry_ptr.add(RTSS_OSD_TEXT_OFFSET), 0, text_field_len);
-                if owner_field_len > 0 {
-                    std::ptr::write_bytes(entry_ptr.add(owner_offset), 0, owner_field_len);
-                }
+            let slot = base.add((i as usize) * layout.entry_size);
+            if layout.read_owner(slot) == owner_name {
+                layout.clear(slot);
                 released += 1;
                 debug!("🎯 RTSS OSD slot {} released (owner: {})", i, owner_name);
             }
         }
-
-        // busy flag 由 _busy guard 的 Drop 自动清除
     }
 
     if released > 0 {
@@ -584,6 +690,11 @@ pub async fn rtss_set_osd(text: String, owner: Option<String>) -> Result<(), Str
             return release_osd_slots(&owner_name).map(|_| ());
         }
 
+        let owner_cstr = CString::new(owner_name.as_str())
+            .map_err(|e| format!("owner 名称含非法 NUL 字节: {}", e))?;
+        let text_cstr = CString::new(text.as_str())
+            .map_err(|e| format!("OSD 文本含非法 NUL 字节: {}", e))?;
+
         let shm = win::SharedMemoryHandle::open()?;
 
         unsafe {
@@ -594,117 +705,23 @@ pub async fn rtss_set_osd(text: String, owner: Option<String>) -> Result<(), Str
                 return Err("RTSS 共享内存签名不匹配".to_string());
             }
 
-            let osd_arr_base = (shm.ptr as *mut u8).add(header.dwOSDArrOffset as usize);
-            let osd_count = if header.dwOSDEntrySize > 0 {
-                header.dwOSDArrSize
-            } else {
-                0
-            };
-
+            let layout = OsdEntryLayout::from_header(header);
+            let osd_count = if header.dwOSDEntrySize > 0 { header.dwOSDArrSize } else { 0 };
             if osd_count == 0 {
                 return Err("RTSS OSD 槽位数量为 0".to_string());
             }
 
-            let owner_cstr = CString::new(owner_name.as_str())
-                .map_err(|e| format!("owner 名称含非法 NUL 字节: {}", e))?;
-            let text_cstr = CString::new(text.as_str())
-                .map_err(|e| format!("OSD 文本含非法 NUL 字节: {}", e))?;
-
-            let entry_size = header.dwOSDEntrySize as usize;
-            let text_offset = RTSS_OSD_TEXT_OFFSET.min(entry_size);
-            let text_field_len = RTSS_OSD_TEXT_LEN.min(entry_size.saturating_sub(text_offset));
-            let owner_offset = RTSS_OSD_OWNER_OFFSET.min(entry_size);
-            let owner_field_len = RTSS_OSD_OWNER_LEN.min(entry_size.saturating_sub(owner_offset));
-
-            // ── 扫描槽位：找到已有的、记录空闲的、清理重复的 ──
-            let mut target_slot: Option<(u32, *mut u8)> = None;
-            let mut empty_slots: Vec<(u32, *mut u8)> = Vec::new();
-            let mut last_foreign_occupied_idx: Option<u32> = None;
-
-            // RAII busy guard: drop 时自动清 busy flag（含 panic）
+            let base = (shm.ptr as *mut u8).add(header.dwOSDArrOffset as usize);
             let _busy = BusyGuard::new(&mut (*header_ptr).dwBusy);
 
-            for i in 0..osd_count {
-                let entry_ptr = osd_arr_base.add((i as usize) * entry_size);
-                let osd_owner_ptr = entry_ptr.add(owner_offset);
+            let slot_idx = find_or_alloc_slot(base, &layout, osd_count, &owner_name)?;
+            let slot = base.add((slot_idx as usize) * layout.entry_size);
+            layout.write(slot, text_cstr.as_bytes_with_nul(), owner_cstr.as_bytes_with_nul());
 
-                let text_first_byte = std::ptr::read_volatile(entry_ptr.add(text_offset));
-                let first_byte = std::ptr::read_volatile(osd_owner_ptr);
-                if first_byte == 0 && text_first_byte == 0 {
-                    empty_slots.push((i, entry_ptr));
-                    continue;
-                }
-
-                let existing_owner = if first_byte != 0 {
-                    let owner_slice = std::slice::from_raw_parts(osd_owner_ptr, owner_field_len);
-                    let nul_pos = owner_slice.iter().position(|&b| b == 0).unwrap_or(owner_field_len.saturating_sub(1));
-                    String::from_utf8_lossy(&owner_slice[..nul_pos]).to_string()
-                } else {
-                    String::new()
-                };
-
-                if !existing_owner.is_empty() && existing_owner == owner_name.as_str() {
-                    if target_slot.is_none() {
-                        // 第一个匹配的 → 复用
-                        target_slot = Some((i, entry_ptr));
-                    } else {
-                        // 后续重复的 → 仅清理 text/owner 区释放
-                        std::ptr::write_bytes(entry_ptr.add(text_offset), 0, text_field_len);
-                        if owner_field_len > 0 {
-                            std::ptr::write_bytes(entry_ptr.add(owner_offset), 0, owner_field_len);
-                        }
-                        debug!("🎯 cleaned up duplicate OSD slot {} for '{}'", i, owner_name);
-                    }
-                    continue;
-                }
-
-                last_foreign_occupied_idx = Some(i);
-            }
-
-            let preferred_empty_slot = if let Some(last_idx) = last_foreign_occupied_idx {
-                empty_slots.iter().find(|(idx, _)| *idx > last_idx).copied()
-            } else {
-                empty_slots.first().copied()
-            };
-
-            let fallback_empty_slot = empty_slots.first().copied();
-
-            let (slot_idx, slot) = target_slot
-                .or(preferred_empty_slot)
-                .or(fallback_empty_slot)
-                .ok_or_else(|| {
-                    // busy flag 由 _busy guard 的 Drop 自动清除
-                    format!("没有可用的 RTSS OSD 槽位（共 {} 个均被占用）", osd_count)
-                })?;
-
-            let text_bytes = text_cstr.as_bytes_with_nul();
-            let owner_bytes = owner_cstr.as_bytes_with_nul();
-            let text_max = text_field_len;
-
-            // 只清理 text/owner 区，避免伤及 RTSS entry 其余数据
-            std::ptr::write_bytes(slot.add(text_offset), 0, text_field_len);
-            if owner_field_len > 0 {
-                std::ptr::write_bytes(slot.add(owner_offset), 0, owner_field_len);
-            }
-            std::ptr::copy_nonoverlapping(
-                text_bytes.as_ptr(),
-                slot.add(text_offset),
-                text_bytes.len().min(text_max.saturating_sub(1).max(1))
+            debug!(
+                "🎯 RTSS OSD slot {} (entry_size={}, ext={})",
+                slot_idx, layout.entry_size, layout.text_ex.is_some()
             );
-
-            // 写入 Owner
-            let owner_ptr = slot.add(owner_offset);
-            if owner_field_len > 0 {
-                std::ptr::copy_nonoverlapping(
-                    owner_bytes.as_ptr(),
-                    owner_ptr,
-                    owner_bytes.len().min(owner_field_len.saturating_sub(1).max(1))
-                );
-            }
-
-            // busy flag 由 _busy guard 的 Drop 自动清除
-
-            debug!("🎯 RTSS OSD using slot {} (last foreign occupied: {:?})", slot_idx, last_foreign_occupied_idx);
         }
 
         debug!("✅ RTSS OSD updated");
@@ -713,6 +730,7 @@ pub async fn rtss_set_osd(text: String, owner: Option<String>) -> Result<(), Str
 
     #[cfg(not(target_os = "windows"))]
     {
+        let _ = (text, owner);
         Err("RTSS 仅在 Windows 上可用".to_string())
     }
 }
@@ -1618,25 +1636,23 @@ fn format_osd_text(
 ) -> String {
     let mut parts = Vec::new();
 
-    // 矢量字体前缀（RTSS Extended OSD 使用 <FR=fontname,height> 标签）
-    // 如果用户没有设置 font_size，使用 -1 表示保持 RTSS 默认大小
-    let font_prefix = if !config.cjk_font.is_empty() {
-        let h = if config.font_size > 0 { config.font_size as i32 } else { -1 };
-        format!("<FR={},{}>", config.cjk_font, h)
+    // 字号 tag（RTSS 支持 <S=size>，适用于光栅与矢量两种渲染模式）
+    // 注意：RTSS 不支持任何 <F=fontname> 或 <FR=...> 内联字体选择 tag。
+    // CJK 中文显示需用户在 RTSS UI 中手动设置：
+    //   1. Setup → On-Screen Display rendering mode = “Vector 3D” 或 “Vector 2D”
+    //   2. On-Screen Display zoom 设为合适值
+    //   3. 点击字体名旁的 “Setup” 按钮，选择 CJK TrueType 字体（如 Microsoft YaHei UI、微软雅黑）
+    let size_tag = if config.font_size > 0 {
+        format!("<S={}>", config.font_size)
     } else {
         String::new()
     };
 
     // 标题
     if !config.header_text.is_empty() {
-        let size_tag = if config.font_size > 0 && config.cjk_font.is_empty() {
-            format!("<S={}>", config.font_size)
-        } else {
-            String::new()
-        };
-        parts.push(format!("{}{}<C={}>{}<C>", font_prefix, size_tag, config.title_color, config.header_text));
-    } else if !font_prefix.is_empty() {
-        parts.push(font_prefix);
+        parts.push(format!("{}<C={}>{}<C>", size_tag, config.title_color, config.header_text));
+    } else if !size_tag.is_empty() {
+        parts.push(size_tag.clone());
     }
 
     // 标签映射
@@ -1671,14 +1687,11 @@ fn format_osd_text(
         }
     }
 
-    let result = parts.join("\n");
-
-    // 无矢量字体时过滤非 ASCII 字符，避免 RTSS 光栅字体乱码
-    if config.cjk_font.is_empty() {
-        result.chars().map(|c| if c.is_ascii() { c } else { '*' }).collect()
-    } else {
-        result
-    }
+    // 始终写入 UTF-8：RTSS 矢量模式下 szOSDEx 是 UTF-8，能渲染 CJK；
+    // 光栅模式下会显示为零完。不再进行过滤转换，
+    // 仅要求用户在 RTSS UI 中设置：
+    //   Setup → On-Screen Display rendering mode = Vector 3D + 选 CJK 字体
+    parts.join("\n")
 }
 
 /// 监控循环主体

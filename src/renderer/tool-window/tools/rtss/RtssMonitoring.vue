@@ -29,15 +29,8 @@
         <label>{{ t.rtssTool.headerText }}</label>
         <input v-model="config.header_text" class="style-input" placeholder="☀ Foundation Sunshine" />
       </div>
-      <div class="style-row">
-        <label>{{ t.rtssTool.cjkFont || 'CJK 矢量字体' }}</label>
-        <select v-model="config.cjk_font" class="fmt-select wide">
-          <option value="">{{ t.rtssTool.cjkFontDisabled || '不启用（仅 ASCII）' }}</option>
-          <option value="Microsoft YaHei">微软雅黑</option>
-          <option value="SimHei">黑体</option>
-          <option value="SimSun">宋体</option>
-          <option value="KaiTi">楷体</option>
-        </select>
+      <div class="style-row cjk-hint">
+        <small>{{ t.rtssTool.cjkHint || '中文/CJK 需在 RTSS Setup 中启用“Vector 3D”并选择中文字体（如 Microsoft YaHei）' }}</small>
       </div>
       <div class="style-row">
         <label>{{ t.rtssTool.updateInterval }}</label>
@@ -93,7 +86,6 @@ const DEFAULT_CONFIG = {
   value_color: '00FF00',
   font_size: 0,
   header_text: '☀ Foundation Sunshine',
-  cjk_font: '',
 }
 
 function loadPersistedConfig() {

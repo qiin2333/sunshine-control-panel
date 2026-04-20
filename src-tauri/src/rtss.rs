@@ -1040,6 +1040,10 @@ pub async fn rtss_get_available_metrics() -> Vec<MetricDef> {
             id: "app_name".into(), label_zh: "应用名称".into(),
             label_en: "App".into(), group: "session".into(),
         },
+        MetricDef {
+            id: "capture_method".into(), label_zh: "捕获方式".into(),
+            label_en: "Capture".into(), group: "session".into(),
+        },
         // 进程性能
         MetricDef {
             id: "process_cpu".into(), label_zh: "CPU 占用".into(),
@@ -1053,6 +1057,10 @@ pub async fn rtss_get_available_metrics() -> Vec<MetricDef> {
             id: "process_threads".into(), label_zh: "线程数".into(),
             label_en: "Threads".into(), group: "process".into(),
         },
+        MetricDef {
+            id: "process_encoder".into(), label_zh: "编码器占用".into(),
+            label_en: "Encoder".into(), group: "process".into(),
+        },
     ]
 }
 
@@ -1064,6 +1072,7 @@ struct ProcessStats {
     cpu_percent: f64,
     mem_mb: f64,
     thread_count: u32,
+    encoder_percent: f64,
 }
 
 #[cfg(target_os = "windows")]
@@ -1190,10 +1199,13 @@ fn get_sunshine_process_stats() -> Option<ProcessStats> {
         return None;
     }
 
+    let encoder_percent = get_gpu_encode_percent(&current_pids);
+
     Some(ProcessStats {
         cpu_percent: total_cpu_percent.min(100.0),
         mem_mb: total_mem_mb,
         thread_count: total_thread_count,
+        encoder_percent,
     })
 }
 
@@ -1277,6 +1289,156 @@ fn find_sunshine_pid_toolhelp() -> Option<u32> {
     None
 }
 
+/// PDH 句柄，用于持续查询 GPU Engine 计数器（编码器/3D/解码等）
+/// 需要在两次 PdhCollectQueryData 之间保留句柄才能拿到瞬时值
+#[cfg(target_os = "windows")]
+static GPU_PDH_QUERY: Lazy<std::sync::Mutex<Option<GpuPdhQuery>>> =
+    Lazy::new(|| std::sync::Mutex::new(None));
+
+#[cfg(target_os = "windows")]
+struct GpuPdhQuery {
+    query: windows::Win32::System::Performance::PDH_HQUERY,
+    counter: windows::Win32::System::Performance::PDH_HCOUNTER,
+}
+
+#[cfg(target_os = "windows")]
+unsafe impl Send for GpuPdhQuery {}
+
+#[cfg(target_os = "windows")]
+impl Drop for GpuPdhQuery {
+    fn drop(&mut self) {
+        unsafe {
+            use windows::Win32::System::Performance::PdhCloseQuery;
+            let _ = PdhCloseQuery(self.query);
+        }
+    }
+}
+
+/// 获取所有匹配 PID 集合的 GPU 视频编码引擎占用百分比之和
+/// 使用 Windows GPU Engine 性能计数器（任务管理器 "GPU 视频编码" 列同源）
+#[cfg(target_os = "windows")]
+fn get_gpu_encode_percent(pids: &std::collections::HashSet<u32>) -> f64 {
+    use windows::Win32::System::Performance::*;
+    use windows::core::PCWSTR;
+
+    if pids.is_empty() {
+        return 0.0;
+    }
+
+    let mut guard = GPU_PDH_QUERY.lock().unwrap();
+
+    // 首次调用时初始化 PDH 查询
+    if guard.is_none() {
+        unsafe {
+            let mut query = PDH_HQUERY::default();
+            let status = PdhOpenQueryW(PCWSTR::null(), 0, &mut query);
+            if status != 0 {
+                debug!("⚠ PdhOpenQueryW failed: 0x{:08X}", status);
+                return 0.0;
+            }
+
+            // 通配符路径：所有 GPU Engine 实例的占用率
+            let path: Vec<u16> = "\\GPU Engine(*)\\Utilization Percentage"
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
+            let mut counter = PDH_HCOUNTER::default();
+            let status = PdhAddCounterW(query, PCWSTR::from_raw(path.as_ptr()), 0, &mut counter);
+            if status != 0 {
+                debug!("⚠ PdhAddCounterW failed: 0x{:08X}", status);
+                let _ = PdhCloseQuery(query);
+                return 0.0;
+            }
+
+            // 首次采样作为基线
+            let _ = PdhCollectQueryData(query);
+
+            *guard = Some(GpuPdhQuery { query, counter });
+            // 首次调用返回 0（需要至少两次采样才能计算瞬时值）
+            return 0.0;
+        }
+    }
+
+    let pdh = guard.as_ref().unwrap();
+    unsafe {
+        let status = PdhCollectQueryData(pdh.query);
+        if status != 0 {
+            debug!("⚠ PdhCollectQueryData failed: 0x{:08X}", status);
+            return 0.0;
+        }
+
+        // 第一次调用获取所需缓冲区大小
+        let mut buffer_size: u32 = 0;
+        let mut item_count: u32 = 0;
+        let status = PdhGetFormattedCounterArrayW(
+            pdh.counter,
+            PDH_FMT_DOUBLE,
+            &mut buffer_size,
+            &mut item_count,
+            None,
+        );
+        // PDH_MORE_DATA = 0x800007D2
+        const PDH_MORE_DATA: u32 = 0x800007D2;
+        if status != PDH_MORE_DATA && status != 0 {
+            debug!("⚠ PdhGetFormattedCounterArrayW(size) failed: 0x{:08X}", status);
+            return 0.0;
+        }
+        if buffer_size == 0 || item_count == 0 {
+            return 0.0;
+        }
+
+        let mut buffer: Vec<u8> = vec![0u8; buffer_size as usize];
+        let items_ptr = buffer.as_mut_ptr() as *mut PDH_FMT_COUNTERVALUE_ITEM_W;
+        let status = PdhGetFormattedCounterArrayW(
+            pdh.counter,
+            PDH_FMT_DOUBLE,
+            &mut buffer_size,
+            &mut item_count,
+            Some(items_ptr),
+        );
+        if status != 0 {
+            debug!("⚠ PdhGetFormattedCounterArrayW(data) failed: 0x{:08X}", status);
+            return 0.0;
+        }
+
+        let items = std::slice::from_raw_parts(items_ptr, item_count as usize);
+        let mut total: f64 = 0.0;
+
+        for item in items {
+            if item.szName.is_null() {
+                continue;
+            }
+            // 读取实例名（以 null 结尾的 UTF-16 字符串）
+            let mut len = 0usize;
+            while *item.szName.0.add(len) != 0 && len < 1024 {
+                len += 1;
+            }
+            let name_slice = std::slice::from_raw_parts(item.szName.0, len);
+            let name = String::from_utf16_lossy(name_slice);
+
+            // 实例名格式: pid_<PID>_luid_..._engtype_VideoEncode
+            if !name.contains("engtype_VideoEncode") {
+                continue;
+            }
+            // 解析 pid_<N>_
+            if let Some(rest) = name.strip_prefix("pid_") {
+                if let Some(end) = rest.find('_') {
+                    if let Ok(pid) = rest[..end].parse::<u32>() {
+                        if pids.contains(&pid) {
+                            let value = item.FmtValue.Anonymous.doubleValue;
+                            if value.is_finite() && value > 0.0 {
+                                total += value;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        total.min(100.0)
+    }
+}
+
 /// 计算进程线程数
 #[cfg(target_os = "windows")]
 fn count_process_threads(pid: u32) -> u32 {
@@ -1337,6 +1499,35 @@ fn get_process_memory_wmi(pid: u32) -> f64 {
 }
 
 // ─── 会话信息与 OSD 格式化 ──────────────────────────────────
+
+/// 读取 Sunshine 当前配置的捕获方式
+/// 返回值: "WGC" / "DDX" / "AMD" / "Auto"
+/// 数据源: sunshine.conf 中的 `capture` 字段
+fn get_capture_method() -> String {
+    let config_path = crate::sunshine::config_dir().join("sunshine.conf");
+    if let Ok(content) = std::fs::read_to_string(&config_path) {
+        for line in content.lines() {
+            let line = line.trim();
+            if line.starts_with('#') || line.is_empty() {
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("capture") {
+                let rest = rest.trim_start();
+                if let Some(value) = rest.strip_prefix('=') {
+                    let value = value.trim().trim_matches('"').to_lowercase();
+                    return match value.as_str() {
+                        "wgc" => "WGC".into(),
+                        "ddx" => "DDX".into(),
+                        "amd" => "AMD".into(),
+                        "" => "Auto".into(),
+                        other => other.to_uppercase(),
+                    };
+                }
+            }
+        }
+    }
+    "Auto".into()
+}
 
 /// 从 Sunshine API 获取串流会话信息
 async fn fetch_session_info() -> std::collections::HashMap<String, String> {
@@ -1459,9 +1650,11 @@ fn format_osd_text(
             "stream_codec" => "Codec",
             "stream_hdr" => "HDR",
             "app_name" => "App",
+            "capture_method" => "Capture",
             "process_cpu" => "CPU",
             "process_mem" => "Mem",
             "process_threads" => "Threads",
+            "process_encoder" => "Enc",
             _ => "??",
         }
     }
@@ -1509,11 +1702,16 @@ async fn monitoring_loop(config: MonitoringConfig) {
             metrics.extend(session_info);
         }
 
+        // 捕获方式（从 sunshine.conf 读取，独立于会话）
+        if config.metrics.iter().any(|m| m == "capture_method") {
+            metrics.insert("capture_method".into(), get_capture_method());
+        }
+
         // 是否需要进程统计
         #[cfg(target_os = "windows")]
         {
             let needs_process = config.metrics.iter().any(|m| {
-                matches!(m.as_str(), "process_cpu" | "process_mem" | "process_threads")
+                matches!(m.as_str(), "process_cpu" | "process_mem" | "process_threads" | "process_encoder")
             });
 
             if needs_process {
@@ -1527,6 +1725,9 @@ async fn monitoring_loop(config: MonitoringConfig) {
                         }
                         if config.metrics.contains(&"process_threads".to_string()) {
                             metrics.insert("process_threads".into(), format!("{}", stats.thread_count));
+                        }
+                        if config.metrics.contains(&"process_encoder".to_string()) {
+                            metrics.insert("process_encoder".into(), format!("{:.1}%", stats.encoder_percent));
                         }
                     }
                     None => {

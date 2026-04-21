@@ -582,7 +582,9 @@ impl OsdEntryLayout {
         if let Some((off, len)) = self.text_ex { zero(off, len); }
     }
 
-    /// 写入 text + owner 到槽位（自动同时写 szOSD 和 szOSDEx）
+    /// 写入 text + owner 到槽位
+    /// - 如果 szOSDEx 可用（v2.7+，矢量模式）：只写 szOSDEx，szOSD 留空（避免 RTSS 同时渲染导致双份）
+    /// - 否则：回落到 szOSD（仅 ASCII，CJK 会乱码）
     /// `text` / `owner` 应包含 NUL 终止符
     unsafe fn write(&self, slot: *mut u8, text: &[u8], owner: &[u8]) {
         unsafe { self.clear(slot); }
@@ -591,9 +593,11 @@ impl OsdEntryLayout {
             let n = src.len().min(dst_len.saturating_sub(1).max(1));
             unsafe { std::ptr::copy_nonoverlapping(src.as_ptr(), slot.add(dst_off), n); }
         };
-        copy(self.text.0, self.text.1, text);
+        match self.text_ex {
+            Some((off, len)) => copy(off, len, text),
+            None => copy(self.text.0, self.text.1, text),
+        }
         copy(self.owner.0, self.owner.1, owner);
-        if let Some((off, len)) = self.text_ex { copy(off, len, text); }
     }
 }
 

@@ -227,6 +227,7 @@ const {
   cleanupCovers,
   restartAsAdmin,
   checkForUpdates,
+  openGamepadTest,
 } = useTools()
 
 const handleCheckForUpdates = async () => {
@@ -255,7 +256,7 @@ const toolsMenuItems = computed(() => [
   { icon: Link, label: t.value.sidebar.officialWebsite, action: () => openUrl('https://www.alkaidlab.com/') },
   { icon: Timer, label: t.value.sidebar.streamTimer, action: openTimer },
   { icon: DataLine, label: t.value.sidebar.latencyTest, action: () => openUrl('https://yangkile.github.io/D-lay/') },
-  { icon: Cpu, label: t.value.sidebar.gamepadTest, action: () => openUrl('https://hardwaretester.com/gamepad') },
+  { icon: Cpu, label: t.value.sidebar.gamepadTest, action: openGamepadTest },
   { icon: CopyDocument, label: t.value.sidebar.clipboardSync, action: () => openUrl('https://gcopy.rutron.net/zh') },
   { icon: Delete, label: t.value.sidebar.cleanTemp, action: cleanupCovers },
 ])

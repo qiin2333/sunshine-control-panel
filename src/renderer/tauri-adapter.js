@@ -117,6 +117,18 @@ export const moonlightWeb = {
   generateCert: () => invoke('moonlight_web_generate_cert'),
 }
 
+// ─── ControllerMeta ──────────────────────────────────────
+
+export const controllerMeta = {
+  getStatus: () => wrapDefault('controllermeta_get_status',
+    { installed: false, running: false, install_path: '', binary_path: '', version: '' }),
+  checkRelease: () => invoke('controllermeta_check_release'),
+  download: (url, version) => invoke('controllermeta_download', { url, version: version || '' }),
+  launch: () => invoke('controllermeta_launch'),
+  getInstallPath: () => invoke('controllermeta_get_install_path'),
+  uninstall: () => invoke('controllermeta_uninstall'),
+}
+
 // ─── 文件系统 ────────────────────────────────────────────
 
 export async function readDirectory(path) {
@@ -133,5 +145,6 @@ export default {
   sunshine,
   tools,
   moonlightWeb,
+  controllerMeta,
   readDirectory,
 }

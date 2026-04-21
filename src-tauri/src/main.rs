@@ -18,6 +18,7 @@ mod windows;
 mod app;
 mod commands;
 mod moonlight_web;
+mod controllermeta;
 
 use log::info;
 
@@ -139,6 +140,12 @@ fn main() {
             moonlight_web::moonlight_web_download,
             moonlight_web::moonlight_web_get_install_path,
             moonlight_web::moonlight_web_generate_cert,
+            controllermeta::controllermeta_get_status,
+            controllermeta::controllermeta_check_release,
+            controllermeta::controllermeta_download,
+            controllermeta::controllermeta_launch,
+            controllermeta::controllermeta_get_install_path,
+            controllermeta::controllermeta_uninstall,
             windows::_webview_heartbeat,
             rtss::get_rtss_status,
             rtss::rtss_set_osd,

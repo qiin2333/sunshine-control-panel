@@ -1,5 +1,5 @@
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { openExternalUrl, tools, vmouse } from '@/tauri-adapter.js'
+import { ElMessage, ElMessageBox, ElLoading, ElNotification } from 'element-plus'
+import { openExternalUrl, tools, vmouse, controllerMeta } from '@/tauri-adapter.js'
 
 /**
  * 工具操作 Composable
@@ -282,6 +282,167 @@ export function useTools() {
     )
   }
 
+  /**
+   * 打开手柄测试工具（ControllerMeta）
+   *
+   * 流程：
+   * 1. 已安装 → 直接启动
+   * 2. 未安装 → 询问用户：下载并启动 / 打开网页版 / 取消
+   * 3. 下载过程中通过消息提示进度
+   */
+  const openGamepadTest = async () => {
+    const FALLBACK_WEB = 'https://hardwaretester.com/gamepad'
+    const OFFICIAL_SITE = 'https://www.controllermeta.com/'
+
+    // 规范化版本号比较：忽略 v 前缀、按数字段比较
+    const normalizeVersion = (v) => String(v || '').trim().replace(/^v/i, '')
+    const compareVersion = (a, b) => {
+      const pa = normalizeVersion(a).split('.').map((x) => parseInt(x, 10) || 0)
+      const pb = normalizeVersion(b).split('.').map((x) => parseInt(x, 10) || 0)
+      const len = Math.max(pa.length, pb.length)
+      for (let i = 0; i < len; i++) {
+        const d = (pa[i] || 0) - (pb[i] || 0)
+        if (d !== 0) return d
+      }
+      return 0
+    }
+
+    // 执行下载 + 启动的完整流程（已有 loading 实例时复用）
+    const downloadAndLaunch = async (release, loading) => {
+      const sizeMb = release.download_size
+        ? (release.download_size / 1024 / 1024).toFixed(1)
+        : '?'
+      loading.setText(`⏳ 正在下载 ControllerMeta ${release.version} (${sizeMb} MB)... 0%`)
+
+      const { listen } = await import('@tauri-apps/api/event')
+      const unlisten = await listen('controllermeta-download-progress', (event) => {
+        const p = event.payload?.progress ?? 0
+        const downloaded = ((event.payload?.downloaded ?? 0) / 1024 / 1024).toFixed(1)
+        loading.setText(`⏳ 下载中 ${release.version} - ${downloaded}/${sizeMb} MB (${p}%)`)
+      })
+
+      try {
+        await controllerMeta.download(release.download_url, release.version)
+        unlisten()
+        loading.close()
+        ElMessage.success(`ControllerMeta ${release.version} 安装完成，正在启动...`)
+        try {
+          await controllerMeta.launch()
+        } catch (err) {
+          ElMessage.error(`启动失败: ${err}`)
+        }
+      } catch (err) {
+        unlisten()
+        loading.close()
+        console.error('[ControllerMeta] download failed:', err)
+        ElMessage.error(`下载失败: ${err}`)
+      }
+    }
+
+    try {
+      const status = await controllerMeta.getStatus()
+
+      if (status.installed) {
+        // 已安装：先启动（不阻塞），然后后台检查更新
+        try {
+          await controllerMeta.launch()
+          ElMessage.success(
+            `已启动 ControllerMeta${status.version ? ' ' + status.version : ''}`
+          )
+        } catch (err) {
+          ElMessage.error(`启动失败: ${err}`)
+          return
+        }
+
+        // 后台静默检查更新，不打扰用户
+        ;(async () => {
+          try {
+            const release = await controllerMeta.checkRelease()
+            if (
+              release?.download_url &&
+              status.version &&
+              compareVersion(release.version, status.version) > 0
+            ) {
+              ElNotification({
+                title: 'ControllerMeta 有新版本',
+                message: `当前 ${status.version}，最新 ${release.version}。点击「更新」下载并重启。`,
+                type: 'info',
+                duration: 0,
+                position: 'bottom-right',
+                dangerouslyUseHTMLString: false,
+                onClick: async () => {
+                  const loading = ElLoading.service({
+                    lock: true,
+                    text: '准备更新...',
+                    background: 'rgba(0, 0, 0, 0.5)',
+                  })
+                  await downloadAndLaunch(release, loading)
+                },
+              })
+            }
+          } catch (err) {
+            console.warn('[ControllerMeta] 后台检查更新失败（静默）:', err)
+          }
+        })()
+
+        return
+      }
+
+      // 未安装：询问用户操作
+      let choice
+      try {
+        choice = await ElMessageBox({
+          title: '手柄测试工具',
+          message:
+            'ControllerMeta 是一款高精度手柄分析工具（实时摇杆轨迹、8000Hz 回报率检测、震动测试等）。\n\n首次使用需要下载安装（约 17 MB，来自 GitHub Releases）。',
+          showCancelButton: true,
+          distinguishCancelAndClose: true,
+          confirmButtonText: '下载并启动',
+          cancelButtonText: '打开网页版',
+          closeOnClickModal: false,
+          type: 'info',
+        })
+      } catch (action) {
+        if (action === 'cancel') {
+          await openExternalUrl(FALLBACK_WEB)
+        }
+        return
+      }
+
+      if (choice?.action !== 'confirm') return
+
+      const loading = ElLoading.service({
+        lock: true,
+        text: '🔍 正在查询 ControllerMeta 最新版本...',
+        background: 'rgba(0, 0, 0, 0.5)',
+      })
+
+      let release
+      try {
+        release = await controllerMeta.checkRelease()
+      } catch (err) {
+        loading.close()
+        console.error('[ControllerMeta] checkRelease failed:', err)
+        ElMessage.error(`查询版本失败（可能是网络问题）: ${err}`)
+        await openExternalUrl(OFFICIAL_SITE)
+        return
+      }
+
+      if (!release?.download_url) {
+        loading.close()
+        ElMessage.warning('未找到可下载的安装包，已打开官网')
+        await openExternalUrl(OFFICIAL_SITE)
+        return
+      }
+
+      await downloadAndLaunch(release, loading)
+    } catch (err) {
+      console.error('[ControllerMeta] openGamepadTest failed:', err)
+      ElMessage.error(`手柄测试工具不可用: ${err}`)
+      await openExternalUrl(FALLBACK_WEB)
+    }
+  }
+
   return {
     confirmAction,
     uninstallVdd,
@@ -296,6 +457,7 @@ export function useTools() {
     createWindow,
     installVmouse,
     uninstallVmouse,
+    openGamepadTest,
   }
 }
 

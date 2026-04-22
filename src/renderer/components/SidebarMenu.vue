@@ -165,29 +165,13 @@ import UpdateDialog from './UpdateDialog.vue'
 import { useSidebarState } from '../composables/useSidebarState.js'
 import { useWindowControls } from '../composables/useWindowControls.js'
 import { useTools } from '../composables/useTools.js'
+import {
+  createManagementTools,
+  createUtilityTools,
+  createFooterTools,
+} from '../composables/toolsRegistry.js'
 import { ROUTES } from '../composables/useRouter.js'
 import { useI18n } from '../desktop/i18n/index.js'
-import IconLang from '../desktop/icons/IconLang.vue'
-import {
-  Monitor,
-  Delete,
-  RefreshRight,
-  Refresh,
-  Link,
-  Setting,
-  CopyDocument,
-  Timer,
-  DataLine,
-  Cpu,
-  Minus,
-  Close,
-  Sunny,
-  Moon,
-  Key,
-  Download,
-  Connection,
-  MagicStick,
-} from '@element-plus/icons-vue'
 
 const emit = defineEmits(['route-change'])
 
@@ -240,39 +224,32 @@ const handleCheckForUpdates = async () => {
 
 const handleSkipVersion = (version) => skipVersion(version)
 
-// 菜单配置
-const managementMenuItems = computed(() => [
-  { icon: Setting, label: t.value.sidebar.advancedSettings, action: goHome, isActive: () => router.isRoute(ROUTES.HOME) },
-  { icon: Monitor, label: t.value.sidebar.virtualDisplay, action: openVddSettings, isActive: () => router.isRoute(ROUTES.VDD_SETTINGS) },
-  ...(import.meta.env.DEV ? [{ icon: Connection, label: t.value.sidebar.webStream, action: openWebStream, isActive: () => router.isRoute(ROUTES.WEB_STREAM) }] : []),
-  { icon: MagicStick, label: t.value.sidebar.aiAssistant, action: openAiAssistant, isActive: () => router.isRoute(ROUTES.AI_ASSISTANT) },
-  // { icon: Delete, label: t.value.sidebar.uninstallVdd, action: uninstallVdd },
-  // { icon: RefreshRight, label: t.value.sidebar.restartGpu, action: restartDriver },
-  // { icon: Refresh, label: '使用WGC捕获', action: restartSunshineInUserMode },
-  { icon: Download, label: t.value.sidebar.checkUpdate, action: handleCheckForUpdates, hasSwitch: true },
-])
+// 菜单配置：从 toolsRegistry 读取（新增/修改菜单只需改那个文件）
+const toolsCtx = {
+  t,
+  locale,
+  router,
+  isDark,
+  isAdmin,
+  toggleTheme,
+  toggleLocale,
+  minimizeWindow,
+  closeWindow,
+  goHome,
+  openVddSettings,
+  openWebStream,
+  openAiAssistant,
+  handleCheckForUpdates,
+  openTimer,
+  openUrl,
+  openGamepadTest,
+  cleanupCovers,
+  restartAsAdmin,
+}
 
-const toolsMenuItems = computed(() => [
-  { icon: Link, label: t.value.sidebar.officialWebsite, action: () => openUrl('https://www.alkaidlab.com/') },
-  { icon: Timer, label: t.value.sidebar.streamTimer, action: openTimer },
-  { icon: DataLine, label: t.value.sidebar.latencyTest, action: () => openUrl('https://yangkile.github.io/D-lay/') },
-  { icon: Cpu, label: t.value.sidebar.gamepadTest, action: openGamepadTest },
-  { icon: CopyDocument, label: t.value.sidebar.clipboardSync, action: () => openUrl('https://gcopy.rutron.net/zh') },
-  { icon: Delete, label: t.value.sidebar.cleanTemp, action: cleanupCovers },
-])
-
-const footerMenuItems = computed(() => {
-  const items = [
-    { icon: isDark.value ? Sunny : Moon, label: isDark.value ? t.value.sidebar.lightMode : t.value.sidebar.darkMode, action: toggleTheme },
-    { icon: IconLang, label: locale.value === 'zh' ? 'EN' : '中文', action: toggleLocale },
-    { icon: Minus, label: t.value.sidebar.minimize, action: minimizeWindow },
-    { icon: Close, label: t.value.sidebar.hideWindow, action: closeWindow, class: 'danger' },
-  ]
-  if (!isAdmin.value) {
-    items.push({ icon: Key, label: t.value.sidebar.restartAsAdmin, action: restartAsAdmin, class: 'warning' })
-  }
-  return items
-})
+const managementMenuItems = computed(() => createManagementTools(toolsCtx))
+const toolsMenuItems = computed(() => createUtilityTools(toolsCtx))
+const footerMenuItems = computed(() => createFooterTools(toolsCtx))
 
 // 路由变化时通知父组件（用于 iframe 休眠/唤醒）
 watch(() => router.currentRoute.value, (newRoute, oldRoute) => {

@@ -34,8 +34,8 @@ use clipboard_rs::{
 };
 use log::{debug, info, warn};
 use serde::Serialize;
+use tauri::async_runtime::JoinHandle;
 use tokio::sync::Notify;
-use tokio::task::JoinHandle;
 
 use crate::sunshine::{create_https_client, get_sunshine_url};
 
@@ -50,6 +50,14 @@ const MAX_IMAGE_PIXELS: u64 = 32 * 1024 * 1024;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 const SSE_RECONNECT_BACKOFF: Duration = Duration::from_secs(3);
 const ECHO_TTL: Duration = Duration::from_secs(5);
+
+fn create_sse_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .connect_timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("创建 SSE HTTP 客户端失败: {}", e))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
@@ -183,8 +191,8 @@ impl ClipboardHandler for WatcherCallbacks {
         let busy = self.busy.clone();
         // Do the (potentially blocking) clipboard read off the watcher thread
         // so we don't stall additional events. spawn_blocking is fine.
-        tokio::spawn(async move {
-            tokio::task::spawn_blocking(move || snapshot_and_post(&echo))
+        tauri::async_runtime::spawn(async move {
+            tauri::async_runtime::spawn_blocking(move || snapshot_and_post(&echo))
                 .await
                 .ok();
             busy.store(false, Ordering::Release);
@@ -244,7 +252,7 @@ fn post_outbound(kind: Kind, payload: Vec<u8>) {
         st.next_token
     };
     let body = encode_frame(&Frame { kind, token, payload });
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         if let Err(e) = post_item(body).await {
             warn!("clipboard /item POST failed: {e}");
         }
@@ -360,7 +368,7 @@ async fn sse_pump(stop: Arc<Notify>, echo: Arc<Mutex<EchoState>>) {
         };
         let endpoint = format!("{}/api/v1/clipboard/events", url.trim_end_matches('/'));
 
-        let client = match create_https_client() {
+        let client = match create_sse_client() {
             Ok(c) => c,
             Err(e) => {
                 warn!("clipboard SSE: client: {e}");
@@ -408,7 +416,7 @@ async fn sse_pump(stop: Arc<Notify>, echo: Arc<Mutex<EchoState>>) {
                             let raw = buf.drain(..end + 2).collect::<Vec<u8>>();
                             if let Some(frame) = parse_sse_event(&raw) {
                                 let echo = echo.clone();
-                                tokio::task::spawn_blocking(move || apply_inbound(frame, &echo));
+                                tauri::async_runtime::spawn_blocking(move || apply_inbound(frame, &echo));
                             }
                         }
                     }
@@ -504,10 +512,10 @@ pub fn start() -> Result<(), String> {
 
     let sse_stop = stop.clone();
     let sse_echo = echo.clone();
-    let sse_task = tokio::spawn(async move { sse_pump(sse_stop, sse_echo).await });
+    let sse_task = tauri::async_runtime::spawn(async move { sse_pump(sse_stop, sse_echo).await });
 
     let hb_stop = stop.clone();
-    let heartbeat_task = tokio::spawn(async move { heartbeat_pump(hb_stop).await });
+    let heartbeat_task = tauri::async_runtime::spawn(async move { heartbeat_pump(hb_stop).await });
 
     st.enabled = true;
     st.stop = Some(stop);

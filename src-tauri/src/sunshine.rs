@@ -228,6 +228,14 @@ const DEFAULT_WEB_UI_PORT: u16 = 47990;
 
 #[tauri::command]
 pub async fn get_sunshine_url() -> Result<String, String> {
+    // 开发模式下优先使用环境变量，和本地代理保持一致
+    if let Ok(url) = std::env::var("WEBUI_DEV_TARGET") {
+        if let Some(base) = parse_url_to_base(&url) {
+            return Ok(base);
+        }
+        return Err(format!("Invalid WEBUI_DEV_TARGET: {}", url));
+    }
+
     // 优先检查命令行参数
     if let Some(url) = get_command_line_url() {
         return parse_url_to_base(&url).ok_or_else(|| url);

@@ -19,6 +19,7 @@ mod app;
 mod commands;
 mod moonlight_web;
 mod controllermeta;
+mod clipboard;
 
 use log::info;
 
@@ -146,6 +147,9 @@ fn main() {
             controllermeta::controllermeta_launch,
             controllermeta::controllermeta_get_install_path,
             controllermeta::controllermeta_uninstall,
+            clipboard::clipboard_sync_enable,
+            clipboard::clipboard_sync_disable,
+            clipboard::clipboard_sync_status,
             windows::_webview_heartbeat,
             rtss::get_rtss_status,
             rtss::rtss_set_osd,

@@ -131,7 +131,8 @@ export function createUtilityTools(ctx) {
       id: 'clipboard-sync',
       icon: CopyDocument,
       label: ctx.t.value.sidebar.clipboardSync,
-      action: () => ctx.openUrl('https://gcopy.rutron.net/zh'),
+      action: ctx.toggleClipboardSync,
+      isActive: () => ctx.clipboardSyncEnabled?.value === true,
     },
     {
       id: 'clean-temp',

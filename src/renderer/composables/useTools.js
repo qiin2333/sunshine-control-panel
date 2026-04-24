@@ -1,5 +1,10 @@
+import { ref } from 'vue'
 import { ElMessage, ElMessageBox, ElLoading, ElNotification } from 'element-plus'
 import { openExternalUrl, tools, vmouse, controllerMeta } from '@/tauri-adapter.js'
+
+// Module-scoped reactive flag so all sidebar instances share state.
+const clipboardSyncEnabled = ref(false)
+let clipboardSyncInitialised = false
 
 /**
  * 工具操作 Composable
@@ -443,6 +448,40 @@ export function useTools() {
     }
   }
 
+  /**
+   * Toggle the user-session clipboard sync agent.
+   * Pure UI helper: starts/stops the watcher + SSE pump in the Tauri backend
+   * and surfaces a single toast. Heavy lifting lives in src-tauri/src/clipboard.rs.
+   */
+  const toggleClipboardSync = async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core')
+      const cmd = clipboardSyncEnabled.value ? 'clipboard_sync_disable' : 'clipboard_sync_enable'
+      const status = await invoke(cmd)
+      clipboardSyncEnabled.value = !!status?.enabled
+      ElMessage.success(
+        clipboardSyncEnabled.value
+          ? '剪贴板同步已开启'
+          : '剪贴板同步已关闭'
+      )
+    } catch (err) {
+      ElMessage.error(`剪贴板同步切换失败: ${err}`)
+    }
+  }
+
+  /** One-time read of the current agent state on first sidebar render. */
+  const initClipboardSyncStatus = async () => {
+    if (clipboardSyncInitialised) return
+    clipboardSyncInitialised = true
+    try {
+      const { invoke } = await import('@tauri-apps/api/core')
+      const status = await invoke('clipboard_sync_status')
+      clipboardSyncEnabled.value = !!status?.enabled
+    } catch (err) {
+      console.warn('[clipboard] status query failed:', err)
+    }
+  }
+
   return {
     confirmAction,
     uninstallVdd,
@@ -458,6 +497,9 @@ export function useTools() {
     installVmouse,
     uninstallVmouse,
     openGamepadTest,
+    toggleClipboardSync,
+    initClipboardSyncStatus,
+    clipboardSyncEnabled,
   }
 }
 

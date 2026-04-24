@@ -156,7 +156,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onMounted } from 'vue'
 import VddSettings from './VddSettings.vue'
 import Welcome from './welcome.vue'
 import WebStreamSettings from './WebStreamSettings.vue'
@@ -212,7 +212,17 @@ const {
   restartAsAdmin,
   checkForUpdates,
   openGamepadTest,
+  toggleClipboardSync,
+  initClipboardSyncStatus,
+  clipboardSyncEnabled,
 } = useTools()
+
+// Read the agent's current state once on mount so the sidebar reflects
+// any sync that survives across panel reloads (it doesn't currently, but the
+// hook is there for future persistence).
+onMounted(() => {
+  initClipboardSyncStatus()
+})
 
 const handleCheckForUpdates = async () => {
   const result = await checkForUpdates()
@@ -245,6 +255,8 @@ const toolsCtx = {
   openGamepadTest,
   cleanupCovers,
   restartAsAdmin,
+  toggleClipboardSync,
+  clipboardSyncEnabled,
 }
 
 const managementMenuItems = computed(() => createManagementTools(toolsCtx))

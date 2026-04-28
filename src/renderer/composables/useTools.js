@@ -299,6 +299,8 @@ export function useTools() {
     const FALLBACK_WEB = 'https://hardwaretester.com/gamepad'
     const OFFICIAL_SITE = 'https://www.controllermeta.com/'
 
+    ElMessage.info('正在准备手柄测试工具...')
+
     // 规范化版本号比较：忽略 v 前缀、按数字段比较
     const normalizeVersion = (v) => String(v || '').trim().replace(/^v/i, '')
     const compareVersion = (a, b) => {
@@ -414,7 +416,10 @@ export function useTools() {
         return
       }
 
-      if (choice?.action !== 'confirm') return
+      // ElMessageBox 在当前 Element Plus 版本中 resolve 的是 action 字符串（如 'confirm'），
+      // 不是 { action: 'confirm' } 对象。旧判断会导致点击「下载并启动」后直接返回，
+      // loading 和下载进度监听都不会创建。
+      if (choice !== 'confirm') return
 
       const loading = ElLoading.service({
         lock: true,

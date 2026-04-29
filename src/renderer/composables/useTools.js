@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { ElMessage, ElMessageBox, ElLoading, ElNotification } from 'element-plus'
 import { openExternalUrl, tools, vmouse, controllerMeta } from '@/tauri-adapter.js'
+import { useI18n } from '../desktop/i18n/index.js'
 
 // Module-scoped reactive flag so all sidebar instances share state.
 const clipboardSyncEnabled = ref(false)
@@ -10,6 +11,8 @@ let clipboardSyncInitialised = false
  * 工具操作 Composable
  */
 export function useTools() {
+  const { t } = useI18n()
+
   /**
    * 公共确认对话框操作
    * @param {string} message - 确认消息
@@ -454,37 +457,45 @@ export function useTools() {
   }
 
   /**
-   * Toggle the user-session clipboard sync agent.
-   * Pure UI helper: starts/stops the watcher + SSE pump in the Tauri backend
-   * and surfaces a single toast. Heavy lifting lives in src-tauri/src/clipboard.rs.
+   * Clipboard sync is enabled by default whenever the user-session agent is
+   * alive. The sidebar button no longer toggles anything — it only reflects
+   * status and reports it on click.
    */
-  const toggleClipboardSync = async () => {
-    try {
-      const { invoke } = await import('@tauri-apps/api/core')
-      const cmd = clipboardSyncEnabled.value ? 'clipboard_sync_disable' : 'clipboard_sync_enable'
-      const status = await invoke(cmd)
-      clipboardSyncEnabled.value = !!status?.enabled
-      ElMessage.success(
-        clipboardSyncEnabled.value
-          ? '剪贴板同步已开启'
-          : '剪贴板同步已关闭'
-      )
-    } catch (err) {
-      ElMessage.error(`剪贴板同步切换失败: ${err}`)
-    }
-  }
-
-  /** One-time read of the current agent state on first sidebar render. */
-  const initClipboardSyncStatus = async () => {
-    if (clipboardSyncInitialised) return
-    clipboardSyncInitialised = true
+  const refreshClipboardSyncStatus = async () => {
     try {
       const { invoke } = await import('@tauri-apps/api/core')
       const status = await invoke('clipboard_sync_status')
-      clipboardSyncEnabled.value = !!status?.enabled
+      clipboardSyncEnabled.value = !!status?.agent_active
+      return status
     } catch (err) {
       console.warn('[clipboard] status query failed:', err)
+      return null
     }
+  }
+
+  const showClipboardSyncStatus = async () => {
+    const status = await refreshClipboardSyncStatus()
+    const msg = t.value.clipboardSync
+    if (!status) {
+      ElMessage.warning(msg.statusUnavailable)
+      return
+    }
+    if (status.agent_active && status.service_allowed) {
+      ElMessage.success(msg.active)
+    } else if (!status.agent_active && status.service_allowed) {
+      ElMessage.warning(msg.agentInactive)
+    } else if (status.agent_active && !status.service_allowed) {
+      ElMessage.warning(msg.serviceDisabled)
+    } else {
+      ElMessage.info(msg.inactive)
+    }
+  }
+
+  /** Initial read on first sidebar render so the indicator dot is correct. */
+  const initClipboardSyncStatus = async () => {
+    if (clipboardSyncInitialised) return
+    clipboardSyncInitialised = true
+    await refreshClipboardSyncStatus()
   }
 
   return {
@@ -502,7 +513,7 @@ export function useTools() {
     installVmouse,
     uninstallVmouse,
     openGamepadTest,
-    toggleClipboardSync,
+    showClipboardSyncStatus,
     initClipboardSyncStatus,
     clipboardSyncEnabled,
   }

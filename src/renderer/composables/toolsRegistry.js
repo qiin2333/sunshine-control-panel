@@ -131,7 +131,7 @@ export function createUtilityTools(ctx) {
       id: 'clipboard-sync',
       icon: CopyDocument,
       label: ctx.t.value.sidebar.clipboardSync,
-      action: ctx.toggleClipboardSync,
+      action: ctx.showClipboardSyncStatus,
       isActive: () => ctx.clipboardSyncEnabled?.value === true,
     },
     {

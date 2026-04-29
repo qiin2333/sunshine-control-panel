@@ -41,7 +41,11 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
     register_global_shortcuts(app)?;
     setup_menu_event_handler(app);
     start_proxy_server_async();
-    
+
+    // 剪贴板同步：用户会话 agent 默认随面板启动；服务端如果禁用了则 SSE 自然失败，
+    // 不需要额外开关。
+    crate::clipboard::auto_start();
+
     // 启动 WebView 心跳监控（检测渲染进程崩溃并自动恢复）
     windows::start_heartbeat_monitor(app.handle().clone());
     

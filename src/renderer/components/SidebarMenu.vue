@@ -63,7 +63,13 @@
         <!-- 工具菜单 -->
         <div class="menu-section">
           <p v-if="!isCollapsed" class="section-title">{{ t.sidebar.sectionTools }}</p>
-          <div v-for="item in toolsMenuItems" :key="item.label" class="menu-item" @click.stop="item.action?.()">
+          <div
+            v-for="item in toolsMenuItems"
+            :key="item.label"
+            class="menu-item"
+            :class="{ active: item.isActive?.() }"
+            @click.stop="item.action?.()"
+          >
             <el-icon :size="20"><component :is="item.icon" /></el-icon>
             <transition name="fade">
               <span v-if="!isCollapsed">{{ item.label }}</span>
@@ -212,7 +218,7 @@ const {
   restartAsAdmin,
   checkForUpdates,
   openGamepadTest,
-  toggleClipboardSync,
+  showClipboardSyncStatus,
   initClipboardSyncStatus,
   clipboardSyncEnabled,
 } = useTools()
@@ -255,7 +261,7 @@ const toolsCtx = {
   openGamepadTest,
   cleanupCovers,
   restartAsAdmin,
-  toggleClipboardSync,
+  showClipboardSyncStatus,
   clipboardSyncEnabled,
 }
 

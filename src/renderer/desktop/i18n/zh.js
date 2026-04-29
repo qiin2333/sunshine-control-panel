@@ -544,6 +544,14 @@ export const zh = {
     restartAsAdmin: '以管理员重启',
   },
 
+  clipboardSync: {
+    statusUnavailable: '无法获取剪贴板同步状态',
+    active: '剪贴板同步已激活：主机与客户端双向同步',
+    agentInactive: '本地剪贴板同步代理未运行；请重启控制面板重试',
+    serviceDisabled: '主机配置已强制禁用剪贴板同步 (clipboard_sync = false)',
+    inactive: '剪贴板同步未启用',
+  },
+
   // === 系统工具 ===
   systemTools: {
     vddUninstallConfirm: '确定要卸载虚拟显示器驱动吗？此操作需要管理员权限。',

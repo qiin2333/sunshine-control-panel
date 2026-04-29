@@ -171,7 +171,10 @@ static AGENT: once_cell::sync::Lazy<Mutex<State>> =
 
 #[derive(Serialize, Clone, Copy)]
 pub struct ClipboardStatus {
-    pub enabled: bool,
+    /// Local user-session agent is running (watcher + SSE pump active).
+    pub agent_active: bool,
+    /// Sunshine service has clipboard sync allowed (config not force-disabled).
+    pub service_allowed: bool,
 }
 
 // ---------- Outbound watcher ----------
@@ -527,6 +530,7 @@ pub fn start() -> Result<(), String> {
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn stop() {
     let (stop_tx, sse, hb, watcher_shutdown, watcher_thread) = {
         let mut st = AGENT.lock().unwrap();
@@ -560,26 +564,57 @@ pub fn stop() {
     info!("clipboard sync agent stopped");
 }
 
-pub fn current_status() -> ClipboardStatus {
-    let st = AGENT.lock().unwrap();
-    ClipboardStatus { enabled: st.enabled }
+fn agent_active() -> bool {
+    AGENT.lock().unwrap().enabled
+}
+
+async fn query_service_allowed() -> bool {
+    // Service exposes the effective gate at /api/v1/clipboard/capability.
+    // Treat any failure (Sunshine down, network blip) as "unknown but allowed"
+    // so the indicator doesn't flicker red on every reconnect.
+    let url = match get_sunshine_url().await {
+        Ok(u) => u,
+        Err(_) => return true,
+    };
+    let client = match create_https_client() {
+        Ok(c) => c,
+        Err(_) => return true,
+    };
+    let endpoint = format!(
+        "{}/api/v1/clipboard/capability",
+        url.trim_end_matches('/')
+    );
+    let resp = match client.post(&endpoint).send().await {
+        Ok(r) => r,
+        Err(_) => return true,
+    };
+    if !resp.status().is_success() {
+        return true;
+    }
+    let json: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(_) => return true,
+    };
+    json.get("clipboard_sync")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true)
+}
+
+/// Start the agent in the background at app launch. The agent is harmless
+/// when the service has clipboard sync force-disabled: SSE will simply be
+/// rejected and outbound posts will 4xx, so we just keep retrying quietly.
+pub fn auto_start() {
+    if let Err(e) = start() {
+        warn!("clipboard auto-start failed: {e}");
+    }
 }
 
 // ---------- Tauri commands ----------
 
 #[tauri::command]
-pub fn clipboard_sync_enable() -> Result<ClipboardStatus, String> {
-    start()?;
-    Ok(current_status())
-}
-
-#[tauri::command]
-pub fn clipboard_sync_disable() -> Result<ClipboardStatus, String> {
-    stop();
-    Ok(current_status())
-}
-
-#[tauri::command]
-pub fn clipboard_sync_status() -> ClipboardStatus {
-    current_status()
+pub async fn clipboard_sync_status() -> ClipboardStatus {
+    ClipboardStatus {
+        agent_active: agent_active(),
+        service_allowed: query_service_allowed().await,
+    }
 }

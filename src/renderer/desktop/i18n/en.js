@@ -544,6 +544,14 @@ export const en = {
     restartAsAdmin: 'Restart as Admin',
   },
 
+  clipboardSync: {
+    statusUnavailable: 'Unable to get clipboard sync status',
+    active: 'Clipboard sync is active: bidirectional host/client sync is available',
+    agentInactive: 'The local clipboard sync agent is not running. Please restart the control panel and try again.',
+    serviceDisabled: 'Clipboard sync is force-disabled by host config (clipboard_sync = false)',
+    inactive: 'Clipboard sync is not active',
+  },
+
   // === System Tools ===
   systemTools: {
     vddUninstallConfirm: 'Are you sure you want to uninstall the virtual display driver? This requires admin privileges.',

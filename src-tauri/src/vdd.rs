@@ -588,8 +588,23 @@ pub async fn exec_pipe_cmd(command: String) -> Result<bool, String> {
         use windows::Win32::Storage::FileSystem::*;
         use windows::Win32::Foundation::*;
         use windows::core::PCWSTR;
-        
+        use crate::vdd_ioctl;
+
         tokio::task::spawn_blocking(move || {
+            // Preferred path: IOCTL transport. Mirrors the C++ dispatch in
+            // `Sunshine/src/display_device/vdd_utils.cpp`: only fall through
+            // to the legacy pipe when the device interface is absent.
+            match vdd_ioctl::send_command(&command) {
+                vdd_ioctl::IoctlResult::Success => return Ok(true),
+                vdd_ioctl::IoctlResult::Failed(msg) => {
+                    return Err(format!("vdd_ioctl: {msg}"));
+                }
+                vdd_ioctl::IoctlResult::InterfaceMissing => {
+                    // Driver too old / not installed; fall back to pipe.
+                }
+            }
+
+            // [LEGACY-PIPE] Fallback for older driver builds.
             unsafe {
                 let pipe_name = r"\\.\pipe\ZakoVDDPipe";
                 let wide: Vec<u16> = pipe_name.encode_utf16().chain(std::iter::once(0)).collect();

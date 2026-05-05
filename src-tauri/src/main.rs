@@ -2,6 +2,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod vdd;
+#[cfg(target_os = "windows")]
+mod vdd_ioctl;
 mod vmouse;
 mod rtss;
 mod hwinfo;

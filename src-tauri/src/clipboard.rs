@@ -9,11 +9,16 @@
 //!
 //! ```text
 //!   u8 version=1
-//!   u8 kind        (1 = utf8 text, 2 = png image)
+//!   u8 kind        (1 = utf8 text, 2 = png image, 3 = blob ref JSON)
 //!   u32 token      (echo-suppression nonce)
 //!   u32 length
 //!   bytes payload  (length bytes)
 //! ```
+//!
+//! kind=3 (REF) payload is a small UTF-8 JSON object:
+//! `{"id":"<uuid>","mime":"image/png","size":12345}`. The actual blob is
+//! transferred out-of-band over HTTPS (`/api/v1/clipboard/blob[/<id>]`) so we
+//! can move payloads larger than the single-packet 65 KB wire ceiling.
 //!
 //! Echo suppression: every locally-applied inbound payload's hash is recorded
 //! before we touch the clipboard; the watcher's resulting on_clipboard_change
@@ -42,10 +47,19 @@ use crate::sunshine::{create_https_client, get_sunshine_url};
 const WIRE_VERSION: u8 = 1;
 const KIND_TEXT: u8 = 1;
 const KIND_PNG: u8 = 2;
+const KIND_REF: u8 = 3;
 
 const MAX_TEXT_BYTES: usize = 1 * 1024 * 1024;
-const MAX_IMAGE_BYTES: usize = 4 * 1024 * 1024;
+const MAX_IMAGE_BYTES: usize = 50 * 1024 * 1024; // matches service blob cap
 const MAX_IMAGE_PIXELS: u64 = 32 * 1024 * 1024;
+
+/// Payload size at/above which we switch from inline (KIND_TEXT/KIND_PNG)
+/// to out-of-band blob transfer (KIND_REF). Single-packet wire ceiling is
+/// ~65525 bytes of payload, so 60000 leaves comfortable headroom.
+const INLINE_THRESHOLD: usize = 60_000;
+
+const MIME_TEXT: &str = "text/plain; charset=utf-8";
+const MIME_PNG: &str = "image/png";
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 const SSE_RECONNECT_BACKOFF: Duration = Duration::from_secs(3);
@@ -63,6 +77,7 @@ fn create_sse_client() -> Result<reqwest::Client, String> {
 enum Kind {
     Text,
     Png,
+    Ref,
 }
 
 impl Kind {
@@ -70,6 +85,7 @@ impl Kind {
         match b {
             KIND_TEXT => Some(Kind::Text),
             KIND_PNG => Some(Kind::Png),
+            KIND_REF => Some(Kind::Ref),
             _ => None,
         }
     }
@@ -77,6 +93,7 @@ impl Kind {
         match self {
             Kind::Text => KIND_TEXT,
             Kind::Png => KIND_PNG,
+            Kind::Ref => KIND_REF,
         }
     }
 }
@@ -85,6 +102,13 @@ struct Frame {
     kind: Kind,
     token: u32,
     payload: Vec<u8>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
+struct RefMeta {
+    id: String,
+    mime: String,
+    size: u64,
 }
 
 fn encode_frame(f: &Frame) -> Vec<u8> {
@@ -224,7 +248,7 @@ fn snapshot_and_post(echo: &Arc<Mutex<EchoState>>) {
         if echo.lock().unwrap().is_echo(Kind::Text, &bytes) {
             return;
         }
-        post_outbound(Kind::Text, bytes);
+        post_outbound(Kind::Text, bytes, MIME_TEXT);
         return;
     }
 
@@ -244,22 +268,59 @@ fn snapshot_and_post(echo: &Arc<Mutex<EchoState>>) {
         if echo.lock().unwrap().is_echo(Kind::Png, &bytes) {
             return;
         }
-        post_outbound(Kind::Png, bytes);
+        post_outbound(Kind::Png, bytes, MIME_PNG);
     }
 }
 
-fn post_outbound(kind: Kind, payload: Vec<u8>) {
-    let token = {
-        let mut st = AGENT.lock().unwrap();
-        st.next_token = st.next_token.wrapping_add(1).max(1);
-        st.next_token
-    };
+/// Decide inline vs out-of-band based on payload size, then dispatch.
+fn post_outbound(kind: Kind, payload: Vec<u8>, mime: &'static str) {
+    if payload.len() <= INLINE_THRESHOLD {
+        post_inline(kind, payload);
+    } else {
+        post_via_blob(kind, payload, mime);
+    }
+}
+
+fn post_inline(kind: Kind, payload: Vec<u8>) {
+    let token = next_token();
     let body = encode_frame(&Frame { kind, token, payload });
     tauri::async_runtime::spawn(async move {
         if let Err(e) = post_item(body).await {
             warn!("clipboard /item POST failed: {e}");
         }
     });
+}
+
+fn post_via_blob(kind: Kind, payload: Vec<u8>, mime: &'static str) {
+    let size = payload.len() as u64;
+    tauri::async_runtime::spawn(async move {
+        let id = match upload_blob(payload, mime).await {
+            Ok(id) => id,
+            Err(e) => {
+                warn!("clipboard blob upload failed (kind={:?}, size={}): {e}", kind, size);
+                return;
+            }
+        };
+        let meta = RefMeta { id, mime: mime.to_string(), size };
+        let json = match serde_json::to_vec(&meta) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("clipboard ref json encode failed: {e}");
+                return;
+            }
+        };
+        let token = next_token();
+        let body = encode_frame(&Frame { kind: Kind::Ref, token, payload: json });
+        if let Err(e) = post_item(body).await {
+            warn!("clipboard /item POST (ref) failed: {e}");
+        }
+    });
+}
+
+fn next_token() -> u32 {
+    let mut st = AGENT.lock().unwrap();
+    st.next_token = st.next_token.wrapping_add(1).max(1);
+    st.next_token
 }
 
 async fn post_item(body: Vec<u8>) -> Result<(), String> {
@@ -292,9 +353,94 @@ async fn post_capability_once() -> Result<(), String> {
     Ok(())
 }
 
+/// POST /api/v1/clipboard/blob with raw bytes + X-Clipboard-Mime header.
+/// Returns the assigned blob id on success.
+async fn upload_blob(bytes: Vec<u8>, mime: &str) -> Result<String, String> {
+    let url = get_sunshine_url().await?;
+    let client = create_https_client()?;
+    let resp = client
+        .post(format!("{}/api/v1/clipboard/blob", url.trim_end_matches('/')))
+        .header("Content-Type", "application/octet-stream")
+        .header("X-Clipboard-Mime", mime)
+        .body(bytes)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(format!("upload status {}", status));
+    }
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    json.get("id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "upload response missing id".to_string())
+}
+
+/// GET /api/v1/clipboard/blob/<id>. Returns (bytes, mime).
+async fn fetch_blob(id: &str) -> Result<(Vec<u8>, String), String> {
+    let url = get_sunshine_url().await?;
+    let client = create_https_client()?;
+    let resp = client
+        .get(format!("{}/api/v1/clipboard/blob/{}", url.trim_end_matches('/'), id))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("fetch status {}", resp.status()));
+    }
+    let mime = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+    let bytes = resp.bytes().await.map_err(|e| e.to_string())?.to_vec();
+    Ok((bytes, mime))
+}
+
 // ---------- Inbound apply ----------
 
 fn apply_inbound(frame: Frame, echo: &Arc<Mutex<EchoState>>) {
+    // Non-REF path is fully synchronous; REF path is dispatched by the caller
+    // onto the async runtime instead (see sse_pump).
+    apply_inbound_inline(frame, echo);
+}
+
+async fn apply_inbound_ref(frame: Frame, echo: Arc<Mutex<EchoState>>) {
+    let meta: RefMeta = match serde_json::from_slice(&frame.payload) {
+        Ok(m) => m,
+        Err(e) => {
+            warn!("inbound REF: bad json: {e}");
+            return;
+        }
+    };
+    if meta.id.is_empty() || meta.id.len() > 128 {
+        warn!("inbound REF: bad id length");
+        return;
+    }
+    let (bytes, _mime_from_header) = match fetch_blob(&meta.id).await {
+        Ok(t) => t,
+        Err(e) => {
+            warn!("inbound REF: fetch_blob({}) failed: {e}", meta.id);
+            return;
+        }
+    };
+    // Trust the reference's mime (set by the original poster).
+    let kind = match meta.mime.as_str() {
+        m if m.starts_with("text/") => Kind::Text,
+        "image/png" => Kind::Png,
+        other => {
+            warn!("inbound REF: unsupported mime '{}'", other);
+            return;
+        }
+    };
+    let frame = Frame { kind, token: frame.token, payload: bytes };
+    let echo = echo.clone();
+    let _ = tauri::async_runtime::spawn_blocking(move || apply_inbound_inline(frame, &echo)).await;
+}
+
+fn apply_inbound_inline(frame: Frame, echo: &Arc<Mutex<EchoState>>) {
     // Record BEFORE writing so the watcher sees the hash and suppresses.
     echo.lock().unwrap().record(frame.kind, &frame.payload);
 
@@ -343,6 +489,10 @@ fn apply_inbound(frame: Frame, echo: &Arc<Mutex<EchoState>>) {
             if let Err(e) = ctx.set_image(img) {
                 warn!("inbound set_image failed: {e}");
             }
+        }
+        Kind::Ref => {
+            // Already unwrapped above; should never reach here.
+            warn!("apply_inbound_inline got Kind::Ref; dropped");
         }
     }
 }
@@ -419,7 +569,13 @@ async fn sse_pump(stop: Arc<Notify>, echo: Arc<Mutex<EchoState>>) {
                             let raw = buf.drain(..end + 2).collect::<Vec<u8>>();
                             if let Some(frame) = parse_sse_event(&raw) {
                                 let echo = echo.clone();
-                                tauri::async_runtime::spawn_blocking(move || apply_inbound(frame, &echo));
+                                if frame.kind == Kind::Ref {
+                                    tauri::async_runtime::spawn(async move {
+                                        apply_inbound_ref(frame, echo).await;
+                                    });
+                                } else {
+                                    tauri::async_runtime::spawn_blocking(move || apply_inbound(frame, &echo));
+                                }
                             }
                         }
                     }

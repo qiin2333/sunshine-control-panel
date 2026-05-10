@@ -204,7 +204,7 @@ pub async fn install_vmouse_driver() -> Result<String, String> {
         }
 
         info!("调用 install-vmouse.bat 安装虚拟鼠标驱动...");
-        bat_runner::run_elevated(&install_bat, "vmouse")?;
+        bat_runner::run_elevated(&install_bat, "vmouse", &[])?;
 
         // 等待驱动加载
         tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
@@ -235,7 +235,7 @@ pub async fn uninstall_vmouse_driver() -> Result<String, String> {
         }
 
         info!("调用 uninstall-vmouse.bat 卸载虚拟鼠标驱动...");
-        bat_runner::run_elevated(&uninstall_bat, "vmouse")?;
+        bat_runner::run_elevated(&uninstall_bat, "vmouse", &[])?;
 
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 

@@ -181,6 +181,7 @@ pub async fn get_vigem_status() -> Result<VigemStatus, String> {
 #[cfg(target_os = "windows")]
 async fn run_gamepad_script(
     name: &str,
+    extra_args: &[&str],
     success_msg: &str,
     settle_secs: u64,
 ) -> Result<String, String> {
@@ -191,21 +192,32 @@ async fn run_gamepad_script(
             bat.display()
         ));
     }
-    log::info!("调用 {} ...", name);
-    bat_runner::run_elevated(&bat, "vigem")?;
+    log::info!("调用 {} {} ...", name, extra_args.join(" "));
+    bat_runner::run_elevated(&bat, "vigem", extra_args)?;
     tokio::time::sleep(tokio::time::Duration::from_secs(settle_secs)).await;
     Ok(success_msg.to_string())
 }
 
 /// 安装 / 更新 ViGEmBus 驱动（复用 scripts/install-gamepad.bat）
+///
+/// `force=true` 时传递 `force` 参数让 bat 跳过“已装 >=1.17 就 skip”的逻辑，
+/// 强制拉取并重装最新 nefarius/vigembus 发行版。
 #[tauri::command]
-pub async fn install_vigem_driver() -> Result<String, String> {
+pub async fn install_vigem_driver(force: Option<bool>) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
-        run_gamepad_script("install-gamepad.bat", "ViGEmBus 驱动安装完成", 2).await
+        let force = force.unwrap_or(false);
+        let args: &[&str] = if force { &["force"] } else { &[] };
+        let msg = if force {
+            "ViGEmBus 驱动已重新安装为最新版"
+        } else {
+            "ViGEmBus 驱动安装完成"
+        };
+        run_gamepad_script("install-gamepad.bat", args, msg, 2).await
     }
     #[cfg(not(target_os = "windows"))]
     {
+        let _ = force;
         Err("此功能仅支持 Windows".to_string())
     }
 }
@@ -215,7 +227,7 @@ pub async fn install_vigem_driver() -> Result<String, String> {
 pub async fn uninstall_vigem_driver() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
-        run_gamepad_script("uninstall-gamepad.bat", "ViGEmBus 驱动已卸载", 2).await
+        run_gamepad_script("uninstall-gamepad.bat", &[], "ViGEmBus 驱动已卸载", 2).await
     }
     #[cfg(not(target_os = "windows"))]
     {

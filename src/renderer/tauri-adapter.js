@@ -82,7 +82,7 @@ export const vmouse = {
 
 export const vigem = {
   getStatus: () => wrapResult('get_vigem_status'),
-  install: () => wrapResult('install_vigem_driver'),
+  install: (force = false) => wrapResult('install_vigem_driver', { force: !!force }),
   uninstall: () => wrapResult('uninstall_vigem_driver'),
 }
 

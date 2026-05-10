@@ -116,8 +116,8 @@
         }
       }
     },
-    async install() {
-      return await invoke('install_vigem_driver')
+    async install(force = false) {
+      return await invoke('install_vigem_driver', { force: !!force })
     },
     async uninstall() {
       return await invoke('uninstall_vigem_driver')

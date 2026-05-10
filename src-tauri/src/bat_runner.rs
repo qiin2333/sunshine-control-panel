@@ -42,7 +42,7 @@ pub fn is_elevated() -> bool {
 /// 因此走更稳的方式：在 `%TEMP%` 写一份只有几行的 wrapper.bat，里面自己
 /// 重定向 + exit /b %ERRORLEVEL%，然后让 PowerShell 直接 Start-Process
 /// 这份 wrapper（不需要任何引号嵌套）。
-pub fn run_elevated(bat_path: &Path, log_prefix: &str) -> Result<(), String> {
+pub fn run_elevated(bat_path: &Path, log_prefix: &str, extra_args: &[&str]) -> Result<(), String> {
     let stem = bat_path
         .file_stem()
         .and_then(|s| s.to_str())
@@ -50,11 +50,18 @@ pub fn run_elevated(bat_path: &Path, log_prefix: &str) -> Result<(), String> {
     let log_path = std::env::temp_dir().join(format!("sunshine-{}-{}.log", log_prefix, stem));
     let log_str = log_path.to_string_lossy().into_owned();
 
+    // 把额外参数拼成 cmd-safe 的字符串：每个参数用双引号包裹
+    let args_cmd: String = extra_args
+        .iter()
+        .map(|a| format!(" \"{}\"", a))
+        .collect();
+
     if is_elevated() {
         // 已有管理员权限，cmd 自己重定向把全部输出落盘
         let cmd_line = format!(
-            r#""{bat}" > "{log}" 2>&1"#,
+            r#""{bat}"{args} > "{log}" 2>&1"#,
             bat = bat_path.display(),
+            args = args_cmd,
             log = log_str
         );
         let output = Command::new("cmd")
@@ -78,7 +85,14 @@ pub fn run_elevated(bat_path: &Path, log_prefix: &str) -> Result<(), String> {
             // chcp 65001 让中文输出不乱码
             writeln!(f, "@echo off").ok();
             writeln!(f, "chcp 65001 >nul").ok();
-            writeln!(f, r#"call "{}" > "{}" 2>&1"#, bat_path.display(), log_str).ok();
+            writeln!(
+                f,
+                r#"call "{}"{} > "{}" 2>&1"#,
+                bat_path.display(),
+                args_cmd,
+                log_str
+            )
+            .ok();
             writeln!(f, "exit /b %ERRORLEVEL%").ok();
         }
 

@@ -34,15 +34,20 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Cache Cargo
+      # Only cache Cargo registry/git (download deps), NOT src-tauri/target.
+      # Caching the build target dir caused a Tauri proc-macro fingerprint
+      # corruption that silently dropped some `generate_handler!` entries
+      # (install_vmouse_driver / uninstall_vmouse_driver) from the IPC dispatch
+      # table while leaving sibling commands intact. Always rebuild the crate
+      # from scratch; deps stay cached so CI cost is bounded.
+      - name: Cache Cargo registry
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
 
       - name: Install npm dependencies
         run: npm install

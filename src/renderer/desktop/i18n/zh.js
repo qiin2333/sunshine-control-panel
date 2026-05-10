@@ -328,6 +328,96 @@ export const zh = {
     title: 'Moonlight 串流快捷键手册',
   },
 
+  // === 桌宠设置 ===
+  petTool: {
+    title: '桌宠设置',
+    language: '语言',
+    languageDesc: '切换设置面板语言',
+    tabs: {
+      speech: '对话',
+      animation: '动画',
+    },
+    animationMore: '更多动画选项后续加入…',
+    master: '桌宠对话总开关',
+    masterDesc: '关闭后桌宠不会说话，下面选项均不生效',
+    random: '随机对话',
+    randomDesc: '预设对话',
+    speechInterval: '对话间隔',
+    speechIntervalDesc: '两句话之间的间隔时间（最小 15 秒）',
+    jitter: '变化频率',
+    jitterDesc: '修改变化频率间隔，可以缓解机械感（0% 关闭，最高 100%）',
+    vision: '桌面观察',
+    visionDesc: '桌宠会定时偏看你的屏幕并生成评论（需要多模态 AI）',
+    visionHelp: '需要在「米塔 AI 助手」中配置好 API Key，且选择支持视觉的模型。\n启用后桌宠会定时截屏并交给 AI 生成一句针对屏幕内容的吐槽。',
+    visionInterval: '观察间隔',
+    visionIntervalDesc: '多久看一次桌面并生成评论（最小 15 秒）',
+    visionCostHint: '间隔较短会频繁调用 AI，可能消耗较多 API 额度',
+    pokeNow: '立即观察',
+    pokeNowDesc: '让桌宠马上看一眼屏幕并说一句',
+    pokeBtn: '戳一下',
+    visionHistory: '最近历史',
+    visionHistoryDesc: '查看桌宠最近的 5 句历史',
+    visionHistoryEmpty: '还没有历史记录，戳一下试试～',
+    visionHistoryClear: '清空',
+    visionHistoryView: '查看',
+    aiKeyMissing: '尚未配置 AI 助手',
+    aiKeyMissingDesc: '请先在「米塔 AI 助手」中填入 API Key 并启用，然后重新打开此面板，才能开启桌面观察。',
+    // 桌宠气泡中使用的运行时提示
+    runtime: {
+      // 后端话术加载失败时用的内置傅本
+      defaultPhrases: [
+        '杂鱼～杂鱼～',
+        '串流画质又调低了？杂鱼～',
+        '码率不够高哦，杂鱼看得清吗♡',
+        '延迟这么高，杂鱼在干什么呢～',
+        '帧率掉了吧？杂鱼的网络不太行呢',
+        '虚拟显示器开着呢，杂鱼想看什么？',
+        '嘶嘶，杂鱼又在偷偷串流了～',
+        'DPI调那么高，杂鱼眼睛受得了吗♡',
+        '连接不稳定哦，杂鱼要检查网络啦～',
+        '串流质量还不错嘛，杂鱼今天很乖♡',
+        '又在调码率了？杂鱼真是麻烦呢～',
+        '分辨率调这么低，杂鱼是想省流量吗',
+        '串流开这么久，杂鱼不累吗？',
+        '网络波动了哦，杂鱼要注意啦♡',
+        '画面卡顿了吧？杂鱼就是杂鱼～',
+        '音频延迟了呢，杂鱼听得清吗♡',
+        '串流设置改来改去，杂鱼真挑剔～',
+      ],
+      visionPrompt: `你是一个可爱但毒舌的桌面宠物"米塔"。你正在偷看用户的电脑屏幕。
+根据截图内容，假定用户正在做某件事，然后调戏用户。不要用"你是不是在..."这种猜测句式，而是直接断言"你又在..."来调侃。
+15-40字，雌小鬼风格，常用口癖：杂鱼♡、哼、切、笨蛋。
+示例风格：
+- 看到游戏→"又在打游戏偷懒了♡ 杂鱼的操作真是一言难尽呢～"
+- 看到代码→"写了半天bug又多了吧，杂鱼程序员～"
+- 看到摸鱼→"上班时间逛这个，被老板看到可就惨了呢♡"
+- 看到聊天→"跟谁聊得这么开心？哼，才不在意呢"
+只输出一句话，不要解释。用中文回复。`,
+      visionUserMsg: '看看我的桌面，说点什么吧',
+      visionNotConfigured: '还没配好 AI 助手哦，去「米塔 AI 助手」填个 Key 吧～',
+      visionEmpty: 'AI 返回了一口气，什么都没说…试试换个模型？',
+      visionErrorPrefix: '看晕了：',
+      visionUnknownError: '发生什么事了？',
+      visionLoading: '正在偷看屏幕…',
+      visionTimeout: '看太久了眼睛都花了，试试换个模型吧',
+      visionCooldown: '刚看过哦，让我歇一下再看',
+      visionBusy: '让我先看完手上这张～',
+      errors: {
+        notVlm: '这个模型不会看图哦，换个支持视觉的吧～',
+        unauthorized: 'API Key 不对，去看看界面上的米塔AI助手',
+        forbidden: '权限不够，模型可能没开通',
+        notFound: '找不到这个模型，换一个？',
+        rateLimit: '请求太快了，是不是额度不够了？',
+        timeout: '网络超时啦，再戳一下试试',
+        network: '连不上服务器，检查网络',
+      },
+    },
+    reset: '恢复默认',
+    resetTooltip: '将桌宠设置恢复为默认值',
+    unitSec: '秒',
+    unitMin: '分',
+  },
+
   // === RTSS 工具 ===
   rtssTool: {
     title: 'RTSS 控制',
@@ -408,6 +498,7 @@ export const zh = {
     bitrateAdjust: '码率调整',
     shortcutGuide: '快捷键手册',
     rtssControl: 'RTSS 控制',
+    petSettings: '桌宠设置',
     close: '关闭',
   },
 

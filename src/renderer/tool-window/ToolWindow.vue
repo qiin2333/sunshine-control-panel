@@ -62,6 +62,9 @@ onMounted(async () => {
       case 'rtss':
         currentTool.value = defineAsyncComponent(() => import('./tools/RtssOsdTool.vue'))
         break
+      case 'pet':
+        currentTool.value = defineAsyncComponent(() => import('./tools/PetSettingsTool.vue'))
+        break
       default:
         console.error('未知的工具类型:', toolType)
     }

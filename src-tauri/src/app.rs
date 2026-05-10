@@ -84,9 +84,9 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
 /// 注册全局快捷键
 fn register_global_shortcuts(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
-    
+
     let app_handle = app.handle().clone();
-    
+
     match app.handle().global_shortcut().on_shortcut("CmdOrCtrl+Shift+Alt+T", move |_app, _shortcut, event| {
         if event.state == ShortcutState::Pressed {
             debug!("⌨️ 全局快捷键触发: CTRL+SHIFT+ALT+T");
@@ -101,7 +101,7 @@ fn register_global_shortcuts(app: &mut App) -> Result<(), Box<dyn std::error::Er
             log::warn!("⚠️  工具栏快捷键不可用，但应用程序将继续正常运行");
         }
     }
-    
+
     Ok(())
 }
 

@@ -14,9 +14,6 @@ const TRAY_ID: &str = "main-tray";
 // 防止睡眠状态管理
 static PREVENT_SLEEP_STATE: Mutex<bool> = Mutex::new(false);
 
-// 工具栏显示状态管理
-static TOOLBAR_VISIBLE_STATE: Mutex<bool> = Mutex::new(false);
-
 // Sunshine 用户模式状态管理
 #[cfg(target_os = "windows")]
 static SUNSHINE_USER_MODE_STATE: Mutex<bool> = Mutex::new(false);
@@ -48,7 +45,7 @@ const ZH_STRINGS: TrayStrings = TrayStrings {
     open_website: "🌐 打开官网",
     vdd_settings: "📱 设置虚拟显示器（VDD）",
     restart_user_mode: "☀ 用户模式运行 Sunshine",
-    show_toolbar: "🐾 显示工具栏",
+    show_toolbar: "🐾 显示桌宠",
     prevent_sleep: "💤 不许睡",
     rtss_control: "🎯 RTSS 控制",
     log_console: "🔍 打开日志控制台",
@@ -138,12 +135,6 @@ pub fn create_system_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         }
     }
 
-    // 初始化工具栏状态
-    let is_toolbar_visible = app.get_webview_window("toolbar")
-        .and_then(|w| w.is_visible().ok())
-        .unwrap_or(false);
-    *TOOLBAR_VISIBLE_STATE.lock().unwrap() = is_toolbar_visible;
-
     let menu = build_tray_menu(app)?;
     let s = get_tray_strings();
     let tooltip = if utils::is_running_as_admin().unwrap_or(false) {
@@ -202,10 +193,8 @@ fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let open_website = MenuItem::with_id(app, "open_website", s.open_website, true, None::<&str>)?;
     let vdd_settings = MenuItem::with_id(app, "vdd_settings", s.vdd_settings, true, None::<&str>)?;
     
-    // 从状态获取工具栏是否显示
-    let is_toolbar_visible = *TOOLBAR_VISIBLE_STATE.lock().unwrap();
-    let show_toolbar = CheckMenuItem::with_id(app, "show_toolbar", s.show_toolbar, true, is_toolbar_visible, None::<&str>)?;
-    
+    let show_toolbar = MenuItem::with_id(app, "show_toolbar", s.show_toolbar, true, None::<&str>)?;
+
     let rtss_control = MenuItem::with_id(app, "rtss_control", s.rtss_control, true, None::<&str>)?;
     let log_console = MenuItem::with_id(app, "log_console", s.log_console, true, None::<&str>)?;
     #[cfg(any(debug_assertions, feature = "beta"))]
@@ -409,12 +398,9 @@ fn toggle_toolbar<R: Runtime>(app: &AppHandle<R>) {
 
     if let Some(toolbar_window) = app.get_webview_window("toolbar") {
         let _ = toolbar_window.close();
-        *TOOLBAR_VISIBLE_STATE.lock().unwrap() = false;
     } else {
         if let Err(e) = toolbar::create_toolbar_window_internal(app) {
             error!("❌ 创建工具栏失败: {}", e);
-        } else {
-            *TOOLBAR_VISIBLE_STATE.lock().unwrap() = true;
         }
     }
 }

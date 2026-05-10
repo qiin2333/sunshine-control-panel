@@ -1,7 +1,8 @@
 <template>
   <div id="toolbar-container" :class="{ 'menu-open': menuVisible }"
        @click.self="handleOutsideClick"
-       @pointerdown.self="onContainerDragStart">
+       @pointerdown.self="onContainerDragStart"
+       @contextmenu.prevent>
     <!-- 气泡菜单 -->
     <transition name="bubble">
       <div v-if="menuVisible" class="bubble-menu" @click.stop>
@@ -42,16 +43,28 @@
 import { ref, computed, onUnmounted, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { cursorPosition } from '@tauri-apps/api/window'
 import { PhysicalPosition } from '@tauri-apps/api/dpi'
 import { useI18n } from '../desktop/i18n/index.js'
 import * as PIXI from 'pixi.js'
 import { callVisionLLM } from '../composables/aiClient.js'
 import { STORAGE_KEY, DEFAULT_CONFIG } from '../composables/aiProviders.js'
+import {
+  loadMasterEnabled,
+  loadRandomEnabled,
+  loadRandomIntervalSec,
+  loadJitterPercent,
+  loadVisionEnabled,
+  loadVisionIntervalSec,
+  pushVisionHistory,
+  MIN_INTERVAL_SEC,
+} from '../composables/petSpeechConfig.js'
 
 const { t, locale, toggleLocale } = useI18n()
 
 const menuVisible = ref(false)
 const speechVisible = ref(false)
+const speechSource = ref('random')
 const speechText = ref('')
 let speechTimer = null
 let speechInterval = null
@@ -130,29 +143,11 @@ const setCacheEntry = async (key, data, etag) => {
   }
 }
 
-// 默认话术（fallback）
-const defaultPhrases = [
-  '杂鱼～杂鱼～',
-  '串流画质又调低了？杂鱼～',
-  '码率不够高哦，杂鱼看得清吗♡',
-  '延迟这么高，杂鱼在干什么呢～',
-  '帧率掉了吧？杂鱼的网络不太行呢',
-  '虚拟显示器开着呢，杂鱼想看什么？',
-  '嘿嘿，杂鱼又在偷偷串流了～',
-  'DPI调那么高，杂鱼眼睛受得了吗♡',
-  '连接不稳定哦，杂鱼要检查网络啦～',
-  '串流质量还不错嘛，杂鱼今天很乖♡',
-  '又在调码率了？杂鱼真是麻烦呢～',
-  '分辨率调这么低，杂鱼是想省流量吗',
-  '串流开这么久，杂鱼不累吗？',
-  '网络波动了哦，杂鱼要注意啦♡',
-  '画面卡顿了吧？杂鱼就是杂鱼～',
-  '音频延迟了呢，杂鱼听得清吗♡',
-  '串流设置改来改去，杂鱼真挑剔～',
-]
+// 默认话术（fallback）：从 i18n 读取，跟随 locale 切换
+const defaultPhrases = computed(() => t.value.petTool?.runtime?.defaultPhrases || [])
 
-// 响应式话术列表
-const speechPhrases = ref([...defaultPhrases])
+// 响应式话术列表（后端拉到的话术优先；未拉到时回退到 i18n fallback）
+const speechPhrases = ref([])
 
 // 加载话术（ETag 条件请求：有缓存则先用缓存，同时带 ETag 请求确认是否需要更新）
 const loadSpeechPhrases = async () => {
@@ -179,7 +174,9 @@ const loadSpeechPhrases = async () => {
 
 const showSpeech = () => {
   if (speechVisible.value) return
-  const phrases = speechPhrases.value
+  // 后端对话为空时回落到 i18n 内置话术
+  const phrases = speechPhrases.value.length > 0 ? speechPhrases.value : defaultPhrases.value
+  if (phrases.length === 0) return
   const text = phrases[Math.floor(Math.random() * phrases.length)]
   speechText.value = text
   speechVisible.value = true
@@ -192,19 +189,36 @@ const showSpeech = () => {
   }, 2600)
 }
 
+// 直接显示一段固定文本（用于反馈失败/状态提示）
+// 与 showSpeech 共用同一气泡组件与入场动画
+const showSpeechRaw = (text, durationMs) => {
+  if (!text) return
+  // 先关再开，确保 v-if 重新挂载、走 bubble-enter 过渡
+  speechVisible.value = false
+  if (speechTimer) {
+    clearTimeout(speechTimer)
+    speechTimer = null
+  }
+  // 文本中可能含换行/缩进，统一压成单行避免气泡顶部高度异常
+  const normalized = String(text).replace(/\s+/g, ' ').trim()
+  const auto = Math.min(12000, 4000 + Math.floor(normalized.length / 8) * 1000)
+  const ms = typeof durationMs === 'number' ? durationMs : auto
+
+  // 下一帧再设为 true，让 Vue 触发离开→进入过渡
+  requestAnimationFrame(() => {
+    speechSource.value = 'raw'
+    speechText.value = normalized
+    speechVisible.value = true
+    speechTimer = setTimeout(() => {
+      speechVisible.value = false
+    }, ms)
+  })
+}
+
 // ===== Vision 桌面观察 =====
 
-const VISION_PROMPT = `你是一个可爱但毒舌的桌面宠物"米塔"。你正在偷看用户的电脑屏幕。
-根据截图内容，假定用户正在做某件事，然后调戏用户。不要用"你是不是在..."这种猜测句式，而是直接断言"你又在..."来调侃。
-15-40字，雌小鬼风格，常用口癖：杂鱼♡、哼、切、笨蛋。
-示例风格：
-- 看到游戏→"又在打游戏偷懒了♡ 杂鱼的操作真是一言难尽呢～"
-- 看到代码→"写了半天bug又多了吧，杂鱼程序员～"
-- 看到摸鱼→"上班时间逛这个，被老板看到可就惨了呢♡"
-- 看到聊天→"跟谁聊得这么开心？哼，才不在意呢"
-只输出一句话，不要解释。用中文回复。`
-
-let visionCounter = 0
+// 运行时文案统一从 i18n 读取（zh.js / en.js 中 petTool.runtime.*）
+const rt = () => t.value.petTool?.runtime || {}
 
 const getAiConfig = () => {
   try {
@@ -216,48 +230,284 @@ const getAiConfig = () => {
 }
 
 const isPetVisionEnabled = () => {
-  return localStorage.getItem('sunshine-pet-enabled') === 'true'
+  // 总开关 + 桌面观察开关 双条件
+  return loadMasterEnabled() && loadVisionEnabled()
 }
 
-const tryVisionSpeech = async () => {
+// 从各种原始错误中提取人可读的 message
+const extractErrorMessage = (err) => {
+  if (!err) return rt().visionUnknownError || ''
+  let raw = typeof err === 'string' ? err : err?.message || String(err)
+  const jsonMatch = raw.match(/\{[\s\S]*\}/)
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0])
+      const msg =
+        parsed?.error?.message ||
+        parsed?.message ||
+        parsed?.data?.message ||
+        parsed?.error
+      if (typeof msg === 'string' && msg.trim()) return msg.trim()
+    } catch {
+      // 解析失败则回退到原始文本
+    }
+  }
+  return raw
+}
+
+// 错误特征 → i18n key 映射；命中即返回对应短提示
+const VISION_ERROR_PATTERNS = [
+  [/not a vlm|vision language model|text-only|no vision|不支持视觉|不支持图像/, 'notVlm'],
+  [/401|unauthor|invalid api key/, 'unauthorized'],
+  [/403|forbidden|permission/, 'forbidden'],
+  [/404|not found|no such model/, 'notFound'],
+  [/429|rate limit|too many|quota/, 'rateLimit'],
+  [/timeout|timed out|abort/, 'timeout'],
+  [/network|fetch failed|econn|enot|failed to fetch/, 'network'],
+]
+
+const friendlyVisionError = (msg) => {
+  const m = (msg || '').toLowerCase()
+  const errors = rt().errors || {}
+  for (const [re, key] of VISION_ERROR_PATTERNS) {
+    if (re.test(m)) return errors[key] || null
+  }
+  return null
+}
+
+// 剥离 LLM 特殊 token / 思维链 / Markdown 代码块包裹
+// 例如 GLM 系列会输出 <|begin_of_box|>...<|end_of_box|>，思维模型会输出 <think>...</think>
+const sanitizeLlmReply = (raw) => {
+  if (!raw) return ''
+  let s = String(raw)
+  // 思维链：DeepSeek-R1 / Claude thinking / Qwen
+  s = s.replace(/<think>[\s\S]*?<\/think>/gi, '')
+  s = s.replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '')
+  // 包裹型特殊 token：<|...|>...<|...|>，先尝试提取 begin_of_box / answer 内的内容
+  const boxed = s.match(/<\|begin_of_box\|>([\s\S]*?)<\|end_of_box\|>/i)
+  if (boxed) s = boxed[1]
+  const answered = s.match(/<\|begin_of_answer\|>([\s\S]*?)<\|end_of_answer\|>/i)
+  if (answered) s = answered[1]
+  // 去除残余的 <|...|> 标记
+  s = s.replace(/<\|[^|]*\|>/g, '')
+  // 去除 Markdown 代码块围栏（少数模型会包代码块）
+  s = s.replace(/^```[a-z]*\s*|```\s*$/gim, '')
+  // 去除前后引号
+  s = s.trim().replace(/^["'「『]+|["'」』]+$/g, '')
+  return s.trim()
+}
+
+// 防止用户连点 / 多 trigger 同时跑
+let visionInflight = false
+// 戳一下成功/失败后的冷静期，避免连按
+const VISION_COOLDOWN_MS = 3000
+let visionCooldownUntil = 0
+// AI 请求 120s 客户端超时（即使后端继续处理，前端也释放锁）
+const VISION_REQUEST_TIMEOUT_MS = 120000
+
+// Promise.race 实现的客户端超时
+const withTimeout = (promise, ms, timeoutErr) => {
+  let timer
+  const t = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(timeoutErr || new Error('timeout')), ms)
+  })
+  return Promise.race([promise, t]).finally(() => clearTimeout(timer))
+}
+
+const tryVisionSpeech = async (isManual = false) => {
   const config = getAiConfig()
-  if (!config.enabled || !config.apiKey || !isPetVisionEnabled()) return false
+  const r = rt()
+  if (!config.enabled || !config.apiKey || !isPetVisionEnabled()) {
+    if (isManual) showSpeechRaw(r.visionNotConfigured || '')
+    return false
+  }
+
+  // 冷静期：仅对 manual 触发提示，auto 静默跳过
+  const now = Date.now()
+  if (now < visionCooldownUntil) {
+    if (isManual) {
+      console.info('[桌宠Vision] 冷静期内，跳过', { remainMs: visionCooldownUntil - now })
+      showSpeechRaw(r.visionCooldown || '')
+    }
+    return false
+  }
+
+  if (visionInflight) {
+    if (isManual) {
+      console.info('[桌宠Vision] 已有请求进行中，跳过本次触发')
+      showSpeechRaw(r.visionBusy || r.visionLoading || '')
+    }
+    return false
+  }
+  visionInflight = true
+
+  // 手动触发：立即抢占当前气泡，显示加载提示，避免用户以为没生效
+  if (isManual && r.visionLoading) {
+    showSpeechRaw(r.visionLoading, 30000) // 30s 占位，下面成功/失败会覆盖
+  }
+
+  const trigger = isManual ? 'manual' : 'auto'
+  const t0 = performance.now()
+  console.info(`[桌宠Vision] 开始捕获屏幕 trigger=${trigger} model=${config.model || '(default)'}`)
 
   try {
     const screenshot = await invoke('capture_screenshot')
-    const response = await callVisionLLM(config, VISION_PROMPT, '看看我的桌面，说点什么吧', screenshot, 150)
-    if (response && response.trim()) {
-      speechText.value = response.trim()
+    const shotMs = Math.round(performance.now() - t0)
+    const shotLen = typeof screenshot === 'string' ? screenshot.length : (screenshot?.byteLength || 0)
+    console.info(`[桌宠Vision] 截图完成 ${shotMs}ms size=${shotLen}`)
+
+    const t1 = performance.now()
+    const timeoutErr = new Error('timeout')
+    timeoutErr.isTimeout = true
+    const response = await withTimeout(
+      callVisionLLM(config, r.visionPrompt, r.visionUserMsg, screenshot, 150),
+      VISION_REQUEST_TIMEOUT_MS,
+      timeoutErr
+    )
+    const llmMs = Math.round(performance.now() - t1)
+    console.info(`[桌宠Vision] AI 响应 ${llmMs}ms reply=${JSON.stringify(response)}`)
+
+    const cleaned = sanitizeLlmReply(response)
+    if (cleaned) {
+      speechSource.value = 'vision'
+      speechText.value = cleaned
       speechVisible.value = true
       if (speechTimer) clearTimeout(speechTimer)
-      speechTimer = setTimeout(() => { speechVisible.value = false }, 5000)
+      // 桌面观察的内容信息量较大，按文本长度自适应：基础 7s，每 8 字 +1s，最长 15s
+      const showMs = Math.min(15000, 7000 + Math.floor(cleaned.length / 8) * 1000)
+      speechTimer = setTimeout(() => { speechVisible.value = false }, showMs)
+      // 写入历史（仅成功评论，不记录错误提示）
+      pushVisionHistory(cleaned)
       return true
     }
+    console.warn('[桌宠Vision] AI 返回空内容（清洗后）')
+    if (isManual) showSpeechRaw(r.visionEmpty || '')
   } catch (err) {
-    console.warn('[桌宠Vision] 失败:', typeof err === 'string' ? err : err?.message)
+    if (err?.isTimeout) {
+      console.warn('[桌宠Vision] 请求超时', VISION_REQUEST_TIMEOUT_MS, 'ms')
+      if (isManual) showSpeechRaw(r.visionTimeout || '')
+    } else {
+      const raw = extractErrorMessage(err)
+      console.warn('[桌宠Vision] 失败:', raw)
+      if (isManual) {
+        const friendly = friendlyVisionError(raw)
+        const short = friendly || (raw.length > 35 ? raw.slice(0, 35) + '…' : raw)
+        showSpeechRaw(`${r.visionErrorPrefix || ''}${short}`)
+      }
+    }
+  } finally {
+    visionInflight = false
+    if (isManual) visionCooldownUntil = Date.now() + VISION_COOLDOWN_MS
   }
   return false
 }
 
-const startSpeechLoop = () => {
-  // 首次延迟随机出现
-  const firstDelay = 4000 + Math.random() * 6000
-  setTimeout(() => showSpeech(), firstDelay)
-  // 后续固定间隔（启动时随机选择 15s~35s）
-  speechInterval = setInterval(async () => {
-    // 避免菜单展开时打断交互
-    if (menuVisible.value) return
+// 调度状态：模块级，便于 config-changed 时重排
+let nextRandomAt = 0
+let nextVisionAt = 0
 
-    // 每 3-5 次随机话术后尝试一次 vision 观察
-    visionCounter++
-    if (visionCounter >= 3 + Math.floor(Math.random() * 3)) {
-      visionCounter = 0
+// 配置变化时根据"已等待时长"与新间隔取较小者，避免一改就等满整段
+const rescheduleSpeech = () => {
+  const now = Date.now()
+  const randomIntervalMs = Math.max(MIN_INTERVAL_SEC, loadRandomIntervalSec()) * 1000
+  const visionIntervalMs = Math.max(MIN_INTERVAL_SEC, loadVisionIntervalSec()) * 1000
+  if (nextRandomAt > now + randomIntervalMs) nextRandomAt = now + randomIntervalMs
+  if (nextVisionAt > now + visionIntervalMs) nextVisionAt = now + visionIntervalMs
+  console.info('[桌宠] 配置变化，重新调度', {
+    randomInMs: nextRandomAt - now,
+    visionInMs: nextVisionAt - now,
+  })
+
+  // 当前可见气泡若与"被关掉的功能"对应，立即收起
+  if (!speechVisible.value) return
+  const masterOn = loadMasterEnabled()
+  if (!masterOn) {
+    // 总开关关掉 → 任何来源的气泡都收起
+    speechVisible.value = false
+    if (speechTimer) { clearTimeout(speechTimer); speechTimer = null }
+    return
+  }
+  if (speechSource.value === 'vision' && !loadVisionEnabled()) {
+    speechVisible.value = false
+    if (speechTimer) { clearTimeout(speechTimer); speechTimer = null }
+    return
+  }
+  if (speechSource.value === 'random' && !loadRandomEnabled()) {
+    speechVisible.value = false
+    if (speechTimer) { clearTimeout(speechTimer); speechTimer = null }
+  }
+}
+
+const startSpeechLoop = () => {
+  // 首次延迟随机出现（随机对话）
+  const firstDelay = 4000 + Math.random() * 6000
+  setTimeout(() => {
+    if (loadMasterEnabled() && loadRandomEnabled()) showSpeech()
+  }, firstDelay)
+
+  // 随机对话与桌面观察使用两个独立的下一次调度点，
+  // 在一个定时器中轮询，避免互相干扰。
+  const TICK_MS = 1000
+  nextRandomAt = Date.now() + firstDelay
+  nextVisionAt = Date.now() + firstDelay + 8000 // 视觉首次略后，避免启动后立即被截屏
+
+  const computeNextRandom = () => {
+    const intervalSec = Math.max(MIN_INTERVAL_SEC, loadRandomIntervalSec())
+    const jitterPct = Math.max(0, loadJitterPercent()) / 100
+    const jitter = (Math.random() - 0.5) * 2 * intervalSec * jitterPct
+    return Date.now() + Math.max(MIN_INTERVAL_SEC, intervalSec + jitter) * 1000
+  }
+
+  const computeNextVision = () => {
+    const intervalSec = Math.max(MIN_INTERVAL_SEC, loadVisionIntervalSec())
+    return Date.now() + intervalSec * 1000
+  }
+
+  speechInterval = setInterval(async () => {
+    if (!loadMasterEnabled()) return
+    if (menuVisible.value) return
+    const now = Date.now()
+
+    // 桌面观察（优先调度，如果到点则尝试截屏）
+    if (loadVisionEnabled() && now >= nextVisionAt) {
+      nextVisionAt = computeNextVision()
       const used = await tryVisionSpeech()
-      if (used) return
+      if (used) {
+        // 视觉说过话了，同时把随机对话下次点往后推一点避免接踵
+        if (loadRandomEnabled()) {
+          nextRandomAt = Math.max(nextRandomAt, Date.now() + Math.max(5, MIN_INTERVAL_SEC / 2) * 1000)
+        }
+        return
+      }
     }
 
-    showSpeech()
-  }, 15000 + Math.random() * 20000)
+    // 随机对话
+    if (loadRandomEnabled() && now >= nextRandomAt) {
+      nextRandomAt = computeNextRandom()
+      showSpeech()
+    }
+  }, TICK_MS)
+}
+
+// 设置弹窗跨窗口通信
+let speechBroadcast = null
+const initSpeechBroadcast = () => {
+  try {
+    speechBroadcast = new BroadcastChannel('sunshine-pet-speech')
+    speechBroadcast.addEventListener('message', async (e) => {
+      const type = e?.data?.type
+      if (type === 'config-changed') {
+        // 设置面板修改了间隔等：根据新值收紧已有调度
+        rescheduleSpeech()
+      } else if (type === 'poke-vision') {
+        // 强制触发桌面观察（设置面板的"立即观察"按钮）
+        await tryVisionSpeech(true)
+      } else if (type === 'poke') {
+        // 兼容旧消息：优先视觉，失败则随机
+        if (!(await tryVisionSpeech())) showSpeech()
+      }
+    })
+  } catch (_) {}
 }
 
 const menuItems = computed(() => [
@@ -287,9 +537,9 @@ const menuItems = computed(() => [
     icon: '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path fill="white" d="M20 5H4c-1.1 0-1.99.9-1.99 2L2 17c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-9 3h2v2h-2V8zm0 3h2v2h-2v-2zM8 8h2v2H8V8zm0 3h2v2H8v-2zm-1 2H5v-2h2v2zm0-3H5V8h2v2zm9 7H8v-2h8v2zm0-4h-2v-2h2v2zm0-3h-2V8h2v2zm3 3h-2v-2h2v2zm0-3h-2V8h2v2z"/></svg>',
   },
   {
-    id: 'lang',
-    label: locale.value === 'zh' ? 'English' : '中文',
-    icon: '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="10" fill="none" stroke="white" stroke-width="2"/><line x1="2" y1="12" x2="22" y2="12" stroke="white" stroke-width="2"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" fill="none" stroke="white" stroke-width="2"/></svg>',
+    id: 'pet-settings',
+    label: t.value.toolbar.petSettings,
+    icon: '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path fill="white" d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94 0 .31.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>',
   },
   {
     id: 'close',
@@ -313,8 +563,12 @@ const handleOutsideClick = () => {
 const handleMenuItem = async (action) => {
   menuVisible.value = false
 
-  if (action === 'lang') {
-    toggleLocale()
+  if (action === 'pet-settings') {
+    try {
+      await invoke('handle_toolbar_menu_action', { action: 'pet' })
+    } catch (error) {
+      console.error('Open pet settings failed:', error)
+    }
     return
   }
 
@@ -749,6 +1003,71 @@ const onIconClick = () => {
   if (!hasMoved) toggleMenu()
 }
 
+// 窗口鼠标命中测试：透明区域穿透到下层窗口/桌面。
+// Tauri 透明窗口默认整窗吃鼠标事件，CSS 的 pointer-events:none 只影响 DOM，
+// 必须用 setIgnoreCursorEvents 在 OS 层切换。
+//
+// 难点：当 ignoreCursorEvents=true 时，DOM 收不到任何鼠标事件，
+// 所以必须用全局光标轮询（cursorPosition + outerPosition）来判断是否进入桌宠区域。
+//
+// 命中规则：
+//   - 鼠标在内圈 80×80 桌宠图标 → ignore=false（可点击/拖拽）
+//   - 菜单展开时：鼠标在 240×240 整窗内 → ignore=false（可点气泡按钮 / 点空白关闭）
+//   - 否则（外圈空白 / 完全在窗口外）→ ignore=true（穿透到下层）
+let cursorIgnoreState = false
+let hitTestTimer = null
+const HIT_TEST_INTERVAL_MS = 80
+const setCursorIgnore = (ignore) => {
+  if (ignore === cursorIgnoreState) return
+  cursorIgnoreState = ignore
+  appWindow.setIgnoreCursorEvents(ignore).catch((e) => {
+    console.warn('[桌宠HitTest] setIgnoreCursorEvents 失败', ignore, e)
+  })
+}
+
+const hitTestTick = async () => {
+  // 拖拽期间维持非穿透，避免打断 startDragging
+  if (isDragging) {
+    setCursorIgnore(false)
+    return
+  }
+  try {
+    const [winPos, winSize, cur] = await Promise.all([
+      appWindow.outerPosition(),
+      appWindow.outerSize(),
+      cursorPosition(),
+    ])
+    // PhysicalPosition: 物理像素
+    const relX = cur.x - winPos.x
+    const relY = cur.y - winPos.y
+    const inWindow = relX >= 0 && relY >= 0 && relX < winSize.width && relY < winSize.height
+    if (!inWindow) {
+      setCursorIgnore(true)
+      return
+    }
+    if (menuVisible.value) {
+      setCursorIgnore(false)
+      return
+    }
+    const dpr = window.devicePixelRatio || 1
+    const cx = winSize.width / 2
+    const cy = winSize.height / 2
+    const halfIcon = 40 * dpr
+    const inIcon = Math.abs(relX - cx) <= halfIcon && Math.abs(relY - cy) <= halfIcon
+    setCursorIgnore(!inIcon)
+  } catch (e) {
+    console.warn('[桌宠HitTest] tick 失败', e)
+  }
+}
+
+const initBubbleClickThrough = () => {
+  // 初始进入穿透状态，由轮询决定何时取消
+  setCursorIgnore(true)
+  hitTestTimer = setInterval(hitTestTick, HIT_TEST_INTERVAL_MS)
+  // 首次立即跑一次，避免等到 80ms 后才生效
+  hitTestTick()
+}
+
 onMounted(async () => {
   try {
     await initPixiApp()
@@ -758,6 +1077,8 @@ onMounted(async () => {
   startSpeechLoop()
   loadSpeechPhrases()
   startResourceRefresh()
+  initSpeechBroadcast()
+  initBubbleClickThrough()
 })
 
 onUnmounted(() => {
@@ -777,6 +1098,11 @@ onUnmounted(() => {
   // 清理拖拽
   removeDragListeners()
   if (touchRafId) { cancelAnimationFrame(touchRafId); touchRafId = null }
+  if (hitTestTimer) { clearInterval(hitTestTimer); hitTestTimer = null }
+  if (speechBroadcast) {
+    try { speechBroadcast.close() } catch (_) {}
+    speechBroadcast = null
+  }
 })
 </script>
 
@@ -793,9 +1119,9 @@ onUnmounted(() => {
 @danger-light: rgba(255, 182, 193, 0.95);
 @danger-dark: rgba(255, 150, 150, 0.95);
 
-@halo-default: drop-shadow(0 0 4px rgba(255, 182, 193, 0.25)) drop-shadow(0 0 8px rgba(221, 160, 221, 0.1));
-@halo-hover: drop-shadow(0 0 6px rgba(255, 182, 193, 0.4)) drop-shadow(0 0 12px rgba(221, 160, 221, 0.15));
-@halo-active: drop-shadow(0 0 8px rgba(123, 80, 87, 0.5)) drop-shadow(0 0 16px rgba(221, 160, 221, 0.2));
+@halo-default: drop-shadow(0 0 2px rgba(255, 182, 193, 0.1)) drop-shadow(0 0 4px rgba(221, 160, 221, 0.05));
+@halo-hover: drop-shadow(0 0 3px rgba(255, 182, 193, 0.16)) drop-shadow(0 0 5px rgba(221, 160, 221, 0.07));
+@halo-active: drop-shadow(0 0 3px rgba(123, 80, 87, 0.2)) drop-shadow(0 0 6px rgba(221, 160, 221, 0.08));
 
 @transition-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
 
@@ -944,7 +1270,7 @@ onUnmounted(() => {
   padding: 0;
   margin: 0;
   border-radius: 50%;
-  animation: float 3s ease-in-out infinite;
+  animation: float 4s ease-in-out infinite;
   filter: @halo-default;
   transition: all 0.4s @transition-bounce;
   position: relative;
@@ -955,12 +1281,12 @@ onUnmounted(() => {
   -webkit-font-smoothing: antialiased;
 
   &:hover {
-    animation: pulse 1.5s ease-in-out infinite;
+    animation: pulse 2.4s ease-in-out infinite;
     filter: @halo-hover;
   }
 
   &.active {
-    transform: scale(1.15) translateZ(0);
+    transform: scale(1.12) translateZ(0);
     filter: @halo-active;
   }
 }
@@ -1057,7 +1383,7 @@ onUnmounted(() => {
     transform: translate3d(0, 0, 0) scale(1);
   }
   50% {
-    transform: translate3d(0, -10px, 0) scale(1);
+    transform: translate3d(0, -7px, 0) scale(1);
   }
 }
 

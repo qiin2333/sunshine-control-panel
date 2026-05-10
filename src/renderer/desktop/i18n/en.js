@@ -328,6 +328,96 @@ export const en = {
     title: 'Moonlight Streaming Shortcuts Guide',
   },
 
+  // === Pet Settings ===
+  petTool: {
+    title: 'Pet Settings',
+    language: 'Language',
+    languageDesc: 'Switch settings panel language',
+    tabs: {
+      speech: 'Speech',
+      animation: 'Animation',
+    },
+    animationMore: 'More animation options coming soon…',
+    master: 'Pet Speech (Master)',
+    masterDesc: 'When off, the pet stays silent and the options below have no effect',
+    random: 'Random Talk',
+    randomDesc: 'Preset phrases',
+    speechInterval: 'Talk Interval',
+    speechIntervalDesc: 'Time between two phrases (minimum 15s)',
+    jitter: 'Variation',
+    jitterDesc: 'Adjust the variation range to reduce mechanical feel (0% off, max 100%)',
+    vision: 'Desktop Observation',
+    visionDesc: 'Pet peeks at your screen and generates AI comments (multimodal AI required)',
+    visionHelp: 'Configure an API key under \'Mita AI Assistant\' and pick a vision-capable model (e.g. GPT-4o).\nWhen enabled, the pet periodically captures the screen and asks the AI for a snarky comment about what it sees.',
+    visionInterval: 'Observation Interval',
+    visionIntervalDesc: 'How often to capture the screen and generate a comment (minimum 15s)',
+    visionCostHint: 'A short interval calls the AI frequently and may consume more API quota',
+    pokeNow: 'Observe Now',
+    pokeNowDesc: 'Make the pet take a look and say something right now',
+    pokeBtn: 'Poke',
+    visionHistory: 'Recent Comments',
+    visionHistoryDesc: 'View the pet\'s last 5 desktop comments',
+    visionHistoryEmpty: 'No history yet, give the pet a poke~',
+    visionHistoryClear: 'Clear',
+    visionHistoryView: 'View',
+    aiKeyMissing: 'AI assistant not configured',
+    aiKeyMissingDesc: 'Configure an API key in \'Mita AI Assistant\' first, then refresh this panel to enable Desktop Observation.',
+
+    // Runtime tips used inside the toolbar speech bubble
+    runtime: {
+      // Built-in fallback phrases used when backend phrase loading fails
+      defaultPhrases: [
+        'Loser~ loser~',
+        'Lowered the streaming quality again? Loser~',
+        'Bitrate too low, can you even see clearly?♡',
+        'Latency this high, what are you doing?',
+        'Dropping frames? Your network is hopeless~',
+        'Virtual display is on, what do you wanna peek at?',
+        'Hehe, sneaking another stream session~',
+        'DPI cranked that high, your eyes okay?♡',
+        'Connection unstable, go check your network~',
+        'Stream quality is decent, you\'ve been good today♡',
+        'Tweaking bitrate again? Such a hassle~',
+        'Resolution this low, trying to save bandwidth?',
+        'Streaming this long, aren\'t you tired?',
+        'Network is fluctuating, watch out♡',
+        'Frame stuttering? A loser is a loser~',
+        'Audio delay detected, can you hear me?♡',
+        'Constantly fiddling with settings, so picky~',
+      ],
+      visionPrompt: `You are Mita, a cute but sharp-tongued desktop pet sneaking a peek at the user's screen.
+Looking at the screenshot, assume the user is doing something specific, then tease them. Don't use guessing phrases like "Are you...?" - assert directly with "You're at it again..." style.
+15-40 characters, bratty kohai tone. Common verbal tics: hmph, tch, dummy, loser~.
+Examples:
+- gaming -> "Slacking off with games again~ Your moves are pathetic, loser♡"
+- coding -> "Half a day in and the bugs only multiplied, huh?"
+- chatting -> "Chatting up a storm with someone? Hmph, not that I care."
+Output only one short sentence, no explanation. Reply in English.`,
+      visionUserMsg: 'Take a look at my desktop and say something.',
+      visionNotConfigured: 'AI assistant not set up yet, fill in a Key in Mita AI Assistant~',
+      visionEmpty: 'AI returned nothing... try a different model?',
+      visionErrorPrefix: 'Got dizzy: ',
+      visionUnknownError: 'Something happened?',
+      visionLoading: 'Sneaking a peek…',
+      visionTimeout: 'Looking too long, eyes hurt. Try a different model?',
+      visionCooldown: 'Just looked, give me a moment',
+      visionBusy: 'Let me finish this one first~',
+      errors: {
+        notVlm: 'This model can\'t see images, switch to a vision model~',
+        unauthorized: 'API Key invalid, check it in Mita AI Assistant',
+        forbidden: 'Access denied, model may not be enabled',
+        notFound: 'Model not found, try another?',
+        rateLimit: 'Rate limited or quota exceeded, try later',
+        timeout: 'Network timed out, poke me again',
+        network: 'Cannot reach the server, check network',
+      },
+    },
+    reset: 'Reset',
+    resetTooltip: 'Restore pet settings to defaults',
+    unitSec: 'sec',
+    unitMin: 'min',
+  },
+
   // === RTSS Tool ===
   rtssTool: {
     title: 'RTSS Control',
@@ -408,6 +498,7 @@ export const en = {
     bitrateAdjust: 'Bitrate Adjust',
     shortcutGuide: 'Shortcuts Guide',
     rtssControl: 'RTSS Control',
+    petSettings: 'Pet Settings',
     close: 'Close',
   },
 

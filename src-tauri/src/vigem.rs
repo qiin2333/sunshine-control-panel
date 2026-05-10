@@ -61,6 +61,9 @@ struct VigemProbe {
     device_status: String,
     device_problem: u64,
     device_instance_id: String,
+    /// `Get-Service ViGEmBus` 的 Status (Running/Stopped/...)，作为
+    /// PnP 检测漏判时的兜底真理来源
+    service_state: String,
 }
 
 /// 检查 ViGEmBus 驱动文件版本与设备节点状态，返回结构化状态
@@ -71,21 +74,35 @@ fn check_vigem() -> VigemStatus {
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     // 单次 PowerShell 调用拿到：sys 文件版本 + 总线设备状态
+    //
+    // 设备过滤策略（优先级降序）：
+    //   1. HardwareID 串拼 join 后 -match 'ViGEm' —— 兼容大小写并避免 -contains 精确匹配失败
+    //   2. FriendlyName 含 "Virtual Gamepad Emulation" —— 实测设备名 = "Nefarius Virtual Gamepad Emulation Bus"
+    //   3. 服务运行状态 sc.exe query ViGEmBus → STATE=RUNNING —— 设备节点 InstanceId 实际是
+    //      "ROOT\SYSTEM\0002"（PnP 总线驱动通用槽位），早期写死的 "ROOT\VIRTUALGAMEPADEMULATIONBUS\*"
+    //      过滤会漏判，导致已正常运行的 ViGEm 被报"总线未激活"。
     let ps = r#"
-$result = @{ installed = $false; version = ''; deviceStatus = 'NotFound'; deviceProblem = 0; deviceInstanceId = '' }
+$result = @{ installed = $false; version = ''; deviceStatus = 'NotFound'; deviceProblem = 0; deviceInstanceId = ''; serviceState = '' }
 $sys = Join-Path $env:SystemRoot 'System32\drivers\ViGEmBus.sys'
 if (Test-Path $sys) {
     $result.installed = $true
     try { $result.version = (Get-Item $sys).VersionInfo.FileVersion } catch {}
 }
-$dev = Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |
-       Where-Object { $_.HardwareID -contains 'ROOT\ViGEmBus' -or $_.InstanceId -like 'ROOT\VIRTUALGAMEPADEMULATIONBUS\*' } |
+$dev = Get-PnpDevice -ErrorAction SilentlyContinue |
+       Where-Object {
+           ($_.HardwareID -and (($_.HardwareID -join ',') -match 'ViGEm')) -or
+           ($_.FriendlyName -like '*Virtual Gamepad Emulation*')
+       } |
        Select-Object -First 1
 if ($dev) {
-    $result.deviceStatus = $dev.Status
+    $result.deviceStatus = [string]$dev.Status
     $result.deviceProblem = [int]$dev.Problem
     $result.deviceInstanceId = $dev.InstanceId
 }
+try {
+    $svc = Get-Service -Name 'ViGEmBus' -ErrorAction Stop
+    $result.serviceState = [string]$svc.Status
+} catch {}
 $result | ConvertTo-Json -Compress
 "#;
 
@@ -118,7 +135,14 @@ $result | ConvertTo-Json -Compress
         }
     };
 
-    let running = probe.installed && probe.device_status == "OK" && probe.device_problem == 0;
+    // running 判定：优先信任 PnP 设备节点（Status=OK 且无 problem code）；
+    // 若 PnP 过滤漏判（device_status 仍是 'NotFound' 或为空），用服务状态兜底——
+    // ViGEmBus 是 KERNEL_DRIVER，service Running 即代表驱动已加载并对外可用，
+    // 实测设备 InstanceId 占用通用槽位 ROOT\SYSTEM\xxxx 时第一档过滤会漏。
+    let pnp_running =
+        probe.installed && probe.device_status == "OK" && probe.device_problem == 0;
+    let service_running = probe.service_state.eq_ignore_ascii_case("Running");
+    let running = probe.installed && (pnp_running || service_running);
     let version_ok = parse_major_minor(&probe.version)
         .map_or(false, |(maj, min)| (maj, min) >= MIN_VIGEM_VERSION);
 

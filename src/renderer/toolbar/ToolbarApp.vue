@@ -1,7 +1,8 @@
 <template>
   <div id="toolbar-container" :class="{ 'menu-open': menuVisible }"
        @click.self="handleOutsideClick"
-       @pointerdown.self="onContainerDragStart">
+       @pointerdown.self="onContainerDragStart"
+       @contextmenu.prevent>
     <!-- 气泡菜单 -->
     <transition name="bubble">
       <div v-if="menuVisible" class="bubble-menu" @click.stop>
@@ -42,6 +43,7 @@
 import { ref, computed, onUnmounted, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { cursorPosition } from '@tauri-apps/api/window'
 import { PhysicalPosition } from '@tauri-apps/api/dpi'
 import { useI18n } from '../desktop/i18n/index.js'
 import * as PIXI from 'pixi.js'
@@ -1001,40 +1003,69 @@ const onIconClick = () => {
   if (!hasMoved) toggleMenu()
 }
 
-// 气泡区域鼠标穿透：仅当鼠标命中气泡（含其后伪三角）时启用窗口忽略鼠标，
-// 离开后恢复，使桌宠图标和菜单仍可点击，气泡不挡住下方桌面/窗口。
-let bubbleClickThroughEnabled = false
-const initBubbleClickThrough = () => {
-  const HIT_TEST = (target) => {
-    if (!(target instanceof Element)) return false
-    return target.closest('.speech-bubble') !== null
+// 窗口鼠标命中测试：透明区域穿透到下层窗口/桌面。
+// Tauri 透明窗口默认整窗吃鼠标事件，CSS 的 pointer-events:none 只影响 DOM，
+// 必须用 setIgnoreCursorEvents 在 OS 层切换。
+//
+// 难点：当 ignoreCursorEvents=true 时，DOM 收不到任何鼠标事件，
+// 所以必须用全局光标轮询（cursorPosition + outerPosition）来判断是否进入桌宠区域。
+//
+// 命中规则：
+//   - 鼠标在内圈 80×80 桌宠图标 → ignore=false（可点击/拖拽）
+//   - 菜单展开时：鼠标在 240×240 整窗内 → ignore=false（可点气泡按钮 / 点空白关闭）
+//   - 否则（外圈空白 / 完全在窗口外）→ ignore=true（穿透到下层）
+let cursorIgnoreState = false
+let hitTestTimer = null
+const HIT_TEST_INTERVAL_MS = 80
+const setCursorIgnore = (ignore) => {
+  if (ignore === cursorIgnoreState) return
+  cursorIgnoreState = ignore
+  appWindow.setIgnoreCursorEvents(ignore).catch((e) => {
+    console.warn('[桌宠HitTest] setIgnoreCursorEvents 失败', ignore, e)
+  })
+}
+
+const hitTestTick = async () => {
+  // 拖拽期间维持非穿透，避免打断 startDragging
+  if (isDragging) {
+    setCursorIgnore(false)
+    return
   }
-  // 注意：拖拽时不要切换，避免打断 startDragging
-  document.addEventListener('mousemove', (e) => {
-    if (isDragging) return
-    if (!speechVisible.value) {
-      if (bubbleClickThroughEnabled) {
-        bubbleClickThroughEnabled = false
-        appWindow.setIgnoreCursorEvents(false).catch(() => {})
-      }
+  try {
+    const [winPos, winSize, cur] = await Promise.all([
+      appWindow.outerPosition(),
+      appWindow.outerSize(),
+      cursorPosition(),
+    ])
+    // PhysicalPosition: 物理像素
+    const relX = cur.x - winPos.x
+    const relY = cur.y - winPos.y
+    const inWindow = relX >= 0 && relY >= 0 && relX < winSize.width && relY < winSize.height
+    if (!inWindow) {
+      setCursorIgnore(true)
       return
     }
-    const onBubble = HIT_TEST(e.target)
-    if (onBubble && !bubbleClickThroughEnabled) {
-      bubbleClickThroughEnabled = true
-      appWindow.setIgnoreCursorEvents(true).catch(() => {})
-    } else if (!onBubble && bubbleClickThroughEnabled) {
-      bubbleClickThroughEnabled = false
-      appWindow.setIgnoreCursorEvents(false).catch(() => {})
+    if (menuVisible.value) {
+      setCursorIgnore(false)
+      return
     }
-  }, { passive: true })
-  // 窗口失焦时复位，避免卡死在穿透状态
-  document.addEventListener('mouseleave', () => {
-    if (bubbleClickThroughEnabled) {
-      bubbleClickThroughEnabled = false
-      appWindow.setIgnoreCursorEvents(false).catch(() => {})
-    }
-  })
+    const dpr = window.devicePixelRatio || 1
+    const cx = winSize.width / 2
+    const cy = winSize.height / 2
+    const halfIcon = 40 * dpr
+    const inIcon = Math.abs(relX - cx) <= halfIcon && Math.abs(relY - cy) <= halfIcon
+    setCursorIgnore(!inIcon)
+  } catch (e) {
+    console.warn('[桌宠HitTest] tick 失败', e)
+  }
+}
+
+const initBubbleClickThrough = () => {
+  // 初始进入穿透状态，由轮询决定何时取消
+  setCursorIgnore(true)
+  hitTestTimer = setInterval(hitTestTick, HIT_TEST_INTERVAL_MS)
+  // 首次立即跑一次，避免等到 80ms 后才生效
+  hitTestTick()
 }
 
 onMounted(async () => {
@@ -1067,6 +1098,7 @@ onUnmounted(() => {
   // 清理拖拽
   removeDragListeners()
   if (touchRafId) { cancelAnimationFrame(touchRafId); touchRafId = null }
+  if (hitTestTimer) { clearInterval(hitTestTimer); hitTestTimer = null }
   if (speechBroadcast) {
     try { speechBroadcast.close() } catch (_) {}
     speechBroadcast = null

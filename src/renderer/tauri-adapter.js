@@ -78,6 +78,14 @@ export const vmouse = {
   setConfig: (enabled) => wrapResult('set_vmouse_config', { enabled }),
 }
 
+// ─── ViGEmBus Virtual Gamepad ──────────────────────
+
+export const vigem = {
+  getStatus: () => wrapResult('get_vigem_status'),
+  install: () => wrapResult('install_vigem_driver'),
+  uninstall: () => wrapResult('uninstall_vigem_driver'),
+}
+
 // ─── Sunshine 配置 ───────────────────────────────────────
 
 export const sunshine = {
@@ -142,6 +150,7 @@ export default {
   openExternalUrl,
   vdd,
   vmouse,
+  vigem,
   sunshine,
   tools,
   moonlightWeb,

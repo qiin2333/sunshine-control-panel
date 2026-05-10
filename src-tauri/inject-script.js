@@ -100,6 +100,30 @@
     },
   }
 
+  // ViGEmBus 虚拟手柄驱动管理 API
+  window.vigemDriver = {
+    async getStatus() {
+      try {
+        return await invoke('get_vigem_status')
+      } catch (e) {
+        return {
+          installed: false,
+          running: false,
+          version: '',
+          version_ok: false,
+          status_text: '检测失败',
+          driver_path: '',
+        }
+      }
+    },
+    async install() {
+      return await invoke('install_vigem_driver')
+    },
+    async uninstall() {
+      return await invoke('uninstall_vigem_driver')
+    },
+  }
+
   // 环境检测
   const isProduction = () => window.TAURI_PRODUCTION === true && window.isTauri === true
 

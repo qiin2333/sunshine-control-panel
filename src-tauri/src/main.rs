@@ -4,6 +4,8 @@
 mod vdd;
 #[cfg(target_os = "windows")]
 mod vdd_ioctl;
+mod bat_runner;
+mod vigem;
 mod vmouse;
 mod rtss;
 mod hwinfo;
@@ -115,6 +117,9 @@ fn main() {
             vmouse::install_vmouse_driver,
             vmouse::uninstall_vmouse_driver,
             vmouse::set_vmouse_config,
+            vigem::get_vigem_status,
+            vigem::install_vigem_driver,
+            vigem::uninstall_vigem_driver,
             fs_utils::get_icc_file_list,
             fs_utils::read_directory,
             fs_utils::read_image_as_data_url,

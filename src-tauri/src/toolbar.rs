@@ -174,6 +174,9 @@ pub fn handle_toolbar_menu_event<R: Runtime>(app: &AppHandle<R>, event_id: &str)
         "shortcuts" | "toolbar_shortcuts" => {
             create_tool_window_internal(app, "shortcuts");
         }
+        "pet" | "toolbar_pet" => {
+            create_tool_window_internal(app, "pet");
+        }
         "close" | "toolbar_close" => {
             if let Some(window) = app.get_webview_window("toolbar") {
                 let _ = window.close();

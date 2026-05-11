@@ -372,11 +372,14 @@ fn set_ini_value(path: &std::path::Path, section: &str, key: &str, value: &str) 
                 "Copy-Item -Path '{}' -Destination '{}' -Force",
                 tmp.display(), path.display()
             );
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
             let output = std::process::Command::new("powershell")
                 .args(["-Command", &format!(
                     "Start-Process powershell -Verb RunAs -WindowStyle Hidden -ArgumentList '-Command {}' -Wait",
                     ps_cmd.replace('\'', "''")
                 )])
+                .creation_flags(CREATE_NO_WINDOW)
                 .output()
                 .map_err(|e| format!("提权写入失败: {}", e))?;
 

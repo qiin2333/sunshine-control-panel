@@ -161,8 +161,11 @@ pub fn open_url_in_browser(url: &str) {
         
         #[cfg(target_os = "windows")]
         {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
             if let Err(e) = Command::new("cmd")
                 .args(&["/c", "start", "", &url])
+                .creation_flags(CREATE_NO_WINDOW)
                 .spawn()
             {
                 error!("❌ 打开 URL 失败: {}", e);
@@ -194,8 +197,11 @@ pub async fn open_external_url(url: String) -> Result<bool, String> {
 
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
         Command::new("cmd")
             .args(&["/c", "start", &url])
+            .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| e.to_string())?;
     }

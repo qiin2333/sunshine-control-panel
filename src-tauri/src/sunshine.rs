@@ -550,10 +550,13 @@ pub(crate) fn is_sunshine_running_in_user_mode_impl() -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {
         use std::process::Command;
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
 
         // 检查服务是否正在运行（服务名不区分大小写，只需检查一次）
         if let Ok(result) = Command::new("sc")
             .args(&["query", "SunshineService"])
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
         {
             let output_str = String::from_utf8_lossy(&result.stdout).to_uppercase();
@@ -565,6 +568,7 @@ pub(crate) fn is_sunshine_running_in_user_mode_impl() -> Result<bool, String> {
         // 服务未运行，检查 sunshine.exe 进程是否存在
         if let Ok(result) = Command::new("tasklist")
             .args(&["/FI", "IMAGENAME eq sunshine.exe", "/FO", "CSV", "/NH"])
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
         {
             let output_str = String::from_utf8_lossy(&result.stdout).to_lowercase();

@@ -76,14 +76,14 @@ const WEBVIEW_VISIBILITY_INIT_SCRIPT: &str = r#"
     setInterval(function() {
         try {
             if (window.__TAURI_INTERNALS__) {
-                window.__TAURI_INTERNALS__.invoke('_webview_heartbeat');
+                window.__TAURI_INTERNALS__.invoke('webview_heartbeat');
             }
         } catch(e) {}
     }, 10000);
     // 立即发送首次心跳
     try {
         if (window.__TAURI_INTERNALS__) {
-            window.__TAURI_INTERNALS__.invoke('_webview_heartbeat');
+            window.__TAURI_INTERNALS__.invoke('webview_heartbeat');
         }
     } catch(e) {}
 })();
@@ -122,7 +122,7 @@ pub fn disable_context_menu<R: Runtime>(_window: &WebviewWindow<R>) {}
 
 /// WebView 心跳命令：由前端 JS 定期调用，表明渲染进程仍然存活
 #[tauri::command]
-pub fn _webview_heartbeat(webview: tauri::Webview) {
+pub fn webview_heartbeat(webview: tauri::Webview) {
     let label = webview.label().to_string();
     HEARTBEAT_MAP.lock().unwrap().insert(label, std::time::Instant::now());
 }

@@ -155,7 +155,7 @@ fn main() {
             controllermeta::controllermeta_get_install_path,
             controllermeta::controllermeta_uninstall,
             clipboard::clipboard_sync_status,
-            windows::_webview_heartbeat,
+            windows::webview_heartbeat,
             rtss::get_rtss_status,
             rtss::rtss_set_osd,
             rtss::rtss_clear_osd,

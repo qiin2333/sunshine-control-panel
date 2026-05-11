@@ -564,8 +564,11 @@ fn stop_windows_service(service_name: &str) {
 /// 强制结束进程
 #[cfg(target_os = "windows")]
 fn kill_process(process_name: &str) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
     let _ = std::process::Command::new("taskkill")
         .args(&["/IM", process_name, "/F", "/T"])
+        .creation_flags(CREATE_NO_WINDOW)
         .output();
 }
 
@@ -621,8 +624,11 @@ fn force_kill_sunshine_processes() {
         current_pid
     );
     
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
     let _ = std::process::Command::new("powershell")
         .args(&["-NoProfile", "-Command", &ps_script])
+        .creation_flags(CREATE_NO_WINDOW)
         .output();
     
     std::thread::sleep(Duration::from_secs(2));

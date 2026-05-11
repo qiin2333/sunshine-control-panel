@@ -61,6 +61,8 @@ async fn update_vdd_xml_extra_fields(settings: &VddSettings) -> Result<(), Strin
 #[cfg(target_os = "windows")]
 async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), String> {
     use std::process::Command;
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
     
     // 写入临时文件
     let temp_path = std::env::temp_dir().join(format!("vdd_extra_{}.xml", std::process::id()));
@@ -115,6 +117,7 @@ async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), Stri
         
         let output = Command::new("powershell")
             .args(&["-NoProfile", "-Command", &ps_script])
+            .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| {
                 // 清理临时文件
@@ -708,6 +711,8 @@ pub async fn upload_edid_file(file_data: Vec<u8>) -> Result<String, String> {
             #[cfg(target_os = "windows")]
             {
                 use std::process::Command;
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
                 
                 // 使用管理员权限创建目录
                 let ps_command = format!(
@@ -717,6 +722,7 @@ pub async fn upload_edid_file(file_data: Vec<u8>) -> Result<String, String> {
                 
                 Command::new("powershell")
                     .args(&["-NoProfile", "-Command", &ps_command])
+                    .creation_flags(CREATE_NO_WINDOW)
                     .spawn()
                     .map_err(|e| format!("创建目录失败: {}", e))?
                     .wait()
@@ -740,6 +746,8 @@ pub async fn upload_edid_file(file_data: Vec<u8>) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         use std::process::Command;
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
         
         let ps_command = format!(
             r#"Start-Process powershell -ArgumentList '-Command', 'Copy-Item -Path \"{}\" -Destination \"{}\" -Force' -Verb RunAs -WindowStyle Hidden -Wait"#,
@@ -749,6 +757,7 @@ pub async fn upload_edid_file(file_data: Vec<u8>) -> Result<String, String> {
         
         Command::new("powershell")
             .args(&["-NoProfile", "-Command", &ps_command])
+            .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| {
                 let _ = fs::remove_file(&temp_path);
@@ -811,6 +820,8 @@ pub async fn delete_edid_file() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         use std::process::Command;
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
         
         let ps_command = format!(
             r#"Start-Process powershell -ArgumentList '-Command', 'Remove-Item -Path \"{}\" -Force' -Verb RunAs -WindowStyle Hidden -Wait"#,
@@ -819,6 +830,7 @@ pub async fn delete_edid_file() -> Result<String, String> {
         
         Command::new("powershell")
             .args(&["-NoProfile", "-Command", &ps_command])
+            .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| format!("删除 EDID 文件失败: {}", e))?
             .wait()
@@ -842,6 +854,8 @@ pub async fn uninstall_vdd_driver() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         use std::process::Command;
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
         
         // 查找 nefconw.exe：先 tools/ 再 tools/vdd/
         let tools_dir = get_sunshine_path().join("tools");
@@ -870,6 +884,7 @@ pub async fn uninstall_vdd_driver() -> Result<String, String> {
         
         Command::new("powershell")
             .args(&["-Command", &ps_command])
+            .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| e.to_string())?;
         

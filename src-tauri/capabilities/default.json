@@ -51,6 +51,7 @@
     "global-shortcut:allow-unregister-all",
     "global-shortcut:default"
   ],
+  "local": true,
   "remote": {
     "urls": [
       "http://localhost:*",

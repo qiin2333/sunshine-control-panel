@@ -128,6 +128,8 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { confirm as dialogConfirm, message as dialogMessage } from '@tauri-apps/plugin-dialog'
+import { ElMessage } from 'element-plus'
 import { Document, RefreshRight, Delete, Search, Close, Download } from '@element-plus/icons-vue'
 
 // 响应式数据
@@ -243,8 +245,10 @@ async function loadLogs() {
   try {
     const logs = await invoke('get_all_logs')
     allLogs.value = logs
+    ElMessage.success(`刷新成功，共 ${logs.length} 条日志`)
   } catch (error) {
     console.error('加载日志失败:', error)
+    ElMessage.error('刷新失败: ' + error)
   } finally {
     loading.value = false
   }
@@ -252,13 +256,14 @@ async function loadLogs() {
 
 // 清空日志
 async function clearLogs() {
-  if (await confirm('确定要清空所有日志吗？')) {
+  if (await dialogConfirm('确定要清空所有日志吗？', { title: '清空日志', kind: 'warning' })) {
     try {
       await invoke('clear_logs')
       allLogs.value = []
+      ElMessage.success('日志已清空')
     } catch (error) {
       console.error('清空日志失败:', error)
-      alert('清空日志失败: ' + error)
+      await dialogMessage('清空日志失败: ' + error, { title: '错误', kind: 'error' })
     }
   }
 }
@@ -267,11 +272,11 @@ async function clearLogs() {
 async function exportLogs(format) {
   try {
     const result = await invoke('export_logs', { format })
-    alert(result || '日志导出成功')
+    await dialogMessage(result || '日志导出成功', { title: '导出成功', kind: 'info' })
   } catch (error) {
     console.error('导出日志失败:', error)
-    if (error && !error.includes('用户取消了保存')) {
-      alert('导出日志失败: ' + error)
+    if (error && !String(error).includes('用户取消了保存')) {
+      await dialogMessage('导出日志失败: ' + error, { title: '错误', kind: 'error' })
     }
   }
 }

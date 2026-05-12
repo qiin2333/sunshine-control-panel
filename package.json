@@ -24,15 +24,16 @@
     "url": "https://github.com/qiin2333"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.10.1",
+    "@tauri-apps/cli": "^2.11.0",
     "@vitejs/plugin-vue": "^6.0.4",
     "cross-env": "^7.0.3",
+    "esbuild": "*",
     "less": "^4.2.2",
     "vite": "^8.0.8"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
-    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/plugin-dialog": "^2.7.0",
     "@tauri-apps/plugin-fs": "^2.5.0",
     "@tauri-apps/plugin-shell": "^2.3.5",

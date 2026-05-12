@@ -51,6 +51,7 @@ export async function openExternalUrl(url) {
 
 export const vdd = {
   getGPUs: () => wrapResult('get_gpus'),
+  getSettingsFilePath: () => wrapResult('get_vdd_settings_file_path'),
   loadSettings: () => wrapResult('load_vdd_settings'),
   saveSettings: (settings) => wrapResult('save_vdd_settings', { settings }),
   getEdidFilePath: () => wrapResult('get_vdd_edid_file_path'),

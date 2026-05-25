@@ -362,12 +362,26 @@ async fn sync_vdd_config_to_sunshine(settings: &VddSettings) -> Result<(), Strin
     }
 
     // 更新 GPU 名称 - 格式: 普通字符串
-    if !settings.gpu.friendlyname.is_empty() {
+    // 注意：VDD 的 vdd_settings.xml 模板里 <friendlyname> 默认是字面字符串 "default"
+    // （在 VDD 侧表示「自动挑最佳 GPU」的哨兵值）。如果原样传给 Sunshine，
+    // display_base.cpp 会把它当成精确 GPU 名 wstring 比较，导致所有 adapter 被跳过、
+    // 报 "Failed to locate an output device" / 503 (AlkaidLab/foundation-sunshine#671)。
+    // 这里把 "default"/"auto" 视为空，不写入 sunshine config。
+    let trimmed = settings.gpu.friendlyname.trim();
+    if !trimmed.is_empty()
+        && !trimmed.eq_ignore_ascii_case("default")
+        && !trimmed.eq_ignore_ascii_case("auto")
+    {
         config_data.insert(
             "adapter_name".to_string(),
-            serde_json::json!(settings.gpu.friendlyname),
+            serde_json::json!(trimmed),
         );
-        debug!("  ✓ GPU: {}", settings.gpu.friendlyname);
+        debug!("  ✓ GPU: {}", trimmed);
+    } else if !trimmed.is_empty() {
+        debug!(
+            "  ⚠ 忽略 VDD 哨兵 friendlyname={:?}，让 Sunshine 自动选卡",
+            trimmed
+        );
     }
 
     // 调用 Sunshine Config API

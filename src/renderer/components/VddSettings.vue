@@ -416,7 +416,7 @@ const createInitialSettings = () => ({
     debuglogging: false,
   },
   cursor: {
-    HardwareCursor: true,
+    HardwareCursor: false,
     CursorMaxY: 128,
     CursorMaxX: 128,
     AlphaCursorSupport: true,

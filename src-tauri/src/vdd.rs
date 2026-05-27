@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// 更新 VDD XML 文件中的 colour、logging 和 edid 节点
+/// 更新 VDD XML 文件中的 colour、logging、cursor 和 edid 节点
 /// C++ 的 saveVddSettings 会保留这些字段，所以我们需要先写入
 async fn update_vdd_xml_extra_fields(settings: &VddSettings) -> Result<(), String> {
     let vdd_xml_path = get_vdd_settings_path();
@@ -23,7 +23,7 @@ async fn update_vdd_xml_extra_fields(settings: &VddSettings) -> Result<(), Strin
         get_default_settings()
     };
 
-    // 只更新 colour、logging 和 edid 字段（其他字段会被 C++ 更新）
+    // 只更新 colour、logging、cursor 和 edid 字段（其他字段会被 C++ 更新）
     if let Some(ref colour) = settings.colour {
         vdd_settings.colour = Some(colour.clone());
         debug!("  ✓ 更新 colour 配置");
@@ -32,6 +32,17 @@ async fn update_vdd_xml_extra_fields(settings: &VddSettings) -> Result<(), Strin
     if let Some(ref logging) = settings.logging {
         vdd_settings.logging = Some(logging.clone());
         debug!("  ✓ 更新 logging 配置");
+    }
+
+    if let Some(ref cursor) = settings.cursor {
+        vdd_settings.cursor = Some(cursor.clone());
+        debug!(
+            "  ✓ 更新 cursor 配置: HardwareCursor={}",
+            cursor.hardware_cursor
+        );
+    } else if vdd_settings.cursor.is_none() {
+        vdd_settings.cursor = default_cursor();
+        debug!("  ✓ 补齐默认 cursor 配置");
     }
 
     if let Some(ref edid) = settings.edid {
@@ -362,12 +373,26 @@ async fn sync_vdd_config_to_sunshine(settings: &VddSettings) -> Result<(), Strin
     }
 
     // 更新 GPU 名称 - 格式: 普通字符串
-    if !settings.gpu.friendlyname.is_empty() {
+    // 注意：VDD 的 vdd_settings.xml 模板里 <friendlyname> 默认是字面字符串 "default"
+    // （在 VDD 侧表示「自动挑最佳 GPU」的哨兵值）。如果原样传给 Sunshine，
+    // display_base.cpp 会把它当成精确 GPU 名 wstring 比较，导致所有 adapter 被跳过、
+    // 报 "Failed to locate an output device" / 503 (AlkaidLab/foundation-sunshine#671)。
+    // 这里把 "default"/"auto" 视为空，不写入 sunshine config。
+    let trimmed = settings.gpu.friendlyname.trim();
+    if !trimmed.is_empty()
+        && !trimmed.eq_ignore_ascii_case("default")
+        && !trimmed.eq_ignore_ascii_case("auto")
+    {
         config_data.insert(
             "adapter_name".to_string(),
-            serde_json::json!(settings.gpu.friendlyname),
+            serde_json::json!(trimmed),
         );
-        debug!("  ✓ GPU: {}", settings.gpu.friendlyname);
+        debug!("  ✓ GPU: {}", trimmed);
+    } else if !trimmed.is_empty() {
+        debug!(
+            "  ⚠ 忽略 VDD 哨兵 friendlyname={:?}，让 Sunshine 自动选卡",
+            trimmed
+        );
     }
 
     // 调用 Sunshine Config API
@@ -383,6 +408,18 @@ fn default_true() -> bool {
     true
 }
 
+fn default_cursor_max_size() -> u32 {
+    128
+}
+
+fn default_xor_cursor_support_level() -> u32 {
+    2
+}
+
+fn default_cursor() -> Option<Cursor> {
+    Some(Cursor::default())
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct VddSettings {
     pub monitors: Monitors,
@@ -393,6 +430,8 @@ pub struct VddSettings {
     pub colour: Option<Colour>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub logging: Option<Logging>,
+    #[serde(default = "default_cursor", skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<Cursor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edid: Option<EdidConfig>,
 }
@@ -441,6 +480,35 @@ pub struct Logging {
     pub send_logs_through_pipe: bool,
     pub logging: bool,
     pub debuglogging: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Cursor {
+    #[serde(rename = "HardwareCursor", default = "default_true")]
+    pub hardware_cursor: bool,
+    #[serde(rename = "CursorMaxY", default = "default_cursor_max_size")]
+    pub cursor_max_y: u32,
+    #[serde(rename = "CursorMaxX", default = "default_cursor_max_size")]
+    pub cursor_max_x: u32,
+    #[serde(rename = "AlphaCursorSupport", default = "default_true")]
+    pub alpha_cursor_support: bool,
+    #[serde(
+        rename = "XorCursorSupportLevel",
+        default = "default_xor_cursor_support_level"
+    )]
+    pub xor_cursor_support_level: u32,
+}
+
+impl Default for Cursor {
+    fn default() -> Self {
+        Self {
+            hardware_cursor: true,
+            cursor_max_y: default_cursor_max_size(),
+            cursor_max_x: default_cursor_max_size(),
+            alpha_cursor_support: true,
+            xor_cursor_support_level: default_xor_cursor_support_level(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -542,6 +610,7 @@ fn get_default_settings() -> VddSettings {
             logging: false,
             debuglogging: false,
         }),
+        cursor: default_cursor(),
         edid: Some(EdidConfig {
             custom_edid: false,
             prevent_spoof: false,
@@ -889,5 +958,77 @@ pub async fn uninstall_vdd_driver() -> Result<String, String> {
     #[cfg(not(target_os = "windows"))]
     {
         Err("此功能仅支持 Windows".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MINIMAL_VDD_XML_WITHOUT_CURSOR: &str = r#"
+<vdd_settings>
+    <monitors><count>1</count></monitors>
+    <gpu><friendlyname></friendlyname></gpu>
+    <global><g_refresh_rate>60</g_refresh_rate></global>
+    <resolutions>
+        <resolution><width>1920</width><height>1080</height></resolution>
+    </resolutions>
+</vdd_settings>
+"#;
+
+    #[test]
+    fn missing_cursor_section_defaults_to_hardware_cursor_enabled() {
+        let settings: VddSettings = from_str(MINIMAL_VDD_XML_WITHOUT_CURSOR).unwrap();
+        let cursor = settings
+            .cursor
+            .expect("cursor defaults should be populated");
+
+        assert!(cursor.hardware_cursor);
+        assert_eq!(cursor.cursor_max_x, 128);
+        assert_eq!(cursor.cursor_max_y, 128);
+        assert!(cursor.alpha_cursor_support);
+        assert_eq!(cursor.xor_cursor_support_level, 2);
+    }
+
+    #[test]
+    fn default_settings_serialize_cursor_section() {
+        let xml = to_string(&get_default_settings()).unwrap();
+
+        assert!(xml.contains("<cursor>"));
+        assert!(xml.contains("<HardwareCursor>true</HardwareCursor>"));
+        assert!(xml.contains("<CursorMaxX>128</CursorMaxX>"));
+        assert!(xml.contains("<CursorMaxY>128</CursorMaxY>"));
+        assert!(xml.contains("<AlphaCursorSupport>true</AlphaCursorSupport>"));
+        assert!(xml.contains("<XorCursorSupportLevel>2</XorCursorSupportLevel>"));
+    }
+
+    #[test]
+    fn explicit_hardware_cursor_false_is_preserved() {
+        let xml = r#"
+<vdd_settings>
+    <monitors><count>1</count></monitors>
+    <gpu><friendlyname></friendlyname></gpu>
+    <global><g_refresh_rate>60</g_refresh_rate></global>
+    <resolutions>
+        <resolution><width>1920</width><height>1080</height></resolution>
+    </resolutions>
+    <cursor>
+        <HardwareCursor>false</HardwareCursor>
+        <CursorMaxY>64</CursorMaxY>
+        <CursorMaxX>64</CursorMaxX>
+        <AlphaCursorSupport>false</AlphaCursorSupport>
+        <XorCursorSupportLevel>1</XorCursorSupportLevel>
+    </cursor>
+</vdd_settings>
+"#;
+
+        let settings: VddSettings = from_str(xml).unwrap();
+        let cursor = settings.cursor.expect("cursor section should parse");
+
+        assert!(!cursor.hardware_cursor);
+        assert_eq!(cursor.cursor_max_x, 64);
+        assert_eq!(cursor.cursor_max_y, 64);
+        assert!(!cursor.alpha_cursor_support);
+        assert_eq!(cursor.xor_cursor_support_level, 1);
     }
 }

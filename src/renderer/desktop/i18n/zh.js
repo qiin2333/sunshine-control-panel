@@ -611,6 +611,8 @@ export const zh = {
     vrrTip: '启用后，驱动会声明 VRR / FreeSync / G-Sync Compatible 支持；但若 EDID 中缺少完整的自适应刷新范围信息，部分主机仍可能无法真正启用 VRR。',
     sdr10bitTip: '启用10bit SDR色彩深度',
     hdr12bitTip: '启用12bit HDR+色彩深度',
+    hardwareCursor: '硬件指针',
+    hardwareCursorTip: '开启后，VDD 会把鼠标指针作为硬件 cursor plane 交给系统；若串流端暂不渲染独立指针，远端可能看不到鼠标，可关闭它回退到软件指针。',
     loggingLabel: '日志记录',
     loggingTip: '记录驱动运行关键事件（错误、状态变化）',
     debugLogging: '详细调试',

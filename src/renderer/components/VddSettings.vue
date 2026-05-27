@@ -229,6 +229,15 @@
                   </div>
                 </el-form-item>
 
+                <el-form-item :label="t.vddSettings.hardwareCursor">
+                  <div class="field-stack">
+                    <div class="field-inline-control">
+                      <el-switch v-model="settings.cursor.HardwareCursor" />
+                    </div>
+                    <span class="form-tip">{{ t.vddSettings.hardwareCursorTip }}</span>
+                  </div>
+                </el-form-item>
+
                 <el-form-item
                   v-for="item in loggingSwitchFields"
                   :key="item.key"
@@ -405,6 +414,13 @@ const createInitialSettings = () => ({
   logging: {
     logging: false,
     debuglogging: false,
+  },
+  cursor: {
+    HardwareCursor: true,
+    CursorMaxY: 128,
+    CursorMaxX: 128,
+    AlphaCursorSupport: true,
+    XorCursorSupportLevel: 2,
   },
   edid: {
     CustomEdid: false,
@@ -652,6 +668,7 @@ const applyLoadedSettings = (data) => {
     resolutions: data?.resolutions || initialSettings.resolutions,
     colour: data?.colour || initialSettings.colour,
     logging: data?.logging || initialSettings.logging,
+    cursor: data?.cursor || initialSettings.cursor,
     edid: data?.edid || initialSettings.edid,
   }
 

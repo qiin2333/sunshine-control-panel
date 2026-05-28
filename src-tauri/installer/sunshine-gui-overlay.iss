@@ -56,7 +56,10 @@ Source: "{#SourceDir}\sunshine-gui.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\WebView2Loader.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Run]
-Filename: "{win}\explorer.exe"; Parameters: """{app}\{#MyGuiExeName}"""; Description: "Launch Sunshine GUI"; Flags: postinstall nowait skipifsilent unchecked
+; runascurrentuser avoids Inno 6's SpawnServer ("CallSpawnServer: Unexpected
+; response: $0") when an elevated installer launches explorer.exe. Demotion
+; to the user session is performed by the shell itself.
+Filename: "{win}\explorer.exe"; Parameters: """{app}\{#MyGuiExeName}"""; Description: "Launch Sunshine GUI"; Flags: postinstall nowait skipifsilent unchecked runascurrentuser
 
 [Code]
 function QueryInstallDir(RootKey: Integer; const SubKey: String; const ValueName: String; var Value: String): Boolean;

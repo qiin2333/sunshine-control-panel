@@ -1055,4 +1055,69 @@ mod tests {
         assert!(!cursor.alpha_cursor_support);
         assert_eq!(cursor.xor_cursor_support_level, 1);
     }
+
+    #[test]
+    fn missing_edid_profile_defaults_to_auto() {
+        // <edid> 存在但缺 <EdidProfile>（老版本文件），应默认回 "auto"
+        let xml = r#"
+<vdd_settings>
+    <monitors><count>1</count></monitors>
+    <gpu><friendlyname></friendlyname></gpu>
+    <global><g_refresh_rate>60</g_refresh_rate></global>
+    <resolutions>
+        <resolution><width>1920</width><height>1080</height></resolution>
+    </resolutions>
+    <edid>
+        <CustomEdid>false</CustomEdid>
+        <PreventSpoof>false</PreventSpoof>
+        <EdidCeaOverride>false</EdidCeaOverride>
+        <Vrr>false</Vrr>
+    </edid>
+</vdd_settings>
+"#;
+
+        let settings: VddSettings = from_str(xml).unwrap();
+        let edid = settings.edid.expect("edid section should parse");
+
+        assert_eq!(edid.edid_profile, "auto");
+    }
+
+    #[test]
+    fn default_settings_serialize_edid_profile() {
+        // round-trip 必须输出 <EdidProfile>，否则会重蹈丢标签覆辙
+        let xml = serialize_vdd_settings(&get_default_settings()).unwrap();
+
+        assert!(xml.contains("<EdidProfile>auto</EdidProfile>"));
+    }
+
+    #[test]
+    fn explicit_edid_profile_is_preserved_through_round_trip() {
+        // 非默认值（modern）必须能跨反序列化→序列化存活
+        let xml = r#"
+<vdd_settings>
+    <monitors><count>1</count></monitors>
+    <gpu><friendlyname></friendlyname></gpu>
+    <global><g_refresh_rate>60</g_refresh_rate></global>
+    <resolutions>
+        <resolution><width>1920</width><height>1080</height></resolution>
+    </resolutions>
+    <edid>
+        <CustomEdid>false</CustomEdid>
+        <PreventSpoof>false</PreventSpoof>
+        <EdidCeaOverride>false</EdidCeaOverride>
+        <EdidProfile>modern</EdidProfile>
+        <Vrr>false</Vrr>
+    </edid>
+</vdd_settings>
+"#;
+
+        let settings: VddSettings = from_str(xml).unwrap();
+        assert_eq!(
+            settings.edid.as_ref().expect("edid section").edid_profile,
+            "modern"
+        );
+
+        let out = serialize_vdd_settings(&settings).unwrap();
+        assert!(out.contains("<EdidProfile>modern</EdidProfile>"));
+    }
 }

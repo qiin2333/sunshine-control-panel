@@ -1,7 +1,6 @@
 use crate::sunshine;
 use log::{debug, error, info, warn};
 use quick_xml::de::from_str;
-use quick_xml::se::to_string;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -54,7 +53,7 @@ async fn update_vdd_xml_extra_fields(settings: &VddSettings) -> Result<(), Strin
     }
 
     // 序列化回 XML
-    let xml = to_string(&vdd_settings).map_err(|e| format!("序列化 VDD XML 失败: {}", e))?;
+    let xml = serialize_vdd_settings(&vdd_settings)?;
 
     // 添加 XML 声明
     let full_xml = format!("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n{}", xml);
@@ -66,6 +65,17 @@ async fn update_vdd_xml_extra_fields(settings: &VddSettings) -> Result<(), Strin
     verify_vdd_xml(&vdd_xml_path)?;
 
     Ok(())
+}
+
+fn serialize_vdd_settings(settings: &VddSettings) -> Result<String, String> {
+    let mut xml = String::new();
+    let mut ser = quick_xml::se::Serializer::with_root(&mut xml, Some("vdd_settings"))
+        .map_err(|e| format!("创建 VDD XML 序列化器失败: {}", e))?;
+    ser.indent(' ', 2);
+    settings
+        .serialize(ser)
+        .map_err(|e| format!("序列化 VDD XML 失败: {}", e))?;
+    Ok(xml)
 }
 
 /// 写入 VDD XML 文件（Windows - 使用管理员权限）
@@ -420,6 +430,10 @@ fn default_xor_cursor_support_level() -> u32 {
     2
 }
 
+fn default_edid_profile() -> String {
+    "auto".to_string()
+}
+
 fn default_cursor() -> Option<Cursor> {
     Some(Cursor::default())
 }
@@ -523,6 +537,8 @@ pub struct EdidConfig {
     pub prevent_spoof: bool,
     #[serde(rename = "EdidCeaOverride")]
     pub edid_cea_override: bool,
+    #[serde(rename = "EdidProfile", default = "default_edid_profile")]
+    pub edid_profile: String,
     #[serde(rename = "Vrr", default)]
     pub vrr: bool,
 }
@@ -619,6 +635,7 @@ fn get_default_settings() -> VddSettings {
             custom_edid: false,
             prevent_spoof: false,
             edid_cea_override: false,
+            edid_profile: default_edid_profile(),
             vrr: false,
         }),
     }
@@ -996,8 +1013,11 @@ mod tests {
 
     #[test]
     fn default_settings_serialize_cursor_section() {
-        let xml = to_string(&get_default_settings()).unwrap();
+        let xml = serialize_vdd_settings(&get_default_settings()).unwrap();
 
+        // 根标签必须是小写 vdd_settings，而非结构体名 VddSettings
+        assert!(xml.contains("<vdd_settings>"));
+        assert!(!xml.contains("<VddSettings>"));
         assert!(xml.contains("<cursor>"));
         assert!(xml.contains("<HardwareCursor>false</HardwareCursor>"));
         assert!(xml.contains("<CursorMaxX>128</CursorMaxX>"));

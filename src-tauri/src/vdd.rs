@@ -712,14 +712,17 @@ pub async fn exec_pipe_cmd(command: String) -> Result<bool, String> {
         use windows::Win32::Storage::FileSystem::*;
         use windows::core::PCWSTR;
 
-        tokio::task::spawn_blocking(move || {
+        let cmd_for_blocking = command.clone();
+        let in_process = tokio::task::spawn_blocking(move || -> Result<bool, (bool, String)> {
             // Preferred path: IOCTL transport. Mirrors the C++ dispatch in
             // `Sunshine/src/display_device/vdd_utils.cpp`: only fall through
             // to the legacy pipe when the device interface is absent.
-            match vdd_ioctl::send_command(&command) {
+            match vdd_ioctl::send_command(&cmd_for_blocking) {
                 vdd_ioctl::IoctlResult::Success => return Ok(true),
                 vdd_ioctl::IoctlResult::Failed(msg) => {
-                    return Err(format!("vdd_ioctl: {msg}"));
+                    // err=5 表示设备存在但当前权限打不开，可通过提权重试。
+                    let access_denied = msg.contains("err=5");
+                    return Err((access_denied, format!("vdd_ioctl: {msg}")));
                 }
                 vdd_ioctl::IoctlResult::InterfaceMissing => {
                     // Driver too old / not installed; fall back to pipe.
@@ -742,13 +745,15 @@ pub async fn exec_pipe_cmd(command: String) -> Result<bool, String> {
                 );
 
                 if handle.is_err() || handle.as_ref().unwrap().is_invalid() {
-                    return Err("无法连接到管道".to_string());
+                    let err = GetLastError().0;
+                    let access_denied = err == 5;
+                    return Err((access_denied, format!("无法连接到管道 (err={err})")));
                 }
 
                 let handle = handle.unwrap();
 
                 // 转换为 UTF-16LE
-                let cmd_wide: Vec<u16> = command.encode_utf16().chain(std::iter::once(0)).collect();
+                let cmd_wide: Vec<u16> = cmd_for_blocking.encode_utf16().chain(std::iter::once(0)).collect();
                 let buffer = cmd_wide.as_ptr() as *const u8;
                 let buffer_len = (cmd_wide.len() * 2) as u32;
 
@@ -765,18 +770,41 @@ pub async fn exec_pipe_cmd(command: String) -> Result<bool, String> {
                 if result.is_ok() {
                     Ok(true)
                 } else {
-                    Err("写入管道失败".to_string())
+                    Err((false, "写入管道失败".to_string()))
                 }
             }
         })
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+
+        match in_process {
+            Ok(v) => Ok(v),
+            Err((true, msg)) => {
+                // 权限不足：回退到提权 PowerShell，向 VDD 控制管道写命令。
+                warn!("  ⚠️ VDD 命令在普通权限下被拒 ({msg})，回退到提权执行");
+                run_elevated_pipe_command(&command).await?;
+                Ok(true)
+            }
+            Err((false, msg)) => Err(msg),
+        }
     }
 
     #[cfg(not(target_os = "windows"))]
     {
         Ok(true)
     }
+}
+
+/// 通过提权 PowerShell 向 ZakoVDD 控制管道写入命令。
+#[cfg(target_os = "windows")]
+async fn run_elevated_pipe_command(command: &str) -> Result<(), String> {
+    // command 为内部常量（如 RELOAD_DRIVER / "HARDWARECURSOR true"），不含单引号；
+    // 即便含单引号，run_elevated_powershell 也会统一对内层命令做 '' 转义。
+    let inner = format!(
+        "$p = New-Object System.IO.Pipes.NamedPipeClientStream('.', 'ZakoVDDPipe', [System.IO.Pipes.PipeDirection]::Out); $p.Connect(3000); $b = [System.Text.Encoding]::Unicode.GetBytes('{}' + [char]0); $p.Write($b, 0, $b.Length); $p.Flush(); $p.Dispose()",
+        command
+    );
+    run_elevated_powershell(&inner, "提权执行 VDD 命令").await
 }
 
 /// 验证 EDID 文件格式和 checksum

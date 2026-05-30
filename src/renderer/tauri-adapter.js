@@ -65,7 +65,9 @@ export const vdd = {
       return true
     } catch (error) {
       console.error('执行管道命令失败:', error)
-      return false
+      throw error instanceof Error
+        ? error
+        : new Error(typeof error === 'string' && error.trim() ? error : '执行管道命令失败')
     }
   },
 }

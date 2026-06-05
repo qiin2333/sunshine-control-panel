@@ -135,7 +135,7 @@ const windowClass = computed(() => {
 
   .desktop-window-main {
     flex: 1;
-    padding: 40px 48px;
+    padding: 32px 40px;
     overflow-y: auto;
     overflow-x: hidden;
     position: relative;
@@ -158,6 +158,12 @@ const windowClass = computed(() => {
       }
     }
   }
+
+  @media (max-width: 900px) {
+    .desktop-window-main {
+      padding: 24px 28px;
+    }
+  }
 }
 
 .theme-light {
@@ -165,4 +171,3 @@ const windowClass = computed(() => {
   color: #1e293b;
 }
 </style>
-

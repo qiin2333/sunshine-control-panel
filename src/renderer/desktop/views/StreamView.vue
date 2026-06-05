@@ -81,7 +81,7 @@
         <div class="desktop-card">
           <div class="card-header">
             <div class="card-title">
-              <span class="title-icon">🌈</span>
+              <span class="title-icon"><Sunny /></span>
               {{ t.stream.hdr }}
             </div>
           </div>
@@ -302,7 +302,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { Film, DataAnalysis, Monitor, Promotion, Mouse } from '@element-plus/icons-vue'
+import { DataAnalysis, Film, Monitor, Mouse, Promotion, Sunny } from '@element-plus/icons-vue'
 import PillGroup from '../components/PillGroup.vue'
 import FdDropdown from '../components/FdDropdown.vue'
 import { vmouse as vmouseApi } from '../../tauri-adapter.js'

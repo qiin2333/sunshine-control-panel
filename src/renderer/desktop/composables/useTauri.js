@@ -18,3 +18,12 @@ export async function tauriInvoke(cmd, params = {}) {
   const invoke = await ensureInvoke()
   return invoke(cmd, params)
 }
+
+export async function isTauriRuntime() {
+  try {
+    const { isTauri } = await import('@tauri-apps/api/core')
+    return isTauri()
+  } catch {
+    return false
+  }
+}

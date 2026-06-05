@@ -19,16 +19,17 @@
         <span class="list-cmd" v-if="app.cmd">{{ app.cmd }}</span>
       </div>
       <div class="list-tags">
-        <span v-if="isFavorite(app.name)" class="list-tag fav">★ {{ t.appContext.favorite }}</span>
+        <span v-if="isFavorite(app.name)" class="list-tag fav"><StarFilled /> {{ t.appContext.favorite }}</span>
         <span v-if="app.elevated && app.elevated !== 'false'" class="list-tag admin">{{ t.appContext.admin }}</span>
       </div>
-      <button class="list-play" tabindex="-1">▶</button>
+      <button class="list-play" tabindex="-1"><VideoPlay /></button>
     </div>
   </div>
 </template>
 
 <script setup>
 import { useI18n } from '../i18n/index.js'
+import { StarFilled, VideoPlay } from '@element-plus/icons-vue'
 const { t } = useI18n()
 
 defineProps({
@@ -120,6 +121,14 @@ defineEmits(['launch', 'contextmenu'])
     font-size: 11px;
     padding: 2px 8px;
     border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+
+    svg {
+      width: 12px;
+      height: 12px;
+    }
 
     &.fav { background: rgba(var(--fd-status-warning-rgb, 255, 215, 0), 0.1); color: var(--fd-status-warning, #ffd700); }
     &.admin { background: rgba(var(--fd-status-danger-rgb, 255, 107, 53), 0.1); color: var(--fd-status-danger, #ff6b35); }
@@ -139,6 +148,11 @@ defineEmits(['launch', 'contextmenu'])
     font-size: 12px;
     transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
     flex-shrink: 0;
+
+    svg {
+      width: 15px;
+      height: 15px;
+    }
   }
 
   &:hover .list-play {

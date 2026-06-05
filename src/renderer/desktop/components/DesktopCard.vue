@@ -75,8 +75,8 @@ function handleClick() {
 .desktop-card {
   background: linear-gradient(145deg, rgba(var(--fd-bg-secondary-rgb, 26, 26, 46), 0.95) 0%, rgba(22, 33, 62, 0.95) 100%);
   border: 1px solid rgba(var(--fd-accent-rgb, 0, 255, 245), 0.2);
-  border-radius: 20px;
-  padding: 32px;
+  border-radius: var(--fd-card-radius, 14px);
+  padding: 24px;
   transition: all 0.3s ease;
 
   &.hoverable:hover {
@@ -161,4 +161,3 @@ function handleClick() {
   }
 }
 </style>
-

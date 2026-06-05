@@ -1,9 +1,11 @@
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { tauriInvoke } from './useTauri'
+import { useI18n } from '../i18n/index.js'
 
 const STORAGE_KEY = 'foundation-desktop-apps'
 
 export function useApps() {
+  const { t } = useI18n()
   const proxyUrl = ref('http://localhost:48081')
   const apps = ref([])
   const loading = ref(true)
@@ -42,16 +44,16 @@ export function useApps() {
 
   // 筛选标签
   const filterTabs = computed(() => [
-    { id: 'all', label: '全部', count: apps.value.length },
-    { id: 'favorites', label: '收藏', count: favorites.value.length },
-    { id: 'recent', label: '最近', count: recentHistory.value.length },
+    { id: 'all', label: t.value.apps.filters.all, count: apps.value.length },
+    { id: 'favorites', label: t.value.apps.filters.favorites, count: favorites.value.length },
+    { id: 'recent', label: t.value.apps.filters.recent, count: recentHistory.value.length },
   ])
 
   const sortLabel = computed(() => {
     switch (sortMode.value) {
-      case 'name': return '名称'
-      case 'recent': return '最近使用'
-      default: return '名称'
+      case 'name': return t.value.apps.sort.name
+      case 'recent': return t.value.apps.sort.recent
+      default: return t.value.apps.sort.name
     }
   })
 
@@ -195,7 +197,7 @@ export function useApps() {
     launchError.value = ''
 
     if (!app.cmd) {
-      launchError.value = `"${app.name}" 没有配置启动命令`
+      launchError.value = t.value.apps.noCommand.replace('{name}', app.name)
       console.warn('[useApps] app has no cmd:', app.name)
       setTimeout(() => { launchError.value = '' }, 4000)
       return
@@ -213,7 +215,7 @@ export function useApps() {
       })
     } catch (e) {
       console.error('Failed to launch app:', e, '\ncmd:', app.cmd, '\nworking-dir:', app['working-dir'])
-      launchError.value = `"${app.name}" ${e}\ncmd: ${app.cmd}`
+      launchError.value = `${t.value.apps.launchFailed.replace('{name}', app.name).replace('{error}', e)}\ncmd: ${app.cmd}`
       setTimeout(() => { launchError.value = '' }, 8000)
     } finally {
       setTimeout(() => { launchingApp.value = null }, 1500)

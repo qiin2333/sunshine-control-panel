@@ -34,7 +34,7 @@
       <!-- 快捷键管理 -->
       <DesktopCard :title="t.tools.shortcutGuide" variant="warning" hoverable class="tool-panel-card">
         <template #title>
-          <span class="title-icon">⌨️</span>
+          <span class="title-icon"><Key /></span>
           {{ t.tools.shortcutGuide }}
         </template>
 
@@ -124,16 +124,12 @@
       </div>
 
       <template #footer>
-        <!-- <button class="desktop-btn" @click="restartGraphicsDriver">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-            <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2" />
-          </svg>
+        <button class="desktop-btn" @click="restartGraphicsDriver">
+          <Refresh />
           {{ t.tools.restartGraphicsDriver }}
-        </button> -->
+        </button>
         <button class="desktop-btn" @click="runDiagnostics">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-            <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2" />
-          </svg>
+          <Refresh />
           {{ t.tools.rediagnose }}
         </button>
       </template>
@@ -143,7 +139,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { DataAnalysis, Search, Monitor } from '@element-plus/icons-vue'
+import { DataAnalysis, Key, Monitor, Refresh, Search } from '@element-plus/icons-vue'
 import { useI18n } from '../i18n/index.js'
 
 // 桌面 UI 组件

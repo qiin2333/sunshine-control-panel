@@ -23,14 +23,22 @@
           <span class="placeholder-letter">{{ app.name?.[0] || '?' }}</span>
         </div>
         <!-- 收藏角标 -->
-        <div v-if="isFavorite(app.name)" class="favorite-badge" @click.stop="$emit('toggleFavorite', app.name)">★</div>
+        <div v-if="isFavorite(app.name)" class="favorite-badge" @click.stop="$emit('toggleFavorite', app.name)">
+          <StarFilled />
+        </div>
         <!-- 启动助手角标 -->
-        <div v-if="helperIcons(app.name).length" class="helper-badges">
-          <span v-for="(icon, i) in helperIcons(app.name)" :key="i" class="helper-badge-icon">{{ icon }}</span>
+        <div v-if="helperIds(app.name).length" class="helper-badges">
+          <LaunchHelperIcon
+            v-for="helperId in helperIds(app.name)"
+            :key="helperId"
+            :template-id="helperId"
+            :size="12"
+            class="helper-badge-icon"
+          />
         </div>
         <!-- Hover 遮罩 -->
         <div class="tile-overlay">
-          <span class="play-icon">▶</span>
+          <span class="play-icon"><VideoPlay /></span>
         </div>
         <!-- 启动动画 -->
         <div v-if="launchingApp === app.name" class="launch-overlay">
@@ -48,6 +56,8 @@
 
 <script setup>
 import { useI18n } from '../i18n/index.js'
+import { StarFilled, VideoPlay } from '@element-plus/icons-vue'
+import LaunchHelperIcon from './LaunchHelperIcon.vue'
 const { t } = useI18n()
 
 const props = defineProps({
@@ -57,7 +67,7 @@ const props = defineProps({
   isFavorite: { type: Function, required: true },
   getAppImageUrl: { type: Function, required: true },
   handleImageError: { type: Function, required: true },
-  helperIcons: { type: Function, default: () => [] },
+  helperIds: { type: Function, default: () => [] },
 })
 
 defineEmits(['launch', 'contextmenu', 'toggleFavorite'])
@@ -147,15 +157,22 @@ defineEmits(['launch', 'contextmenu', 'toggleFavorite'])
   position: absolute;
   top: 8px;
   right: 8px;
-  font-size: 16px;
   color: var(--fd-status-warning, #ffd700);
   text-shadow: 0 0 8px rgba(var(--fd-status-warning-rgb, 255, 215, 0), 0.4);
   z-index: 3;
   cursor: pointer;
   transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 
   &:hover {
     transform: scale(1.4) rotate(15deg);
+  }
+
+  svg {
+    width: 16px;
+    height: 16px;
   }
 }
 
@@ -168,12 +185,13 @@ defineEmits(['launch', 'contextmenu', 'toggleFavorite'])
   z-index: 3;
 
   .helper-badge-icon {
-    font-size: 12px;
+    width: 18px;
+    height: 18px;
     background: rgba(0, 0, 0, 0.6);
+    color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.9);
     backdrop-filter: blur(4px);
     border-radius: 4px;
-    padding: 2px 4px;
-    line-height: 1;
+    padding: 3px;
   }
 }
 
@@ -197,9 +215,13 @@ defineEmits(['launch', 'contextmenu', 'toggleFavorite'])
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 16px;
     box-shadow: 0 0 20px rgba(var(--fd-accent-rgb, 0, 255, 245), 0.35);
     animation: play-pop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+
+    svg {
+      width: 18px;
+      height: 18px;
+    }
   }
 }
 

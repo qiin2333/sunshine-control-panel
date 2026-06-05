@@ -225,7 +225,7 @@
 
 // 侧边导航
 .desktop-sidebar {
-  width: 100px;
+  width: 92px;
   background: transparent;
   border-right: none;
   display: flex;
@@ -235,9 +235,9 @@
   gap: 12px;
 
   .nav-item {
-    width: 64px;
-    height: 64px;
-    border-radius: 16px;
+    width: 60px;
+    height: 60px;
+    border-radius: 14px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -269,8 +269,8 @@
     }
 
     svg {
-      width: 28px;
-      height: 28px;
+      width: 24px;
+      height: 24px;
     }
   }
 
@@ -285,7 +285,7 @@
 // 主面板
 .desktop-main {
   flex: 1;
-  padding: 40px 48px;
+  padding: 32px 40px;
   overflow-y: auto;
   overflow-x: hidden;
 
@@ -311,8 +311,8 @@
 .desktop-card {
   background: @desktop-gradient-card;
   border: 1px solid rgba(var(--fd-accent-rgb, 0, 255, 245), 0.08);
-  border-radius: var(--fd-card-radius, 20px);
-  padding: 32px;
+  border-radius: var(--fd-card-radius, 14px);
+  padding: 24px;
   transition: all 0.3s ease;
 
   &:hover {
@@ -327,7 +327,7 @@
     margin-bottom: 20px;
 
     .card-title {
-      font-size: 22px;
+      font-size: 18px;
       font-weight: 600;
       color: @desktop-text-primary;
       display: flex;
@@ -336,7 +336,7 @@
 
       .title-icon {
         color: @desktop-accent-cyan;
-        font-size: 24px;
+        font-size: 20px;
       }
     }
 
@@ -348,18 +348,18 @@
 
   .card-content {
     color: @desktop-text-secondary;
-    font-size: 16px;
+    font-size: 14px;
   }
 }
 
 // 按钮样式
 .desktop-btn {
-  padding: 14px 28px;
-  border-radius: 12px;
+  padding: 10px 18px;
+  border-radius: 10px;
   border: 1px solid rgba(var(--fd-accent-rgb, 0, 255, 245), 0.3);
   background: transparent;
   color: var(--fd-accent, #00fff5);
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -426,7 +426,7 @@
 
 // 统计数字
 .stat-value {
-  font-size: 42px;
+  font-size: 36px;
   font-weight: 700;
   background: linear-gradient(135deg, var(--fd-accent, #00fff5) 0%, var(--fd-accent-secondary, #ff00ff) 100%);
   -webkit-background-clip: text;

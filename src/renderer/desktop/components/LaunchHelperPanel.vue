@@ -43,7 +43,12 @@
               </div>
               <div v-else class="order-placeholder"></div>
 
-              <span class="helper-icon" @click="toggleHelper(helper.templateId)">{{ getTemplate(helper.templateId)?.icon }}</span>
+              <LaunchHelperIcon
+                class="helper-icon"
+                :template-id="helper.templateId"
+                :size="20"
+                @click="toggleHelper(helper.templateId)"
+              />
               <div class="helper-info" @click="toggleHelper(helper.templateId)">
                 <span class="helper-name">
                   {{ getTemplate(helper.templateId)?.name }}
@@ -141,7 +146,9 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { FolderOpened } from '@element-plus/icons-vue'
 import { useLaunchHelpers } from '../composables/useLaunchHelpers.js'
+import { isTauriRuntime } from '../composables/useTauri.js'
 import { useI18n } from '../i18n/index.js'
+import LaunchHelperIcon from './LaunchHelperIcon.vue'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -153,6 +160,7 @@ const props = defineProps({
 const emit = defineEmits(['close', 'saved'])
 
 const { t } = useI18n()
+const lhText = computed(() => t.value.launchHelper)
 
 const {
   templates,
@@ -226,7 +234,7 @@ function setParamValue(templateId, paramKey, value) {
     if (paramKey === 'path' && value && !getGlobalPath(templateId, paramKey)) {
       setGlobalPath(templateId, paramKey, value)
       const tmpl = getTemplate(templateId)
-      globalSaveNotice.value = (t.launchHelper.globalSaved || '').replace('{name}', tmpl?.name || templateId)
+      globalSaveNotice.value = (lhText.value.globalSaved || '').replace('{name}', tmpl?.name || templateId)
       setTimeout(() => { globalSaveNotice.value = '' }, 3000)
     }
     // 清除该字段的验证错误
@@ -252,7 +260,7 @@ async function checkPathExists(templateId, paramKey, filePath) {
       const { exists } = await import('@tauri-apps/plugin-fs')
       const found = await exists(filePath)
       if (!found) {
-        pathWarnings.value = { ...pathWarnings.value, [key]: t.launchHelper.fileNotFound || '文件不存在' }
+        pathWarnings.value = { ...pathWarnings.value, [key]: lhText.value.fileNotFound || '文件不存在' }
       } else {
         const { [key]: _, ...rest } = pathWarnings.value
         pathWarnings.value = rest
@@ -285,8 +293,8 @@ async function browseFile(templateId, paramKey) {
     const { open } = await import('@tauri-apps/plugin-dialog')
     const path = await open({
       filters: [
-        { name: t.launchHelper.executableFiles || 'Executables', extensions: ['exe', 'bat', 'cmd', 'lnk', 'com', 'scr'] },
-        { name: t.launchHelper.allFiles || 'All Files', extensions: ['*'] },
+        { name: lhText.value.executableFiles || 'Executables', extensions: ['exe', 'bat', 'cmd', 'lnk', 'com', 'scr'] },
+        { name: lhText.value.allFiles || 'All Files', extensions: ['*'] },
       ],
     })
     if (path) {
@@ -367,17 +375,14 @@ async function handleSave() {
     emit('close')
   } catch (e) {
     console.error('Failed to save launch helpers:', e)
-    alert(`${t.launchHelper.saveFailed || 'Save failed: '}${e.message}`)
+    alert(`${lhText.value.saveFailed || 'Save failed: '}${e.message}`)
   } finally {
     saving.value = false
   }
 }
 
 onMounted(async () => {
-  try {
-    await import('@tauri-apps/api/core')
-    hasTauri.value = true
-  } catch { hasTauri.value = false }
+  hasTauri.value = await isTauriRuntime()
 })
 
 // Escape 键全局监听（面板打开时）
@@ -550,9 +555,11 @@ onUnmounted(() => {
   }
 
   .helper-icon {
-    font-size: 24px;
     width: 36px;
-    text-align: center;
+    height: 36px;
+    border-radius: 10px;
+    color: var(--fd-accent, #00fff5);
+    background: rgba(var(--fd-accent-rgb, 0, 255, 245), 0.08);
   }
 
   .helper-info {

@@ -16,7 +16,6 @@ const TEMPLATE_I18N_MAP = {
 const BUILTIN_TEMPLATES = [
   {
     id: 'controller-mapper',
-    icon: '🎮',
     type: 'prep',
     defaultDoCmd: '"{path}" "{profile}"',
     defaultUndoCmd: 'taskkill /im "{exe}" /f',
@@ -28,7 +27,6 @@ const BUILTIN_TEMPLATES = [
   },
   {
     id: 'locale-emulator',
-    icon: '🌐',
     type: 'wrapper',
     wrapTemplate: '"{path}" /runas',
     params: [
@@ -38,7 +36,6 @@ const BUILTIN_TEMPLATES = [
   },
   {
     id: 'translator',
-    icon: '📝',
     type: 'prep',
     defaultDoCmd: '"{path}"',
     defaultUndoCmd: 'taskkill /im "{exe}" /f',
@@ -49,7 +46,6 @@ const BUILTIN_TEMPLATES = [
   },
   {
     id: 'game-trainer',
-    icon: '🔧',
     type: 'prep',
     defaultDoCmd: '"{path}"',
     defaultUndoCmd: 'taskkill /im "{exe}" /f',
@@ -60,7 +56,6 @@ const BUILTIN_TEMPLATES = [
   },
   {
     id: 'rtss-fps-limiter',
-    icon: '🎯',
     type: 'prep',
     defaultDoCmd: '"{path}" limit:set {fps}',
     defaultUndoCmd: '"{path}" limit:set 0',
@@ -73,7 +68,6 @@ const BUILTIN_TEMPLATES = [
   },
   {
     id: 'custom',
-    icon: '⚙️',
     type: 'prep',
     defaultDoCmd: '',
     defaultUndoCmd: '',
@@ -269,17 +263,10 @@ export function useLaunchHelpers(t) {
     return errors
   }
 
-  /**
-   * 获取某应用启用的助手图标列表
-   */
-  function getActiveHelperIcons(appName) {
-    const helpers = getAppHelpers(appName)
-    return helpers
+  function getActiveHelperIds(appName) {
+    return getAppHelpers(appName)
       .filter(h => h.enabled)
-      .map(h => {
-        const tmpl = BUILTIN_TEMPLATES.find(t => t.id === h.templateId)
-        return tmpl?.icon || '⚙️'
-      })
+      .map(h => h.templateId)
   }
 
   /**
@@ -383,17 +370,17 @@ export function useLaunchHelpers(t) {
           let wrapCmd = (rawTmpl || tmpl).wrapTemplate || ''
           wrapCmd = wrapCmd.split('{path}').join(wrapPath)
           if (mergedParams.extraArgs) wrapCmd = `${wrapCmd} ${mergedParams.extraArgs}`
-          cmds.push({ label: `${tmpl.icon} ${tmpl.name} ${lh.previewWrapper || '(包装启动命令)'}`, value: `${wrapCmd} <游戏命令>` })
+          cmds.push({ label: `${tmpl.name} ${lh.previewWrapper || '(包装启动命令)'}`, value: `${wrapCmd} <游戏命令>` })
         }
       } else if (tmpl.id === 'custom') {
-        if (mergedParams.doCmd) cmds.push({ label: `${tmpl.icon} ${lh.previewBefore || '(启动前)'}`, value: mergedParams.doCmd })
-        if (mergedParams.undoCmd) cmds.push({ label: `${tmpl.icon} ${lh.previewAfter || '(退出后)'}`, value: mergedParams.undoCmd })
+        if (mergedParams.doCmd) cmds.push({ label: lh.previewBefore || '(启动前)', value: mergedParams.doCmd })
+        if (mergedParams.undoCmd) cmds.push({ label: lh.previewAfter || '(退出后)', value: mergedParams.undoCmd })
       } else {
         const doCmd = buildDoCmd(rawTmpl || tmpl, mergedParams)
         const undoCmd = buildUndoCmd(rawTmpl || tmpl, mergedParams)
         const elevatedTag = tmpl.elevated ? ' 🛡️' : ''
-        if (doCmd) cmds.push({ label: `${tmpl.icon} ${tmpl.name} ${lh.previewBefore || '(启动前)'}${elevatedTag}`, value: doCmd })
-        if (undoCmd) cmds.push({ label: `${tmpl.icon} ${tmpl.name} ${lh.previewAfter || '(退出后)'}${elevatedTag}`, value: undoCmd })
+        if (doCmd) cmds.push({ label: `${tmpl.name} ${lh.previewBefore || '(启动前)'}${elevatedTag}`, value: doCmd })
+        if (undoCmd) cmds.push({ label: `${tmpl.name} ${lh.previewAfter || '(退出后)'}${elevatedTag}`, value: undoCmd })
       }
     }
     return cmds
@@ -409,7 +396,7 @@ export function useLaunchHelpers(t) {
     setAppHelpers,
     hasActiveHelpers,
     validateHelpers,
-    getActiveHelperIcons,
+    getActiveHelperIds,
     generateAppCommands,
     applyHelpersToApp,
     buildPreviewCommands,

@@ -50,7 +50,7 @@
       :isFavorite="isFavorite"
       :getAppImageUrl="getAppImageUrl"
       :handleImageError="handleImageError"
-      :helperIcons="getActiveHelperIcons"
+      :helperIds="getActiveHelperIds"
       @launch="launchApp"
       @contextmenu="openContextMenu"
       @toggleFavorite="toggleFavorite"
@@ -136,6 +136,7 @@ const {
   activeFilter,
   filterTabs,
   sortLabel,
+  proxyUrl,
   recentApps,
   displayApps,
   isFavorite,
@@ -155,8 +156,7 @@ const contextMenu = ref({ visible: false, x: 0, y: 0, app: null })
 
 // 启动助手面板
 const helperPanel = ref({ open: false, appName: '', app: null })
-const { proxyUrl } = useApps()
-const { getActiveHelperIcons, helperPanelOpen } = useLaunchHelpers(t)
+const { getActiveHelperIds, helperPanelOpen } = useLaunchHelpers(t)
 
 // 同步面板状态到共享 composable（供 DesktopApp 控制器返回使用）
 watch(() => helperPanel.value.open, (v) => { helperPanelOpen.value = v })

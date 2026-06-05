@@ -146,6 +146,7 @@ export const en = {
     pageTitle: 'Settings',
     pageSubtitle: 'Application Preferences',
     appearance: 'Appearance',
+    themeEditorName: 'Theme Editor',
     appearanceDesc: 'Customize theme colors, wallpapers, presets and appearance effects',
     themeEditor: 'Open Editor',
     startup: 'Startup',
@@ -199,8 +200,11 @@ export const en = {
     updateFound: 'New version found: ',
     updateLatest: 'Already up to date',
     updateError: 'Failed to check for updates',
+    updateUnavailable: 'Update checking is only available in the desktop app',
     resetDefaults: 'Reset to Defaults',
     saveSettings: 'Save Settings',
+    saveSuccess: 'Settings saved',
+    resetSuccess: 'Settings reset to defaults',
   },
 
   // === Tools ===
@@ -282,11 +286,34 @@ export const en = {
 
   // === Apps ===
   apps: {
+    libraryTitle: 'Library',
     loading: 'Loading application list...',
+    searchPlaceholder: 'Search...',
     searchNoMatch: 'No matching applications found',
     noFavorites: 'No favorite applications yet',
     noApps: 'No applications configured yet',
     addHint: 'Add applications in Web Console',
+    filters: {
+      all: 'All',
+      favorites: 'Favorites',
+      recent: 'Recent',
+    },
+    sort: {
+      name: 'Name',
+      recent: 'Recently Used',
+    },
+    sortTitle: 'Sort',
+    cardSizeTitle: 'Card Size',
+    gridSizes: {
+      small: 'Small',
+      medium: 'Medium',
+      large: 'Large',
+    },
+    listView: 'List View',
+    gridView: 'Grid View',
+    count: '{count} apps',
+    noCommand: '"{name}" has no launch command configured',
+    launchFailed: '"{name}" failed to launch: {error}',
   },
 
   // === Tool Window ===

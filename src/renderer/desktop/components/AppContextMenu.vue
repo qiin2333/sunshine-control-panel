@@ -7,10 +7,12 @@
       @click.stop
     >
       <div class="menu-item" @click="$emit('launch')">
-        <span class="menu-icon">▶</span> {{ t.appContext.launch }}
+        <span class="menu-icon"><VideoPlay /></span> {{ t.appContext.launch }}
       </div>
       <div class="menu-item" @click="$emit('toggleFavorite')">
-        <span class="menu-icon">{{ isFavorited ? '★' : '☆' }}</span>
+        <span class="menu-icon">
+          <component :is="isFavorited ? StarFilled : Star" />
+        </span>
         {{ isFavorited ? t.appContext.unfavorite : t.appContext.favorite }}
       </div>
       <div class="menu-divider"></div>
@@ -32,7 +34,7 @@
 
 <script setup>
 import { useI18n } from '../i18n/index.js'
-import { Picture, Lightning, DocumentCopy, Folder } from '@element-plus/icons-vue'
+import { DocumentCopy, Folder, Lightning, Picture, Star, StarFilled, VideoPlay } from '@element-plus/icons-vue'
 const { t } = useI18n()
 
 defineProps({
@@ -70,12 +72,17 @@ defineEmits(['launch', 'toggleFavorite', 'copyCmd', 'openDir', 'configHelpers', 
 
     .menu-icon {
       width: 18px;
+      height: 18px;
       text-align: center;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      font-size: 14px;
       flex-shrink: 0;
+
+      :deep(svg) {
+        width: 15px;
+        height: 15px;
+      }
     }
 
     &:hover {

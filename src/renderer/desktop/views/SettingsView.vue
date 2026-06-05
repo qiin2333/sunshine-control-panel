@@ -16,7 +16,7 @@
       <div class="card-content">
         <div class="setting-item">
           <div class="setting-info">
-            <div class="setting-name">主题编辑器</div>
+            <div class="setting-name">{{ t.settings.themeEditorName }}</div>
             <div class="setting-desc">{{ t.settings.appearanceDesc }}</div>
           </div>
           <div class="setting-control">
@@ -94,7 +94,10 @@
           class="setting-item tool-path-item"
         >
           <div class="setting-info">
-            <div class="setting-name">{{ tmpl.icon }} {{ tmpl.name }}</div>
+            <div class="setting-name tool-path-name">
+              <LaunchHelperIcon :template-id="tmpl.id" :size="18" />
+              <span>{{ tmpl.name }}</span>
+            </div>
             <div class="setting-desc">{{ tmpl.description }}</div>
           </div>
           <div class="setting-control tool-path-control">
@@ -214,7 +217,7 @@
     <div class="desktop-card fade-in">
       <div class="card-header">
         <div class="card-title">
-          <span class="title-icon">🐾</span>
+          <span class="title-icon"><ChatDotRound /></span>
           {{ t.settings.pet }}
         </div>
       </div>
@@ -265,7 +268,7 @@
     <!-- 关于 -->
     <div class="desktop-card about-card fade-in">
       <div class="about-content">
-        <div class="about-logo">☀️</div>
+        <div class="about-logo"><Sunny /></div>
         <div class="about-info">
           <div class="about-name">Foundation Desktop</div>
           <div class="about-version">{{ t.settings.version }} 0.2.5</div>
@@ -283,6 +286,16 @@
       </button>
     </div>
 
+    <Transition name="notice">
+      <div
+        v-if="statusNotice"
+        class="settings-notice fade-in"
+        :class="statusNotice.type"
+      >
+        {{ statusNotice.message }}
+      </div>
+    </Transition>
+
     <!-- 保存按钮 -->
     <div class="actions-bar fade-in">
       <button class="desktop-btn" @click="resetSettings">{{ t.settings.resetDefaults }}</button>
@@ -292,11 +305,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
-import { Brush, Promotion, Lightning, FolderOpened, Bell, Setting } from '@element-plus/icons-vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { Bell, Brush, ChatDotRound, FolderOpened, Lightning, Promotion, Setting, Sunny } from '@element-plus/icons-vue'
 import { useLaunchHelpers } from '../composables/useLaunchHelpers'
+import { isTauriRuntime } from '../composables/useTauri'
 import { useDesktopPet } from '../../composables/useDesktopPet.js'
 import { useI18n } from '../i18n/index.js'
+import LaunchHelperIcon from '../components/LaunchHelperIcon.vue'
 
 const { t } = useI18n()
 
@@ -343,8 +358,8 @@ async function browseToolPath(templateId, paramKey) {
     const { open } = await import('@tauri-apps/plugin-dialog')
     const path = await open({
       filters: [
-        { name: t.launchHelper?.executableFiles || 'Executables', extensions: ['exe', 'bat', 'cmd', 'lnk', 'com', 'scr'] },
-        { name: t.launchHelper?.allFiles || 'All Files', extensions: ['*'] },
+        { name: t.value.launchHelper?.executableFiles || 'Executables', extensions: ['exe', 'bat', 'cmd', 'lnk', 'com', 'scr'] },
+        { name: t.value.launchHelper?.allFiles || 'All Files', extensions: ['*'] },
       ],
     })
     if (path) {
@@ -372,8 +387,17 @@ const settings = ref({ ...defaultSettings })
 
 defineEmits(['openThemeEditor'])
 
-const updateStatus = ref(null)
+const statusNotice = ref(null)
 const checking = ref(false)
+let statusTimer = null
+
+function showStatus(type, message) {
+  clearTimeout(statusTimer)
+  statusNotice.value = { type, message }
+  statusTimer = setTimeout(() => {
+    statusNotice.value = null
+  }, 3500)
+}
 
 function loadSettings() {
   try {
@@ -389,13 +413,16 @@ function loadSettings() {
 function resetSettings() {
   settings.value = { ...defaultSettings }
   localStorage.removeItem(SETTINGS_KEY)
+  showStatus('info', t.value.settings.resetSuccess)
 }
 
 function saveSettings() {
   try {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings.value))
+    showStatus('success', t.value.settings.saveSuccess)
   } catch (e) {
     console.error('Failed to save settings:', e)
+    showStatus('error', e.message || String(e))
   }
 }
 
@@ -415,32 +442,42 @@ function openLink(type) {
 }
 
 async function checkUpdate() {
-  if (!invoke.value) return
+  if (!invoke.value) {
+    showStatus('warning', t.value.settings.updateUnavailable)
+    return
+  }
   checking.value = true
-  updateStatus.value = null
   try {
     const update = await invoke.value('check_for_updates')
     if (update) {
-      updateStatus.value = { type: 'success', message: `${t.value.settings.updateFound}${update.version}` }
+      showStatus('success', `${t.value.settings.updateFound}${update.version}`)
     } else {
-      updateStatus.value = { type: 'info', message: t.value.settings.updateLatest }
+      showStatus('info', t.value.settings.updateLatest)
     }
   } catch (e) {
-    updateStatus.value = { type: 'error', message: t.value.settings.updateError }
+    showStatus('error', t.value.settings.updateError)
   } finally {
     checking.value = false
   }
 }
 
 onMounted(async () => {
+  hasTauri.value = await isTauriRuntime()
+  if (!hasTauri.value) {
+    loadSettings()
+    return
+  }
   try {
     const tauri = await import('@tauri-apps/api/core')
     invoke.value = tauri.invoke
-    hasTauri.value = true
   } catch (e) {
     console.log('Tauri invoke not available:', e)
   }
   loadSettings()
+})
+
+onUnmounted(() => {
+  clearTimeout(statusTimer)
 })
 </script>
 
@@ -451,10 +488,10 @@ onMounted(async () => {
 }
 
 .page-header {
-  margin-bottom: 40px;
+  margin-bottom: 32px;
 
   .page-title {
-    font-size: 40px;
+    font-size: 36px;
     font-weight: 700;
     color: var(--fd-text-primary, #fff);
     margin: 0 0 10px 0;
@@ -468,14 +505,14 @@ onMounted(async () => {
 }
 
 .desktop-card {
-  margin-bottom: 28px;
+  margin-bottom: 22px;
 }
 
 .setting-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 20px 0;
+  padding: 16px 0;
   border-bottom: 1px solid rgba(var(--fd-accent-rgb, 0, 255, 245), 0.1);
 
   &:last-child {
@@ -489,7 +526,7 @@ onMounted(async () => {
 
   .setting-info {
     .setting-name {
-      font-size: 18px;
+      font-size: 16px;
       font-weight: 500;
       color: var(--fd-text-primary, #fff);
       margin-bottom: 4px;
@@ -498,8 +535,15 @@ onMounted(async () => {
     .setting-desc {
       font-size: 14px;
       color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.5);
+      line-height: 1.45;
     }
   }
+}
+
+.tool-path-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .select-control {
@@ -584,7 +628,17 @@ onMounted(async () => {
   }
 
   .about-logo {
-    font-size: 48px;
+    width: 42px;
+    height: 42px;
+    color: var(--fd-accent, #00fff5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    svg {
+      width: 100%;
+      height: 100%;
+    }
   }
 
   .about-info {
@@ -628,6 +682,45 @@ onMounted(async () => {
   margin-top: 32px;
   padding-top: 24px;
   border-top: 1px solid rgba(var(--fd-accent-rgb, 0, 255, 245), 0.1);
+}
+
+.settings-notice {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  margin: 8px 0 20px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(var(--fd-accent-rgb, 0, 255, 245), 0.2);
+  background: rgba(var(--fd-bg-secondary-rgb, 26, 26, 46), 0.72);
+  color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.82);
+  font-size: 13px;
+
+  &.success {
+    border-color: rgba(var(--fd-status-success-rgb, 0, 255, 136), 0.35);
+    color: var(--fd-status-success, #00ff88);
+  }
+
+  &.warning,
+  &.info {
+    border-color: rgba(var(--fd-status-warning-rgb, 255, 215, 0), 0.3);
+  }
+
+  &.error {
+    border-color: rgba(var(--fd-status-danger-rgb, 255, 107, 53), 0.35);
+    color: var(--fd-status-danger, #ff6b35);
+  }
+}
+
+.notice-enter-active,
+.notice-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.notice-enter-from,
+.notice-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
 }
 
 .section-desc {

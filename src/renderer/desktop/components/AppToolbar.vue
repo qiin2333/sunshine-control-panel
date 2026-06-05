@@ -1,7 +1,7 @@
 <template>
   <div class="apps-toolbar fade-in">
     <h1 class="apps-title">
-      <span class="gradient-text">游戏库</span>
+      <span class="gradient-text">{{ t.apps.libraryTitle }}</span>
     </h1>
 
     <!-- 筛选标签 -->
@@ -31,7 +31,7 @@
         :value="searchQuery"
         type="text"
         class="search-input"
-        placeholder="搜索..."
+        :placeholder="t.apps.searchPlaceholder"
         @input="$emit('update:searchQuery', $event.target.value)"
         @focus="searchFocused = true"
         @blur="searchFocused = false"
@@ -39,14 +39,14 @@
     </div>
 
     <!-- 排序 -->
-    <button class="toolbar-btn" tabindex="0" @click="$emit('cycleSortMode')" :title="'排序: ' + sortLabel">
+    <button class="toolbar-btn" tabindex="0" @click="$emit('cycleSortMode')" :title="`${t.apps.sortTitle}: ${sortLabel}`">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M3 6h18M3 12h12M3 18h6"/>
       </svg>
     </button>
 
     <!-- 网格大小 -->
-    <button class="toolbar-btn" tabindex="0" @click="$emit('cycleGridSize')" :title="'卡片大小: ' + gridSize">
+    <button class="toolbar-btn" tabindex="0" @click="$emit('cycleGridSize')" :title="`${t.apps.cardSizeTitle}: ${t.apps.gridSizes?.[gridSize] || gridSize}`">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <rect x="3" y="3" width="7" height="7" rx="1"/>
         <rect x="14" y="3" width="7" height="7" rx="1"/>
@@ -56,7 +56,7 @@
     </button>
 
     <!-- 视图切换 -->
-    <button class="toolbar-btn" tabindex="0" @click="$emit('toggleViewMode')" :title="viewMode === 'grid' ? '列表视图' : '网格视图'">
+    <button class="toolbar-btn" tabindex="0" @click="$emit('toggleViewMode')" :title="viewMode === 'grid' ? t.apps.listView : t.apps.gridView">
       <svg v-if="viewMode === 'grid'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
       </svg>
@@ -65,12 +65,15 @@
       </svg>
     </button>
 
-    <div class="apps-count">{{ totalCount }} 个应用</div>
+    <div class="apps-count">{{ t.apps.count.replace('{count}', totalCount) }}</div>
   </div>
 </template>
 
 <script setup>
 import { ref } from 'vue'
+import { useI18n } from '../i18n/index.js'
+
+const { t } = useI18n()
 
 defineProps({
   filterTabs: { type: Array, required: true },

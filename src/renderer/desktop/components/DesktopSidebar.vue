@@ -43,7 +43,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 
 const props = defineProps({
   items: {
@@ -83,7 +83,7 @@ function handleItemClick(item) {
 
 <style lang="less" scoped>
 .desktop-sidebar {
-  width: 100px;
+  width: 92px;
   background: transparent;
   border-right: none;
   display: flex;
@@ -116,9 +116,9 @@ function handleItemClick(item) {
   }
 
   .nav-item {
-    width: 64px;
-    min-height: 64px;
-    border-radius: 16px;
+    width: 60px;
+    min-height: 60px;
+    border-radius: 14px;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -133,7 +133,6 @@ function handleItemClick(item) {
     &:hover:not(.disabled) {
       background: rgba(var(--fd-accent-rgb, 0, 255, 245), 0.1);
       color: var(--fd-accent, #00fff5);
-      transform: scale(1.05);
     }
 
     &.active {
@@ -159,8 +158,8 @@ function handleItemClick(item) {
     }
 
     .nav-icon {
-      width: 28px;
-      height: 28px;
+      width: 24px;
+      height: 24px;
       flex-shrink: 0;
     }
 
@@ -222,4 +221,3 @@ function handleItemClick(item) {
   }
 }
 </style>
-

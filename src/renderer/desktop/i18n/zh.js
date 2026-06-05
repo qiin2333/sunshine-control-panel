@@ -146,6 +146,7 @@ export const zh = {
     pageTitle: '设置',
     pageSubtitle: '应用程序偏好设置',
     appearance: '外观',
+    themeEditorName: '主题编辑器',
     appearanceDesc: '自定义主题色、壁纸、预设和外观效果',
     themeEditor: '打开编辑器',
     startup: '启动',
@@ -199,8 +200,11 @@ export const zh = {
     updateFound: '发现新版本: ',
     updateLatest: '当前已是最新版本',
     updateError: '检查更新失败',
+    updateUnavailable: '检查更新仅在桌面应用中可用',
     resetDefaults: '恢复默认',
     saveSettings: '保存设置',
+    saveSuccess: '设置已保存',
+    resetSuccess: '设置已恢复默认',
   },
 
   // === 工具 ===
@@ -282,11 +286,34 @@ export const zh = {
 
   // === 应用 ===
   apps: {
+    libraryTitle: '游戏库',
     loading: '加载应用列表...',
+    searchPlaceholder: '搜索...',
     searchNoMatch: '没有找到匹配的应用',
     noFavorites: '还没有收藏的应用',
     noApps: '还没有配置任何应用',
     addHint: '在 Web 控制台中添加应用',
+    filters: {
+      all: '全部',
+      favorites: '收藏',
+      recent: '最近',
+    },
+    sort: {
+      name: '名称',
+      recent: '最近使用',
+    },
+    sortTitle: '排序',
+    cardSizeTitle: '卡片大小',
+    gridSizes: {
+      small: '小',
+      medium: '中',
+      large: '大',
+    },
+    listView: '列表视图',
+    gridView: '网格视图',
+    count: '{count} 个应用',
+    noCommand: '「{name}」没有配置启动命令',
+    launchFailed: '「{name}」启动失败: {error}',
   },
 
   // === 工具窗口 ===

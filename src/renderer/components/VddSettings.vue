@@ -238,18 +238,6 @@
                   </div>
                 </el-form-item>
 
-                <el-form-item
-                  v-for="item in loggingSwitchFields"
-                  :key="item.key"
-                  :label="t.vddSettings[item.labelKey]"
-                >
-                  <div class="field-stack">
-                    <div class="field-inline-control">
-                      <el-switch v-model="settings[item.groupKey][item.valueKey]" />
-                    </div>
-                    <span class="form-tip">{{ t.vddSettings[item.tipKey] }}</span>
-                  </div>
-                </el-form-item>
               </div>
             </div>
           </div>
@@ -283,6 +271,50 @@
                 >
                   <el-icon><Delete /></el-icon>
                   {{ t.vddSettings.deleteEdid }}
+                </el-button>
+              </div>
+            </div>
+
+            <div class="section-card trace-card">
+              <div class="section-header">
+                <h3>{{ t.vddSettings.vddTraceTitle }}</h3>
+                <p>{{ t.vddSettings.vddTraceHint }}</p>
+              </div>
+
+              <div class="trace-status">
+                <el-tag :type="traceStatus.running ? 'success' : 'info'" effect="light" round>
+                  {{ traceStatus.running ? t.vddSettings.vddTraceRunning : t.vddSettings.vddTraceIdle }}
+                </el-tag>
+                <span class="trace-path" :title="traceDisplayPath">{{ traceDisplayPath }}</span>
+              </div>
+
+              <p class="form-tip trace-admin-tip">{{ t.vddSettings.vddTraceAdminHint }}</p>
+
+              <div class="action-strip trace-actions">
+                <el-button
+                  type="primary"
+                  :loading="isStartingTrace"
+                  :disabled="traceStatus.running || isStoppingTrace"
+                  @click="startTrace"
+                >
+                  <el-icon><VideoPlay /></el-icon>
+                  {{ t.vddSettings.vddTraceStart }}
+                </el-button>
+                <el-button
+                  :loading="isStoppingTrace"
+                  :disabled="!traceStatus.running || isStartingTrace"
+                  @click="stopTrace"
+                >
+                  <el-icon><VideoPause /></el-icon>
+                  {{ t.vddSettings.vddTraceStop }}
+                </el-button>
+                <el-button
+                  :loading="isOpeningTraceFolder"
+                  :disabled="!traceStatus.directory"
+                  @click="openTraceFolder"
+                >
+                  <el-icon><FolderOpened /></el-icon>
+                  {{ t.vddSettings.vddTraceOpenFolder }}
                 </el-button>
               </div>
             </div>
@@ -374,7 +406,18 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Monitor, Plus, UploadFilled, Upload, Download, Refresh, Delete } from '@element-plus/icons-vue'
+import {
+  Monitor,
+  Plus,
+  UploadFilled,
+  Upload,
+  Download,
+  Refresh,
+  Delete,
+  VideoPlay,
+  VideoPause,
+  FolderOpened,
+} from '@element-plus/icons-vue'
 import { useEditableOptionField } from '../composables/useEditableOptionField.js'
 import { useVddEdid } from '../composables/useVddEdid.js'
 import { vdd } from '../tauri-adapter.js'
@@ -410,10 +453,6 @@ const createInitialSettings = () => ({
     SDR10bit: false,
     HDRPlus: false,
     ColourFormat: 'RGB',
-  },
-  logging: {
-    logging: false,
-    debuglogging: false,
   },
   cursor: {
     HardwareCursor: false,
@@ -463,11 +502,19 @@ const settings = reactive(createInitialSettings())
 const gpuFriendlyName = ref('')
 const gpuOptions = ref([])
 const configFilePath = ref('')
+const traceStatus = ref({
+  running: false,
+  directory: '',
+  latest_file: '',
+})
 
 const isLoading = ref(false)
 const isSaving = ref(false)
 const isReloadingDriver = ref(false)
 const isDeletingEdid = ref(false)
+const isStartingTrace = ref(false)
+const isStoppingTrace = ref(false)
+const isOpeningTraceFolder = ref(false)
 const hasLoadedSnapshot = ref(false)
 const lastSavedSnapshot = ref('')
 
@@ -559,6 +606,7 @@ const presetSummary = computed(() => getVddText('presetsSummary', {
   resolutions: sortedResolutionOptions.value.length,
   rates: sortedRefreshRateOptions.value.length,
 }))
+const traceDisplayPath = computed(() => traceStatus.value.latest_file || t.value.vddSettings.vddTraceNoFile)
 const hasCustomEdidIssue = computed(() => settings.edid.CustomEdid && !edidFileExists.value)
 const currentEdidModeLabel = computed(() => {
   if (!settings.edid.CustomEdid) {
@@ -614,24 +662,6 @@ const heroActions = computed(() => [
     onClick: saveSettings,
   },
 ])
-const loggingSwitchFields = computed(() => {
-  const fields = [
-    { key: 'logging', groupKey: 'logging', valueKey: 'logging', labelKey: 'loggingLabel', tipKey: 'loggingTip' },
-  ]
-
-  if (settings.logging.logging) {
-    fields.push({
-      key: 'debugLogging',
-      groupKey: 'logging',
-      valueKey: 'debuglogging',
-      labelKey: 'debugLogging',
-      tipKey: 'debugLoggingTip',
-    })
-  }
-
-  return fields
-})
-
 const buildSettingsPayload = () => ({
   ...settings,
   gpu: {
@@ -667,7 +697,6 @@ const applyLoadedSettings = (data) => {
     global: data?.global || initialSettings.global,
     resolutions: data?.resolutions || initialSettings.resolutions,
     colour: data?.colour || initialSettings.colour,
-    logging: data?.logging || initialSettings.logging,
     cursor: data?.cursor || initialSettings.cursor,
     edid: data?.edid || initialSettings.edid,
   }
@@ -691,11 +720,31 @@ const applyLoadedSettings = (data) => {
   setRefreshRateOptions(loadedRates)
 }
 
+const applyTraceStatus = (data = {}) => {
+  traceStatus.value = {
+    running: Boolean(data.running),
+    directory: data.directory || '',
+    latest_file: data.latest_file || '',
+  }
+}
+
+const refreshTraceStatus = async () => {
+  try {
+    const result = await vdd.getTraceStatus()
+    if (result?.success) {
+      applyTraceStatus(result.data)
+    }
+  } catch (error) {
+    console.error('Failed to refresh VDD trace status:', error)
+  }
+}
+
 const syncVddState = async ({ silentLoad = false } = {}) => Promise.all([
   loadSettings({ silent: silentLoad }),
   loadGPUs(),
   checkEdidFile(),
   loadSettingsPath(),
+  refreshTraceStatus(),
 ])
 
 const loadSettingsPath = async () => {
@@ -814,6 +863,56 @@ const reloadDriver = async () => {
     ElMessage.error(getErrorMessage(error, t.value.vddSettings.reloadDriverFailed))
   } finally {
     isReloadingDriver.value = false
+  }
+}
+
+const startTrace = async () => {
+  isStartingTrace.value = true
+  try {
+    const result = await vdd.startTrace()
+    if (!result?.success) {
+      throw new Error(result?.message || t.value.vddSettings.vddTraceStartFailed)
+    }
+
+    applyTraceStatus(result.data)
+    ElMessage.success(t.value.vddSettings.vddTraceStartSuccess)
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error, t.value.vddSettings.vddTraceStartFailed))
+  } finally {
+    isStartingTrace.value = false
+    await refreshTraceStatus()
+  }
+}
+
+const stopTrace = async () => {
+  isStoppingTrace.value = true
+  try {
+    const result = await vdd.stopTrace()
+    if (!result?.success) {
+      throw new Error(result?.message || t.value.vddSettings.vddTraceStopFailed)
+    }
+
+    applyTraceStatus(result.data)
+    ElMessage.success(t.value.vddSettings.vddTraceStopSuccess)
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error, t.value.vddSettings.vddTraceStopFailed))
+  } finally {
+    isStoppingTrace.value = false
+    await refreshTraceStatus()
+  }
+}
+
+const openTraceFolder = async () => {
+  isOpeningTraceFolder.value = true
+  try {
+    const result = await vdd.openTraceFolder()
+    if (!result?.success) {
+      throw new Error(result?.message || t.value.vddSettings.vddTraceOpenFolderFailed)
+    }
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error, t.value.vddSettings.vddTraceOpenFolderFailed))
+  } finally {
+    isOpeningTraceFolder.value = false
   }
 }
 

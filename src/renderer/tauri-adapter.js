@@ -58,6 +58,10 @@ export const vdd = {
   uploadEdidFile: (fileData) => wrapResult('upload_edid_file', { fileData }),
   readEdidFile: () => wrapResult('read_edid_file'),
   deleteEdidFile: () => wrapResult('delete_edid_file'),
+  getTraceStatus: () => wrapResult('get_vdd_trace_status'),
+  startTrace: () => wrapResult('start_vdd_trace'),
+  stopTrace: () => wrapResult('stop_vdd_trace'),
+  openTraceFolder: () => wrapResult('open_vdd_trace_folder'),
 
   async execPipeCmd(command) {
     try {

@@ -107,11 +107,6 @@
         </el-select>
       </el-form-item>
 
-      <!-- 日志 -->
-      <el-form-item :label="t.vddSettings.logging">
-        <el-switch v-model="settings.logging[0].logging" />
-      </el-form-item>
-
       <!-- 保存按钮 -->
       <el-form-item>
         <el-button type="primary" @click="saveSettings">{{ t.vddSettings.save }}</el-button>
@@ -156,7 +151,6 @@ const initialSettings = {
       ColourFormat: 'RGB',
     },
   ],
-  logging: [{ logging: false, debuglogging: true }],
 }
 
 const settings = reactive({ ...initialSettings })

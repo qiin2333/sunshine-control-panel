@@ -5,7 +5,18 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// 更新 VDD XML 文件中的 colour、logging、cursor 和 edid 节点
+const VDD_TRACE_SESSION_NAME: &str = "ZakoVDD-Diagnostics";
+const VDD_TRACE_PROVIDER_GUID: &str = "{B254994F-46E6-4719-80A0-0A3AA50D6CE5}";
+const VDD_TRACE_FILE_PREFIX: &str = "zako-vdd";
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct VddTraceStatus {
+    pub running: bool,
+    pub directory: String,
+    pub latest_file: Option<String>,
+}
+
+/// 更新 VDD XML 文件中的 colour、cursor 和 edid 节点
 /// C++ 的 saveVddSettings 会保留这些字段，所以我们需要先写入
 async fn update_vdd_xml_extra_fields(settings: &VddSettings) -> Result<(), String> {
     let vdd_xml_path = get_vdd_settings_path();
@@ -22,15 +33,10 @@ async fn update_vdd_xml_extra_fields(settings: &VddSettings) -> Result<(), Strin
         get_default_settings()
     };
 
-    // 只更新 colour、logging、cursor 和 edid 字段（其他字段会被 C++ 更新）
+    // 只更新 colour、cursor 和 edid 字段（其他字段会被 C++ 更新）
     if let Some(ref colour) = settings.colour {
         vdd_settings.colour = Some(colour.clone());
         debug!("  ✓ 更新 colour 配置");
-    }
-
-    if let Some(ref logging) = settings.logging {
-        vdd_settings.logging = Some(logging.clone());
-        debug!("  ✓ 更新 logging 配置");
     }
 
     if let Some(ref cursor) = settings.cursor {
@@ -257,7 +263,7 @@ async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), Stri
 
     fs::write(vdd_xml_path, content).map_err(|e| format!("写入 VDD XML 失败: {}", e))?;
 
-    debug!("  ✓ 已写入 colour 和 logging 到 XML");
+    debug!("  ✓ 已写入 VDD XML 扩展字段");
 
     Ok(())
 }
@@ -271,10 +277,13 @@ fn verify_vdd_xml(vdd_xml_path: &PathBuf) -> Result<(), String> {
     let verify_content =
         fs::read_to_string(vdd_xml_path).map_err(|e| format!("验证文件失败: {}", e))?;
 
-    if verify_content.contains("<colour>") || verify_content.contains("<logging>") {
-        debug!("  ✅ 验证: colour/logging 字段已写入");
+    if verify_content.contains("<colour>")
+        || verify_content.contains("<cursor>")
+        || verify_content.contains("<edid>")
+    {
+        debug!("  ✅ 验证: VDD XML 扩展字段已写入");
     } else {
-        warn!("  ⚠️  警告: 未在文件中找到 colour/logging 字段");
+        warn!("  ⚠️  警告: 未在文件中找到 VDD XML 扩展字段");
     }
 
     Ok(())
@@ -446,8 +455,6 @@ pub struct VddSettings {
     pub resolutions: Resolutions,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub colour: Option<Colour>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub logging: Option<Logging>,
     #[serde(default = "default_cursor", skip_serializing_if = "Option::is_none")]
     pub cursor: Option<Cursor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -490,14 +497,6 @@ pub struct Colour {
     pub hdr_plus: bool,
     #[serde(rename = "ColourFormat")]
     pub colour_format: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Logging {
-    #[serde(rename = "SendLogsThroughPipe", default = "default_true")]
-    pub send_logs_through_pipe: bool,
-    pub logging: bool,
-    pub debuglogging: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -592,6 +591,85 @@ fn get_vdd_edid_path() -> PathBuf {
         .join("user_edid.bin")
 }
 
+/// 获取 VDD ETW 采集文件目录
+fn get_vdd_trace_dir() -> PathBuf {
+    get_sunshine_path()
+        .join("config")
+        .join("logs")
+        .join("vdd-traces")
+}
+
+fn quote_powershell(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+fn quote_powershell_path(path: &Path) -> String {
+    quote_powershell(path.to_string_lossy().as_ref())
+}
+
+fn latest_vdd_trace_file(trace_dir: &Path) -> Option<PathBuf> {
+    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+
+    for entry in fs::read_dir(trace_dir).ok()? {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        let path = entry.path();
+        let is_etl = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("etl"));
+
+        if !is_etl {
+            continue;
+        }
+
+        let Ok(modified) = entry.metadata().and_then(|metadata| metadata.modified()) else {
+            continue;
+        };
+        if match newest.as_ref() {
+            Some((newest_modified, _)) => modified > *newest_modified,
+            None => true,
+        } {
+            newest = Some((modified, path));
+        }
+    }
+
+    newest.map(|(_, path)| path)
+}
+
+#[cfg(target_os = "windows")]
+fn is_vdd_trace_running() -> bool {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    Command::new("logman")
+        .args(["query", VDD_TRACE_SESSION_NAME, "-ets"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_vdd_trace_running() -> bool {
+    false
+}
+
+fn build_vdd_trace_status() -> VddTraceStatus {
+    let trace_dir = get_vdd_trace_dir();
+    let latest_file = latest_vdd_trace_file(&trace_dir)
+        .map(|path| path.to_string_lossy().into_owned());
+
+    VddTraceStatus {
+        running: is_vdd_trace_running(),
+        directory: trace_dir.to_string_lossy().into_owned(),
+        latest_file,
+    }
+}
+
 /// 获取 VDD 设置文件路径（暴露给前端）
 #[tauri::command]
 pub fn get_vdd_settings_file_path() -> String {
@@ -624,11 +702,6 @@ fn get_default_settings() -> VddSettings {
             sdr10bit: false,
             hdr_plus: false,
             colour_format: "RGB".to_string(),
-        }),
-        logging: Some(Logging {
-            send_logs_through_pipe: true,
-            logging: false,
-            debuglogging: false,
         }),
         cursor: default_cursor(),
         edid: Some(EdidConfig {
@@ -687,9 +760,9 @@ pub async fn save_vdd_settings(settings: VddSettings) -> Result<String, String> 
     debug!("⏳ 等待 Sunshine API 完成文件写入...");
     tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
 
-    // 步骤3: 写入 colour、logging 和 edid 到 XML
-    // 读取 C++ 刚写入的 XML，添加 colour、logging 和 edid，然后写回
-    debug!("📝 写入 colour、logging 和 edid 字段...");
+    // 步骤3: 写入 colour、cursor 和 edid 到 XML
+    // 读取 C++ 刚写入的 XML，添加 colour、cursor 和 edid，然后写回
+    debug!("📝 写入 colour、cursor 和 edid 字段...");
     update_vdd_xml_extra_fields(&settings).await?;
 
     // 步骤4: 通知 VDD 驱动重新加载配置
@@ -964,11 +1037,98 @@ pub async fn delete_edid_file() -> Result<String, String> {
 }
 
 #[tauri::command]
+pub fn get_vdd_trace_status() -> VddTraceStatus {
+    build_vdd_trace_status()
+}
+
+#[tauri::command]
+pub async fn start_vdd_trace() -> Result<VddTraceStatus, String> {
+    #[cfg(target_os = "windows")]
+    {
+        if is_vdd_trace_running() {
+            return Ok(build_vdd_trace_status());
+        }
+
+        let trace_dir = get_vdd_trace_dir();
+        let trace_file = trace_dir.join(format!(
+            "{}-{}.etl",
+            VDD_TRACE_FILE_PREFIX,
+            chrono::Local::now().format("%Y%m%d-%H%M%S")
+        ));
+        let command = format!(
+            "New-Item -ItemType Directory -Force -Path {} | Out-Null; logman start {} -ets -p {} 0xFFFFFFFF 0x5 -o {}",
+            quote_powershell_path(&trace_dir),
+            quote_powershell(VDD_TRACE_SESSION_NAME),
+            quote_powershell(VDD_TRACE_PROVIDER_GUID),
+            quote_powershell_path(&trace_file)
+        );
+
+        run_elevated_powershell(&command, "启动 VDD ETW 采集").await?;
+        Ok(build_vdd_trace_status())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("VDD ETW trace capture is only supported on Windows".to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn stop_vdd_trace() -> Result<VddTraceStatus, String> {
+    #[cfg(target_os = "windows")]
+    {
+        if !is_vdd_trace_running() {
+            return Ok(build_vdd_trace_status());
+        }
+
+        let command = format!(
+            "logman stop {} -ets",
+            quote_powershell(VDD_TRACE_SESSION_NAME)
+        );
+        run_elevated_powershell(&command, "停止 VDD ETW 采集").await?;
+        Ok(build_vdd_trace_status())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("VDD ETW trace capture is only supported on Windows".to_string())
+    }
+}
+
+#[tauri::command]
+pub fn open_vdd_trace_folder() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        use std::process::Command;
+
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let trace_dir = get_vdd_trace_dir();
+        fs::create_dir_all(&trace_dir)
+            .map_err(|e| format!("Failed to create VDD ETW trace folder: {}", e))?;
+
+        let trace_dir_text = trace_dir.to_string_lossy().into_owned();
+        Command::new("cmd")
+            .args(["/c", "start", "", &trace_dir_text])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| format!("Failed to open VDD ETW trace folder: {}", e))?;
+
+        Ok(trace_dir_text)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("Opening the VDD ETW trace folder is only supported on Windows".to_string())
+    }
+}
+
+#[tauri::command]
 pub async fn uninstall_vdd_driver() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
-        use std::process::Command;
         use std::os::windows::process::CommandExt;
+        use std::process::Command;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         // 查找 nefconw.exe：先 tools/ 再 tools/vdd/
         let tools_dir = get_sunshine_path().join("tools");

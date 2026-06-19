@@ -218,6 +218,13 @@ function handleDrop(e) {
   display: flex;
   flex-direction: column;
   box-shadow: -8px 0 40px rgba(0, 0, 0, 0.5);
+
+  :deep(svg) {
+    width: 16px;
+    height: 16px;
+    display: block;
+    flex: 0 0 auto;
+  }
 }
 
 .editor-header {
@@ -232,6 +239,16 @@ function handleDrop(e) {
     font-size: 18px;
     font-weight: 600;
     color: var(--fd-text-primary, #fff);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    line-height: 1;
+
+    :deep(svg) {
+      width: 20px;
+      height: 20px;
+      color: var(--fd-accent, #00fff5);
+    }
   }
 
   .close-btn {
@@ -425,6 +442,10 @@ function handleDrop(e) {
   cursor: pointer;
   font-size: 12px;
   transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 
   &:hover {
     background: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.06);
@@ -460,8 +481,16 @@ function handleDrop(e) {
   }
 
   .drop-icon {
-    font-size: 28px;
     margin-bottom: 6px;
+    color: var(--fd-accent, #00fff5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    :deep(svg) {
+      width: 32px;
+      height: 32px;
+    }
   }
 
   .drop-text {
@@ -511,6 +540,15 @@ function handleDrop(e) {
   background: rgba(255, 255, 255, 0.2);
   color: #fff;
   transition: background 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+
+  :deep(svg) {
+    width: 12px;
+    height: 12px;
+  }
 
   &:hover {
     background: rgba(255, 255, 255, 0.25);

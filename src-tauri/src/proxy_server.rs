@@ -4,6 +4,7 @@ use axum::{
     Router,
     middleware::Next,
 };
+use bytes::Bytes;
 use tower_http::cors::CorsLayer;
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
@@ -14,6 +15,10 @@ use log::{info, warn, error, debug};
 /// 全局 Sunshine 目标 URL（动态配置）
 static SUNSHINE_TARGET: Lazy<Arc<RwLock<String>>> = 
     Lazy::new(|| Arc::new(RwLock::new(String::from("https://localhost:47990"))));
+
+#[cfg(test)]
+static TEST_REFRESH_TARGET: Lazy<std::sync::Mutex<Option<String>>> =
+    Lazy::new(|| std::sync::Mutex::new(None));
 
 /// 快速失败机制：记录 Sunshine 是否可用
 static SUNSHINE_AVAILABLE: AtomicBool = AtomicBool::new(true);
@@ -51,6 +56,34 @@ pub fn set_sunshine_target(url: String) {
         info!("🎯 代理目标已更新: {}", url);
         *target = url;
     }
+}
+
+/// Dynamic Sunshine target helpers.
+fn get_sunshine_target() -> String {
+    SUNSHINE_TARGET.read()
+        .map(|url| url.clone())
+        .unwrap_or_else(|_| "https://localhost:47990".to_string())
+}
+
+async fn refresh_sunshine_target_internal() -> Result<String, String> {
+    #[cfg(test)]
+    if let Some(base_url) = TEST_REFRESH_TARGET.lock().unwrap().clone() {
+        set_sunshine_target(base_url.clone());
+        return Ok(base_url);
+    }
+
+    let url = crate::sunshine::get_sunshine_url().await?;
+    let base_url = url.trim_end_matches('/').to_string();
+    set_sunshine_target(base_url.clone());
+    Ok(base_url)
+}
+
+/// Refresh the proxy target from the current Sunshine config.
+#[tauri::command]
+pub async fn refresh_sunshine_target() -> Result<String, String> {
+    let base_url = refresh_sunshine_target_internal().await?;
+    reset_fast_fail();
+    Ok(base_url)
 }
 
 /// 注入到 Sunshine 页面的 CSS 样式（编译时从文件读取）
@@ -305,7 +338,7 @@ async fn proxy_handler(req: Request) -> Response {
     
     // 获取请求体
     let body = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
-        Ok(bytes) => bytes.to_vec(),
+        Ok(bytes) => bytes,
         Err(e) => {
             error!("❌ 读取请求体失败: {}", e);
             return (axum::http::StatusCode::BAD_REQUEST, "读取请求体失败").into_response();
@@ -313,9 +346,7 @@ async fn proxy_handler(req: Request) -> Response {
     };
     
     // 构建目标 URL
-    let sunshine_base = SUNSHINE_TARGET.read()
-        .map(|url| url.clone())
-        .unwrap_or_else(|_| "https://localhost:47990".to_string());
+    let sunshine_base = get_sunshine_target();
     
     let target_url = if query.is_empty() {
         format!("{}{}", sunshine_base, path)
@@ -334,9 +365,17 @@ async fn proxy_handler(req: Request) -> Response {
     }
     
     // 请求 Sunshine
-    match fetch_and_proxy(&target_url, &method, &headers, body).await {
+    match fetch_and_proxy(&target_url, &method, &headers, &body).await {
         Ok(response) => {
             mark_available();
+            if method == axum::http::Method::POST && path == "/api/restart" && response.status().is_success() {
+                tauri::async_runtime::spawn(async {
+                    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                    if let Err(e) = refresh_sunshine_target_internal().await {
+                        warn!("Failed to refresh Sunshine target after restart request: {}", e);
+                    }
+                });
+            }
             let status = response.status();
             if status.is_client_error() || status.is_server_error() {
                 warn!("⚠️ 代理响应异常 [{}]: HTTP {}", path, status.as_u16());
@@ -360,8 +399,36 @@ async fn proxy_handler(req: Request) -> Response {
             error!("❌ 代理错误 [{}] ({}): {}", path, error_kind, error_str);
             
             if is_connection_error(&error_str) {
-                mark_unavailable();
-                service_unavailable_response(is_api)
+                match refresh_sunshine_target_internal().await {
+                    Ok(refreshed_base) if refreshed_base != sunshine_base => {
+                        let refreshed_url = if query.is_empty() {
+                            format!("{}{}", refreshed_base, path)
+                        } else {
+                            format!("{}{}?{}", refreshed_base, path, query)
+                        };
+
+                        match fetch_and_proxy(&refreshed_url, &method, &headers, &body).await {
+                            Ok(response) => {
+                                mark_available();
+                                response
+                            }
+                            Err(retry_err) => {
+                                error!("Proxy retry failed [{}]: {}", path, retry_err);
+                                mark_unavailable();
+                                service_unavailable_response(is_api)
+                            }
+                        }
+                    }
+                    Ok(_) => {
+                        mark_unavailable();
+                        service_unavailable_response(is_api)
+                    }
+                    Err(refresh_err) => {
+                        warn!("Failed to refresh Sunshine target after proxy error: {}", refresh_err);
+                        mark_unavailable();
+                        service_unavailable_response(is_api)
+                    }
+                }
             } else {
                 if is_api {
                     (
@@ -387,7 +454,7 @@ async fn handle_steam_api(
 ) -> Response {
     // 获取请求体
     let body = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
-        Ok(bytes) => bytes.to_vec(),
+        Ok(bytes) => bytes,
         Err(e) => {
             error!("❌ 读取请求体失败: {}", e);
             return (axum::http::StatusCode::BAD_REQUEST, "读取请求体失败").into_response();
@@ -512,7 +579,7 @@ async fn handle_external_proxy(
     
     // 获取请求体
     let body = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
-        Ok(bytes) => bytes.to_vec(),
+        Ok(bytes) => bytes,
         Err(e) => {
             error!("❌ 读取请求体失败: {}", e);
             return (axum::http::StatusCode::BAD_REQUEST, "读取请求体失败").into_response();
@@ -594,7 +661,7 @@ async fn send_request(
     url: &str,
     method: &axum::http::Method,
     headers: &axum::http::HeaderMap,
-    body: &[u8]
+    body: &Bytes,
 ) -> Result<reqwest::Response, reqwest::Error> {
     let mut req_builder = match method.as_str() {
         "GET" => client.get(url),
@@ -617,7 +684,7 @@ async fn send_request(
     }
     
     if !body.is_empty() {
-        req_builder = req_builder.body(body.to_vec());
+        req_builder = req_builder.body(body.clone());
     }
     
     req_builder.send().await
@@ -628,17 +695,17 @@ async fn fetch_and_proxy(
     url: &str, 
     method: &axum::http::Method,
     headers: &axum::http::HeaderMap,
-    body: Vec<u8>
+    body: &Bytes,
 ) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
     let client = get_http_client();
     
     // 尝试请求，HTTPS 失败时降级到 HTTP（仅限非连接错误）
-    let response = match send_request(client, url, method, headers, &body).await {
+    let response = match send_request(client, url, method, headers, body).await {
         Ok(resp) => resp,
         Err(e) if url.starts_with("https://") && !is_connection_error(&e.to_string()) => {
             let http_url = url.replace("https://", "http://");
             warn!("⚠️  HTTPS 连接失败，尝试 HTTP: {}", http_url);
-            send_request(client, &http_url, method, headers, &body).await?
+            send_request(client, &http_url, method, headers, body).await?
         }
         Err(e) => return Err(e.into()),
     };
@@ -737,4 +804,70 @@ fn inject_theme_script(html: String) -> String {
     result.push_str(&html[pos..]);
     
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn unused_local_port() -> u16 {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        listener.local_addr().unwrap().port()
+    }
+
+    async fn spawn_one_shot_http_server(body: &'static str) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request_buf = [0_u8; 1024];
+            let _ = stream.read(&mut request_buf).await;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+        });
+
+        format!("http://{}", addr)
+    }
+
+    #[tokio::test]
+    async fn proxy_retries_with_refreshed_target_when_port_changes() {
+        let marker = "proxy-refresh-target-ok";
+        let old_port = unused_local_port().await;
+        let new_target = spawn_one_shot_http_server(marker).await;
+
+        set_sunshine_target(format!("http://127.0.0.1:{}", old_port));
+        *TEST_REFRESH_TARGET.lock().unwrap() = Some(new_target);
+
+        let request = axum::http::Request::builder()
+            .method(axum::http::Method::GET)
+            .uri("/")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = proxy_handler(request).await;
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8_lossy(&body);
+
+        *TEST_REFRESH_TARGET.lock().unwrap() = None;
+
+        assert!(status.is_success(), "unexpected status: {status}");
+        assert!(
+            text.contains(marker),
+            "proxy did not retry against refreshed target: {text}"
+        );
+    }
 }

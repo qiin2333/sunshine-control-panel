@@ -82,6 +82,14 @@ const isWelcomePath = (url) => {
 
 const openWelcome = () => sidebarMenuRef.value?.openWelcome?.()
 
+const refreshProxyTarget = async () => {
+  try {
+    await sunshine.refreshTarget()
+  } catch (error) {
+    console.warn('[SunshineFrame] refresh proxy target failed:', error)
+  }
+}
+
 // Navigation handler
 const handleNavigateFrame = (event) => {
   const url = event.detail?.url
@@ -223,7 +231,7 @@ const setupWindowStateMonitor = async (currentWindow) => {
   pollTimer = setInterval(checkWindowStateFn, POLL_INTERVAL)
   await checkWindowStateFn()
 
-  const visibilityHandler = () => {
+  const visibilityHandler = async () => {
     const hidden = document.hidden
     setAnimationsPaused(hidden)
 
@@ -241,6 +249,7 @@ const setupWindowStateMonitor = async (currentWindow) => {
       }
     } else {
       // 窗口恢复 → 唤醒 iframe（仅当是窗口隐藏导致的休眠时恢复）
+      await refreshProxyTarget()
       if (windowSuspendedUrl) {
         sunshineUrl.value = windowSuspendedUrl
         windowSuspendedUrl = ''
@@ -284,6 +293,7 @@ onMounted(async () => {
   window.addEventListener('locale-changed', handleLocaleChanged)
 
   try {
+    await refreshProxyTarget()
     const proxyBaseUrl = await sunshine.getProxyUrl()
     proxyBase = proxyBaseUrl
     const cmdLineUrl = await sunshine.getCommandLineUrl()

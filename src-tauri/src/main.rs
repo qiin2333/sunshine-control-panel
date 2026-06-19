@@ -108,6 +108,7 @@ fn main() {
             sunshine::restart_sunshine_in_user_mode,
             sunshine::restart_sunshine_service,
             proxy_server::get_proxy_url_command,
+            proxy_server::refresh_sunshine_target,
             utils::open_external_url,
             utils::restart_graphics_driver,
             utils::restart_as_admin,

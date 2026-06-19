@@ -97,6 +97,7 @@ export const sunshine = {
   getUrl: () => wrapDefault('get_sunshine_url', 'https://localhost:47990/'),
   getCommandLineUrl: () => wrapDefault('get_command_line_url', null),
   getProxyUrl: () => wrapDefault('get_proxy_url_command', 'http://localhost:48081'),
+  refreshTarget: () => wrapDefault('refresh_sunshine_target', null),
   getActiveSessions: () => wrapDefault('get_active_sessions', []),
   getLocale: () => wrapDefault('get_sunshine_locale', 'en'),
   setLocale: (locale) => invoke('set_sunshine_locale', { locale }),

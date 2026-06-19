@@ -83,10 +83,9 @@ const isWelcomePath = (url) => {
 const openWelcome = () => sidebarMenuRef.value?.openWelcome?.()
 
 const refreshProxyTarget = async () => {
-  try {
-    await sunshine.refreshTarget()
-  } catch (error) {
-    console.warn('[SunshineFrame] refresh proxy target failed:', error)
+  const refreshedTarget = await sunshine.refreshTarget()
+  if (!refreshedTarget) {
+    console.warn('[SunshineFrame] refresh proxy target failed')
   }
 }
 

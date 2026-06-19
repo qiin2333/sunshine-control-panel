@@ -4,6 +4,7 @@ use axum::{
     Router,
     middleware::Next,
 };
+use bytes::Bytes;
 use tower_http::cors::CorsLayer;
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
@@ -68,21 +69,21 @@ async fn refresh_sunshine_target_internal() -> Result<String, String> {
     #[cfg(test)]
     if let Some(base_url) = TEST_REFRESH_TARGET.lock().unwrap().clone() {
         set_sunshine_target(base_url.clone());
-        mark_available();
         return Ok(base_url);
     }
 
     let url = crate::sunshine::get_sunshine_url().await?;
     let base_url = url.trim_end_matches('/').to_string();
     set_sunshine_target(base_url.clone());
-    mark_available();
     Ok(base_url)
 }
 
 /// Refresh the proxy target from the current Sunshine config.
 #[tauri::command]
 pub async fn refresh_sunshine_target() -> Result<String, String> {
-    refresh_sunshine_target_internal().await
+    let base_url = refresh_sunshine_target_internal().await?;
+    reset_fast_fail();
+    Ok(base_url)
 }
 
 /// 注入到 Sunshine 页面的 CSS 样式（编译时从文件读取）
@@ -337,7 +338,7 @@ async fn proxy_handler(req: Request) -> Response {
     
     // 获取请求体
     let body = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
-        Ok(bytes) => bytes.to_vec(),
+        Ok(bytes) => bytes,
         Err(e) => {
             error!("❌ 读取请求体失败: {}", e);
             return (axum::http::StatusCode::BAD_REQUEST, "读取请求体失败").into_response();
@@ -364,7 +365,7 @@ async fn proxy_handler(req: Request) -> Response {
     }
     
     // 请求 Sunshine
-    match fetch_and_proxy(&target_url, &method, &headers, body.clone()).await {
+    match fetch_and_proxy(&target_url, &method, &headers, &body).await {
         Ok(response) => {
             mark_available();
             if method == axum::http::Method::POST && path == "/api/restart" && response.status().is_success() {
@@ -406,7 +407,7 @@ async fn proxy_handler(req: Request) -> Response {
                             format!("{}{}?{}", refreshed_base, path, query)
                         };
 
-                        match fetch_and_proxy(&refreshed_url, &method, &headers, body).await {
+                        match fetch_and_proxy(&refreshed_url, &method, &headers, &body).await {
                             Ok(response) => {
                                 mark_available();
                                 response
@@ -453,7 +454,7 @@ async fn handle_steam_api(
 ) -> Response {
     // 获取请求体
     let body = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
-        Ok(bytes) => bytes.to_vec(),
+        Ok(bytes) => bytes,
         Err(e) => {
             error!("❌ 读取请求体失败: {}", e);
             return (axum::http::StatusCode::BAD_REQUEST, "读取请求体失败").into_response();
@@ -578,7 +579,7 @@ async fn handle_external_proxy(
     
     // 获取请求体
     let body = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
-        Ok(bytes) => bytes.to_vec(),
+        Ok(bytes) => bytes,
         Err(e) => {
             error!("❌ 读取请求体失败: {}", e);
             return (axum::http::StatusCode::BAD_REQUEST, "读取请求体失败").into_response();
@@ -660,7 +661,7 @@ async fn send_request(
     url: &str,
     method: &axum::http::Method,
     headers: &axum::http::HeaderMap,
-    body: &[u8]
+    body: &Bytes,
 ) -> Result<reqwest::Response, reqwest::Error> {
     let mut req_builder = match method.as_str() {
         "GET" => client.get(url),
@@ -683,7 +684,7 @@ async fn send_request(
     }
     
     if !body.is_empty() {
-        req_builder = req_builder.body(body.to_vec());
+        req_builder = req_builder.body(body.clone());
     }
     
     req_builder.send().await
@@ -694,17 +695,17 @@ async fn fetch_and_proxy(
     url: &str, 
     method: &axum::http::Method,
     headers: &axum::http::HeaderMap,
-    body: Vec<u8>
+    body: &Bytes,
 ) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
     let client = get_http_client();
     
     // 尝试请求，HTTPS 失败时降级到 HTTP（仅限非连接错误）
-    let response = match send_request(client, url, method, headers, &body).await {
+    let response = match send_request(client, url, method, headers, body).await {
         Ok(resp) => resp,
         Err(e) if url.starts_with("https://") && !is_connection_error(&e.to_string()) => {
             let http_url = url.replace("https://", "http://");
             warn!("⚠️  HTTPS 连接失败，尝试 HTTP: {}", http_url);
-            send_request(client, &http_url, method, headers, &body).await?
+            send_request(client, &http_url, method, headers, body).await?
         }
         Err(e) => return Err(e.into()),
     };

@@ -1,29 +1,32 @@
 // Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod app;
+mod bat_runner;
+mod clipboard;
+mod commands;
+mod controllermeta;
+mod file_transfer;
+mod fs_utils;
+mod hwinfo;
+mod logger;
+mod moonlight_web;
+mod proxy_server;
+mod rtss;
+#[cfg(target_os = "windows")]
+mod shell_context_menu;
+mod sunshine;
+mod system;
+mod toolbar;
+mod tray;
+mod update;
+mod utils;
 mod vdd;
 #[cfg(target_os = "windows")]
 mod vdd_ioctl;
-mod bat_runner;
 mod vigem;
 mod vmouse;
-mod rtss;
-mod hwinfo;
-mod system;
-mod sunshine;
-mod utils;
-mod proxy_server;
-mod fs_utils;
-mod toolbar;
-mod update;
-mod logger;
-mod tray;
 mod windows;
-mod app;
-mod commands;
-mod moonlight_web;
-mod controllermeta;
-mod clipboard;
 
 use log::info;
 
@@ -46,7 +49,7 @@ fn main() {
             "--renderer-process-limit=1",
         ].join(" "));
     }
-    
+
     tauri::Builder::default()
         .manage(app::AppState {
             main_window: std::sync::Mutex::new(None),
@@ -62,7 +65,7 @@ fn main() {
             // 初始化日志系统（需要在 setup 中获取 app handle）
             logger::init_logger(app.handle().clone());
             info!("🚀 Sunshine Control Panel 启动中...");
-            
+
             app::setup_application(app)
         })
         .on_window_event(|window, event| {
@@ -160,6 +163,7 @@ fn main() {
             controllermeta::controllermeta_get_install_path,
             controllermeta::controllermeta_uninstall,
             clipboard::clipboard_sync_status,
+            file_transfer::send_file_to_client,
             windows::webview_heartbeat,
             rtss::get_rtss_status,
             rtss::rtss_set_osd,

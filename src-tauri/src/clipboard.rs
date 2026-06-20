@@ -9,7 +9,8 @@
 //!
 //! ```text
 //!   u8 version=1
-//!   u8 kind        (1 = utf8 text, 2 = png image, 3 = blob ref JSON)
+//!   u8 kind        (1 = utf8 text, 2 = png image, 3 = blob ref JSON,
+//!                   4 = file-transfer offer JSON)
 //!   u32 token      (echo-suppression nonce)
 //!   u32 length
 //!   bytes payload  (length bytes)
@@ -27,15 +28,15 @@
 
 use std::collections::VecDeque;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
 };
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use clipboard_rs::{
-    common::RustImage as _, Clipboard, ClipboardContext, ClipboardHandler, ClipboardWatcher,
-    ClipboardWatcherContext, RustImageData, WatcherShutdown,
+    Clipboard, ClipboardContext, ClipboardHandler, ClipboardWatcher, ClipboardWatcherContext,
+    RustImageData, WatcherShutdown, common::RustImage as _,
 };
 use log::{debug, info, warn};
 use serde::Serialize;
@@ -48,6 +49,7 @@ const WIRE_VERSION: u8 = 1;
 const KIND_TEXT: u8 = 1;
 const KIND_PNG: u8 = 2;
 const KIND_REF: u8 = 3;
+const KIND_FILE_OFFER: u8 = 4;
 
 const MAX_TEXT_BYTES: usize = 1 * 1024 * 1024;
 const MAX_IMAGE_BYTES: usize = 50 * 1024 * 1024; // matches service blob cap
@@ -78,6 +80,7 @@ enum Kind {
     Text,
     Png,
     Ref,
+    FileOffer,
 }
 
 impl Kind {
@@ -86,6 +89,7 @@ impl Kind {
             KIND_TEXT => Some(Kind::Text),
             KIND_PNG => Some(Kind::Png),
             KIND_REF => Some(Kind::Ref),
+            KIND_FILE_OFFER => Some(Kind::FileOffer),
             _ => None,
         }
     }
@@ -94,6 +98,7 @@ impl Kind {
             Kind::Text => KIND_TEXT,
             Kind::Png => KIND_PNG,
             Kind::Ref => KIND_REF,
+            Kind::FileOffer => KIND_FILE_OFFER,
         }
     }
 }
@@ -242,7 +247,11 @@ fn snapshot_and_post(echo: &Arc<Mutex<EchoState>>) {
         }
         let bytes = text.into_bytes();
         if bytes.len() > MAX_TEXT_BYTES {
-            warn!("local clipboard text {}B exceeds {}B cap; dropped", bytes.len(), MAX_TEXT_BYTES);
+            warn!(
+                "local clipboard text {}B exceeds {}B cap; dropped",
+                bytes.len(),
+                MAX_TEXT_BYTES
+            );
             return;
         }
         if echo.lock().unwrap().is_echo(Kind::Text, &bytes) {
@@ -262,7 +271,11 @@ fn snapshot_and_post(echo: &Arc<Mutex<EchoState>>) {
         };
         let bytes = png.get_bytes().to_vec();
         if bytes.len() > MAX_IMAGE_BYTES {
-            warn!("local clipboard png {}B exceeds {}B cap; dropped", bytes.len(), MAX_IMAGE_BYTES);
+            warn!(
+                "local clipboard png {}B exceeds {}B cap; dropped",
+                bytes.len(),
+                MAX_IMAGE_BYTES
+            );
             return;
         }
         if echo.lock().unwrap().is_echo(Kind::Png, &bytes) {
@@ -283,7 +296,11 @@ fn post_outbound(kind: Kind, payload: Vec<u8>, mime: &'static str) {
 
 fn post_inline(kind: Kind, payload: Vec<u8>) {
     let token = next_token();
-    let body = encode_frame(&Frame { kind, token, payload });
+    let body = encode_frame(&Frame {
+        kind,
+        token,
+        payload,
+    });
     tauri::async_runtime::spawn(async move {
         if let Err(e) = post_item(body).await {
             warn!("clipboard /item POST failed: {e}");
@@ -297,11 +314,18 @@ fn post_via_blob(kind: Kind, payload: Vec<u8>, mime: &'static str) {
         let id = match upload_blob(payload, mime).await {
             Ok(id) => id,
             Err(e) => {
-                warn!("clipboard blob upload failed (kind={:?}, size={}): {e}", kind, size);
+                warn!(
+                    "clipboard blob upload failed (kind={:?}, size={}): {e}",
+                    kind, size
+                );
                 return;
             }
         };
-        let meta = RefMeta { id, mime: mime.to_string(), size };
+        let meta = RefMeta {
+            id,
+            mime: mime.to_string(),
+            size,
+        };
         let json = match serde_json::to_vec(&meta) {
             Ok(v) => v,
             Err(e) => {
@@ -310,7 +334,11 @@ fn post_via_blob(kind: Kind, payload: Vec<u8>, mime: &'static str) {
             }
         };
         let token = next_token();
-        let body = encode_frame(&Frame { kind: Kind::Ref, token, payload: json });
+        let body = encode_frame(&Frame {
+            kind: Kind::Ref,
+            token,
+            payload: json,
+        });
         if let Err(e) = post_item(body).await {
             warn!("clipboard /item POST (ref) failed: {e}");
         }
@@ -327,7 +355,10 @@ async fn post_item(body: Vec<u8>) -> Result<(), String> {
     let url = get_sunshine_url().await?;
     let client = create_https_client()?;
     let resp = client
-        .post(format!("{}/api/v1/clipboard/item", url.trim_end_matches('/')))
+        .post(format!(
+            "{}/api/v1/clipboard/item",
+            url.trim_end_matches('/')
+        ))
         .header("Content-Type", "application/octet-stream")
         .body(body)
         .send()
@@ -339,11 +370,24 @@ async fn post_item(body: Vec<u8>) -> Result<(), String> {
     Ok(())
 }
 
+pub async fn post_file_offer_payload(payload: Vec<u8>) -> Result<(), String> {
+    let token = next_token();
+    let body = encode_frame(&Frame {
+        kind: Kind::FileOffer,
+        token,
+        payload,
+    });
+    post_item(body).await
+}
+
 async fn post_capability_once() -> Result<(), String> {
     let url = get_sunshine_url().await?;
     let client = create_https_client()?;
     let resp = client
-        .post(format!("{}/api/v1/clipboard/capability", url.trim_end_matches('/')))
+        .post(format!(
+            "{}/api/v1/clipboard/capability",
+            url.trim_end_matches('/')
+        ))
         .send()
         .await
         .map_err(|e| e.to_string())?;
@@ -359,7 +403,10 @@ async fn upload_blob(bytes: Vec<u8>, mime: &str) -> Result<String, String> {
     let url = get_sunshine_url().await?;
     let client = create_https_client()?;
     let resp = client
-        .post(format!("{}/api/v1/clipboard/blob", url.trim_end_matches('/')))
+        .post(format!(
+            "{}/api/v1/clipboard/blob",
+            url.trim_end_matches('/')
+        ))
         .header("Content-Type", "application/octet-stream")
         .header("X-Clipboard-Mime", mime)
         .body(bytes)
@@ -382,7 +429,11 @@ async fn fetch_blob(id: &str) -> Result<(Vec<u8>, String), String> {
     let url = get_sunshine_url().await?;
     let client = create_https_client()?;
     let resp = client
-        .get(format!("{}/api/v1/clipboard/blob/{}", url.trim_end_matches('/'), id))
+        .get(format!(
+            "{}/api/v1/clipboard/blob/{}",
+            url.trim_end_matches('/'),
+            id
+        ))
         .send()
         .await
         .map_err(|e| e.to_string())?;
@@ -430,12 +481,17 @@ async fn apply_inbound_ref(frame: Frame, echo: Arc<Mutex<EchoState>>) {
     let kind = match meta.mime.as_str() {
         m if m.starts_with("text/") => Kind::Text,
         "image/png" => Kind::Png,
+        "application/vnd.sunshine.file-offer+json" => Kind::FileOffer,
         other => {
             warn!("inbound REF: unsupported mime '{}'", other);
             return;
         }
     };
-    let frame = Frame { kind, token: frame.token, payload: bytes };
+    let frame = Frame {
+        kind,
+        token: frame.token,
+        payload: bytes,
+    };
     let echo = echo.clone();
     let _ = tauri::async_runtime::spawn_blocking(move || apply_inbound_inline(frame, &echo)).await;
 }
@@ -493,6 +549,12 @@ fn apply_inbound_inline(frame: Frame, echo: &Arc<Mutex<EchoState>>) {
         Kind::Ref => {
             // Already unwrapped above; should never reach here.
             warn!("apply_inbound_inline got Kind::Ref; dropped");
+        }
+        Kind::FileOffer => {
+            // Host GUI currently only sends this to clients. If a client sends
+            // one back, ignore it rather than writing arbitrary file metadata
+            // to the host clipboard.
+            warn!("inbound file offer on host GUI agent; dropped");
         }
     }
 }
@@ -654,12 +716,14 @@ pub fn start() -> Result<(), String> {
     // Spawn watcher thread (blocking; the crate's start_watch() is sync).
     let watcher_echo = echo.clone();
     let (shutdown_tx, watcher_handle) = {
-        let mut watcher = ClipboardWatcherContext::new()
-            .map_err(|e| format!("ClipboardWatcherContext: {e}"))?;
-        let shutdown = watcher.add_handler(WatcherCallbacks {
-            echo: watcher_echo,
-            busy,
-        }).get_shutdown_channel();
+        let mut watcher =
+            ClipboardWatcherContext::new().map_err(|e| format!("ClipboardWatcherContext: {e}"))?;
+        let shutdown = watcher
+            .add_handler(WatcherCallbacks {
+                echo: watcher_echo,
+                busy,
+            })
+            .get_shutdown_channel();
         let handle = std::thread::Builder::new()
             .name("clipboard-watcher".into())
             .spawn(move || {
@@ -736,10 +800,7 @@ async fn query_service_allowed() -> bool {
         Ok(c) => c,
         Err(_) => return true,
     };
-    let endpoint = format!(
-        "{}/api/v1/clipboard/capability",
-        url.trim_end_matches('/')
-    );
+    let endpoint = format!("{}/api/v1/clipboard/capability", url.trim_end_matches('/'));
     let resp = match client.post(&endpoint).send().await {
         Ok(r) => r,
         Err(_) => return true,

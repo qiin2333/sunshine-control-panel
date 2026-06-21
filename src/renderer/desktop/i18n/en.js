@@ -207,6 +207,38 @@ export const en = {
     resetSuccess: 'Settings reset to defaults',
   },
 
+  // === Theme Editor ===
+  themeEditor: {
+    title: 'Theme Editor',
+    wallpaper: 'Wallpaper',
+    replace: 'Replace',
+    remove: 'Remove',
+    dropImage: 'Drop image here',
+    chooseFile: 'or click to choose a file',
+    presets: 'Presets',
+    presetNames: {
+      cyberpunk: 'Cyberpunk',
+      midnight: 'Midnight Blue',
+      emerald: 'Emerald',
+      rose: 'Rose Gold',
+      steam: 'Steam Classic',
+    },
+    colors: 'Colors',
+    accentColor: 'Accent Color',
+    secondaryColor: 'Secondary Color',
+    backgroundPrimary: 'Primary Background',
+    backgroundSecondary: 'Secondary Background',
+    appearance: 'Appearance',
+    cardRadius: 'Card Radius',
+    fontSize: 'Font Size',
+    effects: 'Effects',
+    backgroundGrid: 'Background Grid',
+    scanlines: 'Scanlines',
+    data: 'Data',
+    exportTheme: 'Export Theme',
+    importTheme: 'Import Theme',
+  },
+
   // === Tools ===
   tools: {
     pageTitle: 'Utility Tools',

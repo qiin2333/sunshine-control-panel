@@ -135,6 +135,8 @@ onMounted(() => {
     
     .tool-content {
       padding: 0;
+      min-height: 236px;
+      justify-content: center;
     }
   }
 }
@@ -181,7 +183,7 @@ onMounted(() => {
   padding: 20px 30px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 18px;
 }
 
 .dpi-display {
@@ -189,7 +191,7 @@ onMounted(() => {
 }
 
 .dpi-value {
-  font-size: 48px;
+  font-size: 46px;
   font-weight: 700;
   text-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
   display: inline-block;
@@ -259,6 +261,8 @@ onMounted(() => {
   flex-wrap: wrap;
   gap: 6px;
   justify-content: center;
+  max-width: 560px;
+  margin: 0 auto;
 }
 
 .preset-btn {

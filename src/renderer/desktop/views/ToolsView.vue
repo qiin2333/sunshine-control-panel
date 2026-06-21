@@ -6,9 +6,9 @@
     </div>
 
     <!-- 工具网格 - 平铺所有工具 -->
-    <DesktopGrid :cols="2" gap="lg" :responsive="true">
+    <DesktopGrid class="tools-grid" :cols="2" gap="lg" :responsive="true">
       <!-- 码率调节器 -->
-      <DesktopCard :title="t.tools.bitrateAdjust" variant="success" hoverable class="tool-panel-card">
+      <DesktopCard variant="success" hoverable class="tool-panel-card bitrate-card">
         <template #title>
           <span class="title-icon"><DataAnalysis /></span>
           {{ t.tools.bitrateAdjust }}
@@ -20,7 +20,7 @@
       </DesktopCard>
 
       <!-- DPI 调节器 -->
-      <DesktopCard :title="t.tools.dpiScaling" variant="secondary" hoverable class="tool-panel-card">
+      <DesktopCard variant="secondary" hoverable class="tool-panel-card dpi-card">
         <template #title>
           <span class="title-icon"><Search /></span>
           {{ t.tools.dpiScaling }}
@@ -32,7 +32,7 @@
       </DesktopCard>
 
       <!-- 快捷键管理 -->
-      <DesktopCard :title="t.tools.shortcutGuide" variant="warning" hoverable class="tool-panel-card">
+      <DesktopCard variant="warning" hoverable class="tool-panel-card shortcuts-card">
         <template #title>
           <span class="title-icon"><Key /></span>
           {{ t.tools.shortcutGuide }}
@@ -240,10 +240,11 @@ onMounted(async () => {
 .tools-view {
   max-width: 1600px;
   margin: 0 auto;
+  padding-bottom: 32px;
 }
 
 .page-header {
-  margin-bottom: 40px;
+  margin-bottom: 34px;
 
   .page-title {
     font-size: 40px;
@@ -260,11 +261,29 @@ onMounted(async () => {
 }
 
 .tool-panel-card {
-  min-height: 400px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+
+  :deep(.card-header) {
+    margin-bottom: 18px;
+  }
+
+  :deep(.card-title) {
+    min-width: 0;
+    flex-wrap: wrap;
+    line-height: 1.25;
+  }
+
+  :deep(.card-content) {
+    flex: 1;
+    min-height: 0;
+  }
 
   .tool-panel-content {
-    max-height: 600px;
-    overflow-y: auto;
+    min-height: 0;
+    overflow: visible;
 
     &::-webkit-scrollbar {
       width: 6px;
@@ -291,11 +310,24 @@ onMounted(async () => {
   }
 }
 
+.bitrate-card,
+.dpi-card {
+  min-height: 320px;
+}
+
+.shortcuts-card {
+  grid-column: ~"1 / -1";
+
+  .tool-panel-content {
+    overflow: visible;
+  }
+}
+
 .section-title {
   font-size: 20px;
   font-weight: 600;
   color: var(--fd-text-primary, #fff);
-  margin: 48px 0 16px 0;
+  margin: 36px 0 16px 0;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -323,16 +355,21 @@ onMounted(async () => {
 
   .diagnostic-item {
     display: flex;
-    flex-direction: column;
     align-items: center;
-    text-align: center;
+    text-align: left;
     gap: 12px;
+    min-width: 0;
+    padding: 16px;
+    border: 1px solid rgba(var(--fd-accent-rgb, 0, 255, 245), 0.1);
+    border-radius: 12px;
+    background: rgba(var(--fd-bg-primary-rgb, 15, 15, 35), 0.22);
   }
 
   .diagnostic-icon {
-    width: 64px;
-    height: 64px;
-    border-radius: 16px;
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
+    flex: 0 0 48px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -353,12 +390,15 @@ onMounted(async () => {
     }
 
     svg {
-      width: 32px;
-      height: 32px;
+      width: 26px;
+      height: 26px;
     }
   }
 
   .diagnostic-info {
+    min-width: 0;
+    flex: 1;
+
     .diagnostic-name {
       font-size: 14px;
       color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.5);
@@ -369,6 +409,9 @@ onMounted(async () => {
       font-size: 14px;
       font-weight: 500;
       color: var(--fd-text-primary, #fff);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
   }
 
@@ -376,6 +419,7 @@ onMounted(async () => {
     font-size: 12px;
     padding: 4px 12px;
     border-radius: 12px;
+    flex-shrink: 0;
 
     &.good {
       background: rgba(var(--fd-status-success-rgb, 0, 255, 136), 0.1);
@@ -390,6 +434,46 @@ onMounted(async () => {
     &.error {
       background: rgba(var(--fd-status-danger-rgb, 255, 107, 53), 0.1);
       color: var(--fd-status-danger, #ff6b35);
+    }
+  }
+
+  :deep(.card-footer) {
+    flex-wrap: wrap;
+
+    .desktop-btn {
+      min-width: 132px;
+      justify-content: center;
+      white-space: nowrap;
+    }
+
+    .desktop-btn svg {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+    }
+  }
+}
+
+@media (max-width: 800px) {
+  .tools-view {
+    padding-bottom: 20px;
+  }
+
+  .page-header {
+    margin-bottom: 24px;
+
+    .page-title {
+      font-size: 32px;
+    }
+  }
+
+  .shortcuts-card {
+    grid-column: auto;
+  }
+
+  .diagnostics-card {
+    .diagnostic-item {
+      align-items: flex-start;
     }
   }
 }

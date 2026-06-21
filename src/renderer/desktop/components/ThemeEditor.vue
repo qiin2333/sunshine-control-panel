@@ -9,14 +9,14 @@
     <Transition name="slide">
       <div v-if="open" class="theme-editor" @click.stop>
         <div class="editor-header">
-          <h2><Brush /> 主题编辑</h2>
+          <h2><Brush /> {{ t.themeEditor.title }}</h2>
           <button class="close-btn" @click="$emit('close')">✕</button>
         </div>
 
         <div class="editor-body">
           <!-- 壁纸 -->
           <section class="editor-section">
-            <label class="section-title">壁纸</label>
+            <label class="section-title">{{ t.themeEditor.wallpaper }}</label>
             <div
               class="wallpaper-drop"
               :class="{ dragging: isDragging, 'has-wallpaper': wallpaper }"
@@ -28,13 +28,13 @@
               <template v-if="wallpaper">
                 <img :src="wallpaper" class="wallpaper-preview" />
                 <div class="wallpaper-actions">
-                  <button class="wp-btn" @click.stop="triggerFileInput"><Refresh /> 更换</button>
-                  <button class="wp-btn danger" @click.stop="$emit('removeWallpaper')">✕ 移除</button>
+                  <button class="wp-btn" @click.stop="triggerFileInput"><Refresh /> {{ t.themeEditor.replace }}</button>
+                  <button class="wp-btn danger" @click.stop="$emit('removeWallpaper')">✕ {{ t.themeEditor.remove }}</button>
                 </div>
               </template>
               <template v-else>
                 <div class="drop-icon"><Picture /></div>
-                <div class="drop-text">拖拽图片到此处<br/><small>或点击选择文件</small></div>
+                <div class="drop-text">{{ t.themeEditor.dropImage }}<br/><small>{{ t.themeEditor.chooseFile }}</small></div>
               </template>
             </div>
             <input
@@ -58,7 +58,7 @@
 
           <!-- 预设主题 -->
           <section class="editor-section">
-            <label class="section-title">预设主题</label>
+            <label class="section-title">{{ t.themeEditor.presets }}</label>
             <div class="preset-grid">
               <button
                 v-for="(preset, key) in presets"
@@ -68,42 +68,42 @@
                 @click="$emit('applyPreset', key)"
               >
                 <span class="preset-dot" :style="{ background: preset.vars['--fd-accent'] }"></span>
-                {{ preset.label }}
+                {{ t.themeEditor.presetNames[key] || preset.label }}
               </button>
             </div>
           </section>
 
           <!-- 颜色 -->
           <section class="editor-section">
-            <label class="section-title">颜色</label>
+            <label class="section-title">{{ t.themeEditor.colors }}</label>
             <div class="control-row">
-              <span class="control-label">主题色</span>
+              <span class="control-label">{{ t.themeEditor.accentColor }}</span>
               <input type="color" :value="vars['--fd-accent']" @input="throttledSetVar('--fd-accent', $event.target.value)" @change="$emit('setVar', '--fd-accent', $event.target.value)" />
             </div>
             <div class="control-row">
-              <span class="control-label">辅助色</span>
+              <span class="control-label">{{ t.themeEditor.secondaryColor }}</span>
               <input type="color" :value="vars['--fd-accent-secondary']" @input="throttledSetVar('--fd-accent-secondary', $event.target.value)" @change="$emit('setVar', '--fd-accent-secondary', $event.target.value)" />
             </div>
             <div class="control-row">
-              <span class="control-label">背景主色</span>
+              <span class="control-label">{{ t.themeEditor.backgroundPrimary }}</span>
               <input type="color" :value="vars['--fd-bg-primary']" @input="throttledSetVar('--fd-bg-primary', $event.target.value)" @change="$emit('setVar', '--fd-bg-primary', $event.target.value)" />
             </div>
             <div class="control-row">
-              <span class="control-label">背景副色</span>
+              <span class="control-label">{{ t.themeEditor.backgroundSecondary }}</span>
               <input type="color" :value="vars['--fd-bg-secondary']" @input="throttledSetVar('--fd-bg-secondary', $event.target.value)" @change="$emit('setVar', '--fd-bg-secondary', $event.target.value)" />
             </div>
           </section>
 
           <!-- 外观 -->
           <section class="editor-section">
-            <label class="section-title">外观</label>
+            <label class="section-title">{{ t.themeEditor.appearance }}</label>
             <div class="control-row">
-              <span class="control-label">卡片圆角</span>
+              <span class="control-label">{{ t.themeEditor.cardRadius }}</span>
               <input type="range" min="0" max="32" :value="parseInt(vars['--fd-card-radius'])" @input="$emit('setVar', '--fd-card-radius', $event.target.value + 'px')" />
               <span class="control-value">{{ vars['--fd-card-radius'] }}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">字体大小</span>
+              <span class="control-label">{{ t.themeEditor.fontSize }}</span>
               <input type="range" min="12" max="18" :value="parseInt(vars['--fd-font-size'])" @input="$emit('setVar', '--fd-font-size', $event.target.value + 'px')" />
               <span class="control-value">{{ vars['--fd-font-size'] }}</span>
             </div>
@@ -111,16 +111,16 @@
 
           <!-- 效果 -->
           <section class="editor-section">
-            <label class="section-title">效果</label>
+            <label class="section-title">{{ t.themeEditor.effects }}</label>
             <div class="control-row">
-              <span class="control-label">背景网格</span>
+              <span class="control-label">{{ t.themeEditor.backgroundGrid }}</span>
               <label class="switch">
                 <input type="checkbox" :checked="vars['--fd-grid-visible'] === '1'" @change="$emit('setVar', '--fd-grid-visible', $event.target.checked ? '1' : '0')" />
                 <span class="slider"></span>
               </label>
             </div>
             <div class="control-row">
-              <span class="control-label">扫描线</span>
+              <span class="control-label">{{ t.themeEditor.scanlines }}</span>
               <label class="switch">
                 <input type="checkbox" :checked="vars['--fd-scanline-visible'] === '1'" @change="$emit('setVar', '--fd-scanline-visible', $event.target.checked ? '1' : '0')" />
                 <span class="slider"></span>
@@ -130,10 +130,10 @@
 
           <!-- 导入导出 -->
           <section class="editor-section">
-            <label class="section-title">数据</label>
+            <label class="section-title">{{ t.themeEditor.data }}</label>
             <div class="action-row">
-              <button class="action-btn" @click="handleExport"><Upload /> 导出主 题</button>
-              <button class="action-btn" @click="handleImport"><Download /> 导入主 题</button>
+              <button class="action-btn" @click="handleExport"><Upload /> {{ t.themeEditor.exportTheme }}</button>
+              <button class="action-btn" @click="handleImport"><Download /> {{ t.themeEditor.importTheme }}</button>
             </div>
           </section>
         </div>
@@ -145,6 +145,7 @@
 <script setup>
 import { ref } from 'vue'
 import { Brush, Refresh, Picture, Upload, Download } from '@element-plus/icons-vue'
+import { useI18n } from '../i18n/index.js'
 
 const props = defineProps({
   open: { type: Boolean, required: true },
@@ -157,6 +158,7 @@ const props = defineProps({
 
 const emit = defineEmits(['close', 'setVar', 'applyPreset', 'export', 'import', 'setWallpaper', 'removeWallpaper'])
 
+const { t } = useI18n()
 const isDragging = ref(false)
 const fileInputRef = ref(null)
 

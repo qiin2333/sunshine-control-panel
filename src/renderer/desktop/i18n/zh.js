@@ -207,6 +207,38 @@ export const zh = {
     resetSuccess: '设置已恢复默认',
   },
 
+  // === 主题编辑 ===
+  themeEditor: {
+    title: '主题编辑',
+    wallpaper: '壁纸',
+    replace: '更换',
+    remove: '移除',
+    dropImage: '拖拽图片到此处',
+    chooseFile: '或点击选择文件',
+    presets: '预设主题',
+    presetNames: {
+      cyberpunk: '赛博朋克',
+      midnight: '午夜蓝',
+      emerald: '翡翠绿',
+      rose: '玫瑰金',
+      steam: 'Steam 经典',
+    },
+    colors: '颜色',
+    accentColor: '主题色',
+    secondaryColor: '辅助色',
+    backgroundPrimary: '背景主色',
+    backgroundSecondary: '背景副色',
+    appearance: '外观',
+    cardRadius: '卡片圆角',
+    fontSize: '字体大小',
+    effects: '效果',
+    backgroundGrid: '背景网格',
+    scanlines: '扫描线',
+    data: '数据',
+    exportTheme: '导出主题',
+    importTheme: '导入主题',
+  },
+
   // === 工具 ===
   tools: {
     pageTitle: '实用工具',

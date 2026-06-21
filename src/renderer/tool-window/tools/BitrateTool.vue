@@ -27,9 +27,7 @@
           :disabled="isLoading || applying"
           :title="t.bitrateTool.refresh"
         >
-          <el-icon :size="18" :class="{ spinning: refreshing }">
-            <RefreshRight />
-          </el-icon>
+          <RefreshRight class="refresh-icon" :class="{ spinning: refreshing }" />
         </button>
       </div>
 
@@ -300,6 +298,7 @@ onMounted(loadSessions)
     
     .tool-content {
       padding: 0;
+      min-height: 236px;
     }
   }
 }
@@ -419,6 +418,12 @@ onMounted(loadSessions)
   .spinning {
     animation: spin 1s linear infinite;
   }
+
+  .refresh-icon {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+  }
 }
 
 @keyframes spin {
@@ -433,24 +438,46 @@ onMounted(loadSessions)
 .loading-state,
 .empty-state {
   text-align: center;
-  padding: 40px 20px;
+  padding: 28px 20px;
 }
 
 .empty-state {
+  min-height: 190px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+
   .icon {
-    font-size: 48px;
+    width: 64px;
+    height: 64px;
     margin-bottom: 16px;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.88);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+
+    :deep(svg) {
+      width: 34px;
+      height: 34px;
+      flex-shrink: 0;
+    }
   }
 
   p {
     font-size: 16px;
-    opacity: 0.9;
+    color: rgba(255, 255, 255, 0.9);
+    opacity: 1;
     margin-bottom: 8px;
   }
 
   .subtitle {
     font-size: 14px;
-    opacity: 0.7;
+    color: rgba(255, 255, 255, 0.62);
+    opacity: 1;
   }
 
   .warning-text {

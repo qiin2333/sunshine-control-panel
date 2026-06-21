@@ -66,7 +66,7 @@ onMounted(() => {
   
   &.embedded {
     width: 100%;
-    max-height: 600px;
+    max-height: none;
     
     .tool-header {
       display: none;
@@ -74,7 +74,7 @@ onMounted(() => {
     
     .tool-content {
       padding: 0;
-      max-height: 600px;
+      max-height: min(52vh, 520px);
     }
   }
 }
@@ -121,6 +121,7 @@ onMounted(() => {
   padding: 20px 28px;
   max-height: 70vh;
   overflow-y: auto;
+  padding-right: 10px;
 }
 
 /* Markdown 渲染样式 - 白色主题 */
@@ -132,12 +133,16 @@ onMounted(() => {
 }
 
 .tool-content :deep(h2) {
-  font-size: 18px;
+  font-size: 17px;
   color: white;
-  margin: 24px 0 12px 0;
+  margin: 22px 0 12px 0;
   padding-bottom: 6px;
   border-bottom: 2px solid rgba(255, 255, 255, 0.3);
   font-weight: 600;
+}
+
+.tool-content :deep(h2:first-of-type) {
+  margin-top: 0;
 }
 
 .tool-content :deep(h3) {
@@ -151,6 +156,9 @@ onMounted(() => {
   list-style: none;
   padding: 0;
   margin: 0 0 14px 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 8px;
 }
 
 .tool-content :deep(li) {
@@ -158,12 +166,14 @@ onMounted(() => {
   background: rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(5px);
   border-radius: 6px;
-  margin-bottom: 5px;
+  margin-bottom: 0;
   transition: all 0.2s;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
   font-size: 13px;
+  min-width: 0;
+  min-height: 38px;
 }
 
 .tool-content :deep(li:hover) {
@@ -183,6 +193,7 @@ onMounted(() => {
   color: white;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .tool-content :deep(li code:not(kbd)) {
@@ -205,6 +216,7 @@ onMounted(() => {
 
 .tool-content :deep(.note p) {
   margin: 0;
+  color: inherit;
 }
 
 .tool-content :deep(hr) {
@@ -226,6 +238,13 @@ onMounted(() => {
   margin: 6px 0;
   line-height: 1.5;
   font-size: 13px;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+@media (max-width: 900px) {
+  .tool-content :deep(ul) {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* 滚动条样式 */

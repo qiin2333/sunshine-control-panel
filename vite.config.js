@@ -31,7 +31,7 @@ export default defineConfig(() => ({
   build: {
     outDir: join(__dirname, 'dist'),
     emptyOutDir: true,
-    target: ['es2021', 'chrome100', 'safari13'],
+    target: ['es2021', 'chrome100', 'safari15'],
     minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
     sourcemap: !!process.env.TAURI_DEBUG,
     rollupOptions: {

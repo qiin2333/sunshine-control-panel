@@ -32,6 +32,13 @@
             <el-input v-model="config.apiBase" placeholder="https://api.openai.com/v1" style="max-width: 400px" />
           </el-form-item>
 
+          <el-form-item label="Compatibility">
+            <el-select v-model="config.compatibility" style="width: 100%; max-width: 400px">
+              <el-option label="OpenAI Chat Completions" value="openai-chat" />
+              <el-option label="Anthropic Messages" value="anthropic-messages" />
+            </el-select>
+          </el-form-item>
+
           <el-form-item :label="t.aiAssistant.apiKey">
             <el-input
               v-model="config.apiKey"

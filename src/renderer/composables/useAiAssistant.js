@@ -7,6 +7,31 @@ import { AI_PROVIDERS, DEFAULT_CONFIG, STORAGE_KEY } from './aiProviders.js'
 // 重新导出供外部使用
 export { AI_PROVIDERS }
 
+function normalizeConfig(input = {}) {
+  const cfg = { ...DEFAULT_CONFIG, ...input }
+  if (cfg.provider === 'compatible') {
+    cfg.provider = 'custom'
+  }
+
+  const provider = AI_PROVIDERS.find((p) => p.value === cfg.provider)
+  if (!cfg.compatibility) {
+    cfg.compatibility = provider?.compatibility || DEFAULT_CONFIG.compatibility
+  }
+  return cfg
+}
+
+function isMaskedKey(key) {
+  return typeof key === 'string' && key.includes('****')
+}
+
+function isApiKeyRequired(cfg) {
+  const apiBase = cfg.apiBase || ''
+  return cfg.provider !== 'ollama' &&
+    !apiBase.includes('localhost') &&
+    !apiBase.includes('127.0.0.1') &&
+    !apiBase.includes('[::1]')
+}
+
 async function getProxyUrl() {
   try {
     const { invoke } = await import('@tauri-apps/api/core')
@@ -196,9 +221,9 @@ export function useAiAssistant() {
   function loadConfig() {
     try {
       const saved = localStorage.getItem(STORAGE_KEY)
-      return saved ? { ...DEFAULT_CONFIG, ...JSON.parse(saved) } : { ...DEFAULT_CONFIG }
+      return saved ? normalizeConfig(JSON.parse(saved)) : normalizeConfig()
     } catch {
-      return { ...DEFAULT_CONFIG }
+      return normalizeConfig()
     }
   }
 
@@ -212,15 +237,11 @@ export function useAiAssistant() {
       const resp = await fetch(`${proxyUrl}/api/ai/config`)
       if (!resp.ok) return
       const remote = await resp.json()
-      // 服务端 apiKey 带掩码(****), 保留本地完整 key
       const localKey = config.apiKey || ''
-      if (remote.enabled !== undefined) config.enabled = remote.enabled
-      if (remote.provider) config.provider = remote.provider
-      if (remote.apiBase) config.apiBase = remote.apiBase
-      if (remote.model) config.model = remote.model
-      if (remote.apiKey && !remote.apiKey.includes('****')) {
+      Object.assign(config, normalizeConfig(remote))
+      if (remote.apiKey && !isMaskedKey(remote.apiKey)) {
         config.apiKey = remote.apiKey
-      } else if (localKey && !localKey.includes('****')) {
+      } else if (localKey && !isMaskedKey(localKey)) {
         config.apiKey = localKey
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...config }))
@@ -242,8 +263,11 @@ export function useAiAssistant() {
           enabled: config.enabled,
           provider: config.provider,
           apiBase: config.apiBase,
-          apiKey: config.apiKey,
           model: config.model,
+          compatibility: config.compatibility,
+          temperature: Number(config.temperature) || DEFAULT_CONFIG.temperature,
+          max_tokens: Number(config.max_tokens) || DEFAULT_CONFIG.max_tokens,
+          ...(!isMaskedKey(config.apiKey) && { apiKey: config.apiKey }),
         }),
       })
     } catch (e) {
@@ -273,6 +297,7 @@ export function useAiAssistant() {
     const provider = AI_PROVIDERS.find((p) => p.value === providerValue)
     if (provider) {
       config.apiBase = provider.base
+      config.compatibility = provider.compatibility || DEFAULT_CONFIG.compatibility
       if (provider.models.length > 0) {
         config.model = provider.models[0]
       }
@@ -314,13 +339,14 @@ export function useAiAssistant() {
   // ===== 连接测试 =====
 
   async function testConnection() {
-    if (!config.apiKey && config.provider !== 'ollama') {
+    if (!config.apiKey && isApiKeyRequired(config)) {
       ElMessage.warning('请先填写 API Key')
       return false
     }
 
     isLoading.value = true
     try {
+      await syncToServer()
       await callLLM(config, [{ role: 'user', content: 'hi' }], 5)
       isConnected.value = true
       ElMessage.success('AI 服务连接成功！')
@@ -343,11 +369,17 @@ export function useAiAssistant() {
       return
     }
 
+    if (!config.apiKey && isApiKeyRequired(config)) {
+      ElMessage.warning('璇峰厛濉啓 API Key')
+      return
+    }
+
     chatHistory.value.push({ role: 'user', content: userMessage, timestamp: Date.now() })
     currentInput.value = ''
     isLoading.value = true
 
     try {
+      await syncToServer()
       const [appsContext, logsContext] = await Promise.all([getAppsContext(), getLogsContext()])
       const messages = [
         { role: 'system', content: SYSTEM_PROMPT + appsContext + logsContext },

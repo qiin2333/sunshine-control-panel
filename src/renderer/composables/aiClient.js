@@ -1,13 +1,34 @@
 /**
- * AI HTTP 通信层
- * 负责与各类 AI 服务 API 的通信，通过 Tauri 代理绕过 CORS
+ * AI HTTP client.
+ *
+ * The Mita control panel is the only human-facing configuration entry, while
+ * Sunshine's /api/ai/config and /api/ai/chat/completions remain the shared
+ * storage and execution path for every AI feature.
  */
 
 import { AI_PROVIDERS } from './aiProviders.js'
 
+async function getProxyUrl() {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    return await invoke('get_proxy_url_command')
+  } catch {
+    return 'https://localhost:47990'
+  }
+}
+
+async function fetchJson(url, options = {}) {
+  const resp = await fetch(url, options)
+  const data = await resp.json().catch(() => ({}))
+  if (!resp.ok || data.status === 'error') {
+    const message = typeof data.error === 'string' ? data.error : data.error?.message
+    throw new Error(message || `${resp.status} - ${JSON.stringify(data).substring(0, 200)}`)
+  }
+  return data
+}
+
 /**
- * 通过 Tauri 后端代理发送 HTTP 请求（绕过 CORS）
- * 如果不在 Tauri 环境则回退到 fetch
+ * Generic proxy for provider helper endpoints such as /models.
  */
 export async function proxyFetch(url, method, headers, body) {
   const tauri = window.__TAURI__
@@ -22,7 +43,7 @@ export async function proxyFetch(url, method, headers, body) {
     })
     return JSON.parse(result)
   }
-  // 回退到直接 fetch（Web 环境）
+
   const resp = await fetch(url, {
     method,
     headers: { ...headers, 'Content-Type': 'application/json' },
@@ -35,22 +56,27 @@ export async function proxyFetch(url, method, headers, body) {
   return resp.json()
 }
 
-/**
- * 获取供应商的 API 类型
- */
 export function getApiType(providerValue) {
   const provider = AI_PROVIDERS.find((p) => p.value === providerValue)
   return provider?.apiType || 'openai'
 }
 
-/**
- * 调用 OpenAI 兼容 API
- */
+export function getCompatibility(providerValue) {
+  const provider = AI_PROVIDERS.find((p) => p.value === providerValue)
+  return provider?.compatibility || 'openai-chat'
+}
+
+export function isApiKeyRequired(config) {
+  const apiBase = config?.apiBase || ''
+  return config?.provider !== 'ollama' &&
+    !apiBase.includes('localhost') &&
+    !apiBase.includes('127.0.0.1') &&
+    !apiBase.includes('[::1]')
+}
+
 export async function callOpenAI(apiBase, apiKey, model, messages, maxTokens = 2048) {
   const headers = {}
-  if (apiKey) {
-    headers['Authorization'] = `Bearer ${apiKey}`
-  }
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`
 
   const base = apiBase.replace(/\/+$/, '')
   const data = await proxyFetch(`${base}/chat/completions`, 'POST', headers, {
@@ -62,9 +88,6 @@ export async function callOpenAI(apiBase, apiKey, model, messages, maxTokens = 2
   return data.choices?.[0]?.message?.content || ''
 }
 
-/**
- * 调用 Anthropic Claude API
- */
 export async function callAnthropic(apiBase, apiKey, model, messages, maxTokens = 2048) {
   const systemMsg = messages.find((m) => m.role === 'system')?.content || ''
   const chatMsgs = messages.filter((m) => m.role !== 'system')
@@ -82,51 +105,39 @@ export async function callAnthropic(apiBase, apiKey, model, messages, maxTokens 
   return data.content?.map((c) => c.text).join('') || ''
 }
 
-/**
- * 统一 LLM 调用入口
- * @param {object} config - AI 配置
- * @param {Array} messages - 消息列表
- * @param {number} maxTokens - 最大 token 数
- */
 export async function callLLM(config, messages, maxTokens = 2048) {
-  const apiType = getApiType(config.provider)
-  if (apiType === 'anthropic') {
-    return callAnthropic(config.apiBase, config.apiKey, config.model, messages, maxTokens)
-  }
-  return callOpenAI(config.apiBase, config.apiKey, config.model, messages, maxTokens)
+  const proxyUrl = await getProxyUrl()
+  const data = await fetchJson(`${proxyUrl}/api/ai/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: config.model,
+      messages,
+      temperature: Number(config.temperature) || 0.3,
+      max_tokens: Number(maxTokens || config.max_tokens) || 2048,
+    }),
+  })
+  return data.choices?.[0]?.message?.content || ''
 }
 
-/**
- * 构建带图片的 vision 消息内容（多模态）
- * @param {string} text - 文本提示
- * @param {string} imageDataUrl - data:image/jpeg;base64,... 格式的图片
- * @returns 适用于 OpenAI/Anthropic vision API 的 content 数组
- */
 export function buildVisionContent(text, imageDataUrl) {
-  // 从 data URL 提取 base64 和 media type
   const match = imageDataUrl.match(/^data:(image\/\w+);base64,(.+)$/)
-  if (!match) return text // fallback to text-only
-
-  const [, mediaType, base64Data] = match
+  if (!match) return text
 
   return [
     { type: 'text', text },
     {
       type: 'image_url',
-      image_url: { url: imageDataUrl, detail: 'low' }, // low detail = fewer tokens
+      image_url: { url: imageDataUrl, detail: 'low' },
     },
   ]
 }
 
-/**
- * 构建 Anthropic 格式的 vision 消息内容
- */
 export function buildAnthropicVisionContent(text, imageDataUrl) {
   const match = imageDataUrl.match(/^data:(image\/\w+);base64,(.+)$/)
   if (!match) return text
 
   const [, mediaType, base64Data] = match
-
   return [
     {
       type: 'image',
@@ -136,45 +147,25 @@ export function buildAnthropicVisionContent(text, imageDataUrl) {
   ]
 }
 
-/**
- * 调用带视觉能力的 LLM（发送截屏 + 文本提示）
- */
 export async function callVisionLLM(config, systemPrompt, userText, imageDataUrl, maxTokens = 512) {
-  const apiType = getApiType(config.provider)
+  const isAnthropic = getCompatibility(config.provider) === 'anthropic-messages' || config.compatibility === 'anthropic-messages'
+  const content = isAnthropic
+    ? buildAnthropicVisionContent(userText, imageDataUrl)
+    : buildVisionContent(userText, imageDataUrl)
 
-  if (apiType === 'anthropic') {
-    const content = buildAnthropicVisionContent(userText, imageDataUrl)
-    const messages = [{ role: 'user', content }]
-    return callAnthropic(config.apiBase, config.apiKey, config.model, [
-      { role: 'system', content: systemPrompt },
-      ...messages,
-    ], maxTokens)
-  }
-
-  // OpenAI 兼容（GPT-4o, Qwen-VL, GLM-4V 等）
-  const content = buildVisionContent(userText, imageDataUrl)
-  const messages = [
+  return callLLM(config, [
     { role: 'system', content: systemPrompt },
     { role: 'user', content },
-  ]
-  return callOpenAI(config.apiBase, config.apiKey, config.model, messages, maxTokens)
+  ], maxTokens)
 }
 
-/**
- * 从 API 拉取可用模型列表
- */
 export async function fetchModels(apiBase, apiKey, providerValue) {
   const apiType = getApiType(providerValue)
-
-  // Anthropic 不支持 /models 列表接口
   if (apiType === 'anthropic') return []
-
   if (!apiBase) return []
 
   const headers = {}
-  if (apiKey) {
-    headers['Authorization'] = `Bearer ${apiKey}`
-  }
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`
 
   const base = apiBase.replace(/\/+$/, '')
   const data = await proxyFetch(`${base}/models`, 'GET', headers, null)

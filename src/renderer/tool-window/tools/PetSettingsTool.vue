@@ -258,6 +258,7 @@
 import { ref, computed, watch } from 'vue'
 import { useI18n } from '../../desktop/i18n/index.js'
 import { STORAGE_KEY, DEFAULT_CONFIG } from '../../composables/aiProviders.js'
+import { isApiKeyRequired } from '../../composables/aiClient.js'
 import {
   PET_MASTER_KEY,
   PET_RANDOM_ENABLED_KEY,
@@ -313,7 +314,7 @@ const aiConfigReady = computed(() => {
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
     const cfg = saved ? { ...DEFAULT_CONFIG, ...JSON.parse(saved) } : { ...DEFAULT_CONFIG }
-    return !!(cfg.enabled && cfg.apiKey && cfg.apiKey.trim())
+    return !!(cfg.enabled && (cfg.apiKey?.trim() || !isApiKeyRequired(cfg)))
   } catch {
     return false
   }

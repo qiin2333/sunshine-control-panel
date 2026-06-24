@@ -30,6 +30,15 @@ static PROXY_PORT: AtomicU16 = AtomicU16::new(48081);
 /// 快速失败冷却时间（秒）- 在此时间内不重试，超过后会重新尝试连接
 const FAST_FAIL_COOLDOWN_SECS: u64 = 3;
 
+/// 默认代理超时：用于 Sunshine 普通页面/API，保持界面快速失败。
+const DEFAULT_PROXY_TIMEOUT_SECS: u64 = 5;
+
+/// AI 请求会携带日志、应用列表等上下文，模型首 token 可能明显慢于普通 API。
+const AI_PROXY_TIMEOUT_SECS: u64 = 120;
+
+/// 本机 Sunshine 连接应快速建立；连接超时不跟随 AI 响应超时放大。
+const PROXY_CONNECT_TIMEOUT_MS: u64 = 500;
+
 /// 代理服务器端口范围
 const PROXY_PORT_START: u16 = 48081;
 const PROXY_PORT_END: u16 = 48090;
@@ -231,10 +240,38 @@ fn is_connection_error(error: &str) -> bool {
     CONNECTION_ERROR_PATTERNS.iter().any(|p| error_lower.contains(p))
 }
 
+fn is_timeout_error(error: &str) -> bool {
+    let error_lower = error.to_lowercase();
+    error_lower.contains("timed out") || error_lower.contains("timeout")
+}
+
+fn proxy_error_kind(error: &str) -> &'static str {
+    if error.contains("Connection refused") || error.contains("connection refused") {
+        "连接被拒绝（后端未启动？）"
+    } else if is_timeout_error(error) {
+        "连接超时"
+    } else if error.contains("certificate") || error.contains("ssl") || error.contains("tls") {
+        "TLS/证书错误"
+    } else if is_connection_error(error) {
+        "连接失败"
+    } else {
+        "请求失败"
+    }
+}
+
 /// 检查是否是 API 请求
 #[inline]
 fn is_api_request(path: &str) -> bool {
     path.starts_with("/api/")
+}
+
+/// 检查是否是 AI API 请求。
+///
+/// AI 配置和对话通常会连续触发多个请求；如果前一个普通 API 请求把
+/// Sunshine 标记为不可用，不能让共享 AI 入口在冷却窗口内被直接短路。
+#[inline]
+fn is_ai_api_request(path: &str) -> bool {
+    path.starts_with("/api/ai/")
 }
 
 /// 检查是否是外部代理请求
@@ -315,6 +352,65 @@ fn service_unavailable_response(is_api: bool) -> Response {
     }
 }
 
+fn proxy_error_response(
+    is_api: bool,
+    status: axum::http::StatusCode,
+    message: impl Into<String>,
+    detail: Option<&str>,
+) -> Response {
+    let message = message.into();
+    if is_api {
+        let body = match detail {
+            Some(detail) => serde_json::json!({
+                "success": false,
+                "error": message,
+                "detail": detail,
+            }),
+            None => serde_json::json!({
+                "success": false,
+                "error": message,
+            }),
+        };
+        (
+            status,
+            [(axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8")],
+            body.to_string(),
+        ).into_response()
+    } else {
+        (status, message).into_response()
+    }
+}
+
+fn ai_proxy_error_response(error_kind: &str, error: &str) -> Response {
+    let is_timeout = is_timeout_error(error);
+    let status = if is_timeout {
+        axum::http::StatusCode::GATEWAY_TIMEOUT
+    } else {
+        axum::http::StatusCode::BAD_GATEWAY
+    };
+    let message = if is_timeout {
+        "AI 请求超时，请稍后重试或减少日志上下文".to_string()
+    } else {
+        format!("AI 请求代理失败：{}", error_kind)
+    };
+
+    proxy_error_response(true, status, message, Some(error))
+}
+
+fn connection_failure_response(
+    is_ai_api: bool,
+    is_api: bool,
+    error_kind: &str,
+    error: &str,
+) -> Response {
+    if is_ai_api {
+        ai_proxy_error_response(error_kind, error)
+    } else {
+        mark_unavailable();
+        service_unavailable_response(is_api)
+    }
+}
+
 /// 代理处理器
 async fn proxy_handler(req: Request) -> Response {
     let method = req.method().clone();
@@ -335,6 +431,7 @@ async fn proxy_handler(req: Request) -> Response {
     
     // 判断是否是 API 请求
     let is_api = is_api_request(&path);
+    let is_ai_api = is_ai_api_request(&path);
     
     // 获取请求体
     let body = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
@@ -359,13 +456,15 @@ async fn proxy_handler(req: Request) -> Response {
         debug!("📡 代理请求: {} {}", method, path);
     }
     
-    // 快速失败检查：在冷却时间内直接返回错误，避免大量无效请求
-    if should_fast_fail() {
+    // 快速失败检查：在冷却时间内直接返回错误，避免大量无效请求。
+    // AI 入口除外：它是用户显式触发的共享代理能力，需要真实尝试一次，
+    // 否则会因为旧的全局不可用状态误报 "Sunshine service is unavailable"。
+    if !is_ai_api && should_fast_fail() {
         return service_unavailable_response(is_api);
     }
     
     // 请求 Sunshine
-    match fetch_and_proxy(&target_url, &method, &headers, &body).await {
+    match fetch_and_proxy(&target_url, &method, &headers, &body, is_ai_api).await {
         Ok(response) => {
             mark_available();
             if method == axum::http::Method::POST && path == "/api/restart" && response.status().is_success() {
@@ -384,18 +483,7 @@ async fn proxy_handler(req: Request) -> Response {
         }
         Err(e) => {
             let error_str = e.to_string();
-            // 细分错误类型以便排查
-            let error_kind = if error_str.contains("Connection refused") || error_str.contains("connection refused") {
-                "连接被拒绝（后端未启动？）"
-            } else if error_str.contains("timed out") || error_str.contains("timeout") {
-                "连接超时"
-            } else if error_str.contains("certificate") || error_str.contains("ssl") || error_str.contains("tls") {
-                "TLS/证书错误"
-            } else if is_connection_error(&error_str) {
-                "连接失败"
-            } else {
-                "请求失败"
-            };
+            let error_kind = proxy_error_kind(&error_str);
             error!("❌ 代理错误 [{}] ({}): {}", path, error_kind, error_str);
             
             if is_connection_error(&error_str) {
@@ -407,38 +495,34 @@ async fn proxy_handler(req: Request) -> Response {
                             format!("{}{}?{}", refreshed_base, path, query)
                         };
 
-                        match fetch_and_proxy(&refreshed_url, &method, &headers, &body).await {
+                        match fetch_and_proxy(&refreshed_url, &method, &headers, &body, is_ai_api).await {
                             Ok(response) => {
                                 mark_available();
                                 response
                             }
                             Err(retry_err) => {
-                                error!("Proxy retry failed [{}]: {}", path, retry_err);
-                                mark_unavailable();
-                                service_unavailable_response(is_api)
+                                let retry_error = retry_err.to_string();
+                                let retry_kind = proxy_error_kind(&retry_error);
+                                error!("Proxy retry failed [{}] ({}): {}", path, retry_kind, retry_error);
+                                connection_failure_response(is_ai_api, is_api, retry_kind, &retry_error)
                             }
                         }
                     }
                     Ok(_) => {
-                        mark_unavailable();
-                        service_unavailable_response(is_api)
+                        connection_failure_response(is_ai_api, is_api, error_kind, &error_str)
                     }
                     Err(refresh_err) => {
                         warn!("Failed to refresh Sunshine target after proxy error: {}", refresh_err);
-                        mark_unavailable();
-                        service_unavailable_response(is_api)
+                        connection_failure_response(is_ai_api, is_api, error_kind, &error_str)
                     }
                 }
             } else {
-                if is_api {
-                    (
-                        axum::http::StatusCode::BAD_GATEWAY,
-                        [(axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8")],
-                        format!(r#"{{"success":false,"error":"Proxy error: {}"}}"#, e)
-                    ).into_response()
-                } else {
-                    (axum::http::StatusCode::BAD_GATEWAY, format!("代理错误: {}", e)).into_response()
-                }
+                proxy_error_response(
+                    is_api,
+                    axum::http::StatusCode::BAD_GATEWAY,
+                    format!("代理错误：{}", error_kind),
+                    Some(&error_str),
+                )
             }
         }
     }
@@ -644,15 +728,24 @@ async fn handle_external_proxy(
 fn get_http_client() -> &'static reqwest::Client {
     use std::sync::OnceLock;
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-    CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .danger_accept_invalid_certs(true)
-            .pool_max_idle_per_host(20)
-            .timeout(std::time::Duration::from_secs(5))
-            .connect_timeout(std::time::Duration::from_millis(500))
-            .build()
-            .expect("Failed to create HTTP client")
-    })
+    CLIENT.get_or_init(|| build_http_client(DEFAULT_PROXY_TIMEOUT_SECS))
+}
+
+/// AI 共享入口使用更长响应超时，避免日志诊断/对话被普通代理的 5 秒超时截断。
+fn get_ai_http_client() -> &'static reqwest::Client {
+    use std::sync::OnceLock;
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| build_http_client(AI_PROXY_TIMEOUT_SECS))
+}
+
+fn build_http_client(timeout_secs: u64) -> reqwest::Client {
+    reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .pool_max_idle_per_host(20)
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .connect_timeout(std::time::Duration::from_millis(PROXY_CONNECT_TIMEOUT_MS))
+        .build()
+        .expect("Failed to create HTTP client")
 }
 
 /// 发送 HTTP 请求的辅助函数
@@ -696,8 +789,13 @@ async fn fetch_and_proxy(
     method: &axum::http::Method,
     headers: &axum::http::HeaderMap,
     body: &Bytes,
+    is_ai_api: bool,
 ) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
-    let client = get_http_client();
+    let client = if is_ai_api {
+        get_ai_http_client()
+    } else {
+        get_http_client()
+    };
     
     // 尝试请求，HTTPS 失败时降级到 HTTP（仅限非连接错误）
     let response = match send_request(client, url, method, headers, body).await {
@@ -812,6 +910,9 @@ mod tests {
     use axum::body::Body;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+    static TEST_LOCK: Lazy<tokio::sync::Mutex<()>> =
+        Lazy::new(|| tokio::sync::Mutex::new(()));
+
     async fn unused_local_port() -> u16 {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -842,6 +943,7 @@ mod tests {
 
     #[tokio::test]
     async fn proxy_retries_with_refreshed_target_when_port_changes() {
+        let _guard = TEST_LOCK.lock().await;
         let marker = "proxy-refresh-target-ok";
         let old_port = unused_local_port().await;
         let new_target = spawn_one_shot_http_server(marker).await;
@@ -868,6 +970,78 @@ mod tests {
         assert!(
             text.contains(marker),
             "proxy did not retry against refreshed target: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn ai_api_bypasses_fast_fail_cache() {
+        let _guard = TEST_LOCK.lock().await;
+        let marker = "ai-fast-fail-bypass-ok";
+        let new_target = spawn_one_shot_http_server(marker).await;
+
+        set_sunshine_target(new_target);
+        mark_unavailable();
+
+        let request = axum::http::Request::builder()
+            .method(axum::http::Method::GET)
+            .uri("/api/ai/config")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = proxy_handler(request).await;
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8_lossy(&body);
+
+        reset_fast_fail();
+
+        assert!(status.is_success(), "unexpected status: {status}, body: {text}");
+        assert!(
+            text.contains(marker),
+            "AI API request was short-circuited instead of proxied: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn ai_api_connection_failure_does_not_mark_sunshine_unavailable() {
+        let _guard = TEST_LOCK.lock().await;
+        let old_port = unused_local_port().await;
+        let target = format!("http://127.0.0.1:{}", old_port);
+
+        set_sunshine_target(target.clone());
+        *TEST_REFRESH_TARGET.lock().unwrap() = Some(target);
+        mark_available();
+
+        let request = axum::http::Request::builder()
+            .method(axum::http::Method::GET)
+            .uri("/api/ai/config")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = proxy_handler(request).await;
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8_lossy(&body);
+
+        *TEST_REFRESH_TARGET.lock().unwrap() = None;
+        reset_fast_fail();
+
+        assert_eq!(
+            status,
+            axum::http::StatusCode::BAD_GATEWAY,
+            "unexpected status/body: {text}"
+        );
+        assert!(
+            !text.contains("Sunshine service is unavailable"),
+            "AI proxy failure should not reuse Sunshine unavailable wording: {text}"
+        );
+        assert!(
+            SUNSHINE_AVAILABLE.load(std::sync::atomic::Ordering::Relaxed),
+            "AI proxy failure should not poison the Sunshine fast-fail cache"
         );
     }
 }

@@ -27,6 +27,27 @@ async function fetchJson(url, options = {}) {
   return data
 }
 
+function isSunshineUnavailableError(error) {
+  return String(error?.message || error || '').includes('Sunshine service is unavailable')
+}
+
+async function refreshSunshineProxyTarget() {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('refresh_sunshine_target')
+    return true
+  } catch {
+    try {
+      const invoke = window.__TAURI__?.core?.invoke
+      if (!invoke) return false
+      await invoke('refresh_sunshine_target')
+      return true
+    } catch {
+      return false
+    }
+  }
+}
+
 /**
  * Generic proxy for provider helper endpoints such as /models.
  */
@@ -107,7 +128,8 @@ export async function callAnthropic(apiBase, apiKey, model, messages, maxTokens 
 
 export async function callLLM(config, messages, maxTokens = 2048) {
   const proxyUrl = await getProxyUrl()
-  const data = await fetchJson(`${proxyUrl}/api/ai/chat/completions`, {
+  const url = `${proxyUrl}/api/ai/chat/completions`
+  const options = {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -116,7 +138,17 @@ export async function callLLM(config, messages, maxTokens = 2048) {
       temperature: Number(config.temperature) || 0.3,
       max_tokens: Number(maxTokens || config.max_tokens) || 2048,
     }),
-  })
+  }
+
+  let data
+  try {
+    data = await fetchJson(url, options)
+  } catch (error) {
+    if (!isSunshineUnavailableError(error) || !(await refreshSunshineProxyTarget())) {
+      throw error
+    }
+    data = await fetchJson(url, options)
+  }
   return data.choices?.[0]?.message?.content || ''
 }
 

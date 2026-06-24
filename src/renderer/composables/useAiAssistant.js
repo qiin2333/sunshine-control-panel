@@ -364,6 +364,11 @@ export function useAiAssistant() {
 
   async function sendMessage(userMessage) {
     if (!userMessage.trim()) return
+
+    // Chat should consume the shared Sunshine AI config, not overwrite it with
+    // stale localStorage from an already-open window.
+    await syncFromServer()
+
     if (!config.enabled) {
       ElMessage.warning('请先启用米塔 AI 助手')
       return
@@ -379,7 +384,6 @@ export function useAiAssistant() {
     isLoading.value = true
 
     try {
-      await syncToServer()
       const [appsContext, logsContext] = await Promise.all([getAppsContext(), getLogsContext()])
       const messages = [
         { role: 'system', content: SYSTEM_PROMPT + appsContext + logsContext },

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tauri dev",
-    "dev-webui": "node ../../../scripts/dev-env.mjs --webui-target=https://localhost:3000 tauri dev",
+    "dev-webui": "cross-env WEBUI_DEV_TARGET=https://localhost:3000 tauri dev",
     "dev:toolbar": "npm run build:renderer && cargo build --manifest-path src-tauri/Cargo.toml && src-tauri\\target\\debug\\sunshine-gui.exe --toolbar",
     "dev:renderer": "vite --config vite.config.js",
     "build": "tauri build",

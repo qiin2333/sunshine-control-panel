@@ -47,7 +47,7 @@ import { cursorPosition } from '@tauri-apps/api/window'
 import { PhysicalPosition } from '@tauri-apps/api/dpi'
 import { useI18n } from '../desktop/i18n/index.js'
 import * as PIXI from 'pixi.js'
-import { callVisionLLM } from '../composables/aiClient.js'
+import { callVisionLLM, isApiKeyRequired } from '../composables/aiClient.js'
 import { STORAGE_KEY, DEFAULT_CONFIG } from '../composables/aiProviders.js'
 import {
   loadMasterEnabled,
@@ -317,7 +317,7 @@ const withTimeout = (promise, ms, timeoutErr) => {
 const tryVisionSpeech = async (isManual = false) => {
   const config = getAiConfig()
   const r = rt()
-  if (!config.enabled || !config.apiKey || !isPetVisionEnabled()) {
+  if (!config.enabled || (!config.apiKey && isApiKeyRequired(config)) || !isPetVisionEnabled()) {
     if (isManual) showSpeechRaw(r.visionNotConfigured || '')
     return false
   }

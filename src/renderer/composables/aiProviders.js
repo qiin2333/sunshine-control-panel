@@ -1,5 +1,5 @@
 /**
- * AI 供应商预设配置
+ * AI provider presets for the Mita control-panel entry point.
  */
 
 export const STORAGE_KEY = 'sunshine-ai-config'
@@ -8,17 +8,76 @@ export const DEFAULT_CONFIG = {
   provider: 'openai',
   apiKey: '',
   apiBase: 'https://api.openai.com/v1',
-  model: 'gpt-4o-mini',
+  model: 'gpt-4.1-mini',
+  compatibility: 'openai-chat',
+  temperature: 0.3,
+  max_tokens: 2048,
   enabled: false,
 }
 
 export const AI_PROVIDERS = [
-  { label: 'OpenAI', value: 'openai', base: 'https://api.openai.com/v1', models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'], apiType: 'openai' },
-  { label: 'Claude (Anthropic)', value: 'anthropic', base: 'https://api.anthropic.com', models: ['claude-sonnet-4-20250514', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229'], apiType: 'anthropic' },
-  { label: 'DeepSeek', value: 'deepseek', base: 'https://api.deepseek.com/v1', models: ['deepseek-chat', 'deepseek-reasoner'], apiType: 'openai' },
-  { label: '通义千问 (Qwen)', value: 'qwen', base: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: ['qwen-max', 'qwen-plus', 'qwen-turbo'], apiType: 'openai' },
-  { label: '智谱 (GLM)', value: 'glm', base: 'https://open.bigmodel.cn/api/paas/v4', models: ['glm-4-plus', 'glm-4', 'glm-4-flash'], apiType: 'openai' },
-  { label: 'OpenRouter', value: 'openrouter', base: 'https://openrouter.ai/api/v1', models: ['anthropic/claude-sonnet-4-20250514', 'anthropic/claude-3.5-haiku', 'google/gemini-2.0-flash-001', 'deepseek/deepseek-chat-v3-0324'], apiType: 'openai' },
-  { label: 'Ollama (本地)', value: 'ollama', base: 'http://localhost:11434/v1', models: ['llama3', 'qwen2', 'mistral'], apiType: 'openai' },
-  { label: 'OpenAI 兼容', value: 'compatible', base: '', models: [], apiType: 'openai' },
+  {
+    label: 'OpenAI',
+    value: 'openai',
+    base: 'https://api.openai.com/v1',
+    models: ['gpt-4.1-mini', 'gpt-4.1', 'gpt-4o-mini'],
+    apiType: 'openai',
+    compatibility: 'openai-chat',
+  },
+  {
+    label: 'Anthropic',
+    value: 'anthropic',
+    base: 'https://api.anthropic.com',
+    models: ['claude-3-5-haiku-latest', 'claude-sonnet-4-5'],
+    apiType: 'anthropic',
+    compatibility: 'anthropic-messages',
+  },
+  {
+    label: 'DeepSeek',
+    value: 'deepseek',
+    base: 'https://api.deepseek.com/v1',
+    models: ['deepseek-chat', 'deepseek-reasoner'],
+    apiType: 'openai',
+    compatibility: 'openai-chat',
+  },
+  {
+    label: 'Qwen',
+    value: 'qwen',
+    base: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    models: ['qwen-plus', 'qwen-turbo', 'qwen-max'],
+    apiType: 'openai',
+    compatibility: 'openai-chat',
+  },
+  {
+    label: 'Gemini',
+    value: 'gemini',
+    base: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    models: ['gemini-2.5-flash', 'gemini-2.5-pro'],
+    apiType: 'openai',
+    compatibility: 'openai-chat',
+  },
+  {
+    label: 'OpenRouter',
+    value: 'openrouter',
+    base: 'https://openrouter.ai/api/v1',
+    models: ['openai/gpt-4.1-mini', 'anthropic/claude-sonnet-4.5', 'deepseek/deepseek-chat-v3.1'],
+    apiType: 'openai',
+    compatibility: 'openai-chat',
+  },
+  {
+    label: 'Ollama',
+    value: 'ollama',
+    base: 'http://localhost:11434/v1',
+    models: ['llama3.1', 'qwen2.5', 'gemma3'],
+    apiType: 'openai',
+    compatibility: 'openai-chat',
+  },
+  {
+    label: 'Mita / Custom',
+    value: 'custom',
+    base: '',
+    models: [],
+    apiType: 'openai',
+    compatibility: 'openai-chat',
+  },
 ]

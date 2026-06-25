@@ -38,7 +38,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 
 // 桌面 UI 组件
 import DesktopWindow from './components/DesktopWindow.vue'
@@ -50,6 +50,13 @@ import SplashScreen from './components/SplashScreen.vue'
 import { useGamepad, navigateFocus, confirmFocused } from './composables/useGamepad.js'
 import { useTheme } from './composables/useTheme.js'
 import { useLaunchHelpers } from './composables/useLaunchHelpers.js'
+import {
+  DESKTOP_SETTINGS_UPDATED,
+  desktopSettings,
+  loadDesktopSettings,
+  requestNotificationPermission,
+  showDesktopNotification,
+} from './composables/useDesktopSettings.js'
 import { useI18n } from './i18n/index.js'
 
 // 图标组件
@@ -130,6 +137,80 @@ const currentView = computed(() => viewMap[activeNav.value] || DashboardView)
 
 // Tauri invoke
 const invoke = ref(null)
+let sessionNotifyTimer = null
+let lastSessionIds = new Set()
+let settingsListener = null
+let updateUnlisten = null
+
+function applyRuntimeSettings() {
+  document.documentElement.dataset.fdDevMode = desktopSettings.value.devMode ? 'true' : 'false'
+  if (desktopSettings.value.notifications) {
+    requestNotificationPermission(desktopSettings.value).catch(() => {})
+  }
+}
+
+function sessionKey(session) {
+  return String(session.session_id ?? session.id ?? `${session.client_name || 'client'}:${session.client_address || ''}`)
+}
+
+function settingsText(key, fallback, replacements = {}) {
+  let text = t.value.settings?.[key] || fallback
+  for (const [name, value] of Object.entries(replacements)) {
+    text = text.replace(`{${name}}`, value)
+  }
+  return text
+}
+
+async function pollSessionsForNotifications(initial = false) {
+  if (!invoke.value) return
+  try {
+    const sessions = await invoke.value('get_active_sessions')
+    const nextIds = new Set((sessions || []).map(sessionKey))
+    if (!initial && desktopSettings.value.notifications && desktopSettings.value.connectionNotify) {
+      for (const session of sessions || []) {
+        const id = sessionKey(session)
+        if (!lastSessionIds.has(id)) {
+          showDesktopNotification(
+            settingsText('notificationTitle', 'Sunshine'),
+            settingsText('clientConnected', '{name} connected', { name: session.client_name || 'Client' }),
+            desktopSettings.value
+          )
+        }
+      }
+      for (const id of lastSessionIds) {
+        if (!nextIds.has(id)) {
+          showDesktopNotification(
+            settingsText('notificationTitle', 'Sunshine'),
+            settingsText('clientDisconnected', 'Client disconnected'),
+            desktopSettings.value
+          )
+        }
+      }
+    }
+    lastSessionIds = nextIds
+  } catch {
+    // Sunshine may be offline; keep the last known state.
+  }
+}
+
+async function setupUpdateNotifications() {
+  try {
+    const { listen } = await import('@tauri-apps/api/event')
+    updateUnlisten = await listen('update-available', (event) => {
+      if (!desktopSettings.value.notifications || !desktopSettings.value.updateNotify) return
+      const version = event.payload?.version || ''
+      showDesktopNotification(
+        settingsText('notificationTitle', 'Sunshine'),
+        version
+          ? settingsText('updateAvailableVersion', 'Update available: {version}', { version })
+          : settingsText('updateAvailable', 'Update available'),
+        desktopSettings.value
+      )
+    })
+  } catch {
+    // event API unavailable outside Tauri
+  }
+}
 
 onMounted(async () => {
   try {
@@ -138,6 +219,19 @@ onMounted(async () => {
   } catch (e) {
     console.log('Tauri invoke not available:', e)
   }
+  await loadDesktopSettings()
+  applyRuntimeSettings()
+  settingsListener = () => applyRuntimeSettings()
+  window.addEventListener(DESKTOP_SETTINGS_UPDATED, settingsListener)
+  await setupUpdateNotifications()
+  await pollSessionsForNotifications(true)
+  sessionNotifyTimer = setInterval(() => pollSessionsForNotifications(false), 15000)
+})
+
+onUnmounted(() => {
+  if (sessionNotifyTimer) clearInterval(sessionNotifyTimer)
+  if (settingsListener) window.removeEventListener(DESKTOP_SETTINGS_UPDATED, settingsListener)
+  if (updateUnlisten) updateUnlisten()
 })
 
 // 导航点击处理

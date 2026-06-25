@@ -4,7 +4,7 @@
  */
 
 import { ref } from 'vue'
-import { callVisionLLM } from './aiClient.js'
+import { callVisionLLM, isApiKeyRequired } from './aiClient.js'
 import { STORAGE_KEY, DEFAULT_CONFIG } from './aiProviders.js'
 
 // 桌宠视觉观察的系统提示词
@@ -80,7 +80,7 @@ function getAiConfig() {
 
 async function observe() {
   const config = getAiConfig()
-  if (!config.enabled || !config.apiKey) {
+  if (!config.enabled || (!config.apiKey && isApiKeyRequired(config))) {
     console.warn('[桌宠] AI 未启用或未配置 API Key，跳过观察')
     petMessage.value = '（米塔还没有连接到 AI 服务，请先在设置中配置 AI 助手~）'
     return

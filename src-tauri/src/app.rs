@@ -18,6 +18,10 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
     let args: Vec<String> = std::env::args().collect();
     let show_toolbar = args.iter().any(|arg| arg == "--toolbar" || arg == "-t");
     let show_desktop = args.iter().any(|arg| arg == "--desktop" || arg == "-d");
+    let explicit_minimized = args
+        .iter()
+        .any(|arg| arg == "--minimized" || arg == "--hidden");
+    let desktop_settings = crate::desktop_settings::load_desktop_settings_from_disk();
     let send_to_client_paths = crate::file_transfer::parse_send_to_client_args(&args);
     let is_send_to_client = !send_to_client_paths.is_empty();
     let url_contains_pin = args
@@ -26,15 +30,25 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
         .map_or(false, |arg| arg.contains("/pin"));
 
     let app_handle = app.handle().clone();
+    crate::desktop_settings::apply_startup_settings(&app_handle, &desktop_settings);
+    let start_minimized = explicit_minimized || desktop_settings.start_minimized;
 
     // 创建窗口：桌面模式或工具栏模式时不创建主窗口
     let main_window_created = if show_desktop {
         info!("🖥️ 检测到 --desktop 参数，启动桌面 UI 模式");
-        windows::create_desktop_window(&app_handle)?;
+        if start_minimized {
+            windows::create_desktop_window_hidden(&app_handle)?;
+        } else {
+            windows::create_desktop_window(&app_handle)?;
+        }
         windows::create_main_window_hidden(&app_handle)?;
         false
     } else if !show_toolbar && !url_contains_pin && !is_send_to_client {
-        windows::create_main_window(&app_handle)?;
+        if start_minimized {
+            windows::create_main_window_hidden(&app_handle)?;
+        } else {
+            windows::create_main_window(&app_handle)?;
+        }
         true
     } else {
         false
@@ -81,7 +95,7 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
         }
 
         // 更新检查（仅在主窗口启动时检查）
-        if main_window_created {
+        if main_window_created || show_desktop {
             tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
             if let Err(e) = update::init_update_checker(&app_handle) {
                 error!("❌ 初始化更新检查器失败: {}", e);

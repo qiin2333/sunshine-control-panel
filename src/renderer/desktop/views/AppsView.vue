@@ -211,9 +211,12 @@ async function ctxOpenDir() {
   const dir = contextMenu.value.app?.['working-dir']
   if (dir) {
     try {
-      await tauriInvoke('open_external_url', { url: dir })
+      const opened = await tauriInvoke('open_external_url', { url: dir })
+      if (!opened) throw new Error('Open directory returned false')
     } catch (e) {
       console.error('Open dir failed:', e)
+      launchError.value = `${t.value.appContext.openDirectory}: ${e}`
+      setTimeout(() => { launchError.value = '' }, 4000)
     }
   }
   closeContextMenu()

@@ -6,6 +6,7 @@ mod bat_runner;
 mod clipboard;
 mod commands;
 mod controllermeta;
+mod desktop_settings;
 mod file_transfer;
 mod fs_utils;
 mod hwinfo;
@@ -84,6 +85,8 @@ fn main() {
             commands::fetch_remote_bytes,
             commands::ai_api_proxy,
             commands::capture_screenshot,
+            desktop_settings::get_desktop_settings,
+            desktop_settings::save_desktop_settings,
             vdd::get_vdd_settings_file_path,
             vdd::get_vdd_tools_dir_path,
             vdd::get_vdd_edid_file_path,
@@ -98,6 +101,7 @@ fn main() {
             vdd::stop_vdd_trace,
             vdd::open_vdd_trace_folder,
             system::get_gpus,
+            system::get_monitors,
             system::get_system_info,
             system::get_process_memory_info,
             system::get_sunshine_start_time,

@@ -221,7 +221,8 @@ export function useApps() {
   async function launchApp(app) {
     launchError.value = ''
 
-    if (!app.cmd) {
+    const hasDetached = Array.isArray(app.detached) && app.detached.some((cmd) => String(cmd || '').trim())
+    if (!app.cmd && !hasDetached) {
       launchError.value = t.value.apps.noCommand.replace('{name}', app.name)
       console.warn('[useApps] app has no cmd:', app.name)
       setTimeout(() => { launchError.value = '' }, 4000)
@@ -234,7 +235,8 @@ export function useApps() {
 
     try {
       await tauriInvoke('launch_app', {
-        cmd: app.cmd,
+        app,
+        cmd: app.cmd || '',
         workingDir: app['working-dir'] || null,
         elevated: app.elevated === true || app.elevated === 'true',
       })

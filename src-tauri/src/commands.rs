@@ -139,7 +139,12 @@ pub async fn launch_app(
         .as_ref()
         .and_then(|app| app.get("detached"))
         .and_then(Value::as_array)
-        .is_some_and(|items| !items.is_empty());
+        .is_some_and(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .any(|cmd| !cmd.trim().is_empty())
+        });
 
     if cmd.trim().is_empty() && !has_detached {
         return Err("启动命令不能为空".to_string());

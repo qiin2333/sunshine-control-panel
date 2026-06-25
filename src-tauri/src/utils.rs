@@ -197,14 +197,33 @@ pub async fn open_external_url(url: String) -> Result<bool, String> {
 
     #[cfg(target_os = "windows")]
     {
+        use ::windows::Win32::Foundation::HWND;
+        use ::windows::Win32::UI::Shell::ShellExecuteW;
+        use ::windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        use ::windows::core::PCWSTR;
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         if is_url {
-            Command::new("cmd")
-                .args(&["/c", "start", "", &target])
-                .creation_flags(CREATE_NO_WINDOW)
-                .spawn()
-                .map_err(|e| e.to_string())?;
+            fn to_wide(value: &str) -> Vec<u16> {
+                value.encode_utf16().chain(std::iter::once(0)).collect()
+            }
+
+            let operation = to_wide("open");
+            let target_wide = to_wide(&target);
+            let result = unsafe {
+                ShellExecuteW(
+                    Some(HWND(std::ptr::null_mut())),
+                    PCWSTR(operation.as_ptr()),
+                    PCWSTR(target_wide.as_ptr()),
+                    PCWSTR::null(),
+                    PCWSTR::null(),
+                    SW_SHOWNORMAL,
+                )
+            };
+            let code = result.0 as isize;
+            if code <= 32 {
+                return Err(format!("Failed to open URL: ShellExecuteW code {}", code));
+            }
         } else {
             let path = std::path::PathBuf::from(&target);
             if !path.exists() {

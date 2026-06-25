@@ -66,6 +66,11 @@ fn normalize(settings: &mut DesktopSettings) {
     };
 }
 
+#[cfg(target_os = "windows")]
+fn powershell_single_quote(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
 pub fn load_desktop_settings_from_disk() -> DesktopSettings {
     let Ok(path) = settings_path() else {
         return DesktopSettings::default();
@@ -241,8 +246,8 @@ async fn ensure_sunshine_started() -> Result<(), String> {
             "$svc = Get-Service -Name 'SunshineService' -ErrorAction SilentlyContinue; \
              if ($svc) {{ Start-Service -Name 'SunshineService' }} \
              else {{ Start-Process -FilePath '{}' -WorkingDirectory '{}' -WindowStyle Hidden }}",
-            sunshine_exe.display(),
-            install_dir.display()
+            powershell_single_quote(&sunshine_exe.to_string_lossy()),
+            powershell_single_quote(&install_dir.to_string_lossy())
         );
 
         std::process::Command::new("powershell")

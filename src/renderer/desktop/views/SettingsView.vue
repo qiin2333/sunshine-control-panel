@@ -401,9 +401,15 @@ async function loadSettings() {
   }
 }
 
-function resetSettings() {
+async function resetSettings() {
   settings.value = { ...defaultDesktopSettings }
-  showStatus('info', t.value.settings.resetSuccess)
+  try {
+    await saveDesktopSettings(settings.value)
+    showStatus('info', t.value.settings.resetSuccess)
+  } catch (e) {
+    console.error('Failed to reset settings:', e)
+    showStatus('error', e.message || String(e))
+  }
 }
 
 async function saveSettings() {

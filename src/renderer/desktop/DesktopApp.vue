@@ -153,6 +153,14 @@ function sessionKey(session) {
   return String(session.session_id ?? session.id ?? `${session.client_name || 'client'}:${session.client_address || ''}`)
 }
 
+function settingsText(key, fallback, replacements = {}) {
+  let text = t.value.settings?.[key] || fallback
+  for (const [name, value] of Object.entries(replacements)) {
+    text = text.replace(`{${name}}`, value)
+  }
+  return text
+}
+
 async function pollSessionsForNotifications(initial = false) {
   if (!invoke.value) return
   try {
@@ -162,12 +170,20 @@ async function pollSessionsForNotifications(initial = false) {
       for (const session of sessions || []) {
         const id = sessionKey(session)
         if (!lastSessionIds.has(id)) {
-          showDesktopNotification('Sunshine', `${session.client_name || 'Client'} connected`, desktopSettings.value)
+          showDesktopNotification(
+            settingsText('notificationTitle', 'Sunshine'),
+            settingsText('clientConnected', '{name} connected', { name: session.client_name || 'Client' }),
+            desktopSettings.value
+          )
         }
       }
       for (const id of lastSessionIds) {
         if (!nextIds.has(id)) {
-          showDesktopNotification('Sunshine', 'Client disconnected', desktopSettings.value)
+          showDesktopNotification(
+            settingsText('notificationTitle', 'Sunshine'),
+            settingsText('clientDisconnected', 'Client disconnected'),
+            desktopSettings.value
+          )
         }
       }
     }
@@ -183,7 +199,13 @@ async function setupUpdateNotifications() {
     updateUnlisten = await listen('update-available', (event) => {
       if (!desktopSettings.value.notifications || !desktopSettings.value.updateNotify) return
       const version = event.payload?.version || ''
-      showDesktopNotification('Sunshine GUI', version ? `Update available: ${version}` : 'Update available', desktopSettings.value)
+      showDesktopNotification(
+        settingsText('notificationTitle', 'Sunshine'),
+        version
+          ? settingsText('updateAvailableVersion', 'Update available: {version}', { version })
+          : settingsText('updateAvailable', 'Update available'),
+        desktopSettings.value
+      )
     })
   } catch {
     // event API unavailable outside Tauri

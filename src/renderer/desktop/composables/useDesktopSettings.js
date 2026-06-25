@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { tauriInvoke } from './useTauri'
+import { isTauriRuntime, tauriInvoke } from './useTauri'
 
 export const DESKTOP_SETTINGS_KEY = 'sunshine-desktop-settings'
 export const DESKTOP_SETTINGS_UPDATED = 'desktop-settings-updated'
@@ -59,6 +59,14 @@ export async function loadDesktopSettings() {
 
 export async function saveDesktopSettings(nextSettings) {
   const normalized = normalize(nextSettings)
+  if (!(await isTauriRuntime())) {
+    desktopSettings.value = normalized
+    desktopSettingsStatus.value = 'local'
+    persistLocal(desktopSettings.value)
+    window.dispatchEvent(new CustomEvent(DESKTOP_SETTINGS_UPDATED, { detail: desktopSettings.value }))
+    return { settings: desktopSettings.value, status: desktopSettingsStatus.value }
+  }
+
   let response = null
   try {
     response = await tauriInvoke('save_desktop_settings', { settings: normalized })

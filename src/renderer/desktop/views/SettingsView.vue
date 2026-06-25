@@ -5,7 +5,7 @@
       <p class="page-subtitle">{{ t.settings.pageSubtitle }}</p>
     </div>
 
-    <!-- 外观设置 —— 统一由主题编辑器管理 -->
+    <!-- Appearance settings -->
     <div class="desktop-card fade-in">
       <div class="card-header">
         <div class="card-title">
@@ -26,7 +26,7 @@
       </div>
     </div>
 
-    <!-- 启动设置 -->
+    <!-- Startup settings -->
     <div class="desktop-card fade-in">
       <div class="card-header">
         <div class="card-title">
@@ -76,7 +76,7 @@
       </div>
     </div>
 
-    <!-- 启动助手 — 全局工具路径配置 -->
+    <!-- Launch assistant global tool paths -->
     <div class="desktop-card fade-in">
       <div class="card-header">
         <div class="card-title">
@@ -124,7 +124,7 @@
       </div>
     </div>
 
-    <!-- 通知设置 -->
+    <!-- Notification settings -->
     <div class="desktop-card fade-in">
       <div class="card-header">
         <div class="card-title">
@@ -174,7 +174,7 @@
       </div>
     </div>
 
-    <!-- 高级设置 -->
+    <!-- Advanced settings -->
     <div class="desktop-card fade-in">
       <div class="card-header">
         <div class="card-title">
@@ -213,7 +213,7 @@
       </div>
     </div>
 
-    <!-- 桌宠 -->
+    <!-- Desktop pet -->
     <div class="desktop-card fade-in">
       <div class="card-header">
         <div class="card-title">
@@ -265,7 +265,7 @@
       </div>
     </div>
 
-    <!-- 关于 -->
+    <!-- About -->
     <div class="desktop-card about-card fade-in">
       <div class="about-content">
         <div class="about-logo"><Sunny /></div>
@@ -296,7 +296,7 @@
       </div>
     </Transition>
 
-    <!-- 保存按钮 -->
+    <!-- Actions -->
     <div class="actions-bar fade-in">
       <button class="desktop-btn" @click="resetSettings">{{ t.settings.resetDefaults }}</button>
       <button class="desktop-btn primary" @click="saveSettings">{{ t.settings.saveSettings }}</button>
@@ -324,7 +324,7 @@ const { t } = useI18n()
 const invoke = ref(null)
 const hasTauri = ref(false)
 
-// 桌宠设置
+// Desktop pet settings
 const {
   petEnabled,
   isObserving,
@@ -569,7 +569,7 @@ onUnmounted(() => {
   }
 }
 
-// 开关样式
+// Switch styles
 .switch {
   position: relative;
   display: inline-block;

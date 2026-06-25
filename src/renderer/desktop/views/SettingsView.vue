@@ -117,21 +117,9 @@
       @check-update="checkUpdate"
     />
 
-    <Transition name="notice">
-      <div
-        v-if="statusNotice"
-        class="settings-notice fade-in"
-        :class="statusNotice.type"
-      >
-        {{ statusNotice.message }}
-      </div>
-    </Transition>
+    <SettingsNotice :notice="statusNotice" />
 
-    <!-- Actions -->
-    <div class="actions-bar fade-in">
-      <button class="desktop-btn" @click="resetSettings">{{ t.settings.resetDefaults }}</button>
-      <button class="desktop-btn primary" @click="saveSettings">{{ t.settings.saveSettings }}</button>
-    </div>
+    <SettingsActions @reset="resetSettings" @save="saveSettings" />
   </div>
 </template>
 
@@ -148,8 +136,10 @@ import {
 } from '../composables/useDesktopSettings'
 import { useDesktopPet } from '../../composables/useDesktopPet.js'
 import { useI18n } from '../i18n/index.js'
+import SettingsActions from '../components/settings/SettingsActions.vue'
 import SettingsAboutCard from '../components/settings/SettingsAboutCard.vue'
 import SettingsCard from '../components/settings/SettingsCard.vue'
+import SettingsNotice from '../components/settings/SettingsNotice.vue'
 import SettingsRow from '../components/settings/SettingsRow.vue'
 import SettingsSelect from '../components/settings/SettingsSelect.vue'
 import SettingsSwitch from '../components/settings/SettingsSwitch.vue'
@@ -352,54 +342,6 @@ onUnmounted(() => {
     color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.5);
     margin: 0;
   }
-}
-
-.actions-bar {
-  display: flex;
-  justify-content: flex-end;
-  gap: 16px;
-  margin-top: 32px;
-  padding-top: 24px;
-  border-top: 1px solid rgba(var(--fd-accent-rgb, 0, 255, 245), 0.1);
-}
-
-.settings-notice {
-  display: flex;
-  align-items: center;
-  min-height: 42px;
-  margin: 8px 0 20px;
-  padding: 10px 14px;
-  border-radius: 10px;
-  border: 1px solid rgba(var(--fd-accent-rgb, 0, 255, 245), 0.2);
-  background: rgba(var(--fd-bg-secondary-rgb, 26, 26, 46), 0.72);
-  color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.82);
-  font-size: 13px;
-
-  &.success {
-    border-color: rgba(var(--fd-status-success-rgb, 0, 255, 136), 0.35);
-    color: var(--fd-status-success, #00ff88);
-  }
-
-  &.warning,
-  &.info {
-    border-color: rgba(var(--fd-status-warning-rgb, 255, 215, 0), 0.3);
-  }
-
-  &.error {
-    border-color: rgba(var(--fd-status-danger-rgb, 255, 107, 53), 0.35);
-    color: var(--fd-status-danger, #ff6b35);
-  }
-}
-
-.notice-enter-active,
-.notice-leave-active {
-  transition: opacity 0.2s ease, transform 0.2s ease;
-}
-
-.notice-enter-from,
-.notice-leave-to {
-  opacity: 0;
-  transform: translateY(6px);
 }
 
 .section-desc {

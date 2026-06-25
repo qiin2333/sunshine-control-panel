@@ -127,13 +127,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { Bell, Brush, ChatDotRound, Lightning, Promotion, Setting } from '@element-plus/icons-vue'
 import { useLaunchHelpers } from '../composables/useLaunchHelpers'
-import { isTauriRuntime } from '../composables/useTauri'
-import {
-  defaultDesktopSettings,
-  loadDesktopSettings,
-  requestNotificationPermission,
-  saveDesktopSettings,
-} from '../composables/useDesktopSettings'
+import { useSettingsState } from '../composables/useSettingsState'
 import { useDesktopPet } from '../../composables/useDesktopPet.js'
 import { useI18n } from '../i18n/index.js'
 import SettingsActions from '../components/settings/SettingsActions.vue'
@@ -147,8 +141,19 @@ import SettingsToolPathRow from '../components/settings/SettingsToolPathRow.vue'
 
 const { t } = useI18n()
 
-const invoke = ref(null)
-const hasTauri = ref(false)
+const {
+  appVersion,
+  checking,
+  hasTauri,
+  settings,
+  statusNotice,
+  checkUpdate,
+  disposeSettingsState,
+  initializeSettingsState,
+  openLink,
+  resetSettings,
+  saveSettings,
+} = useSettingsState(t)
 
 // Desktop pet settings
 const {
@@ -217,107 +222,14 @@ async function browseToolPath(templateId, paramKey) {
   }
 }
 
-const settings = ref({ ...defaultDesktopSettings })
-const appVersion = ref('0.0.0-dev')
-
 defineEmits(['openThemeEditor'])
 
-const statusNotice = ref(null)
-const checking = ref(false)
-let statusTimer = null
-
-function showStatus(type, message) {
-  clearTimeout(statusTimer)
-  statusNotice.value = { type, message }
-  statusTimer = setTimeout(() => {
-    statusNotice.value = null
-  }, 3500)
-}
-
-async function loadSettings() {
-  try {
-    settings.value = await loadDesktopSettings()
-  } catch (e) {
-    console.error('Failed to load settings:', e)
-  }
-}
-
-async function resetSettings() {
-  settings.value = { ...defaultDesktopSettings }
-  try {
-    await saveDesktopSettings(settings.value)
-    showStatus('info', t.value.settings.resetSuccess)
-  } catch (e) {
-    console.error('Failed to reset settings:', e)
-    showStatus('error', e.message || String(e))
-  }
-}
-
-async function saveSettings() {
-  try {
-    await saveDesktopSettings(settings.value)
-    await requestNotificationPermission(settings.value)
-    showStatus('success', t.value.settings.saveSuccess)
-  } catch (e) {
-    console.error('Failed to save settings:', e)
-    showStatus('error', e.message || String(e))
-  }
-}
-
-function openLink(type) {
-  const urls = {
-    github: 'https://github.com/LizardByte/Sunshine',
-    docs: 'https://docs.lizardbyte.dev/projects/sunshine/',
-    discord: 'https://discord.gg/lizardbyte',
-  }
-  if (invoke.value) {
-    invoke.value('open_external_url', { url: urls[type] }).catch(() => {
-      window.open(urls[type], '_blank')
-    })
-  } else {
-    window.open(urls[type], '_blank')
-  }
-}
-
-async function checkUpdate() {
-  if (!invoke.value) {
-    showStatus('warning', t.value.settings.updateUnavailable)
-    return
-  }
-  checking.value = true
-  try {
-    const update = await invoke.value('check_for_updates')
-    if (update) {
-      showStatus('success', `${t.value.settings.updateFound}${update.version}`)
-    } else {
-      showStatus('info', t.value.settings.updateLatest)
-    }
-  } catch (e) {
-    showStatus('error', t.value.settings.updateError)
-  } finally {
-    checking.value = false
-  }
-}
-
 onMounted(async () => {
-  hasTauri.value = await isTauriRuntime()
-  if (!hasTauri.value) {
-    loadSettings()
-    return
-  }
-  try {
-    const tauri = await import('@tauri-apps/api/core')
-    invoke.value = tauri.invoke
-    const info = await invoke.value('get_system_info').catch(() => null)
-    if (info?.app_version) appVersion.value = info.app_version
-  } catch (e) {
-    console.log('Tauri invoke not available:', e)
-  }
-  await loadSettings()
+  await initializeSettingsState()
 })
 
 onUnmounted(() => {
-  clearTimeout(statusTimer)
+  disposeSettingsState()
 })
 </script>
 

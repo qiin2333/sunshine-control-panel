@@ -148,7 +148,7 @@ export const controllerMeta = {
 // ─── 文件系统 ────────────────────────────────────────────
 
 export async function readDirectory(path) {
-  return []
+  return wrapDefault('read_directory', [], { path })
 }
 
 // ─── 导出 ────────────────────────────────────────────────

@@ -646,8 +646,12 @@ async fn handle_external_proxy(
     
     let is_allowed = url::Url::parse(&target_url)
         .ok()
-        .and_then(|u| u.host_str().map(|h| h.to_string()))
-        .map(|host| allowed_domains.iter().any(|d| host == *d || host.ends_with(&format!(".{}", d))))
+        .map(|u| {
+            u.scheme() == "https"
+                && u.host_str()
+                    .map(|host| allowed_domains.iter().any(|d| host == *d || host.ends_with(&format!(".{}", d))))
+                    .unwrap_or(false)
+        })
         .unwrap_or(false);
     
     if !is_allowed {

@@ -365,10 +365,36 @@ const adaptModes = computed(() => [
 const displayOptions = computed(() => {
   const opts = [{ value: '', label: t.value.stream.outputDisplayAuto }]
   for (const d of displays.value) {
-    opts.push({ value: d, label: d })
+    if (typeof d === 'string') {
+      opts.push({ value: d, label: d })
+    } else {
+      opts.push(d)
+    }
   }
   return opts
 })
+
+function formatDisplayDeviceName(data = '') {
+  const text = String(data || '')
+  const displayMatch = text.match(/DISPLAY\d+/)
+  const friendlyMatch = text.match(/FRIENDLY NAME:\s*([^\n\r]+)/)
+  const friendly = friendlyMatch?.[1]?.trim()
+  const display = displayMatch?.[0]
+  if (friendly && display) return `${friendly} (${display})`
+  return friendly || display || text.trim()
+}
+
+function normalizeDisplayDevices(devices) {
+  if (!Array.isArray(devices)) return []
+  return devices
+    .map((device) => {
+      if (typeof device === 'string') return { value: device, label: device }
+      const value = device.device_id || device.id || device.value || ''
+      const label = formatDisplayDeviceName(device.data || device.name || device.label || value)
+      return value ? { value, label: label || value } : null
+    })
+    .filter(Boolean)
+}
 
 function toggleCodec(key) {
   configData.value[key] = configData.value[key] > 0 ? 0 : 2
@@ -409,7 +435,10 @@ async function loadSettings() {
     }
 
     // 检测可用显示器
-    if (invoke.value) {
+    const configDevices = normalizeDisplayDevices(data.display_devices)
+    if (configDevices.length > 0) displays.value = configDevices
+
+    if (invoke.value && displays.value.length === 0) {
       try {
         const monitors = await invoke.value('get_monitors')
         if (monitors && monitors.length > 0) displays.value = monitors

@@ -271,7 +271,7 @@
         <div class="about-logo"><Sunny /></div>
         <div class="about-info">
           <div class="about-name">Foundation Desktop</div>
-          <div class="about-version">{{ t.settings.version }} 0.2.5</div>
+          <div class="about-version">{{ t.settings.version }} {{ appVersion }}</div>
           <div class="about-links">
             <a href="#" @click.prevent="openLink('github')">GitHub</a>
             <span>•</span>
@@ -309,6 +309,12 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { Bell, Brush, ChatDotRound, FolderOpened, Lightning, Promotion, Setting, Sunny } from '@element-plus/icons-vue'
 import { useLaunchHelpers } from '../composables/useLaunchHelpers'
 import { isTauriRuntime } from '../composables/useTauri'
+import {
+  defaultDesktopSettings,
+  loadDesktopSettings,
+  requestNotificationPermission,
+  saveDesktopSettings,
+} from '../composables/useDesktopSettings'
 import { useDesktopPet } from '../../composables/useDesktopPet.js'
 import { useI18n } from '../i18n/index.js'
 import LaunchHelperIcon from '../components/LaunchHelperIcon.vue'
@@ -370,20 +376,8 @@ async function browseToolPath(templateId, paramKey) {
   }
 }
 
-const SETTINGS_KEY = 'sunshine-desktop-settings'
-
-const defaultSettings = {
-  autoStart: false,
-  startMinimized: false,
-  autoStartSunshine: true,
-  notifications: true,
-  connectionNotify: true,
-  updateNotify: true,
-  devMode: false,
-  logLevel: 'info',
-}
-
-const settings = ref({ ...defaultSettings })
+const settings = ref({ ...defaultDesktopSettings })
+const appVersion = ref('0.0.0-dev')
 
 defineEmits(['openThemeEditor'])
 
@@ -399,26 +393,29 @@ function showStatus(type, message) {
   }, 3500)
 }
 
-function loadSettings() {
+async function loadSettings() {
   try {
-    const saved = localStorage.getItem(SETTINGS_KEY)
-    if (saved) {
-      settings.value = { ...defaultSettings, ...JSON.parse(saved) }
-    }
+    settings.value = await loadDesktopSettings()
   } catch (e) {
     console.error('Failed to load settings:', e)
   }
 }
 
-function resetSettings() {
-  settings.value = { ...defaultSettings }
-  localStorage.removeItem(SETTINGS_KEY)
-  showStatus('info', t.value.settings.resetSuccess)
+async function resetSettings() {
+  settings.value = { ...defaultDesktopSettings }
+  try {
+    await saveDesktopSettings(settings.value)
+    showStatus('info', t.value.settings.resetSuccess)
+  } catch (e) {
+    console.error('Failed to reset settings:', e)
+    showStatus('error', e.message || String(e))
+  }
 }
 
-function saveSettings() {
+async function saveSettings() {
   try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings.value))
+    await saveDesktopSettings(settings.value)
+    await requestNotificationPermission(settings.value)
     showStatus('success', t.value.settings.saveSuccess)
   } catch (e) {
     console.error('Failed to save settings:', e)
@@ -470,10 +467,12 @@ onMounted(async () => {
   try {
     const tauri = await import('@tauri-apps/api/core')
     invoke.value = tauri.invoke
+    const info = await invoke.value('get_system_info').catch(() => null)
+    if (info?.app_version) appVersion.value = info.app_version
   } catch (e) {
     console.log('Tauri invoke not available:', e)
   }
-  loadSettings()
+  await loadSettings()
 })
 
 onUnmounted(() => {

@@ -142,23 +142,48 @@ export function useApps() {
     gridSize.value = sizes[(idx + 1) % sizes.length]
   }
 
+  function isDirectImageUrl(imagePath) {
+    return /^(https?:|data:|blob:)/i.test(imagePath)
+  }
+
+  function toProxyPath(path) {
+    const normalizedProxy = proxyUrl.value.replace(/\/$/, '')
+    const normalizedPath = path.startsWith('/') ? path : `/${path}`
+    return `${normalizedProxy}${normalizedPath}`
+  }
+
+  function encodeBoxArtName(name) {
+    const value = String(name || '')
+    try {
+      return encodeURIComponent(decodeURIComponent(value))
+    } catch {
+      return encodeURIComponent(value)
+    }
+  }
+
   function getAppImageUrl(app) {
     if (failedImages.value.has(app.name)) return null
     const ver = coverVersions.value[app.name]
     // 如果刚上传了新封面，直接用 appName.png（上传 API 按 app name 保存）
     if (ver) {
-      return `${proxyUrl.value}/boxart/${encodeURIComponent(app.name)}.png?v=${ver}`
+      return `${proxyUrl.value}/boxart/${encodeBoxArtName(app.name)}.png?v=${ver}`
     }
     const imagePath = app['image-path']
     let url
     if (!imagePath) {
-      url = `${proxyUrl.value}/boxart/${encodeURIComponent(app.name)}.png`
+      url = `${proxyUrl.value}/boxart/${encodeBoxArtName(app.name)}.png`
+    } else if (isDirectImageUrl(imagePath)) {
+      url = imagePath.startsWith('http') ? `${proxyUrl.value}/boxart/${encodeBoxArtName(app.name)}.png` : imagePath
     } else if (imagePath === 'desktop') {
       url = `${proxyUrl.value}/boxart/desktop.png`
+    } else if (imagePath.startsWith('/boxart/') || imagePath.startsWith('boxart/')) {
+      url = toProxyPath(imagePath)
+    } else if (imagePath.startsWith('/')) {
+      url = toProxyPath(imagePath)
     } else if (!/[/\\]/.test(imagePath)) {
-      url = `${proxyUrl.value}/boxart/${encodeURIComponent(imagePath)}`
+      url = `${proxyUrl.value}/boxart/${encodeBoxArtName(imagePath)}`
     } else {
-      url = `${proxyUrl.value}/boxart/${encodeURIComponent(imagePath.split(/[/\\]/).pop())}`
+      url = `${proxyUrl.value}/boxart/${encodeBoxArtName(imagePath.split(/[/\\]/).pop())}`
     }
     return url
   }
@@ -196,7 +221,8 @@ export function useApps() {
   async function launchApp(app) {
     launchError.value = ''
 
-    if (!app.cmd) {
+    const hasDetached = Array.isArray(app.detached) && app.detached.some((cmd) => String(cmd || '').trim())
+    if (!app.cmd && !hasDetached) {
       launchError.value = t.value.apps.noCommand.replace('{name}', app.name)
       console.warn('[useApps] app has no cmd:', app.name)
       setTimeout(() => { launchError.value = '' }, 4000)
@@ -209,7 +235,8 @@ export function useApps() {
 
     try {
       await tauriInvoke('launch_app', {
-        cmd: app.cmd,
+        app,
+        cmd: app.cmd || '',
         workingDir: app['working-dir'] || null,
         elevated: app.elevated === true || app.elevated === 'true',
       })

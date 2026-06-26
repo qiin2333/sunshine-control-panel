@@ -32,6 +32,10 @@ mod windows;
 use log::info;
 
 fn main() {
+    if update::try_run_updater_helper_from_args() {
+        return;
+    }
+
     // 设置 WebView2 浏览器参数以优化 GPU 占用和安全策略
     #[cfg(target_os = "windows")]
     unsafe {

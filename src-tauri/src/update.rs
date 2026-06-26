@@ -1,10 +1,13 @@
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
+
+const UPDATER_HELPER_ARG: &str = "--updater-helper";
+const UPDATE_RESULT_ARG: &str = "--update-result";
 
 // ========== 常量定义 ==========
 const GITHUB_API_URL: &str = "https://api.github.com/repos/qiin2333/sunshine/releases";
@@ -68,6 +71,38 @@ pub struct UpdatePreferences {
     pub last_check_time: u64,
     pub include_prerelease: bool,
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+struct UpdaterHelperState {
+    installer_path: String,
+    extension: String,
+    target_version: Option<String>,
+    gui_exe_path: String,
+    result_path: String,
+    parent_pid: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct UpdaterHelperResult {
+    success: bool,
+    exit_code: Option<i32>,
+    target_version: Option<String>,
+    message: String,
+    finished_at: u64,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Clone)]
+struct UpdaterPanelState {
+    title: String,
+    subtitle: String,
+    step: usize,
+    failed: bool,
+    animation_tick: u32,
+}
+
+#[cfg(target_os = "windows")]
+static UPDATER_PANEL_STATE: OnceLock<Arc<Mutex<UpdaterPanelState>>> = OnceLock::new();
 
 // ========== 版本相关 ==========
 
@@ -426,6 +461,737 @@ fn get_current_timestamp() -> u64 {
         .as_secs()
 }
 
+pub fn try_run_updater_helper_from_args() -> bool {
+    let args: Vec<String> = std::env::args().collect();
+    let Some(index) = args.iter().position(|arg| arg == UPDATER_HELPER_ARG) else {
+        return false;
+    };
+
+    let Some(state_path) = args.get(index + 1) else {
+        return true;
+    };
+
+    #[cfg(target_os = "windows")]
+    {
+        let _ = run_updater_helper(Path::new(state_path));
+    }
+
+    true
+}
+
+pub fn emit_update_result_if_requested(app_handle: &AppHandle) {
+    let args: Vec<String> = std::env::args().collect();
+    let Some(index) = args.iter().position(|arg| arg == UPDATE_RESULT_ARG) else {
+        return;
+    };
+
+    let Some(result_path) = args.get(index + 1) else {
+        return;
+    };
+
+    let result_path = PathBuf::from(result_path);
+    let app = app_handle.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        match fs::read_to_string(&result_path)
+            .ok()
+            .and_then(|content| serde_json::from_str::<UpdaterHelperResult>(&content).ok())
+        {
+            Some(result) => {
+                let _ = app.emit("update-install-result", result);
+                let cleanup_dir = result_path.parent().map(|path| path.to_path_buf());
+                let _ = fs::remove_file(&result_path);
+                if let Some(dir) = cleanup_dir {
+                    let _ = fs::remove_dir_all(dir);
+                }
+            }
+            None => {
+                let _ = app.emit(
+                    "update-install-result",
+                    serde_json::json!({
+                        "success": false,
+                        "exit_code": null,
+                        "target_version": null,
+                        "message": "Unable to read updater result.",
+                        "finished_at": get_current_timestamp()
+                    }),
+                );
+            }
+        }
+    });
+}
+
+#[cfg(target_os = "windows")]
+fn run_updater_helper(state_path: &Path) -> Result<(), String> {
+    let state_content =
+        fs::read_to_string(state_path).map_err(|e| format!("read updater state failed: {}", e))?;
+    let state: UpdaterHelperState = serde_json::from_str(&state_content)
+        .map_err(|e| format!("parse updater state failed: {}", e))?;
+
+    run_updater_panel(state)?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn run_updater_worker(state: UpdaterHelperState, hwnd: isize) {
+    update_updater_panel(hwnd, 0, "准备更新", "正在等待控制面板关闭...");
+    wait_for_parent_exit(state.parent_pid);
+
+    update_updater_panel(hwnd, 1, "正在安装更新", "这可能需要一两分钟，请不要重复启动。");
+    let install_result = run_installer_and_wait(&state);
+
+    update_updater_panel(hwnd, 2, "正在完成", "安装已结束，正在准备重新打开控制面板。");
+    let helper_result = match install_result {
+        Ok(code) => UpdaterHelperResult {
+            success: code == 0,
+            exit_code: Some(code),
+            target_version: state.target_version.clone(),
+            message: if code == 0 {
+                "Update installed successfully.".to_string()
+            } else {
+                format!("Installer exited with code {}.", code)
+            },
+            finished_at: get_current_timestamp(),
+        },
+        Err(error) => UpdaterHelperResult {
+            success: false,
+            exit_code: None,
+            target_version: state.target_version.clone(),
+            message: error,
+            finished_at: get_current_timestamp(),
+        },
+    };
+
+    if helper_result.success {
+        update_updater_panel(hwnd, 3, "更新完成", "正在重新打开 Sunshine 控制面板。");
+    } else {
+        update_updater_panel(hwnd, 3, "更新未完成", "正在重新打开控制面板并显示结果。");
+    }
+
+    let _ = write_updater_result(&state.result_path, &helper_result);
+    let _ = restart_gui_with_update_result(&state.gui_exe_path, &state.result_path);
+
+    std::thread::sleep(Duration::from_millis(900));
+    unsafe {
+        let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+            Some(windows::Win32::Foundation::HWND(hwnd as *mut _)),
+            windows::Win32::UI::WindowsAndMessaging::WM_APP + 2,
+            windows::Win32::Foundation::WPARAM(0),
+            windows::Win32::Foundation::LPARAM(0),
+        );
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn run_updater_panel(state: UpdaterHelperState) -> Result<(), String> {
+    use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::Graphics::Gdi::{
+        InvalidateRect, COLOR_WINDOW, HBRUSH,
+    };
+    use windows::Win32::Graphics::Dwm::DwmSetWindowAttribute;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, PostQuitMessage,
+        RegisterClassW, SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow, TranslateMessage,
+        CS_DROPSHADOW, CS_HREDRAW, CS_VREDRAW, HWND_TOPMOST, MSG, SWP_SHOWWINDOW, SW_SHOW,
+        WINDOW_STYLE, WNDCLASSW, WM_APP, WM_CLOSE, WM_DESTROY, WM_NCHITTEST, WM_PAINT,
+        WM_ERASEBKGND, WM_TIMER, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    };
+    use windows::core::PCWSTR;
+
+    unsafe extern "system" fn wnd_proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        match msg {
+            WM_PAINT => {
+                draw_updater_panel(hwnd);
+                LRESULT(0)
+            }
+            WM_ERASEBKGND => LRESULT(1),
+            WM_CLOSE => {
+                update_updater_panel(
+                    hwnd.0 as isize,
+                    current_updater_step(),
+                    "正在安装更新",
+                    "更新正在进行，请稍等片刻。",
+                );
+                LRESULT(0)
+            }
+            WM_DESTROY => {
+                let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::KillTimer(Some(hwnd), 1) };
+                unsafe { PostQuitMessage(0) };
+                LRESULT(0)
+            }
+            WM_TIMER => {
+                tick_updater_panel();
+                invalidate_updater_progress(hwnd);
+                LRESULT(0)
+            }
+            WM_NCHITTEST => {
+                LRESULT(windows::Win32::UI::WindowsAndMessaging::HTCAPTION as isize)
+            }
+            x if x == WM_APP + 1 => {
+                let _ = unsafe { InvalidateRect(Some(hwnd), None, false) };
+                LRESULT(0)
+            }
+            x if x == WM_APP + 2 => {
+                let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd) };
+                LRESULT(0)
+            }
+            _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
+        }
+    }
+
+    let state_arc = Arc::new(Mutex::new(UpdaterPanelState {
+        title: "准备更新".to_string(),
+        subtitle: "正在启动更新助手...".to_string(),
+        step: 0,
+        failed: false,
+        animation_tick: 0,
+    }));
+    let _ = UPDATER_PANEL_STATE.set(state_arc);
+
+    let class_name = to_wide_null("SunshineUpdaterPanel");
+    let window_title = to_wide_null("Sunshine 正在更新");
+    let wnd_class = WNDCLASSW {
+        style: CS_HREDRAW | CS_VREDRAW | CS_DROPSHADOW,
+        lpfnWndProc: Some(wnd_proc),
+        hInstance: HINSTANCE(std::ptr::null_mut()),
+        hbrBackground: HBRUSH((COLOR_WINDOW.0 + 1) as *mut _),
+        lpszClassName: PCWSTR(class_name.as_ptr()),
+        ..Default::default()
+    };
+
+    unsafe { RegisterClassW(&wnd_class) };
+
+    let width = 560;
+    let height = 300;
+    let (x, y) = updater_panel_position(width, height);
+
+    let hwnd = unsafe {
+        CreateWindowExW(
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+            PCWSTR(class_name.as_ptr()),
+            PCWSTR(window_title.as_ptr()),
+            WINDOW_STYLE(WS_POPUP.0),
+            x,
+            y,
+            width,
+            height,
+            None,
+            None,
+            Some(HINSTANCE(std::ptr::null_mut())),
+            None,
+        )
+    }
+    .map_err(|e| format!("create updater panel failed: {}", e))?;
+
+    unsafe {
+        // DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUND = 2. Windows 10 ignores it.
+        let corner_preference: u32 = 2;
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(33i32),
+            &corner_preference as *const u32 as *const std::ffi::c_void,
+            std::mem::size_of::<u32>() as u32,
+        );
+    }
+
+    let hwnd_value = hwnd.0 as isize;
+    std::thread::spawn(move || run_updater_worker(state, hwnd_value));
+
+    let _ = unsafe { ShowWindow(hwnd, SW_SHOW) };
+    let _ = unsafe { SetWindowPos(hwnd, Some(HWND_TOPMOST), x, y, width, height, SWP_SHOWWINDOW) };
+    let _ = unsafe { SetTimer(Some(hwnd), 1, 90, None) };
+    let _ = unsafe { SetForegroundWindow(hwnd) };
+    let _ = unsafe { windows::Win32::Graphics::Gdi::UpdateWindow(hwnd) };
+
+    let mut msg = MSG::default();
+    while unsafe { GetMessageW(&mut msg, None, 0, 0) }.as_bool() {
+        let _ = unsafe { TranslateMessage(&msg) };
+        unsafe { DispatchMessageW(&msg) };
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn update_updater_panel(hwnd: isize, step: usize, title: &str, subtitle: &str) {
+    if let Some(state) = UPDATER_PANEL_STATE.get() {
+        if let Ok(mut state) = state.lock() {
+            state.step = step;
+            state.title = title.to_string();
+            state.subtitle = subtitle.to_string();
+            state.failed = title.contains("未完成");
+        }
+    }
+
+    unsafe {
+        let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+            Some(windows::Win32::Foundation::HWND(hwnd as *mut _)),
+            windows::Win32::UI::WindowsAndMessaging::WM_APP + 1,
+            windows::Win32::Foundation::WPARAM(0),
+            windows::Win32::Foundation::LPARAM(0),
+        );
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn tick_updater_panel() {
+    if let Some(state) = UPDATER_PANEL_STATE.get() {
+        if let Ok(mut state) = state.lock() {
+            state.animation_tick = state.animation_tick.wrapping_add(1);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn invalidate_updater_progress(hwnd: windows::Win32::Foundation::HWND) {
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::Graphics::Gdi::InvalidateRect;
+
+    let rect = RECT {
+        left: 18,
+        top: 126,
+        right: 542,
+        bottom: 178,
+    };
+    let _ = unsafe { InvalidateRect(Some(hwnd), Some(&rect), false) };
+}
+
+#[cfg(target_os = "windows")]
+fn current_updater_step() -> usize {
+    UPDATER_PANEL_STATE
+        .get()
+        .and_then(|state| state.lock().ok().map(|state| state.step))
+        .unwrap_or(1)
+}
+
+#[cfg(target_os = "windows")]
+fn to_wide_null(text: &str) -> Vec<u16> {
+    text.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+#[cfg(target_os = "windows")]
+fn updater_panel_position(width: i32, height: i32) -> (i32, i32) {
+    use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+
+    let screen_width = unsafe { GetSystemMetrics(SM_CXSCREEN) };
+    let screen_height = unsafe { GetSystemMetrics(SM_CYSCREEN) };
+
+    if screen_width > width && screen_height > height {
+        return ((screen_width - width) / 2, (screen_height - height) / 2);
+    }
+
+    (80, 80)
+}
+
+#[cfg(target_os = "windows")]
+fn draw_updater_panel(hwnd: windows::Win32::Foundation::HWND) {
+    use windows::Win32::Foundation::{COLORREF, RECT};
+    use windows::Win32::Graphics::Gdi::{
+        BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
+        EndPaint, SelectObject, SetBkMode, DT_LEFT, DT_SINGLELINE, DT_VCENTER, DT_WORDBREAK,
+        PAINTSTRUCT, SRCCOPY, TRANSPARENT,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
+
+    let state = UPDATER_PANEL_STATE
+        .get()
+        .and_then(|state| state.lock().ok().map(|state| state.clone()))
+        .unwrap_or_else(|| UpdaterPanelState {
+            title: "正在安装更新".to_string(),
+            subtitle: "请稍等片刻。".to_string(),
+            step: 1,
+            failed: false,
+            animation_tick: 0,
+        });
+
+    unsafe {
+        let mut ps = PAINTSTRUCT::default();
+        let paint_hdc = BeginPaint(hwnd, &mut ps);
+        let mut client = RECT::default();
+        let _ = GetClientRect(hwnd, &mut client);
+        let width = client.right - client.left;
+        let height = client.bottom - client.top;
+        let mem_hdc = CreateCompatibleDC(Some(paint_hdc));
+        let mem_bitmap = CreateCompatibleBitmap(paint_hdc, width, height);
+        let old_bitmap = SelectObject(mem_hdc, mem_bitmap.into());
+
+        fill_rect(mem_hdc, 0, 0, client.right, client.bottom, COLORREF(0x0028262D));
+        fill_rect(mem_hdc, 0, 0, client.right, 44, COLORREF(0x0035323D));
+
+        let accent = if state.failed {
+            COLORREF(0x00A5A5D4)
+        } else {
+            COLORREF(0x00BBC539)
+        };
+        let gura_light = COLORREF(0x00DFE76E);
+        let gura_pale = COLORREF(0x00EFF3A5);
+        fill_rect(mem_hdc, 0, 0, client.right, 4, accent);
+        fill_rect(mem_hdc, client.right - 108, 0, client.right, 4, gura_light);
+        fill_rect(mem_hdc, 0, client.bottom - 3, client.right, client.bottom, COLORREF(0x0035323D));
+        fill_rect(mem_hdc, 16, 58, client.right - 16, 60, COLORREF(0x00423F4A));
+        fill_rect(mem_hdc, 16, 242, client.right - 16, 244, COLORREF(0x00423F4A));
+
+        for i in 0..5 {
+            let x = client.right - 34 - (i * 14);
+            fill_rect(
+                mem_hdc,
+                x,
+                17,
+                x + 8,
+                25,
+                if i % 2 == 0 { accent } else { gura_light },
+            );
+        }
+
+        let _ = SetBkMode(mem_hdc, TRANSPARENT);
+        draw_text_styled(
+            mem_hdc,
+            "SUNSHINE UPDATE",
+            22,
+            15,
+            client.right - 32,
+            36,
+            DT_LEFT | DT_SINGLELINE | DT_VCENTER,
+            15,
+            700,
+            accent,
+        );
+
+        draw_text_styled(
+            mem_hdc,
+            &state.title,
+            22,
+            76,
+            client.right - 32,
+            104,
+            DT_LEFT | DT_SINGLELINE | DT_VCENTER,
+            18,
+            700,
+            COLORREF(0x00B8D5E6),
+        );
+
+        let status_line = format!("> {}", state.subtitle);
+        draw_text_styled(
+            mem_hdc,
+            &status_line,
+            22,
+            110,
+            client.right - 32,
+            136,
+            DT_LEFT | DT_WORDBREAK,
+            13,
+            500,
+            COLORREF(0x00B8D5E6),
+        );
+
+        let progress_left = 22;
+        let progress_top = 154;
+        let progress_width = client.right - 44;
+        fill_rect(mem_hdc, progress_left, progress_top, progress_left + progress_width, progress_top + 18, COLORREF(0x00423F4A));
+
+        let progress = match state.step {
+            0 => progress_width / 5,
+            1 => progress_width / 2,
+            2 => progress_width * 4 / 5,
+            _ => progress_width,
+        };
+        let block_gap = 4;
+        let block_count = 28;
+        let block_width = (progress_width - block_gap * (block_count - 1)) / block_count;
+        let active_blocks = ((progress * block_count) / progress_width).max(1);
+        for i in 0..block_count {
+            let x = progress_left + i * (block_width + block_gap);
+            let active = i < active_blocks;
+            let shimmer = state.step == 1
+                && !state.failed
+                && active
+                && i == ((state.animation_tick / 2) as i32 % active_blocks.max(1));
+            fill_rect(
+                mem_hdc,
+                x,
+                progress_top + 4,
+                x + block_width,
+                progress_top + 14,
+                if shimmer {
+                    gura_pale
+                } else if active {
+                    accent
+                } else {
+                    COLORREF(0x0035323D)
+                },
+            );
+        }
+
+        let percent = match state.step {
+            0 => "20%",
+            1 => "50%",
+            2 => "80%",
+            _ => "100%",
+        };
+        draw_text_styled(
+            mem_hdc,
+            percent,
+            client.right - 78,
+            progress_top - 24,
+            client.right - 22,
+            progress_top - 4,
+            DT_LEFT | DT_SINGLELINE | DT_VCENTER,
+            12,
+            700,
+            accent,
+        );
+
+        let steps = ["PREP", "INST", "DONE", "OPEN"];
+        let step_top = 196;
+        let step_left = 22;
+        let step_width = client.right - 44;
+        let slot = step_width / 4;
+        for (index, label) in steps.iter().enumerate() {
+            let x = step_left + (index as i32 * slot);
+            let done = index <= state.step;
+            let marker = if state.failed && index == state.step {
+                "[!]"
+            } else if done {
+                "[x]"
+            } else {
+                "[ ]"
+            };
+            let text = format!("{} {}", marker, label);
+            draw_text_styled(
+                mem_hdc,
+                &text,
+                x,
+                step_top,
+                x + slot - 8,
+                step_top + 24,
+                DT_LEFT | DT_SINGLELINE,
+                12,
+                if done { 700 } else { 500 },
+                if done {
+                    accent
+                } else {
+                    COLORREF(0x008C8173)
+                },
+            );
+            if index > 0 {
+                fill_rect(
+                    mem_hdc,
+                    x - slot + 80,
+                    step_top + 8,
+                    x - 10,
+                    step_top + 10,
+                    if done {
+                        accent
+                    } else {
+                        COLORREF(0x00423F4A)
+                    },
+                );
+            }
+        }
+
+        draw_text_styled(
+            mem_hdc,
+            "安装期间可以暂时离开，完成后会自动回到控制面板。",
+            22,
+            258,
+            client.right - 32,
+            284,
+            DT_LEFT | DT_WORDBREAK,
+            12,
+            500,
+            COLORREF(0x00B8D5E6),
+        );
+
+        let _ = BitBlt(paint_hdc, 0, 0, width, height, Some(mem_hdc), 0, 0, SRCCOPY);
+        let _ = SelectObject(mem_hdc, old_bitmap);
+        let _ = DeleteObject(mem_bitmap.into());
+        let _ = DeleteDC(mem_hdc);
+        let _ = EndPaint(hwnd, &ps);
+    }
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn fill_rect(
+    hdc: windows::Win32::Graphics::Gdi::HDC,
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+    color: windows::Win32::Foundation::COLORREF,
+) {
+    let brush = unsafe { windows::Win32::Graphics::Gdi::CreateSolidBrush(color) };
+    let _ = unsafe {
+        windows::Win32::Graphics::Gdi::FillRect(
+            hdc,
+            &windows::Win32::Foundation::RECT {
+                left,
+                top,
+                right,
+                bottom,
+            },
+            brush,
+        )
+    };
+    let _ = unsafe { windows::Win32::Graphics::Gdi::DeleteObject(brush.into()) };
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn draw_text_styled(
+    hdc: windows::Win32::Graphics::Gdi::HDC,
+    text: &str,
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+    format: windows::Win32::Graphics::Gdi::DRAW_TEXT_FORMAT,
+    size: i32,
+    weight: i32,
+    color: windows::Win32::Foundation::COLORREF,
+) {
+    use windows::Win32::Graphics::Gdi::{
+        CreateFontW, DeleteObject, SelectObject, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET,
+        DEFAULT_PITCH, FF_DONTCARE, NONANTIALIASED_QUALITY, OUT_DEFAULT_PRECIS,
+    };
+    use windows::core::PCWSTR;
+
+    let face = to_wide_null(if text.is_ascii() { "Cascadia Mono" } else { "SimSun" });
+    let font = unsafe {
+        CreateFontW(
+            -size,
+            0,
+            0,
+            0,
+            weight,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS,
+            CLIP_DEFAULT_PRECIS,
+            NONANTIALIASED_QUALITY,
+            DEFAULT_PITCH.0 as u32 | FF_DONTCARE.0 as u32,
+            PCWSTR(face.as_ptr()),
+        )
+    };
+    let previous_font = unsafe { SelectObject(hdc, font.into()) };
+    let _ = unsafe { windows::Win32::Graphics::Gdi::SetTextColor(hdc, color) };
+    unsafe { draw_text(hdc, text, left, top, right, bottom, format) };
+    let _ = unsafe { SelectObject(hdc, previous_font) };
+    let _ = unsafe { DeleteObject(font.into()) };
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn draw_text(
+    hdc: windows::Win32::Graphics::Gdi::HDC,
+    text: &str,
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+    format: windows::Win32::Graphics::Gdi::DRAW_TEXT_FORMAT,
+) {
+    let mut wide: Vec<u16> = text.encode_utf16().collect();
+    let mut rect = windows::Win32::Foundation::RECT {
+        left,
+        top,
+        right,
+        bottom,
+    };
+    let _ = unsafe { windows::Win32::Graphics::Gdi::DrawTextW(hdc, &mut wide, &mut rect, format) };
+}
+
+#[cfg(target_os = "windows")]
+fn wait_for_parent_exit(parent_pid: u32) {
+    if parent_pid == 0 || parent_pid == std::process::id() {
+        return;
+    }
+
+    for _ in 0..45 {
+        if !is_pid_running(parent_pid) {
+            return;
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn is_pid_running(pid: u32) -> bool {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    let filter = format!("PID eq {}", pid);
+    let Ok(output) = Command::new("tasklist")
+        .args(["/FI", &filter, "/NH"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    else {
+        return false;
+    };
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    text.contains(&pid.to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn run_installer_and_wait(state: &UpdaterHelperState) -> Result<i32, String> {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    let installer = Path::new(&state.installer_path);
+    if !installer.exists() {
+        return Err(format!("Installer not found: {}", state.installer_path));
+    }
+
+    let status = match state.extension.as_str() {
+        "msi" => Command::new("msiexec")
+            .args(["/i", &state.installer_path, "/qn", "/norestart"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status(),
+        "exe" => Command::new(&state.installer_path)
+            .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status(),
+        other => return Err(format!("Unsupported installer extension: {}", other)),
+    }
+    .map_err(|e| format!("start installer failed: {}", e))?;
+
+    Ok(status.code().unwrap_or(-1))
+}
+
+#[cfg(target_os = "windows")]
+fn write_updater_result(result_path: &str, result: &UpdaterHelperResult) -> Result<(), String> {
+    let result_path = Path::new(result_path);
+    if let Some(parent) = result_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("create result dir failed: {}", e))?;
+    }
+
+    let content = serde_json::to_string_pretty(result)
+        .map_err(|e| format!("serialize updater result failed: {}", e))?;
+    fs::write(result_path, content).map_err(|e| format!("write updater result failed: {}", e))
+}
+
+#[cfg(target_os = "windows")]
+fn restart_gui_with_update_result(gui_exe_path: &str, result_path: &str) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    Command::new(gui_exe_path)
+        .args([UPDATE_RESULT_ARG, result_path])
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map_err(|e| format!("restart control panel failed: {}", e))?;
+
+    Ok(())
+}
+
 /// 获取上次检查时间
 fn get_last_check_time(app: &AppHandle) -> u64 {
     app.try_state::<Arc<Mutex<UpdatePreferences>>>()
@@ -755,6 +1521,17 @@ fn emit_download_progress(
     );
 }
 
+fn emit_install_progress(app_handle: &AppHandle, stage: &str, detail: Option<&str>, terminal: bool) {
+    let _ = app_handle.emit(
+        "install-progress",
+        serde_json::json!({
+            "stage": stage,
+            "detail": detail.unwrap_or(""),
+            "terminal": terminal
+        }),
+    );
+}
+
 /// 处理下载流
 async fn download_stream(
     mut stream: impl futures_util::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Unpin,
@@ -850,62 +1627,74 @@ pub async fn download_update(
 
 // ========== 安装相关 ==========
 
-/// 构建安装命令参数
 #[cfg(target_os = "windows")]
-fn build_install_command(file_path: &str, extension: &str) -> Result<String, String> {
-    let escaped_path = file_path.replace("'", "''");
+fn prepare_updater_helper(
+    file_path: &str,
+    extension: &str,
+    target_version: Option<String>,
+) -> Result<(PathBuf, PathBuf), String> {
+    let current_exe =
+        std::env::current_exe().map_err(|e| format!("get current exe failed: {}", e))?;
+    let work_dir = std::env::temp_dir().join(format!("sunshine-updater-{}", get_current_timestamp()));
+    fs::create_dir_all(&work_dir).map_err(|e| format!("create updater dir failed: {}", e))?;
 
-    match extension {
-        "msi" => {
-            // MSI 安装包：使用 /qn 完全静默安装
-            Ok(format!(
-                "Start-Process msiexec -ArgumentList '/i', '{}', '/qn', '/norestart' -Wait",
-                escaped_path
-            ))
-        }
-        "exe" => {
-            // EXE 安装包：尝试多种静默参数
-            Ok(format!(
-                "Start-Process '{}' -ArgumentList '/VERYSILENT', '/SILENT', '/S', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-' -Wait",
-                escaped_path
-            ))
-        }
-        _ => Err(format!("不支持的安装包格式: {}", extension)),
-    }
+    let helper_exe = work_dir.join("sunshine-updater-helper.exe");
+    fs::copy(&current_exe, &helper_exe)
+        .map_err(|e| format!("copy updater helper failed: {}", e))?;
+
+    let state_path = work_dir.join("state.json");
+    let result_path = work_dir.join("result.json");
+    let state = UpdaterHelperState {
+        installer_path: file_path.to_string(),
+        extension: extension.to_string(),
+        target_version,
+        gui_exe_path: current_exe.to_string_lossy().to_string(),
+        result_path: result_path.to_string_lossy().to_string(),
+        parent_pid: std::process::id(),
+    };
+
+    let state_content = serde_json::to_string_pretty(&state)
+        .map_err(|e| format!("serialize updater state failed: {}", e))?;
+    fs::write(&state_path, state_content).map_err(|e| format!("write updater state failed: {}", e))?;
+
+    Ok((helper_exe, state_path))
 }
 
-/// 启动安装程序
 #[cfg(target_os = "windows")]
-fn launch_installer(install_args: &str) -> Result<(), String> {
+fn launch_updater_helper(helper_exe: &Path, state_path: &Path) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     use std::process::Command;
 
     const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-    Command::new("powershell")
-        .args(&[
-            "-NoProfile",
-            "-WindowStyle",
-            "Hidden",
-            "-Command",
-            install_args,
-        ])
+    Command::new(helper_exe)
+        .arg(UPDATER_HELPER_ARG)
+        .arg(state_path)
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()
-        .map_err(|e| format!("启动安装程序失败: {}", e))?;
+        .map_err(|e| format!("launch updater helper failed: {}", e))?;
 
     Ok(())
 }
 
 /// 安装更新文件
 #[tauri::command]
-pub async fn install_update(file_path: String, app_handle: AppHandle) -> Result<(), String> {
+pub async fn install_update(
+    file_path: String,
+    target_version: Option<String>,
+    app_handle: AppHandle,
+) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         info!("🔧 开始安装更新: {}", file_path);
 
         // 先关闭Sunshine和GUI
-        stop_sunshine_and_gui().await?;
+        emit_install_progress(&app_handle, "preparing", None, false);
+        emit_install_progress(&app_handle, "stopping-service", None, false);
+        if let Err(e) = stop_sunshine_and_gui().await {
+            emit_install_progress(&app_handle, "failed", Some(&e), true);
+            return Err(e);
+        }
+        emit_install_progress(&app_handle, "service-stopped", None, false);
 
         // 检查文件扩展名
         let path = std::path::Path::new(&file_path);
@@ -915,9 +1704,28 @@ pub async fn install_update(file_path: String, app_handle: AppHandle) -> Result<
             .unwrap_or("")
             .to_lowercase();
 
-        // 构建并启动安装命令
-        let install_args = build_install_command(&file_path, &extension)?;
-        launch_installer(&install_args)?;
+        if !matches!(extension.as_str(), "msi" | "exe") {
+            let error = format!("Unsupported installer extension: {}", extension);
+            emit_install_progress(&app_handle, "failed", Some(&error), true);
+            return Err(error);
+        }
+
+        emit_install_progress(&app_handle, "building-command", None, false);
+        let (helper_exe, state_path) =
+            match prepare_updater_helper(&file_path, &extension, target_version) {
+                Ok(paths) => paths,
+                Err(e) => {
+                    emit_install_progress(&app_handle, "failed", Some(&e), true);
+                    return Err(e);
+                }
+            };
+
+        emit_install_progress(&app_handle, "launching-installer", None, false);
+        if let Err(e) = launch_updater_helper(&helper_exe, &state_path) {
+            emit_install_progress(&app_handle, "failed", Some(&e), true);
+            return Err(e);
+        }
+        emit_install_progress(&app_handle, "installer-started", None, false);
 
         info!("✅ 安装程序已静默启动，正在安装...");
 
@@ -925,7 +1733,6 @@ pub async fn install_update(file_path: String, app_handle: AppHandle) -> Result<
         let app_clone = app_handle.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(3)).await;
-            info!("🚪 退出GUI进程，等待安装完成...");
             app_clone.exit(0);
         });
 

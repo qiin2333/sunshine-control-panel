@@ -21,12 +21,28 @@
       </div>
 
       <!-- 安装提示 (仅新版本) -->
-      <div v-if="!isLatest && isInstalling" class="install-notice">
-        <el-alert type="warning" :closable="false" show-icon>
-          <template #title>
-            <p>{{ t.updateDialog.preparingInstall }}</p>
-          </template>
-        </el-alert>
+      <div v-if="!isLatest && isInstalling" class="install-progress-panel">
+        <div class="install-status">
+          <span class="install-spinner" :class="{ failed: installStage === 'failed' }"></span>
+          <div>
+            <p class="install-current">{{ currentInstallMessage }}</p>
+            <p v-if="installDetail" class="install-detail">{{ installDetail }}</p>
+          </div>
+        </div>
+
+        <ol class="install-steps">
+          <li
+            v-for="(step, index) in installSteps"
+            :key="step.key"
+            :class="getInstallStepStatus(index)"
+          >
+            <span class="step-dot"></span>
+            <span class="step-label">{{ step.label }}</span>
+          </li>
+        </ol>
+
+        <p class="install-note">{{ t.updateDialog.installDoNotRepeat }}</p>
+        <p v-if="installWaitHint" class="install-wait-hint">{{ installWaitHint }}</p>
       </div>
     </div>
 
@@ -54,7 +70,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
@@ -78,6 +94,13 @@ const visible = computed({
 const isDownloading = ref(false)
 const downloadProgress = ref(0)
 const isInstalling = ref(false)
+const installStage = ref('idle')
+const installDetail = ref('')
+const installWaitHint = ref('')
+const installLastEventAt = ref(0)
+const installFailedRank = ref(null)
+let installProgressUnlisten = null
+let installWaitTimer = null
 
 const isLatest = computed(() => !!props.updateInfo?.is_latest)
 
@@ -106,6 +129,101 @@ const parsedReleaseNotes = computed(() =>
 const isDownloadInProgress = computed(() => downloadProgress.value > 0 && downloadProgress.value < 100)
 
 const showDownloadButtons = computed(() => !isInstalling.value && downloadProgress.value === 0)
+
+const installSteps = computed(() => [
+  { key: 'downloaded', label: t.value.updateDialog.installStepDownloaded },
+  { key: 'stopping-service', label: t.value.updateDialog.installStepStopping },
+  { key: 'launching-installer', label: t.value.updateDialog.installStepLaunching },
+  { key: 'installer-started', label: t.value.updateDialog.installStepBackground },
+  { key: 'app-exiting', label: t.value.updateDialog.installStepExiting },
+])
+
+const installStageRanks = {
+  idle: -1,
+  preparing: 0,
+  downloaded: 0,
+  'stopping-service': 1,
+  'service-stopped': 2,
+  'building-command': 2,
+  'launching-installer': 2,
+  'installer-started': 3,
+  'app-exiting': 4,
+  failed: -1,
+}
+
+const currentInstallRank = computed(() => installStageRanks[installStage.value] ?? 0)
+
+const currentInstallMessage = computed(() => {
+  const messages = {
+    idle: t.value.updateDialog.preparingInstall,
+    preparing: t.value.updateDialog.installPreparing,
+    downloaded: t.value.updateDialog.installPreparing,
+    'stopping-service': t.value.updateDialog.installStoppingService,
+    'service-stopped': t.value.updateDialog.installServiceStopped,
+    'building-command': t.value.updateDialog.installBuildingCommand,
+    'launching-installer': t.value.updateDialog.installLaunching,
+    'installer-started': t.value.updateDialog.installStartedBackground,
+    'app-exiting': t.value.updateDialog.installExiting,
+    failed: t.value.updateDialog.installFailed,
+  }
+  return messages[installStage.value] || t.value.updateDialog.preparingInstall
+})
+
+const getInstallStepStatus = (index) => {
+  if (installStage.value === 'failed') {
+    const failedRank = installFailedRank.value ?? Math.max(currentInstallRank.value, 0)
+    if (index < failedRank) return 'done'
+    if (index === failedRank) return 'failed'
+    return 'pending'
+  }
+  if (index < currentInstallRank.value) return 'done'
+  if (index === currentInstallRank.value) return 'active'
+  return 'pending'
+}
+
+const clearInstallProgressListener = () => {
+  if (installProgressUnlisten) {
+    installProgressUnlisten()
+    installProgressUnlisten = null
+  }
+}
+
+const clearInstallWaitTimer = () => {
+  if (installWaitTimer) {
+    clearInterval(installWaitTimer)
+    installWaitTimer = null
+  }
+}
+
+const markInstallProgressSeen = () => {
+  installLastEventAt.value = Date.now()
+  installWaitHint.value = ''
+}
+
+const startInstallWaitTimer = () => {
+  clearInstallWaitTimer()
+  markInstallProgressSeen()
+  installWaitTimer = setInterval(() => {
+    if (!isInstalling.value || installStage.value === 'failed') return
+    const elapsedMs = Date.now() - installLastEventAt.value
+    if (elapsedMs >= 60000) {
+      installWaitHint.value = t.value.updateDialog.installLongWaitHint
+    } else if (elapsedMs >= 15000) {
+      installWaitHint.value = t.value.updateDialog.installWaitHint
+    } else {
+      installWaitHint.value = ''
+    }
+  }, 1000)
+}
+
+const resetInstallProgress = () => {
+  installStage.value = 'idle'
+  installDetail.value = ''
+  installWaitHint.value = ''
+  installLastEventAt.value = 0
+  installFailedRank.value = null
+  clearInstallWaitTimer()
+}
 
 const getTauriApis = async () => {
   const [{ invoke }, { listen }] = await Promise.all([import('@tauri-apps/api/core'), import('@tauri-apps/api/event')])
@@ -160,17 +278,41 @@ const handleInstall = async (filePath) => {
     )
 
     isInstalling.value = true
-    const { invoke } = await getTauriApis()
-    await invoke('install_update', { filePath })
+    resetInstallProgress()
+    installStage.value = 'downloaded'
+    startInstallWaitTimer()
+
+    const { invoke, listen } = await getTauriApis()
+    clearInstallProgressListener()
+    installProgressUnlisten = await listen('install-progress', (event) => {
+      const payload = event.payload || {}
+      if (payload.stage) {
+        if (payload.stage === 'failed') {
+          installFailedRank.value = Math.max(currentInstallRank.value, 0)
+        } else {
+          installFailedRank.value = null
+        }
+        installStage.value = payload.stage
+      }
+      installDetail.value = payload.detail || ''
+      markInstallProgressSeen()
+      if (payload.terminal) clearInstallWaitTimer()
+    })
+
+    await invoke('install_update', { filePath, targetVersion: props.updateInfo?.version || null })
 
     ElMessage.success(t.value.updateDialog.installStarted)
-    setTimeout(() => {
-      visible.value = false
-    }, 2000)
   } catch (error) {
     if (error !== 'cancel') {
+      installFailedRank.value = Math.max(currentInstallRank.value, 0)
+      installStage.value = 'failed'
+      installDetail.value = String(error)
+      clearInstallWaitTimer()
+      clearInstallProgressListener()
       ElMessage.error(t.value.updateDialog.installError.replace('{error}', error))
       isInstalling.value = false
+    } else {
+      downloadProgress.value = 0
     }
   }
 }
@@ -208,7 +350,14 @@ const resetState = () => {
   downloadProgress.value = 0
   isInstalling.value = false
   isDownloading.value = false
+  resetInstallProgress()
+  clearInstallProgressListener()
 }
+
+onBeforeUnmount(() => {
+  clearInstallWaitTimer()
+  clearInstallProgressListener()
+})
 
 watch(
   () => props.modelValue,
@@ -306,8 +455,122 @@ watch(
   }
 }
 
-.install-notice {
-  margin-bottom: 20px;
+.install-progress-panel {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid #dcdfe6;
+  border-radius: @border-radius;
+  background: #f8fafc;
+}
+
+.install-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.install-spinner {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  margin-top: 2px;
+  border: 2px solid #c6e2ff;
+  border-top-color: #409eff;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+
+  &.failed {
+    border-color: #f56c6c;
+    animation: none;
+  }
+}
+
+.install-current {
+  margin: 0;
+  color: #303133;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.install-detail,
+.install-note,
+.install-wait-hint {
+  margin: 6px 0 0;
+  color: #606266;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.install-wait-hint {
+  color: #b88230;
+}
+
+.install-steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  li {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    gap: 6px;
+    color: #909399;
+    font-size: 12px;
+    line-height: 1.3;
+  }
+
+  .step-dot {
+    width: 10px;
+    height: 10px;
+    flex: 0 0 10px;
+    border: 2px solid #c0c4cc;
+    border-radius: 50%;
+    background: #fff;
+  }
+
+  .step-label {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  li.done {
+    color: #409eff;
+
+    .step-dot {
+      border-color: #409eff;
+      background: #409eff;
+    }
+  }
+
+  li.active {
+    color: #303133;
+    font-weight: 600;
+
+    .step-dot {
+      border-color: #409eff;
+      background: #ecf5ff;
+    }
+  }
+
+  li.failed {
+    color: #f56c6c;
+
+    .step-dot {
+      border-color: #f56c6c;
+      background: #fef0f0;
+    }
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .dialog-footer {

@@ -499,9 +499,8 @@ pub fn emit_update_result_if_requested(app_handle: &AppHandle) {
         {
             Some(result) => {
                 let _ = app.emit("update-install-result", result);
-                let cleanup_dir = result_path.parent().map(|path| path.to_path_buf());
-                let _ = fs::remove_file(&result_path);
-                if let Some(dir) = cleanup_dir {
+                if let Some(dir) = updater_cleanup_dir_for_result(&result_path) {
+                    let _ = fs::remove_file(&result_path);
                     let _ = fs::remove_dir_all(dir);
                 }
             }
@@ -519,6 +518,26 @@ pub fn emit_update_result_if_requested(app_handle: &AppHandle) {
             }
         }
     });
+}
+
+fn updater_cleanup_dir_for_result(result_path: &Path) -> Option<PathBuf> {
+    if result_path.file_name()?.to_string_lossy() != "result.json" {
+        return None;
+    }
+
+    let parent = result_path.parent()?;
+    let dir_name = parent.file_name()?.to_string_lossy();
+    if !dir_name.starts_with("sunshine-updater-") {
+        return None;
+    }
+
+    let temp_dir = std::env::temp_dir().canonicalize().ok()?;
+    let parent = parent.canonicalize().ok()?;
+    if parent.starts_with(temp_dir) {
+        Some(parent)
+    } else {
+        None
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -1628,6 +1647,30 @@ pub async fn download_update(
 // ========== 安装相关 ==========
 
 #[cfg(target_os = "windows")]
+fn create_updater_work_dir() -> Result<PathBuf, String> {
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let temp_dir = std::env::temp_dir();
+    for attempt in 0..100 {
+        let work_dir = temp_dir.join(format!(
+            "sunshine-updater-{}-{}-{}",
+            now_ms,
+            std::process::id(),
+            attempt
+        ));
+        match fs::create_dir(&work_dir) {
+            Ok(()) => return Ok(work_dir),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("create updater dir failed: {}", e)),
+        }
+    }
+
+    Err("create updater dir failed: too many name collisions".to_string())
+}
+
+#[cfg(target_os = "windows")]
 fn prepare_updater_helper(
     file_path: &str,
     extension: &str,
@@ -1635,8 +1678,7 @@ fn prepare_updater_helper(
 ) -> Result<(PathBuf, PathBuf), String> {
     let current_exe =
         std::env::current_exe().map_err(|e| format!("get current exe failed: {}", e))?;
-    let work_dir = std::env::temp_dir().join(format!("sunshine-updater-{}", get_current_timestamp()));
-    fs::create_dir_all(&work_dir).map_err(|e| format!("create updater dir failed: {}", e))?;
+    let work_dir = create_updater_work_dir()?;
 
     let helper_exe = work_dir.join("sunshine-updater-helper.exe");
     fs::copy(&current_exe, &helper_exe)
@@ -1732,7 +1774,9 @@ pub async fn install_update(
         // 延迟后退出当前GUI进程
         let app_clone = app_handle.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(3)).await;
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            emit_install_progress(&app_clone, "app-exiting", None, false);
+            tokio::time::sleep(Duration::from_secs(1)).await;
             app_clone.exit(0);
         });
 

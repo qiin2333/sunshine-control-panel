@@ -12,19 +12,32 @@
 
     <div class="sharing-toolbar">
       <div class="sharing-status">
-        <span class="status-indicator" :class="mappings.length > 0 ? 'online' : 'connecting'"></span>
+        <span class="status-indicator" :class="statusClass"></span>
         <span>{{ statusText }}</span>
       </div>
       <div class="sharing-actions">
         <button class="desktop-btn compact" :disabled="busy" @click="installMenu">
           <Link />
-          添加右键菜单
+          启用右键共享
         </button>
         <button class="desktop-btn compact" :disabled="busy" @click="uninstallMenu">
-          移除右键菜单
+          关闭右键共享
         </button>
       </div>
     </div>
+
+    <div class="sharing-policy">
+      <span class="share-chip safe">只读</span>
+      <span class="share-chip safe">仅已配对设备</span>
+      <span class="share-chip safe">阻止链接穿透</span>
+    </div>
+
+    <Transition name="notice">
+      <div v-if="notice.text" class="sharing-notice" :class="notice.type">
+        <span>{{ notice.text }}</span>
+        <button class="notice-close" title="关闭" @click="clearNotice">×</button>
+      </div>
+    </Transition>
 
     <div v-if="error" class="sharing-error">
       {{ error }}
@@ -35,7 +48,17 @@
     </div>
 
     <div v-else-if="mappings.length === 0" class="sharing-empty">
-      还没有共享文件夹
+      <div class="empty-title">还没有共享文件夹</div>
+      <div class="empty-actions">
+        <button class="desktop-btn primary" :disabled="busy" @click="addFolder">
+          <Plus />
+          选择文件夹
+        </button>
+        <button class="desktop-btn" :disabled="busy" @click="installMenu">
+          <Link />
+          启用右键共享
+        </button>
+      </div>
     </div>
 
     <div v-else class="sharing-list">
@@ -46,7 +69,7 @@
         </div>
         <div class="share-meta">
           <span class="share-chip">{{ mapping.mode === 'readwrite' ? '读写' : '只读' }}</span>
-          <span class="share-chip">{{ mapping.clients?.length ? `${mapping.clients.length} 台设备` : '已配对设备' }}</span>
+          <span class="share-chip">{{ clientLabel(mapping) }}</span>
           <span v-if="!mapping.follow_reparse_points" class="share-chip safe">阻止链接穿透</span>
         </div>
         <button
@@ -73,6 +96,12 @@ const mappings = ref([])
 const loading = ref(false)
 const busy = ref(false)
 const error = ref('')
+const notice = ref({ type: 'success', text: '' })
+
+const statusClass = computed(() => {
+  if (loading.value) return 'connecting'
+  return mappings.value.length > 0 ? 'online' : 'offline'
+})
 
 const statusText = computed(() => {
   if (loading.value) return '同步中'
@@ -103,8 +132,9 @@ async function addFolder() {
       multiple: false,
     })
     if (!path) return
-    await fileMapping.quickShareFolder(path)
+    const mapping = await fileMapping.quickShareFolder(path)
     await loadMappings()
+    showNotice('success', `已共享“${mapping?.name || folderName(path)}”，Moonlight 可只读访问`)
   } catch (err) {
     error.value = friendlyError(err)
   } finally {
@@ -121,6 +151,7 @@ async function removeMapping(mapping) {
   try {
     await fileMapping.remove(mapping.id)
     mappings.value = mappings.value.filter(item => item.id !== mapping.id)
+    showNotice('success', `已撤销“${mapping.name || mapping.id}”`)
   } catch (err) {
     error.value = friendlyError(err)
   } finally {
@@ -133,6 +164,7 @@ async function installMenu() {
   error.value = ''
   try {
     await fileMapping.installMenu()
+    showNotice('success', '已添加资源管理器右键共享入口')
   } catch (err) {
     error.value = friendlyError(err)
   } finally {
@@ -145,11 +177,31 @@ async function uninstallMenu() {
   error.value = ''
   try {
     await fileMapping.uninstallMenu()
+    showNotice('success', '已移除资源管理器右键共享入口')
   } catch (err) {
     error.value = friendlyError(err)
   } finally {
     busy.value = false
   }
+}
+
+function clientLabel(mapping) {
+  return mapping.clients?.length ? `${mapping.clients.length} 台设备` : '所有已配对设备'
+}
+
+function folderName(path) {
+  return String(path || '')
+    .split(/[\\/]/)
+    .filter(Boolean)
+    .pop() || '文件夹'
+}
+
+function showNotice(type, text) {
+  notice.value = { type, text }
+}
+
+function clearNotice() {
+  notice.value = { type: 'success', text: '' }
 }
 
 function friendlyError(err) {
@@ -158,6 +210,11 @@ function friendlyError(err) {
   if (text.includes('Connection') || text.includes('connection') || text.includes('refused')) {
     return '无法连接 Sunshine，请确认 Sunshine 正在运行'
   }
+  if (text.includes('not a folder')) return '请选择一个文件夹'
+  if (text.includes('does not exist') || text.includes('cannot be accessed')) return '文件夹不存在或无法访问'
+  if (text.includes('readwrite mode is not supported')) return '当前阶段仅支持只读共享'
+  if (text.includes('allow_delete')) return '当前阶段不允许远端删除文件'
+  if (text.includes('follow_reparse_points')) return '当前阶段不允许穿透符号链接或 junction'
   return text
 }
 
@@ -179,6 +236,13 @@ onMounted(loadMappings)
   align-items: center;
   gap: 10px;
   min-width: 0;
+}
+
+.sharing-policy {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -4px 0 14px;
 }
 
 .desktop-btn {
@@ -206,6 +270,34 @@ onMounted(loadMappings)
   }
 }
 
+.sharing-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  line-height: 1.45;
+
+  &.success {
+    color: var(--fd-status-success, #00ff88);
+    background: rgba(var(--fd-status-success-rgb, 0, 255, 136), 0.1);
+    border: 1px solid rgba(var(--fd-status-success-rgb, 0, 255, 136), 0.24);
+  }
+}
+
+.notice-close {
+  border: 0;
+  background: transparent;
+  color: currentColor;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  opacity: 0.8;
+  padding: 0 2px;
+}
+
 .sharing-error {
   color: var(--fd-status-danger, #ff6b35);
   background: rgba(var(--fd-status-danger-rgb, 255, 107, 53), 0.1);
@@ -222,6 +314,17 @@ onMounted(loadMappings)
   border-radius: 8px;
   padding: 18px;
   text-align: center;
+}
+
+.empty-title {
+  margin-bottom: 12px;
+}
+
+.empty-actions {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .sharing-list {
@@ -277,6 +380,17 @@ onMounted(loadMappings)
     color: var(--fd-status-success, #00ff88);
     background: rgba(var(--fd-status-success-rgb, 0, 255, 136), 0.1);
   }
+}
+
+.notice-enter-active,
+.notice-leave-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.notice-enter-from,
+.notice-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
 }
 
 @media (max-width: 760px) {

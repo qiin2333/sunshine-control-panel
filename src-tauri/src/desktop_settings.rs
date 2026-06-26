@@ -215,6 +215,10 @@ pub fn ensure_sunshine_started_async() {
 async fn ensure_sunshine_started() -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
         let already_running = tokio::task::spawn_blocking(|| {
             std::process::Command::new("powershell")
                 .args([
@@ -222,6 +226,7 @@ async fn ensure_sunshine_started() -> Result<(), String> {
                     "-Command",
                     "if (Get-Process sunshine -ErrorAction SilentlyContinue) { 'true' } else { 'false' }",
                 ])
+                .creation_flags(CREATE_NO_WINDOW)
                 .output()
         })
         .await
@@ -252,6 +257,7 @@ async fn ensure_sunshine_started() -> Result<(), String> {
 
         std::process::Command::new("powershell")
             .args(["-NoProfile", "-Command", &command])
+            .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| e.to_string())?;
         Ok(())

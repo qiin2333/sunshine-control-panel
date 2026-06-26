@@ -1,6 +1,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter, ROUTES } from './useRouter.js'
+import { useI18n } from '../desktop/i18n/index.js'
 
 const STORAGE_KEYS = {
   SKIPPED_VERSION: 'sunshine-skipped-version',
@@ -52,6 +53,7 @@ const getStoredBoolean = (key, defaultValue = false) => {
  */
 export function useSidebarState() {
   const router = useRouter()
+  const { t } = useI18n()
 
   // 状态定义
   const isCollapsed = ref(false)
@@ -242,6 +244,17 @@ export function useSidebarState() {
       }
     })
     cleanupFns.push(unlistenCheckResult)
+
+    const unlistenInstallResult = await listen('update-install-result', ({ payload }) => {
+      const version = payload?.target_version || ''
+      if (payload?.success) {
+        ElMessage.success(t.value.updateDialog.installResultSuccess.replace('{version}', version))
+      } else {
+        const message = payload?.message || t.value.updateDialog.installResultUnknown
+        ElMessage.warning(t.value.updateDialog.installResultFailed.replace('{error}', message))
+      }
+    })
+    cleanupFns.push(unlistenInstallResult)
   }
 
   /**

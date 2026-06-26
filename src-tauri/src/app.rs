@@ -76,6 +76,8 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
 
     // 延迟任务
     tauri::async_runtime::spawn(async move {
+        update::emit_update_result_if_requested(&app_handle);
+
         // PIN 配对窗口
         if url_contains_pin {
             info!("🔐 将在应用启动后打开 PIN 配对窗口");

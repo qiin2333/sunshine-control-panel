@@ -8,6 +8,8 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 const UPDATER_HELPER_ARG: &str = "--updater-helper";
 const UPDATE_RESULT_ARG: &str = "--update-result";
+#[cfg(target_os = "windows")]
+const ERROR_ELEVATION_REQUIRED: i32 = 740;
 
 // ========== 常量定义 ==========
 const GITHUB_API_URL: &str = "https://api.github.com/repos/qiin2333/sunshine/releases";
@@ -1715,7 +1717,7 @@ fn launch_updater_helper(helper_exe: &Path, state_path: &Path) -> Result<(), Str
         .spawn()
     {
         Ok(_) => Ok(()),
-        Err(e) if e.raw_os_error() == Some(740) => {
+        Err(e) if e.raw_os_error() == Some(ERROR_ELEVATION_REQUIRED) => {
             launch_updater_helper_elevated(helper_exe, state_path)
         }
         Err(e) => Err(format!("launch updater helper failed: {}", e)),
@@ -1748,6 +1750,7 @@ fn launch_updater_helper_elevated(helper_exe: &Path, state_path: &Path) -> Resul
         lpFile: PCWSTR(file.as_ptr()),
         lpParameters: PCWSTR(params.as_ptr()),
         lpDirectory: PCWSTR(directory.as_ptr()),
+        // Keep the pixel progress helper visible after UAC approval.
         nShow: SW_SHOWNORMAL.0,
         ..Default::default()
     };

@@ -1,10 +1,10 @@
 <template>
   <SettingsCard title="文件夹共享" :icon="FolderOpened">
     <template #actions>
-      <button class="desktop-btn icon-btn" :disabled="loading" title="刷新" @click="loadMappings">
+      <button class="desktop-btn icon-btn" :disabled="refreshDisabled" title="刷新" @click="loadMappings">
         <Refresh />
       </button>
-      <button class="desktop-btn primary" :disabled="busy" @click="addFolder">
+      <button class="desktop-btn primary" :disabled="actionDisabled" @click="addFolder">
         <Plus />
         添加文件夹
       </button>
@@ -16,11 +16,11 @@
         <span>{{ statusText }}</span>
       </div>
       <div class="sharing-actions">
-        <button class="desktop-btn compact" :disabled="busy" @click="installMenu">
+        <button class="desktop-btn compact" :disabled="actionDisabled" @click="installMenu">
           <Link />
           启用右键共享
         </button>
-        <button class="desktop-btn compact" :disabled="busy" @click="uninstallMenu">
+        <button class="desktop-btn compact" :disabled="actionDisabled" @click="uninstallMenu">
           关闭右键共享
         </button>
       </div>
@@ -43,18 +43,22 @@
       {{ error }}
     </div>
 
-    <div v-if="loading" class="sharing-empty">
-      正在读取共享列表
+    <div v-if="!runtimeChecked || loading" class="sharing-empty">
+      {{ runtimeChecked ? '正在读取共享列表' : '正在检测运行环境' }}
+    </div>
+
+    <div v-else-if="!hasTauri" class="sharing-empty">
+      <div class="empty-title">文件夹共享需要在桌面端使用</div>
     </div>
 
     <div v-else-if="mappings.length === 0" class="sharing-empty">
       <div class="empty-title">还没有共享文件夹</div>
       <div class="empty-actions">
-        <button class="desktop-btn primary" :disabled="busy" @click="addFolder">
+        <button class="desktop-btn primary" :disabled="actionDisabled" @click="addFolder">
           <Plus />
           选择文件夹
         </button>
-        <button class="desktop-btn" :disabled="busy" @click="installMenu">
+        <button class="desktop-btn" :disabled="actionDisabled" @click="installMenu">
           <Link />
           启用右键共享
         </button>
@@ -74,7 +78,7 @@
         </div>
         <button
           class="desktop-btn danger icon-btn"
-          :disabled="busy"
+          :disabled="actionDisabled"
           title="撤销共享"
           @click="removeMapping(mapping)"
         >
@@ -89,27 +93,44 @@
 import { computed, onMounted, ref } from 'vue'
 import { Delete, FolderOpened, Link, Plus, Refresh } from '@element-plus/icons-vue'
 import { open } from '@tauri-apps/plugin-dialog'
+import { isTauriRuntime } from '../../composables/useTauri.js'
 import { fileMapping } from '../../../tauri-adapter.js'
 import SettingsCard from './SettingsCard.vue'
 
 const mappings = ref([])
 const loading = ref(false)
 const busy = ref(false)
+const runtimeChecked = ref(false)
+const hasTauri = ref(false)
 const error = ref('')
 const notice = ref({ type: 'success', text: '' })
 
+const canUseSharing = computed(() => runtimeChecked.value && hasTauri.value)
+const actionDisabled = computed(() => busy.value || !canUseSharing.value)
+const refreshDisabled = computed(() => loading.value || !canUseSharing.value)
+
 const statusClass = computed(() => {
-  if (loading.value) return 'connecting'
+  if (!runtimeChecked.value || loading.value) return 'connecting'
+  if (!hasTauri.value) return 'offline'
   return mappings.value.length > 0 ? 'online' : 'offline'
 })
 
 const statusText = computed(() => {
+  if (!runtimeChecked.value) return '检测中'
+  if (!hasTauri.value) return '仅桌面端可用'
   if (loading.value) return '同步中'
   if (mappings.value.length === 0) return '未共享'
   return `${mappings.value.length} 个共享`
 })
 
 async function loadMappings() {
+  if (!canUseSharing.value) {
+    mappings.value = []
+    loading.value = false
+    error.value = ''
+    return
+  }
+
   loading.value = true
   error.value = ''
   try {
@@ -123,7 +144,7 @@ async function loadMappings() {
 }
 
 async function addFolder() {
-  if (busy.value) return
+  if (actionDisabled.value) return
   busy.value = true
   error.value = ''
   try {
@@ -143,7 +164,7 @@ async function addFolder() {
 }
 
 async function removeMapping(mapping) {
-  if (!mapping?.id || busy.value) return
+  if (!mapping?.id || actionDisabled.value) return
   if (!confirm(`撤销共享“${mapping.name || mapping.id}”？`)) return
 
   busy.value = true
@@ -160,6 +181,7 @@ async function removeMapping(mapping) {
 }
 
 async function installMenu() {
+  if (actionDisabled.value) return
   busy.value = true
   error.value = ''
   try {
@@ -173,6 +195,7 @@ async function installMenu() {
 }
 
 async function uninstallMenu() {
+  if (actionDisabled.value) return
   busy.value = true
   error.value = ''
   try {
@@ -218,7 +241,13 @@ function friendlyError(err) {
   return text
 }
 
-onMounted(loadMappings)
+onMounted(async () => {
+  hasTauri.value = await isTauriRuntime()
+  runtimeChecked.value = true
+  if (hasTauri.value) {
+    await loadMappings()
+  }
+})
 </script>
 
 <style lang="less" scoped>

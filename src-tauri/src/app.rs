@@ -61,10 +61,6 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
     if let Err(e) = crate::shell_context_menu::install_file_transfer_menu() {
         warn!("⚠️  安装文件传输右键菜单失败: {}", e);
     }
-    #[cfg(target_os = "windows")]
-    if let Err(e) = crate::shell_context_menu::install_file_mapping_menu() {
-        warn!("install file mapping context menu failed: {}", e);
-    }
     register_global_shortcuts(app)?;
     setup_menu_event_handler(app);
     start_proxy_server_async();

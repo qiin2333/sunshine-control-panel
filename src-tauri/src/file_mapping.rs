@@ -38,26 +38,25 @@ struct DeleteMappingResponse {
 
 pub fn parse_quick_share_folder_args(args: &[String]) -> Vec<String> {
     let mut out = Vec::new();
-    let mut take_rest = false;
+    let mut index = 0;
 
-    for arg in args {
-        if take_rest {
-            if !arg.trim().is_empty() {
-                out.push(arg.clone());
-            }
-            continue;
-        }
+    while index < args.len() {
+        let arg = &args[index];
 
         if arg == "--quick-share-folder" {
-            take_rest = true;
-            continue;
-        }
-
-        if let Some(path) = arg.strip_prefix("--quick-share-folder=") {
+            if let Some(path) = args.get(index + 1) {
+                if !path.trim().is_empty() && !path.starts_with("--") {
+                    out.push(path.clone());
+                    index += 1;
+                }
+            }
+        } else if let Some(path) = arg.strip_prefix("--quick-share-folder=") {
             if !path.trim().is_empty() {
                 out.push(path.to_string());
             }
         }
+
+        index += 1;
     }
 
     out

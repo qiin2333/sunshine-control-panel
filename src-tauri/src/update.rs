@@ -8,6 +8,8 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 const UPDATER_HELPER_ARG: &str = "--updater-helper";
 const UPDATE_RESULT_ARG: &str = "--update-result";
+#[cfg(target_os = "windows")]
+const ERROR_ELEVATION_REQUIRED: i32 = 740;
 
 // ========== 常量定义 ==========
 const GITHUB_API_URL: &str = "https://api.github.com/repos/qiin2333/sunshine/releases";
@@ -1708,14 +1710,53 @@ fn launch_updater_helper(helper_exe: &Path, state_path: &Path) -> Result<(), Str
     use std::process::Command;
 
     const CREATE_NO_WINDOW: u32 = 0x08000000;
-    Command::new(helper_exe)
+    match Command::new(helper_exe)
         .arg(UPDATER_HELPER_ARG)
         .arg(state_path)
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()
-        .map_err(|e| format!("launch updater helper failed: {}", e))?;
+    {
+        Ok(_) => Ok(()),
+        Err(e) if e.raw_os_error() == Some(ERROR_ELEVATION_REQUIRED) => {
+            launch_updater_helper_elevated(helper_exe, state_path)
+        }
+        Err(e) => Err(format!("launch updater helper failed: {}", e)),
+    }
+}
 
-    Ok(())
+#[cfg(target_os = "windows")]
+fn launch_updater_helper_elevated(helper_exe: &Path, state_path: &Path) -> Result<(), String> {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::Shell::{ShellExecuteExW, SHELLEXECUTEINFOW};
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    use windows::core::PCWSTR;
+
+    let verb = to_wide_null("runas");
+    let file = to_wide_null(&helper_exe.to_string_lossy());
+    let params = to_wide_null(&format!(
+        "{} \"{}\"",
+        UPDATER_HELPER_ARG,
+        state_path.to_string_lossy()
+    ));
+    let directory = helper_exe
+        .parent()
+        .map(|path| to_wide_null(&path.to_string_lossy()))
+        .unwrap_or_else(|| to_wide_null(""));
+
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        hwnd: HWND(std::ptr::null_mut()),
+        lpVerb: PCWSTR(verb.as_ptr()),
+        lpFile: PCWSTR(file.as_ptr()),
+        lpParameters: PCWSTR(params.as_ptr()),
+        lpDirectory: PCWSTR(directory.as_ptr()),
+        // Keep the pixel progress helper visible after UAC approval.
+        nShow: SW_SHOWNORMAL.0,
+        ..Default::default()
+    };
+
+    unsafe { ShellExecuteExW(&mut info) }
+        .map_err(|e| format!("launch updater helper elevated failed: {}", e))
 }
 
 /// 安装更新文件

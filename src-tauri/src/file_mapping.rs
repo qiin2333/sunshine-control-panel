@@ -107,6 +107,7 @@ pub async fn install_file_mapping_menu() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         crate::shell_context_menu::install_file_mapping_menu()?;
+        crate::desktop_settings::set_file_mapping_menu_enabled(true)?;
         Ok("success".to_string())
     }
 
@@ -121,6 +122,7 @@ pub async fn uninstall_file_mapping_menu() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         crate::shell_context_menu::uninstall_file_mapping_menu()?;
+        crate::desktop_settings::set_file_mapping_menu_enabled(false)?;
         Ok("success".to_string())
     }
 

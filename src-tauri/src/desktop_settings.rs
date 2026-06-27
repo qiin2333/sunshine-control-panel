@@ -7,11 +7,13 @@ const SETTINGS_FILE: &str = "desktop-settings.json";
 const RUN_VALUE_NAME: &str = "Sunshine GUI Desktop";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopSettings {
     pub auto_start: bool,
     pub start_minimized: bool,
     pub auto_start_sunshine: bool,
+    pub file_mapping_menu_enabled: bool,
     pub notifications: bool,
     pub connection_notify: bool,
     pub update_notify: bool,
@@ -25,6 +27,7 @@ impl Default for DesktopSettings {
             auto_start: false,
             start_minimized: false,
             auto_start_sunshine: true,
+            file_mapping_menu_enabled: true,
             notifications: true,
             connection_notify: true,
             update_notify: true,
@@ -88,6 +91,12 @@ fn save_desktop_settings_to_disk(settings: &DesktopSettings) -> Result<(), Strin
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let text = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
     fs::write(dir.join(SETTINGS_FILE), text).map_err(|e| e.to_string())
+}
+
+pub fn set_file_mapping_menu_enabled(enabled: bool) -> Result<(), String> {
+    let mut settings = load_desktop_settings_from_disk();
+    settings.file_mapping_menu_enabled = enabled;
+    save_desktop_settings_to_disk(&settings)
 }
 
 #[cfg(target_os = "windows")]

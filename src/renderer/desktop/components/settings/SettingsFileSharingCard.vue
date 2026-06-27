@@ -1,30 +1,35 @@
 <template>
   <SettingsCard title="文件夹共享" :icon="FolderOpened">
-    <template #actions>
-      <button class="desktop-btn icon-btn" :disabled="refreshDisabled" title="刷新" @click="loadMappings">
-        <Refresh />
-      </button>
-      <button class="desktop-btn primary" :disabled="actionDisabled" @click="addFolder">
-        <Plus />
-        添加文件夹
-      </button>
-    </template>
-
-    <div class="sharing-toolbar">
+    <SettingsRow name="共享状态" description="右键共享使用只读权限，仅允许已配对设备访问">
       <div class="sharing-status">
         <span class="status-indicator" :class="statusClass"></span>
         <span>{{ statusText }}</span>
       </div>
-      <div class="sharing-actions">
-        <button class="desktop-btn compact" :disabled="actionDisabled" @click="installMenu">
-          <Link />
-          启用右键共享
+    </SettingsRow>
+
+    <SettingsRow name="共享文件夹" description="选择主机上的文件夹后，Moonlight 可在串流中读取">
+      <div class="sharing-control-group">
+        <button class="desktop-btn icon-btn" :disabled="refreshDisabled" title="刷新" @click="loadMappings">
+          <Refresh />
         </button>
-        <button class="desktop-btn compact" :disabled="actionDisabled" @click="uninstallMenu">
-          关闭右键共享
+        <button class="desktop-btn primary" :disabled="actionDisabled" @click="addFolder">
+          <Plus />
+          添加
         </button>
       </div>
-    </div>
+    </SettingsRow>
+
+    <SettingsRow name="资源管理器右键菜单" description="在文件夹右键菜单中显示“通过 Sunshine 共享”">
+      <div class="sharing-control-group">
+        <button class="desktop-btn compact" :disabled="actionDisabled" @click="installMenu">
+          <Link />
+          启用
+        </button>
+        <button class="desktop-btn compact" :disabled="actionDisabled" @click="uninstallMenu">
+          关闭
+        </button>
+      </div>
+    </SettingsRow>
 
     <div class="sharing-policy">
       <span class="share-chip safe">只读</span>
@@ -57,10 +62,6 @@
         <button class="desktop-btn primary" :disabled="actionDisabled" @click="addFolder">
           <Plus />
           选择文件夹
-        </button>
-        <button class="desktop-btn" :disabled="actionDisabled" @click="installMenu">
-          <Link />
-          启用右键共享
         </button>
       </div>
     </div>
@@ -96,6 +97,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { isTauriRuntime } from '../../composables/useTauri.js'
 import { fileMapping } from '../../../tauri-adapter.js'
 import SettingsCard from './SettingsCard.vue'
+import SettingsRow from './SettingsRow.vue'
 
 const mappings = ref([])
 const loading = ref(false)
@@ -251,27 +253,46 @@ onMounted(async () => {
 </script>
 
 <style lang="less" scoped>
-.sharing-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  margin-bottom: 16px;
-}
-
 .sharing-status,
-.sharing-actions {
+.sharing-control-group {
   display: flex;
   align-items: center;
   gap: 10px;
   min-width: 0;
 }
 
+.sharing-status {
+  color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.78);
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+
+.sharing-control-group {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.sharing-control-group .desktop-btn:not(.icon-btn) {
+  justify-content: center;
+  min-width: 76px;
+  white-space: nowrap;
+}
+
 .sharing-policy {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin: -4px 0 14px;
+  margin: 10px 0 14px;
+}
+
+:deep(.setting-info) {
+  min-width: 0;
+  padding-right: 18px;
+}
+
+:deep(.setting-control) {
+  flex: 0 0 auto;
+  max-width: 48%;
 }
 
 .desktop-btn {
@@ -341,7 +362,7 @@ onMounted(async () => {
   color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.5);
   border: 1px dashed rgba(var(--fd-accent-rgb, 0, 255, 245), 0.2);
   border-radius: 8px;
-  padding: 18px;
+  padding: 16px;
   text-align: center;
 }
 
@@ -364,7 +385,7 @@ onMounted(async () => {
 
 .sharing-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 40px;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, auto) 40px;
   align-items: center;
   gap: 14px;
   padding: 12px;
@@ -395,6 +416,7 @@ onMounted(async () => {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+  min-width: 0;
 }
 
 .share-chip {
@@ -423,13 +445,28 @@ onMounted(async () => {
 }
 
 @media (max-width: 760px) {
-  .sharing-toolbar {
+  :deep(.setting-item) {
     align-items: flex-start;
     flex-direction: column;
+    gap: 12px;
   }
 
-  .sharing-actions {
-    flex-wrap: wrap;
+  :deep(.setting-info) {
+    padding-right: 0;
+  }
+
+  :deep(.setting-control) {
+    width: 100%;
+    max-width: none;
+  }
+
+  .sharing-status,
+  .sharing-control-group {
+    justify-content: flex-start;
+  }
+
+  .sharing-control-group {
+    width: 100%;
   }
 
   .sharing-row {

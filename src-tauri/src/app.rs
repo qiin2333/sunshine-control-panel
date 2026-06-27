@@ -24,6 +24,8 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
     let desktop_settings = crate::desktop_settings::load_desktop_settings_from_disk();
     let send_to_client_paths = crate::file_transfer::parse_send_to_client_args(&args);
     let is_send_to_client = !send_to_client_paths.is_empty();
+    let quick_share_folder_paths = crate::file_mapping::parse_quick_share_folder_args(&args);
+    let is_quick_share_folder = !quick_share_folder_paths.is_empty();
     let url_contains_pin = args
         .iter()
         .find(|arg| arg.starts_with("--url="))
@@ -43,7 +45,7 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
         }
         windows::create_main_window_hidden(&app_handle)?;
         false
-    } else if !show_toolbar && !url_contains_pin && !is_send_to_client {
+    } else if !show_toolbar && !url_contains_pin && !is_send_to_client && !is_quick_share_folder {
         if start_minimized {
             windows::create_main_window_hidden(&app_handle)?;
         } else {
@@ -69,6 +71,9 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
 
     if is_send_to_client {
         crate::file_transfer::dispatch_cli_send(send_to_client_paths);
+    }
+    if is_quick_share_folder {
+        crate::file_mapping::dispatch_cli_quick_share(quick_share_folder_paths);
     }
 
     // 启动 WebView 心跳监控（检测渲染进程崩溃并自动恢复）
@@ -208,6 +213,13 @@ pub fn handle_single_instance(app: &AppHandle, args: Vec<String>) {
     }
 
     // 诊断：列出当前所有窗口
+    let quick_share_folder_paths = crate::file_mapping::parse_quick_share_folder_args(&args);
+    if !quick_share_folder_paths.is_empty() {
+        info!("file mapping quick share request detected");
+        crate::file_mapping::dispatch_cli_quick_share(quick_share_folder_paths);
+        return;
+    }
+
     let windows: Vec<_> = app.webview_windows().keys().cloned().collect();
     info!("📋 当前存在的窗口: {:?}", windows);
 

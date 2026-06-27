@@ -117,6 +117,17 @@ export const tools = {
   uninstallVddDriver: () => invoke('uninstall_vdd_driver'),
 }
 
+// Folder Sharing
+
+export const fileMapping = {
+  list: () => invoke('list_file_mappings'),
+  quickShareFolder: (path) => invoke('quick_share_folder', { path }),
+  remove: (id) => invoke('delete_file_mapping', { id }),
+  update: (id, patch) => invoke('update_file_mapping', { id, patch }),
+  installMenu: () => invoke('install_file_mapping_menu'),
+  uninstallMenu: () => invoke('uninstall_file_mapping_menu'),
+}
+
 // ─── Moonlight Web ───────────────────────────────────────
 
 export const moonlightWeb = {
@@ -161,6 +172,7 @@ export default {
   vigem,
   sunshine,
   tools,
+  fileMapping,
   moonlightWeb,
   controllerMeta,
   readDirectory,

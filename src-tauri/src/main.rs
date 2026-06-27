@@ -7,6 +7,7 @@ mod clipboard;
 mod commands;
 mod controllermeta;
 mod desktop_settings;
+mod file_mapping;
 mod file_transfer;
 mod fs_utils;
 mod hwinfo;
@@ -171,6 +172,12 @@ fn main() {
             controllermeta::controllermeta_get_install_path,
             controllermeta::controllermeta_uninstall,
             clipboard::clipboard_sync_status,
+            file_mapping::quick_share_folder,
+            file_mapping::list_file_mappings,
+            file_mapping::delete_file_mapping,
+            file_mapping::update_file_mapping,
+            file_mapping::install_file_mapping_menu,
+            file_mapping::uninstall_file_mapping_menu,
             file_transfer::send_file_to_client,
             windows::webview_heartbeat,
             rtss::get_rtss_status,

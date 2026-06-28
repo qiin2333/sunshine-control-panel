@@ -164,7 +164,7 @@ async fn create_quick_share(path: &PathBuf) -> Result<FileMappingInfo, String> {
     let endpoint = format!("{}/api/v1/file-mapping/mappings", url.trim_end_matches('/'));
     let client = create_https_client()?;
     let body = serde_json::json!({
-        "path": path.to_string_lossy(),
+        "path": path_for_sunshine_api(path),
     });
 
     let resp = client
@@ -191,6 +191,41 @@ async fn create_quick_share(path: &PathBuf) -> Result<FileMappingInfo, String> {
     parsed
         .mapping
         .ok_or_else(|| "Sunshine mapping API response did not include a mapping".to_string())
+}
+
+fn path_for_sunshine_api(path: &PathBuf) -> String {
+    strip_windows_verbatim_prefix(&path.to_string_lossy())
+}
+
+fn strip_windows_verbatim_prefix(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{}", rest)
+    } else if let Some(rest) = path.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        path.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_windows_verbatim_prefix;
+
+    #[test]
+    fn strips_windows_verbatim_disk_prefix() {
+        assert_eq!(
+            strip_windows_verbatim_prefix(r"\\?\C:\Users\alice\Downloads"),
+            r"C:\Users\alice\Downloads"
+        );
+    }
+
+    #[test]
+    fn strips_windows_verbatim_unc_prefix() {
+        assert_eq!(
+            strip_windows_verbatim_prefix(r"\\?\UNC\server\share\Downloads"),
+            r"\\server\share\Downloads"
+        );
+    }
 }
 
 async fn list_mappings() -> Result<Vec<FileMappingInfo>, String> {

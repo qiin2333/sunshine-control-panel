@@ -46,7 +46,6 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { cursorPosition } from '@tauri-apps/api/window'
 import { PhysicalPosition } from '@tauri-apps/api/dpi'
 import { useI18n } from '../desktop/i18n/index.js'
-import * as PIXI from 'pixi.js'
 import { callVisionLLM, isApiKeyRequired } from '../composables/aiClient.js'
 import { STORAGE_KEY, DEFAULT_CONFIG } from '../composables/aiProviders.js'
 import {
@@ -75,6 +74,14 @@ let pixiApp = null
 let spriteFrames = []
 let currentSprite = null
 let animationTimer = null
+let pixiModulePromise = null
+
+const loadPixi = async () => {
+  if (!pixiModulePromise) {
+    pixiModulePromise = import('pixi.js')
+  }
+  return pixiModulePromise
+}
 
 // 精灵图集 URL
 const SPRITESHEET_URL =
@@ -670,6 +677,8 @@ const initPixiApp = async () => {
     return
   }
 
+  const PIXI = await loadPixi()
+
   // 创建 PixiJS 应用
   pixiApp = new PIXI.Application()
   await pixiApp.init({
@@ -1016,7 +1025,9 @@ const onIconClick = () => {
 //   - 否则（外圈空白 / 完全在窗口外）→ ignore=true（穿透到下层）
 let cursorIgnoreState = false
 let hitTestTimer = null
-const HIT_TEST_INTERVAL_MS = 80
+let hitTestEnabled = false
+const HIT_TEST_ACTIVE_INTERVAL_MS = 80
+const HIT_TEST_IDLE_INTERVAL_MS = 250
 const setCursorIgnore = (ignore) => {
   if (ignore === cursorIgnoreState) return
   cursorIgnoreState = ignore
@@ -1062,10 +1073,19 @@ const hitTestTick = async () => {
 
 const initBubbleClickThrough = () => {
   // 初始进入穿透状态，由轮询决定何时取消
+  hitTestEnabled = true
   setCursorIgnore(true)
-  hitTestTimer = setInterval(hitTestTick, HIT_TEST_INTERVAL_MS)
-  // 首次立即跑一次，避免等到 80ms 后才生效
-  hitTestTick()
+  const scheduleNextHitTest = (delay) => {
+    if (!hitTestEnabled) return
+    hitTestTimer = setTimeout(async () => {
+      if (!hitTestEnabled) return
+      await hitTestTick()
+      if (!hitTestEnabled) return
+      const active = isDragging || menuVisible.value || !cursorIgnoreState
+      scheduleNextHitTest(active ? HIT_TEST_ACTIVE_INTERVAL_MS : HIT_TEST_IDLE_INTERVAL_MS)
+    }, delay)
+  }
+  scheduleNextHitTest(0)
 }
 
 onMounted(async () => {
@@ -1098,7 +1118,8 @@ onUnmounted(() => {
   // 清理拖拽
   removeDragListeners()
   if (touchRafId) { cancelAnimationFrame(touchRafId); touchRafId = null }
-  if (hitTestTimer) { clearInterval(hitTestTimer); hitTestTimer = null }
+  hitTestEnabled = false
+  if (hitTestTimer) { clearTimeout(hitTestTimer); hitTestTimer = null }
   if (speechBroadcast) {
     try { speechBroadcast.close() } catch (_) {}
     speechBroadcast = null

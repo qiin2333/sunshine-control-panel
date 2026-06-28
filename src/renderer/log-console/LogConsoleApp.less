@@ -271,6 +271,7 @@
     padding: 8px;
     font-size: 13px;
     line-height: 1.5;
+    position: relative;
 
     &::-webkit-scrollbar {
       width: 12px;
@@ -290,12 +291,28 @@
       }
     }
 
+    .log-virtual-space {
+      position: relative;
+      min-height: 100%;
+    }
+
+    .log-virtual-window {
+      left: 8px;
+      position: absolute;
+      right: 8px;
+      top: 0;
+      will-change: transform;
+    }
+
     .log-entry {
-      padding: 8px 12px;
+      box-sizing: border-box;
+      height: 38px;
+      overflow: hidden;
+      padding: 7px 12px;
       margin-bottom: 2px;
       border-left: 3px solid transparent;
-      word-wrap: break-word;
-      white-space: pre-wrap;
+      text-overflow: ellipsis;
+      white-space: nowrap;
       border-radius: @border-radius-sm;
       transition: all @transition-fast;
       position: relative;
@@ -393,6 +410,9 @@
 
       .log-message {
         color: @text-primary;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        vertical-align: middle;
 
         :deep(.highlight) {
           background: rgba(0, 122, 204, 0.3);

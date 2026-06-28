@@ -82,7 +82,7 @@
     </div>
 
     <!-- 日志容器 -->
-    <div class="log-container" ref="logContainer">
+    <div class="log-container" ref="logContainer" @scroll="handleLogScroll">
       <div v-if="filteredLogs.length === 0" class="empty-state">
         <div class="empty-state-icon-wrapper">
           <el-icon class="empty-state-icon" :size="56"><Document /></el-icon>
@@ -94,11 +94,19 @@
           {{ loading ? '正在加载日志中...' : searchKeyword ? '没有找到匹配的日志呢~' : '还没有日志记录哦~' }}
         </div>
       </div>
-      <div v-for="log in filteredLogs" :key="`${log.timestamp}-${log.message}`" :class="['log-entry', log.level]">
-        <span class="log-timestamp">{{ log.timestamp }}</span>
-        <span :class="['log-level', log.level]">{{ log.level }}</span>
-        <span v-if="log.file" class="log-source">{{ log.file }}<span v-if="log.line">:{{ log.line }}</span></span>
-        <span class="log-message" v-html="highlightMessage(log.message)"></span>
+      <div v-else class="log-virtual-space" :style="{ height: `${totalHeight}px` }">
+        <div class="log-virtual-window" :style="{ transform: `translateY(${visibleOffset}px)` }">
+          <div
+            v-for="{ log, virtualIndex } in visibleLogs"
+            :key="`${virtualIndex}-${log.timestamp}-${log.message}`"
+            :class="['log-entry', log.level]"
+          >
+            <span class="log-timestamp">{{ log.timestamp }}</span>
+            <span :class="['log-level', log.level]">{{ log.level }}</span>
+            <span v-if="log.file" class="log-source">{{ log.file }}<span v-if="log.line">:{{ log.line }}</span></span>
+            <span class="log-message" v-html="highlightMessage(log.message)"></span>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -125,7 +133,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { confirm as dialogConfirm, message as dialogMessage } from '@tauri-apps/plugin-dialog'
@@ -137,6 +145,14 @@ const allLogs = ref([])
 const loading = ref(false)
 const logContainer = ref(null)
 const searchKeyword = ref('')
+const committedSearchKeyword = ref('')
+const scrollTop = ref(0)
+const viewportHeight = ref(1)
+
+const LOG_ROW_HEIGHT = 40
+const LOG_OVERSCAN = 8
+const SEARCH_DEBOUNCE_MS = 120
+let searchTimer = null
 
 // 过滤器
 const filters = ref({
@@ -149,15 +165,31 @@ const filters = ref({
 })
 
 // 计算属性：获取所有可用的文件来源
-const availableFiles = computed(() => {
+const logSummary = computed(() => {
   const files = new Set()
+  const counts = {
+    total: allLogs.value.length,
+    error: 0,
+    warn: 0,
+    info: 0,
+  }
+
   allLogs.value.forEach((log) => {
     if (log.file) {
       files.add(log.file)
     }
+    if (log.level === 'error') counts.error += 1
+    else if (log.level === 'warn') counts.warn += 1
+    else if (log.level === 'info') counts.info += 1
   })
-  return Array.from(files).sort()
+
+  return {
+    files: Array.from(files).sort(),
+    stats: counts,
+  }
 })
+
+const availableFiles = computed(() => logSummary.value.files)
 
 // 计算属性：过滤后的日志（同时考虑级别、文件来源和关键词）
 const filteredLogs = computed(() => {
@@ -173,8 +205,8 @@ const filteredLogs = computed(() => {
   }
 
   // 如果有关键词，进行搜索过滤
-  if (searchKeyword.value.trim()) {
-    const keyword = searchKeyword.value.trim().toLowerCase()
+  if (committedSearchKeyword.value.trim()) {
+    const keyword = committedSearchKeyword.value.trim().toLowerCase()
     filtered = filtered.filter((log) => {
       const message = log.message.toLowerCase()
       const timestamp = log.timestamp.toLowerCase()
@@ -189,11 +221,11 @@ const filteredLogs = computed(() => {
 
 // 高亮消息中的关键词
 function highlightMessage(message) {
-  if (!searchKeyword.value.trim()) {
+  if (!committedSearchKeyword.value.trim()) {
     return escapeHtml(message)
   }
 
-  const keyword = searchKeyword.value.trim()
+  const keyword = committedSearchKeyword.value.trim()
   const regex = new RegExp(`(${escapeRegex(keyword)})`, 'gi')
   const highlighted = message.replace(regex, '<mark class="highlight">$1</mark>')
   return highlighted
@@ -213,31 +245,56 @@ function escapeRegex(str) {
 
 // 处理搜索输入
 function handleSearchInput() {
-  // 搜索时自动滚动到第一个匹配项
-  nextTick(() => {
-    if (logContainer.value && filteredLogs.value.length > 0) {
-      const firstMatch = logContainer.value.querySelector('.log-entry')
-      if (firstMatch) {
-        firstMatch.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-      }
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    committedSearchKeyword.value = searchKeyword.value
+    if (logContainer.value) {
+      logContainer.value.scrollTop = 0
+      scrollTop.value = 0
     }
-  })
+  }, SEARCH_DEBOUNCE_MS)
 }
 
 // 清除搜索
 function clearSearch() {
   searchKeyword.value = ''
+  committedSearchKeyword.value = ''
+  clearTimeout(searchTimer)
+  if (logContainer.value) {
+    logContainer.value.scrollTop = 0
+    scrollTop.value = 0
+  }
 }
 
 // 计算属性：统计信息
-const stats = computed(() => {
-  return {
-    total: allLogs.value.length,
-    error: allLogs.value.filter((l) => l.level === 'error').length,
-    warn: allLogs.value.filter((l) => l.level === 'warn').length,
-    info: allLogs.value.filter((l) => l.level === 'info').length,
-  }
+const stats = computed(() => logSummary.value.stats)
+
+const totalHeight = computed(() => filteredLogs.value.length * LOG_ROW_HEIGHT)
+const visibleStartIndex = computed(() => {
+  const maxStart = Math.max(0, filteredLogs.value.length - 1)
+  return Math.min(maxStart, Math.max(0, Math.floor(scrollTop.value / LOG_ROW_HEIGHT) - LOG_OVERSCAN))
 })
+const visibleEndIndex = computed(() =>
+  Math.min(
+    filteredLogs.value.length,
+    Math.ceil((scrollTop.value + viewportHeight.value) / LOG_ROW_HEIGHT) + LOG_OVERSCAN
+  )
+)
+const visibleOffset = computed(() => visibleStartIndex.value * LOG_ROW_HEIGHT)
+const visibleLogs = computed(() =>
+  filteredLogs.value.slice(visibleStartIndex.value, visibleEndIndex.value).map((log, index) => ({
+    log,
+    virtualIndex: visibleStartIndex.value + index,
+  }))
+)
+
+function updateViewportHeight() {
+  viewportHeight.value = logContainer.value?.clientHeight || 1
+}
+
+function handleLogScroll() {
+  scrollTop.value = logContainer.value?.scrollTop || 0
+}
 
 // 加载所有日志
 async function loadLogs() {
@@ -296,6 +353,8 @@ let unsubscribe = null
 onMounted(async () => {
   // 初始加载
   await loadLogs()
+  updateViewportHeight()
+  window.addEventListener('resize', updateViewportHeight)
   scrollToBottom()
 
   // 监听新日志事件
@@ -313,6 +372,8 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  clearTimeout(searchTimer)
+  window.removeEventListener('resize', updateViewportHeight)
   if (unsubscribe) {
     unsubscribe()
   }

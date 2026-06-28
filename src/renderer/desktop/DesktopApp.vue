@@ -38,7 +38,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { defineAsyncComponent, ref, computed, onMounted, onUnmounted } from 'vue'
 
 // 桌面 UI 组件
 import DesktopWindow from './components/DesktopWindow.vue'
@@ -71,12 +71,12 @@ import IconPalette from './icons/IconPalette.vue'
 import IconLang from './icons/IconLang.vue'
 
 // 视图组件
-import AppsView from './views/AppsView.vue'
-import DashboardView from './views/DashboardView.vue'
-import DevicesView from './views/DevicesView.vue'
-import StreamView from './views/StreamView.vue'
-import ToolsView from './views/ToolsView.vue'
-import SettingsView from './views/SettingsView.vue'
+const AppsView = defineAsyncComponent(() => import('./views/AppsView.vue'))
+const DashboardView = defineAsyncComponent(() => import('./views/DashboardView.vue'))
+const DevicesView = defineAsyncComponent(() => import('./views/DevicesView.vue'))
+const StreamView = defineAsyncComponent(() => import('./views/StreamView.vue'))
+const ToolsView = defineAsyncComponent(() => import('./views/ToolsView.vue'))
+const SettingsView = defineAsyncComponent(() => import('./views/SettingsView.vue'))
 
 // 导入图标资源
 import sunshineIcon from '../../assets/sunshine.ico'

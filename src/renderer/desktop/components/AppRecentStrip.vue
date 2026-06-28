@@ -17,7 +17,14 @@
         @contextmenu.prevent="$emit('contextmenu', $event, app)"
       >
         <div class="recent-cover">
-          <img v-if="getAppImageUrl(app)" :src="getAppImageUrl(app)" :alt="app.name" @error="handleImageError($event, app)" />
+          <img
+            v-if="getAppImageUrl(app)"
+            :src="getAppImageUrl(app)"
+            :alt="app.name"
+            loading="lazy"
+            decoding="async"
+            @error="handleImageError($event, app)"
+          />
           <div v-else class="mini-placeholder">{{ app.name?.[0] || '?' }}</div>
         </div>
         <span class="recent-name">{{ app.name }}</span>
@@ -66,6 +73,8 @@ defineEmits(['launch', 'contextmenu'])
 }
 
 .recent-tile {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 112px;
   flex-shrink: 0;
   width: 80px;
   cursor: pointer;

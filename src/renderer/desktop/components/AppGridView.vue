@@ -17,6 +17,8 @@
           :src="getAppImageUrl(app)"
           :alt="app.name"
           class="cover-image"
+          loading="lazy"
+          decoding="async"
           @error="handleImageError($event, app)"
         />
         <div v-else class="cover-placeholder">

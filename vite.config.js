@@ -3,6 +3,8 @@ import vuePlugin from '@vitejs/plugin-vue'
 import { defineConfig } from 'vite'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
+import Components from 'unplugin-vue-components/vite'
+import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -51,7 +53,17 @@ export default defineConfig(() => ({
       },
     },
   },
-  plugins: [vuePlugin()],
+  plugins: [
+    vuePlugin(),
+    Components({
+      dts: false,
+      resolvers: [
+        ElementPlusResolver({
+          importStyle: 'css',
+        }),
+      ],
+    }),
+  ],
   resolve: {
     alias: {
       '@': rendererSrcPath,

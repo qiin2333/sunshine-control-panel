@@ -69,11 +69,16 @@ pub fn dispatch_cli_quick_share(paths: Vec<String>) {
 
     tauri::async_runtime::spawn(async move {
         match quick_share_folder_internal(paths).await {
-            Ok(mapping) => info!(
-                "file mapping quick share created: {} ({})",
-                mapping.name, mapping.path
-            ),
-            Err(e) => warn!("file mapping quick share failed: {e}"),
+            Ok(mapping) => {
+                let message = format!("已共享文件夹：{}\n{}", mapping.name, mapping.path);
+                info!("file mapping quick share created: {} ({})", mapping.name, mapping.path);
+                show_quick_share_message("Sunshine 文件夹共享", &message, false);
+            }
+            Err(e) => {
+                let message = format!("共享文件夹失败：\n{e}");
+                warn!("file mapping quick share failed: {e}");
+                show_quick_share_message("Sunshine 文件夹共享", &message, true);
+            }
         }
     });
 }
@@ -205,6 +210,39 @@ fn strip_windows_verbatim_prefix(path: &str) -> String {
     } else {
         path.to_string()
     }
+}
+
+#[cfg(target_os = "windows")]
+fn show_quick_share_message(title: &str, message: &str, is_error: bool) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        MessageBoxW, MB_ICONERROR, MB_ICONINFORMATION, MB_OK,
+    };
+    use windows::core::PCWSTR;
+
+    let title = to_wide_null(title);
+    let message = to_wide_null(message);
+    let icon = if is_error {
+        MB_ICONERROR
+    } else {
+        MB_ICONINFORMATION
+    };
+
+    unsafe {
+        let _ = MessageBoxW(
+            Some(HWND(std::ptr::null_mut())),
+            PCWSTR(message.as_ptr()),
+            PCWSTR(title.as_ptr()),
+            MB_OK | icon,
+        );
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn show_quick_share_message(_title: &str, _message: &str, _is_error: bool) {}
+
+fn to_wide_null(text: &str) -> Vec<u16> {
+    text.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 #[cfg(test)]

@@ -162,12 +162,12 @@
 </template>
 
 <script setup>
-import { computed, ref, watch, onMounted } from 'vue'
+import { computed, defineAsyncComponent, ref, watch, onMounted } from 'vue'
 import VddSettings from './VddSettings.vue'
 import Welcome from './welcome.vue'
 import WebStreamSettings from './WebStreamSettings.vue'
 import AiAssistant from './AiAssistant.vue'
-import UpdateDialog from './UpdateDialog.vue'
+const UpdateDialog = defineAsyncComponent(() => import('./UpdateDialog.vue'))
 import { useSidebarState } from '../composables/useSidebarState.js'
 import { useWindowControls } from '../composables/useWindowControls.js'
 import { useTools } from '../composables/useTools.js'

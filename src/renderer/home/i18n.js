@@ -81,7 +81,7 @@ export const translations = {
       viewPrerelease: '查看预发布版本'
     },
     clients: {
-      title: '📱 推荐的 Moonlight 客户端',
+      title: '📱 推荐的 Moonlight Client',
       subtitle: '建议使用以下经过优化的客户端获得最佳的串流体验',
       downloadBtn: '下载 →'
     },
@@ -181,7 +181,7 @@ export const translations = {
       allVersions: 'All Versions',
       githubReleases: 'GitHub Releases',
       mirrorDownload: 'Mirror Download',
-      domesticSpeed: 'Domestic Speed',
+      domesticSpeed: 'China mirror',
       prerelease: '🚀 Pre-release Available',
       prereleaseFound: 'New pre-release version found',
       viewPrerelease: 'View Pre-release'
@@ -206,8 +206,8 @@ export const translations = {
       userGuideDesc: 'Detailed usage guide and configuration instructions',
       officialDocs: '📋 Official Docs',
       officialDocsDesc: 'LizardByte official documentation reference',
-      qqGroup: '💬 QQ Group',
-      qqGroupDesc: 'Join the community for help'
+      qqGroup: '💬 QQ Community',
+      qqGroupDesc: 'Join the QQ community for help'
     },
     footer: {
       title: 'Sunshine Foundation',

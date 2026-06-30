@@ -141,76 +141,145 @@
           alt="Sunshine Control Panel"
         />
       </div>
-      <h1>Sunshine Control Panel</h1>
-      <div class="version" id="app-version">版本 Loading...</div>
-      <div class="description">Sunshine 控制面板 - 为游戏流媒体提供强大的 GUI 管理工具</div>
+      <h1 data-i18n="appTitle">Sunshine Control Panel</h1>
+      <div class="version" id="app-version">版本加载中...</div>
+      <div class="description" data-i18n="description">
+        Sunshine Control Panel - 给游戏串流用的 GUI 管理工具，杂鱼操作也能稳稳搞定~
+      </div>
 
       <div class="info-grid" id="info-grid">
         <div class="info-item">
           <div class="info-label">构建时间</div>
-          <div class="info-value" id="build-time">Loading...</div>
+          <div class="info-value">加载中...</div>
         </div>
         <div class="info-item">
           <div class="info-label">架构</div>
-          <div class="info-value" id="arch">Loading...</div>
+          <div class="info-value">加载中...</div>
         </div>
         <div class="info-item">
           <div class="info-label">Tauri 版本</div>
-          <div class="info-value" id="tauri-version">Loading...</div>
+          <div class="info-value">加载中...</div>
         </div>
       </div>
 
       <div class="links">
         <a href="https://github.com/AlkaidLab/foundation-sunshine" class="link" target="_blank">GitHub</a>
-        <a href="https://www.alkaidlab.com/" class="link" target="_blank">官网</a>
+        <a href="https://www.alkaidlab.com/" class="link" target="_blank" data-i18n="website">官网</a>
       </div>
 
       <div class="copyright">© 2025 Foundation Sunshine | qiin2333 | alkaidlab.com</div>
     </div>
 
     <script type="module">
-      const DEFAULT_VALUES = {
-        appVersion: 'unknown',
-        tauriVersion: 'unknown',
+      import {
+        getInitialSimpleLocale,
+        pickSimpleMessages,
+        setDocumentLocale,
+        syncSimpleLocaleFromSunshine,
+      } from '../shared/simple-i18n.js'
+
+      const MESSAGES = {
+        zh: {
+          title: '关于 Sunshine Control Panel',
+          appTitle: 'Sunshine Control Panel',
+          version: '版本 {version}',
+          versionLoading: '版本加载中...',
+          description: 'Sunshine Control Panel - 给游戏串流用的 GUI 管理工具，杂鱼操作也能稳稳搞定~',
+          buildTime: '构建时间',
+          architecture: '架构',
+          tauriVersion: 'Tauri 版本',
+          operatingSystem: '操作系统',
+          totalMemory: '总内存',
+          processor: '处理器',
+          loading: '加载中...',
+          unknown: '未知',
+          website: '官网',
+        },
+        en: {
+          title: 'About Sunshine Control Panel',
+          appTitle: 'Sunshine Control Panel',
+          version: 'Version {version}',
+          versionLoading: 'Version Loading...',
+          description: 'Sunshine Control Panel - a powerful GUI management tool for game streaming',
+          buildTime: 'Build Time',
+          architecture: 'Architecture',
+          tauriVersion: 'Tauri Version',
+          operatingSystem: 'Operating System',
+          totalMemory: 'Total Memory',
+          processor: 'Processor',
+          loading: 'Loading...',
+          unknown: 'Unknown',
+          website: 'Website',
+        },
       }
 
       const $ = (id) => document.getElementById(id)
+      let text = pickSimpleMessages(MESSAGES)
+      let latestData = null
+
+      const applyStaticText = () => {
+        document.querySelectorAll('[data-i18n]').forEach((element) => {
+          const key = element.dataset.i18n
+          element.textContent = text[key] || ''
+        })
+      }
+
+      const applyLocale = (locale) => {
+        text = pickSimpleMessages(MESSAGES, locale)
+        setDocumentLocale(locale)
+        document.title = text.title
+        applyStaticText()
+        if (!latestData) {
+          $('app-version').textContent = text.versionLoading
+          renderInfoGrid(getLoadingRows())
+        } else {
+          updateUI(latestData)
+        }
+      }
 
       const createInfoItem = (label, value, fontSize = '14px') => {
         const element = document.createElement('div')
+        const labelElement = document.createElement('div')
+        const valueElement = document.createElement('div')
+
         element.className = 'info-item'
-        element.innerHTML = `
-          <div class="info-label">${label}</div>
-          <div class="info-value" style="font-size: ${fontSize};">${value}</div>
-        `
+        labelElement.className = 'info-label'
+        labelElement.textContent = label
+        valueElement.className = 'info-value'
+        valueElement.style.fontSize = fontSize
+        valueElement.textContent = value
+
+        element.append(labelElement, valueElement)
         return element
       }
 
       const formatMemory = (bytes) => `${(bytes / (1024 ** 3)).toFixed(1)} GB`
 
-      const updateUI = (data) => {
-        $('app-version').textContent = `版本 ${data.appVersion}`
-        $('build-time').textContent = data.buildTime
-        $('arch').textContent = data.arch
-        $('tauri-version').textContent = data.tauriVersion
+      const getLoadingRows = () => [
+        { label: text.buildTime, value: text.loading },
+        { label: text.architecture, value: text.loading },
+        { label: text.tauriVersion, value: text.loading },
+      ]
 
+      const getInfoRows = (data) => [
+        { label: text.buildTime, value: data.buildTime || text.unknown },
+        { label: text.architecture, value: data.arch || text.unknown },
+        { label: text.tauriVersion, value: data.tauriVersion || text.unknown },
+        data.osVersion && { label: text.operatingSystem, value: data.osVersion },
+        data.memoryTotal && { label: text.totalMemory, value: formatMemory(data.memoryTotal) },
+        data.cpuModel && { label: text.processor, value: data.cpuModel, fontSize: '12px' },
+      ].filter(Boolean)
+
+      const renderInfoGrid = (rows) => {
         const infoGrid = $('info-grid')
+        infoGrid.replaceChildren(...rows.map((row) => createInfoItem(row.label, row.value, row.fontSize)))
+        infoGrid.classList.toggle('multi-row', rows.length > 3)
+      }
 
-        if (data.osVersion) {
-          infoGrid.appendChild(createInfoItem('操作系统', data.osVersion))
-        }
-
-        if (data.memoryTotal) {
-          infoGrid.appendChild(createInfoItem('总内存', formatMemory(data.memoryTotal)))
-        }
-
-        if (data.cpuModel) {
-          infoGrid.appendChild(createInfoItem('处理器', data.cpuModel, '12px'))
-        }
-
-        if (infoGrid.children.length > 3) {
-          infoGrid.classList.add('multi-row')
-        }
+      const updateUI = (data) => {
+        latestData = data
+        $('app-version').textContent = text.version.replace('{version}', data.appVersion || text.unknown)
+        renderInfoGrid(getInfoRows(data))
       }
 
       const loadSystemInfo = async () => {
@@ -219,10 +288,10 @@
           const systemInfo = await invoke('get_system_info')
 
           updateUI({
-            appVersion: systemInfo.app_version || DEFAULT_VALUES.appVersion,
+            appVersion: systemInfo.app_version,
             buildTime: systemInfo.build_time || new Date().toLocaleDateString(),
-            arch: systemInfo.arch || 'Unknown',
-            tauriVersion: systemInfo.tauri_version || DEFAULT_VALUES.tauriVersion,
+            arch: systemInfo.arch,
+            tauriVersion: systemInfo.tauri_version,
             osVersion: systemInfo.os_version,
             memoryTotal: systemInfo.memory_total,
             cpuModel: systemInfo.cpu_model,
@@ -231,15 +300,21 @@
           console.error('获取系统信息失败，使用默认值:', error)
 
           updateUI({
-            appVersion: DEFAULT_VALUES.appVersion,
+            appVersion: '',
             buildTime: new Date().toLocaleDateString(),
             arch: navigator.platform.includes('64') ? 'x64' : 'x86',
-            tauriVersion: DEFAULT_VALUES.tauriVersion,
+            tauriVersion: '',
           })
         }
       }
 
-      document.addEventListener('DOMContentLoaded', loadSystemInfo)
+      const init = () => {
+        applyLocale(getInitialSimpleLocale())
+        syncSimpleLocaleFromSunshine(MESSAGES, applyLocale)
+        loadSystemInfo()
+      }
+
+      document.addEventListener('DOMContentLoaded', init)
     </script>
   </body>
 </html>

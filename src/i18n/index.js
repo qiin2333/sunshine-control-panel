@@ -1,3 +1,4 @@
+import { watch } from 'vue'
 import { createI18n } from 'vue-i18n'
 
 // 导入所有语言文件
@@ -49,7 +50,7 @@ export const supportedLocales = [
 // 创建 i18n 实例
 export const i18n = createI18n({
   legacy: false, // 使用 Composition API 模式
-  locale: 'zh', // 默认语言
+  locale: getDefaultLocale(), // 默认跟随已保存设置或系统语言
   fallbackLocale: 'en', // 回退语言
   messages: {
     en,
@@ -75,6 +76,12 @@ export const i18n = createI18n({
   },
 })
 
+function setDocumentLanguage(locale) {
+  document.documentElement.lang = String(locale || '').startsWith('zh') ? 'zh-CN' : 'en'
+}
+
+watch(i18n.global.locale, setDocumentLanguage, { immediate: true })
+
 // 获取默认语言
 export function getDefaultLocale() {
   // 尝试从 localStorage 读取
@@ -91,14 +98,15 @@ export function getDefaultLocale() {
     return locale.code
   }
 
-  // 默认返回中文
-  return 'zh'
+  // 默认返回英文，避免英语系统用户首次打开时看到中文界面
+  return 'en'
 }
 
 // 设置语言
 export function setLocale(locale) {
   if (supportedLocales.find((l) => l.code === locale)) {
     i18n.global.locale.value = locale
+    setDocumentLanguage(locale)
     localStorage.setItem('sunshine-locale', locale)
     return true
   }

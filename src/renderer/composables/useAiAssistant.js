@@ -3,6 +3,7 @@ import { ElMessage } from 'element-plus'
 import { callLLM, fetchModels } from './aiClient.js'
 import { getAppsContext, getLogsContext, parseAction, executeAction } from './aiActions.js'
 import { AI_PROVIDERS, DEFAULT_CONFIG, STORAGE_KEY } from './aiProviders.js'
+import { useI18n } from '../desktop/i18n/index.js'
 
 // 重新导出供外部使用
 export { AI_PROVIDERS }
@@ -60,7 +61,7 @@ const SYSTEM_PROMPT = `你是 Sunshine 串流软件的 AI 助手"米塔"。你�
 ## 你的核心能力
 
 ### 1. 生成菜单命令（menu-cmd）
-菜单命令会出现在 Moonlight 客户端的串流菜单中，用户可在串流时一键执行。
+菜单命令会出现在 Moonlight Client 的串流菜单中，用户可在串流时一键执行。
 每条菜单命令包含：
 - name: 显示名称
 - cmd: 要执行的命令（Windows 命令行）
@@ -100,7 +101,7 @@ const SYSTEM_PROMPT = `你是 Sunshine 串流软件的 AI 助手"米塔"。你�
 - **Fatal/Error 级别日志**：这些通常是问题的直接原因
 - **Warning 日志**：可能暗示潜在问题
 - **编码器相关日志**：NVENC/AMF/软件编码的错误或回退
-- **网络/连接日志**：Moonlight 客户端连接失败、超时等
+- **网络/连接日志**：Moonlight Client 连接失败、超时等
 - **音视频管道日志**：音频设备问题、视频捕获失败
 - **配置加载日志**：配置项无效或冲突
 
@@ -183,10 +184,22 @@ const SYSTEM_PROMPT = `你是 Sunshine 串流软件的 AI 助手"米塔"。你�
 - 根据用户描述判断应该用 menu-cmd 还是 prep-cmd
 `
 
+function getLocalizedSystemPrompt(locale) {
+  const replyLanguage = locale === 'zh' ? 'Chinese' : 'English'
+  return `${SYSTEM_PROMPT}
+
+## UI language
+The current UI language is ${replyLanguage}.
+Reply to the user in ${replyLanguage}. All user-facing explanations, command names, generated app/menu labels, and JSON "explanation" fields must use ${replyLanguage}.`
+}
+
 /**
  * AI 助手 Composable — 状态管理 + 对话逻辑
  */
 export function useAiAssistant() {
+  const { t, locale } = useI18n()
+  const ui = () => t.value.aiAssistant.runtime
+
   // 配置
   const config = reactive(loadConfig())
   const isConnected = ref(false)
@@ -287,7 +300,7 @@ export function useAiAssistant() {
     clearTimeout(saveTimer)
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...config }))
     syncToServer()
-    ElMessage.success('配置已保存并同步到服务端')
+    ElMessage.success(ui().configSaved)
   }
 
   // 初始化时从服务端同步（不阻塞 UI）
@@ -315,7 +328,7 @@ export function useAiAssistant() {
       const models = await fetchModels(config.apiBase, config.apiKey, config.provider)
       remoteModels.value = models
       if (models.length > 0) {
-        ElMessage.success(`已拉取 ${models.length} 个可用模型`)
+        ElMessage.success(ui().modelsFetched.replace('{count}', models.length))
       }
     } catch (error) {
       console.warn('拉取模型列表失败:', error.message)
@@ -340,7 +353,7 @@ export function useAiAssistant() {
 
   async function testConnection() {
     if (!config.apiKey && isApiKeyRequired(config)) {
-      ElMessage.warning('请先填写 API Key')
+      ElMessage.warning(ui().apiKeyRequired)
       return false
     }
 
@@ -349,10 +362,10 @@ export function useAiAssistant() {
       await syncToServer()
       await callLLM(config, [{ role: 'user', content: 'hi' }], 5)
       isConnected.value = true
-      ElMessage.success('AI 服务连接成功！')
+      ElMessage.success(ui().connectionSuccess)
       return true
     } catch (error) {
-      ElMessage.error(`连接失败: ${error.message}`)
+      ElMessage.error(ui().connectionFailed.replace('{error}', error.message))
       isConnected.value = false
       return false
     } finally {
@@ -370,12 +383,12 @@ export function useAiAssistant() {
     await syncFromServer()
 
     if (!config.enabled) {
-      ElMessage.warning('请先启用米塔 AI 助手')
+      ElMessage.warning(ui().enableFirst)
       return
     }
 
     if (!config.apiKey && isApiKeyRequired(config)) {
-      ElMessage.warning('璇峰厛濉啓 API Key')
+      ElMessage.warning(ui().apiKeyRequired)
       return
     }
 
@@ -386,12 +399,12 @@ export function useAiAssistant() {
     try {
       const [appsContext, logsContext] = await Promise.all([getAppsContext(), getLogsContext()])
       const messages = [
-        { role: 'system', content: SYSTEM_PROMPT + appsContext + logsContext },
+        { role: 'system', content: getLocalizedSystemPrompt(locale.value) + appsContext + logsContext },
         ...chatHistory.value.slice(-10).map((m) => ({ role: m.role, content: m.content })),
       ]
 
       const assistantMessage = await callLLM(config, messages)
-      if (!assistantMessage) throw new Error('无法获取回复')
+      if (!assistantMessage) throw new Error(ui().emptyResponse)
 
       const msg = { role: 'assistant', content: assistantMessage, timestamp: Date.now() }
 
@@ -403,7 +416,7 @@ export function useAiAssistant() {
     } catch (error) {
       chatHistory.value.push({
         role: 'assistant',
-        content: `❌ 请求出错: ${error.message}`,
+        content: ui().requestError.replace('{error}', error.message),
         timestamp: Date.now(),
         isError: true,
       })
@@ -442,7 +455,7 @@ export function useAiAssistant() {
       chatHistory.value.push({ role: 'assistant', content: result, timestamp: Date.now() })
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
-      ElMessage.error(`操作失败: ${msg}`)
+      ElMessage.error(ui().actionFailed.replace('{error}', msg))
     }
   }
 

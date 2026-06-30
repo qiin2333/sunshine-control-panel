@@ -1,46 +1,46 @@
 <template>
-  <SettingsCard title="文件夹共享" :icon="FolderOpened">
-    <SettingsRow name="共享状态" description="右键共享使用只读权限，仅允许已配对设备访问">
+  <SettingsCard :title="text.title" :icon="FolderOpened">
+    <SettingsRow :name="text.status" :description="text.statusDesc">
       <div class="sharing-status">
         <span class="status-indicator" :class="statusClass"></span>
         <span>{{ statusText }}</span>
       </div>
     </SettingsRow>
 
-    <SettingsRow name="共享文件夹" description="选择主机上的文件夹后，Moonlight 可在串流中读取">
+    <SettingsRow :name="text.sharedFolders" :description="text.sharedFoldersDesc">
       <div class="sharing-control-group">
-        <button class="desktop-btn icon-btn" :disabled="refreshDisabled" title="刷新" @click="loadMappings">
+        <button class="desktop-btn icon-btn" :disabled="refreshDisabled" :title="text.refresh" @click="loadMappings">
           <Refresh />
         </button>
         <button class="desktop-btn primary" :disabled="actionDisabled" @click="addFolder">
           <Plus />
-          添加
+          {{ text.add }}
         </button>
       </div>
     </SettingsRow>
 
-    <SettingsRow name="资源管理器右键菜单" description="在文件夹右键菜单中显示“通过 Sunshine 共享”">
+    <SettingsRow :name="text.explorerMenu" :description="text.explorerMenuDesc">
       <div class="sharing-control-group">
         <button class="desktop-btn compact" :disabled="actionDisabled" @click="installMenu">
           <Link />
-          启用
+          {{ text.enable }}
         </button>
         <button class="desktop-btn compact" :disabled="actionDisabled" @click="uninstallMenu">
-          关闭
+          {{ text.disable }}
         </button>
       </div>
     </SettingsRow>
 
     <div class="sharing-policy">
-      <span class="share-chip safe">只读</span>
-      <span class="share-chip safe">仅已配对设备</span>
-      <span class="share-chip safe">阻止链接穿透</span>
+      <span class="share-chip safe">{{ text.readOnly }}</span>
+      <span class="share-chip safe">{{ text.pairedOnly }}</span>
+      <span class="share-chip safe">{{ text.blockLinks }}</span>
     </div>
 
     <Transition name="notice">
       <div v-if="notice.text" class="sharing-notice" :class="notice.type">
         <span>{{ notice.text }}</span>
-        <button class="notice-close" title="关闭" @click="clearNotice">×</button>
+        <button class="notice-close" :title="text.close" @click="clearNotice">×</button>
       </div>
     </Transition>
 
@@ -49,19 +49,19 @@
     </div>
 
     <div v-if="!runtimeChecked || loading" class="sharing-empty">
-      {{ runtimeChecked ? '正在读取共享列表' : '正在检测运行环境' }}
+      {{ runtimeChecked ? text.loadingShares : text.detectingRuntime }}
     </div>
 
     <div v-else-if="!hasTauri" class="sharing-empty">
-      <div class="empty-title">文件夹共享需要在桌面端使用</div>
+      <div class="empty-title">{{ text.desktopOnly }}</div>
     </div>
 
     <div v-else-if="mappings.length === 0" class="sharing-empty">
-      <div class="empty-title">还没有共享文件夹</div>
+      <div class="empty-title">{{ text.empty }}</div>
       <div class="empty-actions">
         <button class="desktop-btn primary" :disabled="actionDisabled" @click="addFolder">
           <Plus />
-          选择文件夹
+          {{ text.chooseFolder }}
         </button>
       </div>
     </div>
@@ -73,14 +73,14 @@
           <div class="share-path" :title="mapping.path">{{ mapping.path }}</div>
         </div>
         <div class="share-meta">
-          <span class="share-chip">{{ mapping.mode === 'readwrite' ? '读写' : '只读' }}</span>
+          <span class="share-chip">{{ mapping.mode === 'readwrite' ? text.readWrite : text.readOnly }}</span>
           <span class="share-chip">{{ clientLabel(mapping) }}</span>
-          <span v-if="!mapping.follow_reparse_points" class="share-chip safe">阻止链接穿透</span>
+          <span v-if="!mapping.follow_reparse_points" class="share-chip safe">{{ text.blockLinks }}</span>
         </div>
         <button
           class="desktop-btn danger icon-btn"
           :disabled="actionDisabled"
-          title="撤销共享"
+          :title="text.revoke"
           @click="removeMapping(mapping)"
         >
           <Delete />
@@ -95,11 +95,13 @@ import { computed, onMounted, ref } from 'vue'
 import { Delete, FolderOpened, Link, Plus, Refresh } from '@element-plus/icons-vue'
 import { open } from '@tauri-apps/plugin-dialog'
 import { isTauriRuntime } from '../../composables/useTauri.js'
+import { useI18n } from '../../i18n/index.js'
 import { fileMapping } from '../../../tauri-adapter.js'
 import SettingsCard from './SettingsCard.vue'
 import SettingsRow from './SettingsRow.vue'
 
 const mappings = ref([])
+const { t } = useI18n()
 const loading = ref(false)
 const busy = ref(false)
 const runtimeChecked = ref(false)
@@ -107,6 +109,7 @@ const hasTauri = ref(false)
 const error = ref('')
 const notice = ref({ type: 'success', text: '' })
 
+const text = computed(() => t.value.fileSharing)
 const canUseSharing = computed(() => runtimeChecked.value && hasTauri.value)
 const actionDisabled = computed(() => busy.value || !canUseSharing.value)
 const refreshDisabled = computed(() => loading.value || !canUseSharing.value)
@@ -118,11 +121,11 @@ const statusClass = computed(() => {
 })
 
 const statusText = computed(() => {
-  if (!runtimeChecked.value) return '检测中'
-  if (!hasTauri.value) return '仅桌面端可用'
-  if (loading.value) return '同步中'
-  if (mappings.value.length === 0) return '未共享'
-  return `${mappings.value.length} 个共享`
+  if (!runtimeChecked.value) return text.value.detecting
+  if (!hasTauri.value) return text.value.desktopOnlyShort
+  if (loading.value) return text.value.syncing
+  if (mappings.value.length === 0) return text.value.notShared
+  return text.value.shareCount.replace('{count}', mappings.value.length)
 })
 
 async function loadMappings() {
@@ -157,7 +160,7 @@ async function addFolder() {
     if (!path) return
     const mapping = await fileMapping.quickShareFolder(path)
     await loadMappings()
-    showNotice('success', `已共享“${mapping?.name || folderName(path)}”，Moonlight 可只读访问`)
+    showNotice('success', text.value.sharedSuccess.replace('{name}', mapping?.name || folderName(path)))
   } catch (err) {
     error.value = friendlyError(err)
   } finally {
@@ -167,14 +170,14 @@ async function addFolder() {
 
 async function removeMapping(mapping) {
   if (!mapping?.id || actionDisabled.value) return
-  if (!confirm(`撤销共享“${mapping.name || mapping.id}”？`)) return
+  if (!confirm(text.value.revokeConfirm.replace('{name}', mapping.name || mapping.id))) return
 
   busy.value = true
   error.value = ''
   try {
     await fileMapping.remove(mapping.id)
     mappings.value = mappings.value.filter(item => item.id !== mapping.id)
-    showNotice('success', `已撤销“${mapping.name || mapping.id}”`)
+    showNotice('success', text.value.revokedSuccess.replace('{name}', mapping.name || mapping.id))
   } catch (err) {
     error.value = friendlyError(err)
   } finally {
@@ -188,7 +191,7 @@ async function installMenu() {
   error.value = ''
   try {
     await fileMapping.installMenu()
-    showNotice('success', '已添加资源管理器右键共享入口')
+    showNotice('success', text.value.menuInstalled)
   } catch (err) {
     error.value = friendlyError(err)
   } finally {
@@ -202,7 +205,7 @@ async function uninstallMenu() {
   error.value = ''
   try {
     await fileMapping.uninstallMenu()
-    showNotice('success', '已移除资源管理器右键共享入口')
+    showNotice('success', text.value.menuRemoved)
   } catch (err) {
     error.value = friendlyError(err)
   } finally {
@@ -211,14 +214,16 @@ async function uninstallMenu() {
 }
 
 function clientLabel(mapping) {
-  return mapping.clients?.length ? `${mapping.clients.length} 台设备` : '所有已配对设备'
+  return mapping.clients?.length
+    ? text.value.deviceCount.replace('{count}', mapping.clients.length)
+    : text.value.allPairedDevices
 }
 
 function folderName(path) {
   return String(path || '')
     .split(/[\\/]/)
     .filter(Boolean)
-    .pop() || '文件夹'
+    .pop() || text.value.folderFallback
 }
 
 function showNotice(type, text) {
@@ -230,17 +235,18 @@ function clearNotice() {
 }
 
 function friendlyError(err) {
-  const text = String(err || '').trim()
-  if (!text) return '操作失败'
-  if (text.includes('Connection') || text.includes('connection') || text.includes('refused')) {
-    return '无法连接 Sunshine，请确认 Sunshine 正在运行'
+  const errorText = String(err || '').trim()
+  const msg = t.value.fileSharing
+  if (!errorText) return msg.operationFailed
+  if (errorText.includes('Connection') || errorText.includes('connection') || errorText.includes('refused')) {
+    return msg.connectionFailed
   }
-  if (text.includes('not a folder')) return '请选择一个文件夹'
-  if (text.includes('does not exist') || text.includes('cannot be accessed')) return '文件夹不存在或无法访问'
-  if (text.includes('readwrite mode is not supported')) return '当前阶段仅支持只读共享'
-  if (text.includes('allow_delete')) return '当前阶段不允许远端删除文件'
-  if (text.includes('follow_reparse_points')) return '当前阶段不允许穿透符号链接或 junction'
-  return text
+  if (errorText.includes('not a folder')) return msg.chooseFolderError
+  if (errorText.includes('does not exist') || errorText.includes('cannot be accessed')) return msg.folderUnavailable
+  if (errorText.includes('readwrite mode is not supported')) return msg.readOnlyOnly
+  if (errorText.includes('allow_delete')) return msg.deleteUnsupported
+  if (errorText.includes('follow_reparse_points')) return msg.reparseUnsupported
+  return errorText
 }
 
 onMounted(async () => {

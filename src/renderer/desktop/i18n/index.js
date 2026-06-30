@@ -1,10 +1,24 @@
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { zh } from './zh.js'
 import { en } from './en.js'
 
 const messages = { zh, en }
 
-const currentLocale = ref(localStorage.getItem('language') || 'zh')
+function getDefaultLocale() {
+  const saved = localStorage.getItem('language')
+  if (saved === 'zh' || saved === 'en') return saved
+
+  const browserLang = navigator.language || navigator.userLanguage || ''
+  return browserLang.toLowerCase().startsWith('zh') ? 'zh' : 'en'
+}
+
+const currentLocale = ref(getDefaultLocale())
+
+function setDocumentLanguage(locale) {
+  document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en'
+}
+
+watch(currentLocale, setDocumentLanguage, { immediate: true })
 
 // 从 Sunshine 配置同步语言设置（初始化时调用一次）
 let syncInitialized = false
@@ -72,7 +86,7 @@ async function syncLocaleToTray(locale) {
 }
 
 export function useI18n() {
-  const t = computed(() => messages[currentLocale.value] || messages.zh)
+  const t = computed(() => messages[currentLocale.value] || messages.en)
   const locale = computed({
     get: () => currentLocale.value,
     set: (val) => {

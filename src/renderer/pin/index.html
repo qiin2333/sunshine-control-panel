@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
@@ -176,8 +176,8 @@
   </head>
   <body>
     <div class="pin-container">
-      <h1>🔐 PIN 配对</h1>
-      <p class="subtitle">快点输入 4 位 PIN 码啦~人家等着配对呢！</p>
+      <h1 id="page-title">🔐 PIN 配对</h1>
+      <p class="subtitle" id="subtitle">输入 Moonlight 上显示的 4 位 PIN 来配对这个客户端，别输错啦~</p>
 
       <div class="pin-inputs">
         <input type="text" class="pin-input" maxlength="1" inputmode="numeric" pattern="\d" data-index="0" autofocus />
@@ -190,9 +190,70 @@
     </div>
 
     <script type="module">
+      import {
+        getInitialSimpleLocale,
+        pickSimpleMessages,
+        setDocumentLocale,
+        syncSimpleLocaleFromSunshine,
+      } from '../shared/simple-i18n.js'
+
+      const MESSAGES = {
+        zh: {
+          title: 'PIN 配对',
+          heading: '🔐 PIN 配对',
+          subtitle: '输入 Moonlight 上显示的 4 位 PIN 来配对这个客户端，别输错啦~',
+          defaultClientName: 'Moonlight 客户端',
+          startingService: '正在启动服务，别急嘛...',
+          startingServiceProgress: '正在启动服务，别急嘛... ({progress}%)',
+          cannotConnect: '连接不上服务，请确认 Sunshine 正在运行，杂鱼~',
+          serviceNotReady: '服务还没准备好，再等一下嘛...',
+          pairing: '正在配对...',
+          pairSuccess: '配对成功！',
+          pairIncorrect: '配对失败：PIN 不对哦',
+          requestFailed: '请求失败',
+          requestTimeout: '请求超时，请检查网络后再试一次',
+          requestTimeoutShort: '请求超时',
+          networkError: '网络错误',
+        },
+        en: {
+          title: 'PIN Pairing',
+          heading: '🔐 PIN Pairing',
+          subtitle: 'Enter the 4-digit PIN shown in Moonlight to pair this client.',
+          defaultClientName: 'Moonlight Client',
+          startingService: 'Starting service...',
+          startingServiceProgress: 'Starting service... ({progress}%)',
+          cannotConnect: 'Cannot connect to the service. Make sure Sunshine is running.',
+          serviceNotReady: 'Service is not ready yet. Please wait...',
+          pairing: 'Pairing...',
+          pairSuccess: 'Pairing successful!',
+          pairIncorrect: 'Pairing failed: incorrect PIN',
+          requestFailed: 'Request failed',
+          requestTimeout: 'Request timed out. Check your network connection or try again later.',
+          requestTimeoutShort: 'Request timed out. Check your network connection.',
+          networkError: 'Network error',
+        },
+      }
+
+      let text = pickSimpleMessages(MESSAGES)
+
+      const applyLocale = (locale) => {
+        text = pickSimpleMessages(MESSAGES, locale)
+        setDocumentLocale(locale)
+        document.title = text.title
+        document.getElementById('page-title').textContent = text.heading
+        document.getElementById('subtitle').textContent = text.subtitle
+        if (
+          state.clientName === CONFIG.DEFAULT_CLIENT_NAME ||
+          state.clientName === MESSAGES.zh.defaultClientName ||
+          state.clientName === MESSAGES.en.defaultClientName
+        ) {
+          state.clientName = text.defaultClientName
+        }
+      }
+
       const CONFIG = {
         DEFAULT_PROXY_URL: 'http://localhost:48081',
-        DEFAULT_CLIENT_NAME: 'Moonlight Client',
+        DEFAULT_CLIENT_NAME: 'Moonlight 客户端',
         PIN_LENGTH: 4,
         CLOSE_DELAY: 2000,
         PROXY_CHECK_INTERVAL: 1000, // 增加到 1 秒
@@ -247,7 +308,7 @@
       }
 
       const waitForProxy = async () => {
-        showStatus('<span class="spinner"></span>正在启动服务...', 'loading')
+        showStatus(`<span class="spinner"></span>${text.startingService}`, 'loading')
         setInputsDisabled(true)
 
         for (let i = 0; i < CONFIG.PROXY_CHECK_MAX_RETRIES; i++) {
@@ -285,13 +346,16 @@
 
             // 更新状态提示
             const progress = Math.floor(((i + 1) / CONFIG.PROXY_CHECK_MAX_RETRIES) * 100)
-            showStatus(`<span class="spinner"></span>正在启动服务... (${progress}%)`, 'loading')
+            showStatus(
+              `<span class="spinner"></span>${text.startingServiceProgress.replace('{progress}', progress)}`,
+              'loading'
+            )
           }
 
           await new Promise((resolve) => setTimeout(resolve, CONFIG.PROXY_CHECK_INTERVAL))
         }
 
-        showStatus('❌ 无法连接到服务，请确保 Sunshine 正在运行', 'error')
+        showStatus(`❌ ${text.cannotConnect}`, 'error')
         setInputsDisabled(false)
         return false
       }
@@ -328,14 +392,14 @@
 
           if (!response.ok) {
             const errorText = await response.text().catch(() => '')
-            throw new Error(`HTTP ${response.status}: ${errorText || '请求失败'}`)
+            throw new Error(`HTTP ${response.status}: ${errorText || text.requestFailed}`)
           }
 
           return await response.json()
         } catch (e) {
           clearTimeout(timeoutId)
           if (e.name === 'AbortError') {
-            throw new Error('请求超时，请检查网络连接')
+            throw new Error(text.requestTimeoutShort)
           }
           throw e
         }
@@ -345,33 +409,33 @@
         const pin = getPin()
         if (pin.length !== CONFIG.PIN_LENGTH || state.isSubmitting || !/^\d+$/.test(pin)) return
         if (!state.proxyReady) {
-          showStatus('⏳ 服务尚未就绪，请稍候...', 'loading')
+          showStatus(`⏳ ${text.serviceNotReady}`, 'loading')
           return
         }
 
         state.isSubmitting = true
         setInputsDisabled(true)
-        showStatus('<span class="spinner"></span>配对中...', 'loading')
+        showStatus(`<span class="spinner"></span>${text.pairing}`, 'loading')
 
         try {
           const data = await submitPin(pin)
           const isSuccess = String(data.status).toLowerCase() === 'true'
 
           if (isSuccess) {
-            showStatus('✅ 配对成功！', 'success')
+            showStatus(`✅ ${text.pairSuccess}`, 'success')
             setTimeout(closeWindow, CONFIG.CLOSE_DELAY)
           } else {
-            showStatus('❌ 配对失败：PIN 码错误', 'error')
+            showStatus(`❌ ${text.pairIncorrect}`, 'error')
             clearPin()
             setInputsDisabled(false)
           }
         } catch (error) {
           console.error('配对失败:', error)
-          const errorMsg = error.message || '网络错误'
+          const errorMsg = error.message || text.networkError
           if (errorMsg.includes('超时') || errorMsg.includes('timeout')) {
-            showStatus('❌ 请求超时，请检查网络连接或稍后重试', 'error')
+            showStatus(`❌ ${text.requestTimeout}`, 'error')
           } else if (errorMsg.includes('Failed to fetch') || errorMsg.includes('NetworkError')) {
-            showStatus('❌ 无法连接到服务，请确保 Sunshine 正在运行', 'error')
+            showStatus(`❌ ${text.cannotConnect}`, 'error')
           } else {
             showStatus(`❌ ${errorMsg}`, 'error')
           }
@@ -431,6 +495,8 @@
       }
 
       const init = async () => {
+        applyLocale(getInitialSimpleLocale())
+        syncSimpleLocaleFromSunshine(MESSAGES, applyLocale)
         await getProxyUrl()
         setupEventListeners()
 

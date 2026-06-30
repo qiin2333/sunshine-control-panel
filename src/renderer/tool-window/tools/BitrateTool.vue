@@ -232,7 +232,7 @@ const loadSessions = async (isRefresh = false) => {
     bitrateValue.value = getSessionBitrate(selectedClient.value)
   } catch (error) {
     console.error('获取活动会话失败:', error)
-    showMessage(`❌ 获取会话列表失败: ${error}`, 'error')
+    showMessage(t.value.bitrateTool.loadFailed.replace('{error}', error), 'error')
   } finally {
     loading.value = false
     refreshing.value = false
@@ -248,13 +248,15 @@ const onClientChange = () => {
 // 码率调整
 const applyBitrate = async () => {
   if (!selectedClient.value) {
-    showMessage('❌ 请先选择客户端', 'error', 3000)
+    showMessage(t.value.bitrateTool.selectFirstError, 'error', 3000)
     return
   }
 
   if (!isValidBitrate(bitrateValue.value)) {
     showMessage(
-      `❌ 码率值必须在 ${formatBitrate(BITRATE_LIMITS.MIN)}-${formatBitrate(BITRATE_LIMITS.MAX)} 之间`,
+      t.value.bitrateTool.rangeError
+        .replace('{min}', formatBitrate(BITRATE_LIMITS.MIN))
+        .replace('{max}', formatBitrate(BITRATE_LIMITS.MAX)),
       'error',
       3000
     )
@@ -272,9 +274,9 @@ const applyBitrate = async () => {
     console.error('码率调整错误:', error)
     const errorMessage = error.toString()
     if (errorMessage.includes('身份验证') || errorMessage.includes('401')) {
-      showMessage('❌ 身份验证失败，请检查 Sunshine Web UI 的用户名和密码设置', 'error')
+      showMessage(t.value.bitrateTool.authFailed, 'error')
     } else {
-      showMessage(`❌ 调整失败: ${error}`, 'error')
+      showMessage(t.value.bitrateTool.applyFailed.replace('{error}', error), 'error')
     }
   } finally {
     applying.value = false

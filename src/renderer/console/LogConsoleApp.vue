@@ -4,24 +4,24 @@
     <div class="header">
       <div class="title">
         <el-icon class="title-icon"><Document /></el-icon>
-        日志控制台
+        {{ logText.title }}
       </div>
       <div class="controls">
         <button class="btn" @click="loadLogs">
           <el-icon><RefreshRight /></el-icon>
-          刷新
+          {{ logText.refresh }}
         </button>
         <button class="btn" @click="exportLogs('txt')">
           <el-icon><Download /></el-icon>
-          导出TXT
+          {{ logText.exportTxt }}
         </button>
         <button class="btn" @click="exportLogs('json')">
           <el-icon><Download /></el-icon>
-          导出JSON
+          {{ logText.exportJson }}
         </button>
         <button class="btn danger" @click="clearLogs">
           <el-icon><Delete /></el-icon>
-          清空
+          {{ logText.clear }}
         </button>
       </div>
     </div>
@@ -29,32 +29,32 @@
     <!-- 过滤栏 -->
     <div class="filter-bar">
       <div class="filter-group">
-        <span class="filter-label">过滤级别:</span>
+        <span class="filter-label">{{ logText.filterLevel }}:</span>
         <label class="filter-checkbox">
           <input type="checkbox" v-model="filters.error" />
-          <span class="filter-label-error">错误</span>
+          <span class="filter-label-error">{{ logText.error }}</span>
         </label>
         <label class="filter-checkbox">
           <input type="checkbox" v-model="filters.warn" />
-          <span class="filter-label-warn">警告</span>
+          <span class="filter-label-warn">{{ logText.warn }}</span>
         </label>
         <label class="filter-checkbox">
           <input type="checkbox" v-model="filters.info" />
-          <span class="filter-label-info">信息</span>
+          <span class="filter-label-info">{{ logText.info }}</span>
         </label>
         <label class="filter-checkbox">
           <input type="checkbox" v-model="filters.debug" />
-          <span class="filter-label-debug">调试</span>
+          <span class="filter-label-debug">{{ logText.debug }}</span>
         </label>
         <label class="filter-checkbox">
           <input type="checkbox" v-model="filters.trace" />
-          <span class="filter-label-trace">追踪</span>
+          <span class="filter-label-trace">{{ logText.trace }}</span>
         </label>
       </div>
       <div class="filter-group">
-        <span class="filter-label">来源文件:</span>
+        <span class="filter-label">{{ logText.sourceFile }}:</span>
         <select v-model="filters.file" class="file-filter-select">
-          <option value="">全部文件</option>
+          <option value="">{{ logText.allFiles }}</option>
           <option v-for="file in availableFiles" :key="file" :value="file">{{ file }}</option>
         </select>
       </div>
@@ -68,16 +68,16 @@
           v-model="searchKeyword"
           type="text"
           class="search-input"
-          placeholder="搜索日志内容..."
+          :placeholder="logText.searchPlaceholder"
           @input="handleSearchInput"
         />
-        <button v-if="searchKeyword" class="search-clear-btn" @click="clearSearch" title="清除搜索">
+        <button v-if="searchKeyword" class="search-clear-btn" @click="clearSearch" :title="logText.clearSearch">
           <el-icon><Close /></el-icon>
         </button>
       </div>
       <div v-if="searchKeyword" class="search-info">
         <span class="search-info-icon">🔍</span>
-        找到 <span class="search-info-count">{{ filteredLogs.length }}</span> 条匹配结果
+        {{ logText.found }} <span class="search-info-count">{{ filteredLogs.length }}</span> {{ logText.matchResults }}
       </div>
     </div>
 
@@ -91,7 +91,7 @@
           <div class="sparkle sparkle-3">✨</div>
         </div>
         <div class="empty-state-text">
-          {{ loading ? '正在加载日志中...' : searchKeyword ? '没有找到匹配的日志呢~' : '还没有日志记录哦~' }}
+          {{ loading ? logText.loadingLogs : searchKeyword ? logText.noMatch : logText.noLogs }}
         </div>
       </div>
       <div v-else class="log-virtual-space" :style="{ height: `${totalHeight}px` }">
@@ -113,19 +113,19 @@
     <!-- 统计栏 -->
     <div class="stats">
       <div class="stat-item">
-        <span>总计:</span>
+        <span>{{ logText.total }}:</span>
         <span class="stat-value">{{ stats.total }}</span>
       </div>
       <div class="stat-item">
-        <span class="stat-label-error">错误:</span>
+        <span class="stat-label-error">{{ logText.errors }}:</span>
         <span class="stat-value">{{ stats.error }}</span>
       </div>
       <div class="stat-item">
-        <span class="stat-label-warn">警告:</span>
+        <span class="stat-label-warn">{{ logText.warnings }}:</span>
         <span class="stat-value">{{ stats.warn }}</span>
       </div>
       <div class="stat-item">
-        <span class="stat-label-info">信息:</span>
+        <span class="stat-label-info">{{ logText.info }}:</span>
         <span class="stat-value">{{ stats.info }}</span>
       </div>
     </div>
@@ -133,12 +133,21 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watchEffect } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { confirm as dialogConfirm, message as dialogMessage } from '@tauri-apps/plugin-dialog'
 import { ElMessage } from 'element-plus'
 import { Document, RefreshRight, Delete, Search, Close, Download } from '@element-plus/icons-vue'
+import { useI18n } from '../desktop/i18n/index.js'
+
+const { t, locale } = useI18n()
+const logText = computed(() => t.value.logConsole)
+
+watchEffect(() => {
+  document.title = logText.value.title
+  document.documentElement.lang = locale.value === 'zh' ? 'zh-CN' : 'en'
+})
 
 // 响应式数据
 const allLogs = ref([])
@@ -302,10 +311,10 @@ async function loadLogs() {
   try {
     const logs = await invoke('get_all_logs')
     allLogs.value = logs
-    ElMessage.success(`刷新成功，共 ${logs.length} 条日志`)
+    ElMessage.success(logText.value.refreshed.replace('{count}', logs.length))
   } catch (error) {
     console.error('加载日志失败:', error)
-    ElMessage.error('刷新失败: ' + error)
+    ElMessage.error(`${logText.value.refreshFailed}: ${error}`)
   } finally {
     loading.value = false
   }
@@ -313,14 +322,14 @@ async function loadLogs() {
 
 // 清空日志
 async function clearLogs() {
-  if (await dialogConfirm('确定要清空所有日志吗？', { title: '清空日志', kind: 'warning' })) {
+  if (await dialogConfirm(logText.value.confirmClear, { title: logText.value.clearLogsTitle, kind: 'warning' })) {
     try {
       await invoke('clear_logs')
       allLogs.value = []
-      ElMessage.success('日志已清空')
+      ElMessage.success(logText.value.logsCleared)
     } catch (error) {
       console.error('清空日志失败:', error)
-      await dialogMessage('清空日志失败: ' + error, { title: '错误', kind: 'error' })
+      await dialogMessage(`${logText.value.clearFailed}: ${error}`, { title: logText.value.dialogError, kind: 'error' })
     }
   }
 }
@@ -329,11 +338,11 @@ async function clearLogs() {
 async function exportLogs(format) {
   try {
     const result = await invoke('export_logs', { format })
-    await dialogMessage(result || '日志导出成功', { title: '导出成功', kind: 'info' })
+    await dialogMessage(result || logText.value.exportSuccess, { title: logText.value.exportComplete, kind: 'info' })
   } catch (error) {
     console.error('导出日志失败:', error)
-    if (error && !String(error).includes('用户取消了保存')) {
-      await dialogMessage('导出日志失败: ' + error, { title: '错误', kind: 'error' })
+    if (error && !String(error).includes('用户取消了保存') && !String(error).toLowerCase().includes('cancel')) {
+      await dialogMessage(`${logText.value.exportFailed}: ${error}`, { title: logText.value.dialogError, kind: 'error' })
     }
   }
 }

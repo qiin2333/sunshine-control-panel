@@ -127,14 +127,6 @@ pub fn create_system_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     #[cfg(target_os = "windows")]
     init_sunshine_user_mode_state(app);
 
-    // 初始化语言状态（从 localStorage 无法直接读取，先用默认值，前端初始化后会同步）
-    {
-        let mut locale = CURRENT_LOCALE.lock().unwrap();
-        if locale.is_none() {
-            *locale = Some("zh".to_string());
-        }
-    }
-
     let menu = build_tray_menu(app)?;
     let s = get_tray_strings();
     let tooltip = if utils::is_running_as_admin().unwrap_or(false) {
@@ -534,6 +526,6 @@ pub fn set_tray_locale(app: AppHandle, locale: String) {
 
 /// Tauri 命令：前端获取当前 tray 语言
 #[tauri::command]
-pub fn get_tray_locale() -> String {
-    get_current_locale()
+pub fn get_tray_locale() -> Option<String> {
+    CURRENT_LOCALE.lock().unwrap().clone()
 }

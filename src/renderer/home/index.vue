@@ -3,7 +3,15 @@ import { ref, onMounted, computed } from 'vue'
 import { translations } from './i18n.js'
 
 // 语言状态管理
-const currentLang = ref(localStorage.getItem('language') || 'zh')
+const getDefaultLang = () => {
+  const saved = localStorage.getItem('language')
+  if (saved === 'zh' || saved === 'en') return saved
+
+  const browserLang = navigator.language || navigator.userLanguage || ''
+  return browserLang.toLowerCase().startsWith('zh') ? 'zh' : 'en'
+}
+
+const currentLang = ref(getDefaultLang())
 
 // 切换语言
 const toggleLanguage = () => {

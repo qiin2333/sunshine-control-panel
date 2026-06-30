@@ -81,7 +81,7 @@ export const translations = {
       viewPrerelease: '查看预发布版本'
     },
     clients: {
-      title: '📱 推荐的 Moonlight 客户端',
+      title: '📱 推荐的 Moonlight Client',
       subtitle: '建议使用以下经过优化的客户端获得最佳的串流体验',
       downloadBtn: '下载 →'
     },

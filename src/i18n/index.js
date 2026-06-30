@@ -1,3 +1,4 @@
+import { watch } from 'vue'
 import { createI18n } from 'vue-i18n'
 
 // 导入所有语言文件
@@ -75,6 +76,12 @@ export const i18n = createI18n({
   },
 })
 
+function setDocumentLanguage(locale) {
+  document.documentElement.lang = String(locale || '').startsWith('zh') ? 'zh-CN' : 'en'
+}
+
+watch(i18n.global.locale, setDocumentLanguage, { immediate: true })
+
 // 获取默认语言
 export function getDefaultLocale() {
   // 尝试从 localStorage 读取
@@ -99,6 +106,7 @@ export function getDefaultLocale() {
 export function setLocale(locale) {
   if (supportedLocales.find((l) => l.code === locale)) {
     i18n.global.locale.value = locale
+    setDocumentLanguage(locale)
     localStorage.setItem('sunshine-locale', locale)
     return true
   }

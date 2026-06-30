@@ -235,18 +235,18 @@ function clearNotice() {
 }
 
 function friendlyError(err) {
-  const text = String(err || '').trim()
+  const errorText = String(err || '').trim()
   const msg = t.value.fileSharing
-  if (!text) return msg.operationFailed
-  if (text.includes('Connection') || text.includes('connection') || text.includes('refused')) {
+  if (!errorText) return msg.operationFailed
+  if (errorText.includes('Connection') || errorText.includes('connection') || errorText.includes('refused')) {
     return msg.connectionFailed
   }
-  if (text.includes('not a folder')) return msg.chooseFolderError
-  if (text.includes('does not exist') || text.includes('cannot be accessed')) return msg.folderUnavailable
-  if (text.includes('readwrite mode is not supported')) return msg.readOnlyOnly
-  if (text.includes('allow_delete')) return msg.deleteUnsupported
-  if (text.includes('follow_reparse_points')) return msg.reparseUnsupported
-  return text
+  if (errorText.includes('not a folder')) return msg.chooseFolderError
+  if (errorText.includes('does not exist') || errorText.includes('cannot be accessed')) return msg.folderUnavailable
+  if (errorText.includes('readwrite mode is not supported')) return msg.readOnlyOnly
+  if (errorText.includes('allow_delete')) return msg.deleteUnsupported
+  if (errorText.includes('follow_reparse_points')) return msg.reparseUnsupported
+  return errorText
 }
 
 onMounted(async () => {

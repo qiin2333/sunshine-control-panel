@@ -1,4 +1,4 @@
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { zh } from './zh.js'
 import { en } from './en.js'
 
@@ -13,6 +13,12 @@ function getDefaultLocale() {
 }
 
 const currentLocale = ref(getDefaultLocale())
+
+function setDocumentLanguage(locale) {
+  document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en'
+}
+
+watch(currentLocale, setDocumentLanguage, { immediate: true })
 
 // 从 Sunshine 配置同步语言设置（初始化时调用一次）
 let syncInitialized = false

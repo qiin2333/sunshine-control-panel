@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
@@ -141,28 +141,30 @@
           alt="Sunshine Control Panel"
         />
       </div>
-      <h1 id="app-title">Sunshine 控制面板</h1>
+      <h1 data-i18n="appTitle">Sunshine 控制面板</h1>
       <div class="version" id="app-version">版本加载中...</div>
-      <div class="description" id="description">Sunshine 控制面板 - 给游戏串流用的 GUI 管理工具，杂鱼操作也能稳稳搞定~</div>
+      <div class="description" data-i18n="description">
+        Sunshine 控制面板 - 给游戏串流用的 GUI 管理工具，杂鱼操作也能稳稳搞定~
+      </div>
 
       <div class="info-grid" id="info-grid">
         <div class="info-item">
-          <div class="info-label" id="build-time-label">构建时间</div>
-          <div class="info-value" id="build-time">加载中...</div>
+          <div class="info-label">构建时间</div>
+          <div class="info-value">加载中...</div>
         </div>
         <div class="info-item">
-          <div class="info-label" id="arch-label">架构</div>
-          <div class="info-value" id="arch">加载中...</div>
+          <div class="info-label">架构</div>
+          <div class="info-value">加载中...</div>
         </div>
         <div class="info-item">
-          <div class="info-label" id="tauri-version-label">Tauri 版本</div>
-          <div class="info-value" id="tauri-version">加载中...</div>
+          <div class="info-label">Tauri 版本</div>
+          <div class="info-value">加载中...</div>
         </div>
       </div>
 
       <div class="links">
         <a href="https://github.com/AlkaidLab/foundation-sunshine" class="link" target="_blank">GitHub</a>
-        <a href="https://www.alkaidlab.com/" class="link" target="_blank">Website</a>
+        <a href="https://www.alkaidlab.com/" class="link" target="_blank" data-i18n="website">官网</a>
       </div>
 
       <div class="copyright">© 2025 Foundation Sunshine | qiin2333 | alkaidlab.com</div>
@@ -191,6 +193,7 @@
           processor: '处理器',
           loading: '加载中...',
           unknown: '未知',
+          website: '官网',
         },
         en: {
           title: 'About Sunshine Control Panel',
@@ -206,32 +209,29 @@
           processor: 'Processor',
           loading: 'Loading...',
           unknown: 'Unknown',
+          website: 'Website',
         },
-      }
-
-      const DEFAULT_VALUES = {
-        appVersion: 'unknown',
-        tauriVersion: 'unknown',
       }
 
       const $ = (id) => document.getElementById(id)
       let text = pickSimpleMessages(MESSAGES)
       let latestData = null
 
+      const applyStaticText = () => {
+        document.querySelectorAll('[data-i18n]').forEach((element) => {
+          const key = element.dataset.i18n
+          element.textContent = text[key] || ''
+        })
+      }
+
       const applyLocale = (locale) => {
         text = pickSimpleMessages(MESSAGES, locale)
         setDocumentLocale(locale)
         document.title = text.title
-        $('app-title').textContent = text.appTitle
-        $('description').textContent = text.description
-        $('build-time-label').textContent = text.buildTime
-        $('arch-label').textContent = text.architecture
-        $('tauri-version-label').textContent = text.tauriVersion
+        applyStaticText()
         if (!latestData) {
           $('app-version').textContent = text.versionLoading
-          $('build-time').textContent = text.loading
-          $('arch').textContent = text.loading
-          $('tauri-version').textContent = text.loading
+          renderInfoGrid(getLoadingRows())
         } else {
           updateUI(latestData)
         }
@@ -239,44 +239,47 @@
 
       const createInfoItem = (label, value, fontSize = '14px') => {
         const element = document.createElement('div')
+        const labelElement = document.createElement('div')
+        const valueElement = document.createElement('div')
+
         element.className = 'info-item'
-        element.innerHTML = `
-          <div class="info-label">${label}</div>
-          <div class="info-value" style="font-size: ${fontSize};">${value}</div>
-        `
+        labelElement.className = 'info-label'
+        labelElement.textContent = label
+        valueElement.className = 'info-value'
+        valueElement.style.fontSize = fontSize
+        valueElement.textContent = value
+
+        element.append(labelElement, valueElement)
         return element
       }
 
       const formatMemory = (bytes) => `${(bytes / (1024 ** 3)).toFixed(1)} GB`
 
+      const getLoadingRows = () => [
+        { label: text.buildTime, value: text.loading },
+        { label: text.architecture, value: text.loading },
+        { label: text.tauriVersion, value: text.loading },
+      ]
+
+      const getInfoRows = (data) => [
+        { label: text.buildTime, value: data.buildTime || text.unknown },
+        { label: text.architecture, value: data.arch || text.unknown },
+        { label: text.tauriVersion, value: data.tauriVersion || text.unknown },
+        data.osVersion && { label: text.operatingSystem, value: data.osVersion },
+        data.memoryTotal && { label: text.totalMemory, value: formatMemory(data.memoryTotal) },
+        data.cpuModel && { label: text.processor, value: data.cpuModel, fontSize: '12px' },
+      ].filter(Boolean)
+
+      const renderInfoGrid = (rows) => {
+        const infoGrid = $('info-grid')
+        infoGrid.replaceChildren(...rows.map((row) => createInfoItem(row.label, row.value, row.fontSize)))
+        infoGrid.classList.toggle('multi-row', rows.length > 3)
+      }
+
       const updateUI = (data) => {
         latestData = data
-        $('app-version').textContent = text.version.replace('{version}', data.appVersion)
-        $('build-time').textContent = data.buildTime
-        $('arch').textContent = data.arch
-        $('tauri-version').textContent = data.tauriVersion
-
-        const infoGrid = $('info-grid')
-        while (infoGrid.children.length > 3) {
-          infoGrid.removeChild(infoGrid.lastChild)
-        }
-        infoGrid.classList.remove('multi-row')
-
-        if (data.osVersion) {
-          infoGrid.appendChild(createInfoItem(text.operatingSystem, data.osVersion))
-        }
-
-        if (data.memoryTotal) {
-          infoGrid.appendChild(createInfoItem(text.totalMemory, formatMemory(data.memoryTotal)))
-        }
-
-        if (data.cpuModel) {
-          infoGrid.appendChild(createInfoItem(text.processor, data.cpuModel, '12px'))
-        }
-
-        if (infoGrid.children.length > 3) {
-          infoGrid.classList.add('multi-row')
-        }
+        $('app-version').textContent = text.version.replace('{version}', data.appVersion || text.unknown)
+        renderInfoGrid(getInfoRows(data))
       }
 
       const loadSystemInfo = async () => {
@@ -285,10 +288,10 @@
           const systemInfo = await invoke('get_system_info')
 
           updateUI({
-            appVersion: systemInfo.app_version || DEFAULT_VALUES.appVersion,
+            appVersion: systemInfo.app_version,
             buildTime: systemInfo.build_time || new Date().toLocaleDateString(),
-            arch: systemInfo.arch || text.unknown,
-            tauriVersion: systemInfo.tauri_version || DEFAULT_VALUES.tauriVersion,
+            arch: systemInfo.arch,
+            tauriVersion: systemInfo.tauri_version,
             osVersion: systemInfo.os_version,
             memoryTotal: systemInfo.memory_total,
             cpuModel: systemInfo.cpu_model,
@@ -297,10 +300,10 @@
           console.error('获取系统信息失败，使用默认值:', error)
 
           updateUI({
-            appVersion: DEFAULT_VALUES.appVersion,
+            appVersion: '',
             buildTime: new Date().toLocaleDateString(),
             arch: navigator.platform.includes('64') ? 'x64' : 'x86',
-            tauriVersion: DEFAULT_VALUES.tauriVersion,
+            tauriVersion: '',
           })
         }
       }

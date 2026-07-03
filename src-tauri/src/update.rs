@@ -115,12 +115,13 @@ struct UpdaterSpriteRun {
 #[derive(Clone, Copy)]
 enum UpdaterHelperSpriteVariant {
     Gura,
-    Fox,
+    SunGirl,
 }
 
 #[cfg(target_os = "windows")]
 // Change this constant to swap the updater helper IP without touching rendering code.
-const UPDATER_HELPER_SPRITE_VARIANT: UpdaterHelperSpriteVariant = UpdaterHelperSpriteVariant::Gura;
+const UPDATER_HELPER_SPRITE_VARIANT: UpdaterHelperSpriteVariant =
+    UpdaterHelperSpriteVariant::SunGirl;
 
 #[cfg(target_os = "windows")]
 static UPDATER_PANEL_STATE: OnceLock<Arc<Mutex<UpdaterPanelState>>> = OnceLock::new();
@@ -1118,7 +1119,9 @@ fn updater_helper_sprite_runs() -> &'static [UpdaterSpriteRun] {
 fn updater_helper_sprite_bytes(variant: UpdaterHelperSpriteVariant) -> &'static [u8] {
     match variant {
         UpdaterHelperSpriteVariant::Gura => include_bytes!("../assets/updater-helper-gura.png"),
-        UpdaterHelperSpriteVariant::Fox => include_bytes!("../assets/updater-helper-fox.png"),
+        UpdaterHelperSpriteVariant::SunGirl => {
+            include_bytes!("../assets/updater-helper-sun-girl.png")
+        }
     }
 }
 

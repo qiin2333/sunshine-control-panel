@@ -104,20 +104,6 @@ struct UpdaterPanelState {
 #[cfg(target_os = "windows")]
 static UPDATER_PANEL_STATE: OnceLock<Arc<Mutex<UpdaterPanelState>>> = OnceLock::new();
 
-#[cfg(target_os = "windows")]
-const GURA_PIXEL_PNG: &[u8] = include_bytes!("../../src/renderer/public/gura-pix.png");
-
-#[cfg(target_os = "windows")]
-struct PixelSpriteRun {
-    x: i32,
-    y: i32,
-    width: i32,
-    color: u32,
-}
-
-#[cfg(target_os = "windows")]
-static GURA_PIXEL_SPRITE_RUNS: OnceLock<Vec<PixelSpriteRun>> = OnceLock::new();
-
 // ========== 版本相关 ==========
 
 /// 获取当前 Sunshine 版本
@@ -1071,11 +1057,11 @@ unsafe fn draw_pixel_courier_scene(
         fill_rect(hdc, track_right - 36, top + 8, track_right - 14, top + 29, COLORREF(0x00423F4A));
         fill_rect(hdc, track_right - 32, top + 4, track_right - 18, top + 8, accent);
 
-        let package_x = courier_x + 48;
+        let package_x = courier_x + 54;
         let package_y = top + 10 + bob;
         draw_push_dust(hdc, courier_x - 10, bottom - 13, state.animation_tick, gura_light);
-        draw_gura_pixel_sprite(hdc, courier_x, top - 7 + bob);
-        draw_push_arms(hdc, courier_x + 35, top + 20 + bob, package_x + 3, accent);
+        draw_side_push_sprite(hdc, courier_x, top - 6 + bob, state.failed, accent, gura_light);
+        draw_push_arms(hdc, courier_x + 34, top + 20 + bob, package_x + 3, accent);
         draw_pixel_package(hdc, package_x, package_y, 4, accent);
         draw_package_push_marks(hdc, package_x + 3, package_y + 8, accent);
 
@@ -1098,6 +1084,58 @@ unsafe fn draw_pixel_courier_scene(
             700,
             if state.failed { COLORREF(0x00A5A5D4) } else { accent },
         );
+    }
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn draw_side_push_sprite(
+    hdc: windows::Win32::Graphics::Gdi::HDC,
+    x: i32,
+    y: i32,
+    failed: bool,
+    accent: windows::Win32::Foundation::COLORREF,
+    gura_light: windows::Win32::Foundation::COLORREF,
+) {
+    use windows::Win32::Foundation::COLORREF;
+
+    let outline = COLORREF(0x00211F26);
+    let hood = COLORREF(0x00EFF3A5);
+    let face = COLORREF(0x00DCEAFF);
+    let cheek = COLORREF(0x00B7B6E8);
+    let hair = COLORREF(0x00AFC7D4);
+    let body = if failed { COLORREF(0x00A5A5D4) } else { accent };
+    let boot = COLORREF(0x006D4D2D);
+
+    unsafe {
+        fill_rect(hdc, x + 2, y + 48, x + 42, y + 50, outline);
+
+        // Braced legs make the pose read as pushing instead of walking.
+        fill_rect(hdc, x + 8, y + 36, x + 17, y + 42, body);
+        fill_rect(hdc, x + 1, y + 42, x + 16, y + 47, boot);
+        fill_rect(hdc, x + 23, y + 35, x + 31, y + 44, body);
+        fill_rect(hdc, x + 25, y + 43, x + 39, y + 48, boot);
+
+        // Leaning body and scarf.
+        fill_rect(hdc, x + 13, y + 21, x + 29, y + 38, outline);
+        fill_rect(hdc, x + 16, y + 20, x + 34, y + 36, body);
+        fill_rect(hdc, x + 22, y + 22, x + 35, y + 28, gura_light);
+        fill_rect(hdc, x + 6, y + 27, x + 17, y + 32, COLORREF(0x005D6BBA));
+        fill_rect(hdc, x + 2, y + 30, x + 10, y + 34, COLORREF(0x004B5EA5));
+
+        // Side-facing hood/head.
+        fill_rect(hdc, x + 14, y + 3, x + 34, y + 21, outline);
+        fill_rect(hdc, x + 13, y + 6, x + 35, y + 20, hood);
+        fill_rect(hdc, x + 22, y + 9, x + 36, y + 20, face);
+        fill_rect(hdc, x + 31, y + 12, x + 33, y + 15, outline);
+        fill_rect(hdc, x + 27, y + 17, x + 33, y + 19, cheek);
+        fill_rect(hdc, x + 12, y + 10, x + 19, y + 23, hair);
+        fill_rect(hdc, x + 16, y, x + 24, y + 7, hood);
+        fill_rect(hdc, x + 28, y - 2, x + 35, y + 7, hood);
+        fill_rect(hdc, x + 30, y - 5, x + 35, y - 2, COLORREF(0x00D7DCE8));
+
+        // A small forward tilt cue.
+        fill_rect(hdc, x + 34, y + 18, x + 38, y + 24, face);
+        fill_rect(hdc, x + 36, y + 21, x + 40, y + 24, outline);
     }
 }
 
@@ -1155,130 +1193,6 @@ unsafe fn draw_package_push_marks(
         fill_rect(hdc, x, y + 6, x + 8, y + 8, COLORREF(0x0035323D));
         fill_rect(hdc, x + 2, y + 12, x + 12, y + 14, accent);
     }
-}
-
-#[cfg(target_os = "windows")]
-unsafe fn draw_gura_pixel_sprite(hdc: windows::Win32::Graphics::Gdi::HDC, x: i32, y: i32) {
-    let runs = GURA_PIXEL_SPRITE_RUNS.get_or_init(build_gura_pixel_sprite_runs);
-    unsafe {
-        for run in runs {
-            fill_rect(
-                hdc,
-                x + run.x,
-                y + run.y,
-                x + run.x + run.width,
-                y + run.y + 1,
-                windows::Win32::Foundation::COLORREF(run.color),
-            );
-        }
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn build_gura_pixel_sprite_runs() -> Vec<PixelSpriteRun> {
-    let Ok(image) = image::load_from_memory(GURA_PIXEL_PNG).map(|image| image.to_rgba8()) else {
-        return Vec::new();
-    };
-
-    let (source_width, source_height) = image.dimensions();
-    if source_width == 0 || source_height == 0 {
-        return Vec::new();
-    }
-
-    let background = image.get_pixel(0, 0).0;
-    let is_visible = |rgba: [u8; 4]| -> bool {
-        rgba[3] > 16
-            && (rgba[0].abs_diff(background[0]) > 8
-                || rgba[1].abs_diff(background[1]) > 8
-                || rgba[2].abs_diff(background[2]) > 8)
-    };
-
-    let mut min_x = source_width;
-    let mut min_y = source_height;
-    let mut max_x = 0;
-    let mut max_y = 0;
-    for y in 0..source_height {
-        for x in 0..source_width {
-            if is_visible(image.get_pixel(x, y).0) {
-                min_x = min_x.min(x);
-                min_y = min_y.min(y);
-                max_x = max_x.max(x);
-                max_y = max_y.max(y);
-            }
-        }
-    }
-
-    if min_x > max_x || min_y > max_y {
-        return Vec::new();
-    }
-
-    let crop_width = max_x - min_x + 1;
-    let crop_height = max_y - min_y + 1;
-    let target_height = 52u32;
-    let target_width = ((crop_width * target_height) / crop_height).clamp(1, 68);
-    let mut runs = Vec::new();
-
-    for ty in 0..target_height {
-        let source_y = min_y + (ty * crop_height / target_height);
-        let mut run_start: Option<u32> = None;
-        let mut run_color = 0u32;
-
-        for tx in 0..target_width {
-            let source_x = min_x + (tx * crop_width / target_width);
-            let rgba = image.get_pixel(source_x, source_y).0;
-            let color = if is_visible(rgba) {
-                Some(rgba_to_colorref(rgba))
-            } else {
-                None
-            };
-
-            match (run_start, color) {
-                (Some(start), Some(color)) if color == run_color => {
-                    run_start = Some(start);
-                }
-                (Some(start), Some(color)) => {
-                    runs.push(PixelSpriteRun {
-                        x: start as i32,
-                        y: ty as i32,
-                        width: (tx - start) as i32,
-                        color: run_color,
-                    });
-                    run_start = Some(tx);
-                    run_color = color;
-                }
-                (None, Some(color)) => {
-                    run_start = Some(tx);
-                    run_color = color;
-                }
-                (Some(start), None) => {
-                    runs.push(PixelSpriteRun {
-                        x: start as i32,
-                        y: ty as i32,
-                        width: (tx - start) as i32,
-                        color: run_color,
-                    });
-                    run_start = None;
-                }
-                (None, None) => {}
-            }
-        }
-
-        if let Some(start) = run_start {
-            runs.push(PixelSpriteRun {
-                x: start as i32,
-                y: ty as i32,
-                width: (target_width - start) as i32,
-                color: run_color,
-            });
-        }
-    }
-
-    runs
-}
-
-#[cfg(target_os = "windows")]
-fn rgba_to_colorref(rgba: [u8; 4]) -> u32 {
-    u32::from(rgba[0]) | (u32::from(rgba[1]) << 8) | (u32::from(rgba[2]) << 16)
 }
 
 #[cfg(target_os = "windows")]

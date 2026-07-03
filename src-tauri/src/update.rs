@@ -557,13 +557,9 @@ fn run_updater_worker(state: UpdaterHelperState, hwnd: isize) {
     wait_for_parent_exit(state.parent_pid);
 
     update_updater_panel(hwnd, 1, "正在关闭 Sunshine", "正在关闭 Sunshine 服务，随后安装更新...");
-    let install_result = match stop_sunshine_for_update() {
-        Ok(()) => {
-            update_updater_panel(hwnd, 2, "正在安装更新", "这可能需要一两分钟，请不要重复启动。");
-            run_installer_and_wait(&state)
-        }
-        Err(error) => Err(error),
-    };
+    stop_sunshine_for_update();
+    update_updater_panel(hwnd, 2, "正在安装更新", "这可能需要一两分钟，请不要重复启动。");
+    let install_result = run_installer_and_wait(&state);
 
     update_updater_panel(hwnd, 3, "正在完成", "安装已结束，正在准备重新打开控制面板。");
     let helper_result = match install_result {
@@ -1445,12 +1441,11 @@ fn force_kill_sunshine_processes() {
 
 /// 关闭 Sunshine 服务和残留进程
 #[cfg(target_os = "windows")]
-fn stop_sunshine_for_update() -> Result<(), String> {
+fn stop_sunshine_for_update() {
     info!("正在关闭 Sunshine 以安装更新...");
     stop_sunshine_service();
     force_kill_sunshine_processes();
     info!("Sunshine 服务和相关进程已为更新关闭。");
-    Ok(())
 }
 
 #[cfg(target_os = "windows")]

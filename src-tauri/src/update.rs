@@ -1103,11 +1103,18 @@ unsafe fn draw_side_push_sprite(
     let face = COLORREF(0x00DCEAFF);
     let cheek = COLORREF(0x00B7B6E8);
     let hair = COLORREF(0x00AFC7D4);
+    let hair_blue = COLORREF(0x00A85E39);
+    let hood_shadow = COLORREF(0x00C9CDD8);
     let body = if failed { COLORREF(0x00A5A5D4) } else { accent };
     let boot = COLORREF(0x006D4D2D);
 
     unsafe {
         fill_rect(hdc, x + 2, y + 48, x + 42, y + 50, outline);
+
+        // Tail and hoodie fins keep the tiny side sprite recognizably Gura.
+        fill_rect(hdc, x + 5, y + 22, x + 13, y + 28, hood_shadow);
+        fill_rect(hdc, x + 1, y + 19, x + 7, y + 25, hood);
+        fill_rect(hdc, x + 3, y + 17, x + 8, y + 20, outline);
 
         // Braced legs make the pose read as pushing instead of walking.
         fill_rect(hdc, x + 8, y + 36, x + 17, y + 42, body);
@@ -1121,17 +1128,25 @@ unsafe fn draw_side_push_sprite(
         fill_rect(hdc, x + 22, y + 22, x + 35, y + 28, gura_light);
         fill_rect(hdc, x + 6, y + 27, x + 17, y + 32, COLORREF(0x005D6BBA));
         fill_rect(hdc, x + 2, y + 30, x + 10, y + 34, COLORREF(0x004B5EA5));
+        fill_rect(hdc, x + 12, y + 24, x + 16, y + 36, hair_blue);
 
         // Side-facing hood/head.
         fill_rect(hdc, x + 14, y + 3, x + 34, y + 21, outline);
         fill_rect(hdc, x + 13, y + 6, x + 35, y + 20, hood);
+        fill_rect(hdc, x + 18, y + 2, x + 25, y + 6, hood_shadow);
+        fill_rect(hdc, x + 21, y - 2, x + 27, y + 3, hood);
+        fill_rect(hdc, x + 29, y - 1, x + 35, y + 7, hood);
         fill_rect(hdc, x + 22, y + 9, x + 36, y + 20, face);
         fill_rect(hdc, x + 31, y + 12, x + 33, y + 15, outline);
         fill_rect(hdc, x + 27, y + 17, x + 33, y + 19, cheek);
         fill_rect(hdc, x + 12, y + 10, x + 19, y + 23, hair);
+        fill_rect(hdc, x + 14, y + 16, x + 18, y + 27, hair_blue);
         fill_rect(hdc, x + 16, y, x + 24, y + 7, hood);
         fill_rect(hdc, x + 28, y - 2, x + 35, y + 7, hood);
         fill_rect(hdc, x + 30, y - 5, x + 35, y - 2, COLORREF(0x00D7DCE8));
+        fill_rect(hdc, x + 22, y + 7, x + 25, y + 11, COLORREF(0x00FFFFFF));
+        fill_rect(hdc, x + 26, y + 7, x + 29, y + 10, COLORREF(0x00FFFFFF));
+        fill_rect(hdc, x + 30, y + 7, x + 33, y + 10, COLORREF(0x00FFFFFF));
 
         // A small forward tilt cue.
         fill_rect(hdc, x + 34, y + 18, x + 38, y + 24, face);

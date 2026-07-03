@@ -102,7 +102,19 @@ struct UpdaterPanelState {
 }
 
 #[cfg(target_os = "windows")]
+#[derive(Clone, Copy)]
+struct UpdaterSpriteRun {
+    x: i32,
+    y: i32,
+    width: i32,
+    color: windows::Win32::Foundation::COLORREF,
+}
+
+#[cfg(target_os = "windows")]
 static UPDATER_PANEL_STATE: OnceLock<Arc<Mutex<UpdaterPanelState>>> = OnceLock::new();
+
+#[cfg(target_os = "windows")]
+static UPDATER_HELPER_SPRITE_RUNS: OnceLock<Vec<UpdaterSpriteRun>> = OnceLock::new();
 
 // ========== 版本相关 ==========
 
@@ -1057,13 +1069,7 @@ unsafe fn draw_pixel_courier_scene(
         fill_rect(hdc, track_right - 36, top + 8, track_right - 14, top + 29, COLORREF(0x00423F4A));
         fill_rect(hdc, track_right - 32, top + 4, track_right - 18, top + 8, accent);
 
-        let package_x = courier_x + 54;
-        let package_y = top + 10 + bob;
-        draw_push_dust(hdc, courier_x - 10, bottom - 13, state.animation_tick, gura_light);
-        draw_side_push_sprite(hdc, courier_x, top - 6 + bob, state.failed, accent, gura_light);
-        draw_push_arms(hdc, courier_x + 34, top + 20 + bob, package_x + 3, accent);
-        draw_pixel_package(hdc, package_x, package_y, 4, accent);
-        draw_package_push_marks(hdc, package_x + 3, package_y + 8, accent);
+        draw_updater_helper_sprite(hdc, courier_x, bottom - 61 + bob);
 
         let label = if state.failed {
             "推送中断"
@@ -1088,150 +1094,80 @@ unsafe fn draw_pixel_courier_scene(
 }
 
 #[cfg(target_os = "windows")]
-unsafe fn draw_side_push_sprite(
-    hdc: windows::Win32::Graphics::Gdi::HDC,
-    x: i32,
-    y: i32,
-    failed: bool,
-    _accent: windows::Win32::Foundation::COLORREF,
-    _gura_light: windows::Win32::Foundation::COLORREF,
-) {
+fn updater_helper_sprite_runs() -> &'static [UpdaterSpriteRun] {
     use windows::Win32::Foundation::COLORREF;
 
-    let outline = COLORREF(0x00211F26);
-    let hood = COLORREF(0x00906030);
-    let hood_shadow = COLORREF(0x00604010);
-    let hood_light = COLORREF(0x00E8E4DC);
-    let face = COLORREF(0x00D0E0F0);
-    let cheek = COLORREF(0x00A4A4E6);
-    let hair = COLORREF(0x00F0F0F0);
-    let hair_blue = COLORREF(0x00B88D35);
-    let body = if failed { COLORREF(0x00A5A5D4) } else { hood };
-    let boot = COLORREF(0x006D4D2D);
+    UPDATER_HELPER_SPRITE_RUNS
+        .get_or_init(|| {
+            let bytes = include_bytes!("../assets/updater-helper-gura.png");
+            let Ok(image) = image::load_from_memory(bytes).map(|image| image.to_rgba8()) else {
+                return Vec::new();
+            };
 
-    unsafe {
-        fill_rect(hdc, x + 2, y + 48, x + 42, y + 50, outline);
+            let (width, height) = image.dimensions();
+            let mut runs = Vec::new();
+            for y in 0..height {
+                let mut run_start: Option<(u32, COLORREF)> = None;
+                for x in 0..width {
+                    let pixel = image.get_pixel(x, y).0;
+                    let color = if pixel[3] > 96 {
+                        Some(COLORREF(
+                            pixel[0] as u32 | ((pixel[1] as u32) << 8) | ((pixel[2] as u32) << 16),
+                        ))
+                    } else {
+                        None
+                    };
 
-        // Tail and hoodie fins keep the tiny side sprite recognizably Gura.
-        fill_rect(hdc, x + 5, y + 22, x + 13, y + 28, hood_shadow);
-        fill_rect(hdc, x + 1, y + 19, x + 7, y + 25, hood);
-        fill_rect(hdc, x + 3, y + 17, x + 8, y + 20, outline);
+                    match (run_start, color) {
+                        (Some((start, active_color)), Some(next_color))
+                            if active_color == next_color =>
+                        {
+                            run_start = Some((start, active_color));
+                        }
+                        (Some((start, active_color)), next_color) => {
+                            runs.push(UpdaterSpriteRun {
+                                x: start as i32,
+                                y: y as i32,
+                                width: (x - start) as i32,
+                                color: active_color,
+                            });
+                            run_start = next_color.map(|color| (x, color));
+                        }
+                        (None, Some(next_color)) => {
+                            run_start = Some((x, next_color));
+                        }
+                        (None, None) => {}
+                    }
+                }
 
-        // Braced legs make the pose read as pushing instead of walking.
-        fill_rect(hdc, x + 8, y + 36, x + 17, y + 42, body);
-        fill_rect(hdc, x + 1, y + 42, x + 16, y + 47, boot);
-        fill_rect(hdc, x + 23, y + 35, x + 31, y + 44, body);
-        fill_rect(hdc, x + 25, y + 43, x + 39, y + 48, boot);
+                if let Some((start, active_color)) = run_start {
+                    runs.push(UpdaterSpriteRun {
+                        x: start as i32,
+                        y: y as i32,
+                        width: (width - start) as i32,
+                        color: active_color,
+                    });
+                }
+            }
 
-        // Leaning body and scarf.
-        fill_rect(hdc, x + 13, y + 21, x + 29, y + 38, outline);
-        fill_rect(hdc, x + 16, y + 20, x + 34, y + 36, body);
-        fill_rect(hdc, x + 22, y + 22, x + 35, y + 27, hood_light);
-        fill_rect(hdc, x + 23, y + 28, x + 35, y + 34, COLORREF(0x00464AC4));
-        fill_rect(hdc, x + 26, y + 28, x + 29, y + 31, COLORREF(0x00FFFFFF));
-        fill_rect(hdc, x + 31, y + 28, x + 34, y + 31, COLORREF(0x00FFFFFF));
-        fill_rect(hdc, x + 6, y + 27, x + 17, y + 32, COLORREF(0x005D6BBA));
-        fill_rect(hdc, x + 2, y + 30, x + 10, y + 34, COLORREF(0x004B5EA5));
-        fill_rect(hdc, x + 11, y + 22, x + 17, y + 37, hair_blue);
-
-        // Three-quarter shark hood/head: blue hood, white teeth, white hair, blue streak.
-        fill_rect(hdc, x + 12, y + 1, x + 38, y + 24, outline);
-        fill_rect(hdc, x + 13, y + 3, x + 38, y + 22, hood);
-        fill_rect(hdc, x + 8, y + 8, x + 14, y + 17, hood_shadow);
-        fill_rect(hdc, x + 23, y - 3, x + 29, y + 2, hood_shadow);
-        fill_rect(hdc, x + 33, y, x + 39, y + 8, hood);
-        fill_rect(hdc, x + 36, y + 6, x + 41, y + 11, hood);
-        fill_rect(hdc, x + 18, y + 10, x + 37, y + 22, hood_light);
-        fill_rect(hdc, x + 22, y + 12, x + 38, y + 23, face);
-        fill_rect(hdc, x + 31, y + 13, x + 33, y + 16, outline);
-        fill_rect(hdc, x + 30, y + 13, x + 32, y + 15, hair_blue);
-        fill_rect(hdc, x + 27, y + 18, x + 33, y + 20, cheek);
-        fill_rect(hdc, x + 14, y + 9, x + 23, y + 26, hair);
-        fill_rect(hdc, x + 19, y + 7, x + 28, y + 16, hair);
-        fill_rect(hdc, x + 16, y + 14, x + 21, y + 30, hair_blue);
-        fill_rect(hdc, x + 20, y + 7, x + 23, y + 11, COLORREF(0x00FFFFFF));
-        fill_rect(hdc, x + 25, y + 7, x + 28, y + 11, COLORREF(0x00FFFFFF));
-        fill_rect(hdc, x + 30, y + 7, x + 33, y + 11, COLORREF(0x00FFFFFF));
-
-        // A small forward tilt cue.
-        fill_rect(hdc, x + 34, y + 18, x + 38, y + 24, face);
-        fill_rect(hdc, x + 36, y + 21, x + 40, y + 24, outline);
-    }
+            runs
+        })
+        .as_slice()
 }
 
 #[cfg(target_os = "windows")]
-unsafe fn draw_push_dust(
-    hdc: windows::Win32::Graphics::Gdi::HDC,
-    x: i32,
-    y: i32,
-    tick: u32,
-    color: windows::Win32::Foundation::COLORREF,
-) {
+unsafe fn draw_updater_helper_sprite(hdc: windows::Win32::Graphics::Gdi::HDC, x: i32, y: i32) {
     unsafe {
-        for i in 0..3 {
-            let offset = ((tick as i32 / 2) + i * 9) % 24;
-            let dot_x = x - offset;
-            let dot_y = y + (i % 2) * 4;
-            fill_rect(hdc, dot_x, dot_y, dot_x + 5, dot_y + 2, color);
+        for run in updater_helper_sprite_runs() {
+            fill_rect(
+                hdc,
+                x + run.x,
+                y + run.y,
+                x + run.x + run.width,
+                y + run.y + 1,
+                run.color,
+            );
         }
-    }
-}
-
-#[cfg(target_os = "windows")]
-unsafe fn draw_push_arms(
-    hdc: windows::Win32::Graphics::Gdi::HDC,
-    left: i32,
-    top: i32,
-    right: i32,
-    accent: windows::Win32::Foundation::COLORREF,
-) {
-    use windows::Win32::Foundation::COLORREF;
-
-    unsafe {
-        fill_rect(hdc, left, top, right, top + 3, COLORREF(0x00211F26));
-        fill_rect(hdc, left + 1, top + 1, right - 1, top + 2, COLORREF(0x00DCEAFF));
-        fill_rect(hdc, left + 2, top + 8, right, top + 11, COLORREF(0x00211F26));
-        fill_rect(hdc, left + 3, top + 9, right - 1, top + 10, accent);
-        fill_rect(hdc, right - 2, top - 1, right + 3, top + 4, COLORREF(0x00DCEAFF));
-        fill_rect(hdc, right - 2, top + 7, right + 3, top + 12, COLORREF(0x00DCEAFF));
-    }
-}
-
-#[cfg(target_os = "windows")]
-unsafe fn draw_package_push_marks(
-    hdc: windows::Win32::Graphics::Gdi::HDC,
-    x: i32,
-    y: i32,
-    accent: windows::Win32::Foundation::COLORREF,
-) {
-    use windows::Win32::Foundation::COLORREF;
-
-    unsafe {
-        fill_rect(hdc, x - 5, y - 2, x + 2, y + 4, COLORREF(0x00DCEAFF));
-        fill_rect(hdc, x - 5, y + 8, x + 2, y + 14, COLORREF(0x00DCEAFF));
-        fill_rect(hdc, x, y, x + 10, y + 2, COLORREF(0x0035323D));
-        fill_rect(hdc, x, y + 6, x + 8, y + 8, COLORREF(0x0035323D));
-        fill_rect(hdc, x + 2, y + 12, x + 12, y + 14, accent);
-    }
-}
-
-#[cfg(target_os = "windows")]
-unsafe fn draw_pixel_package(
-    hdc: windows::Win32::Graphics::Gdi::HDC,
-    x: i32,
-    y: i32,
-    scale: i32,
-    accent: windows::Win32::Foundation::COLORREF,
-) {
-    use windows::Win32::Foundation::COLORREF;
-
-    unsafe {
-        fill_rect(hdc, x, y + scale, x + scale * 8, y + scale * 8, COLORREF(0x004B5EA5));
-        fill_rect(hdc, x + scale, y, x + scale * 7, y + scale, COLORREF(0x006A78D0));
-        fill_rect(hdc, x + scale, y + scale * 2, x + scale * 7, y + scale * 7, COLORREF(0x005D6BBA));
-        fill_rect(hdc, x + scale * 3, y, x + scale * 5, y + scale * 8, COLORREF(0x0035323D));
-        fill_rect(hdc, x + scale, y + scale * 3, x + scale * 7, y + scale * 4, accent);
-        fill_rect(hdc, x + scale * 5, y + scale * 5, x + scale * 7, y + scale * 7, COLORREF(0x00EFF3A5));
     }
 }
 

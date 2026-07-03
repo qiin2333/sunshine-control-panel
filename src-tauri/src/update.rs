@@ -1099,12 +1099,12 @@ unsafe fn draw_side_push_sprite(
     use windows::Win32::Foundation::COLORREF;
 
     let outline = COLORREF(0x00211F26);
-    let hood = COLORREF(0x00EFF3A5);
+    let hood = COLORREF(0x00F5F1EA);
     let face = COLORREF(0x00DCEAFF);
     let cheek = COLORREF(0x00B7B6E8);
-    let hair = COLORREF(0x00AFC7D4);
-    let hair_blue = COLORREF(0x00A85E39);
-    let hood_shadow = COLORREF(0x00C9CDD8);
+    let hair = COLORREF(0x00B99B6E);
+    let hair_blue = COLORREF(0x00B88D35);
+    let hood_shadow = COLORREF(0x00E3DAD2);
     let body = if failed { COLORREF(0x00A5A5D4) } else { accent };
     let boot = COLORREF(0x006D4D2D);
 
@@ -1128,7 +1128,7 @@ unsafe fn draw_side_push_sprite(
         fill_rect(hdc, x + 22, y + 22, x + 35, y + 28, gura_light);
         fill_rect(hdc, x + 6, y + 27, x + 17, y + 32, COLORREF(0x005D6BBA));
         fill_rect(hdc, x + 2, y + 30, x + 10, y + 34, COLORREF(0x004B5EA5));
-        fill_rect(hdc, x + 12, y + 24, x + 16, y + 36, hair_blue);
+        fill_rect(hdc, x + 11, y + 22, x + 17, y + 37, hair_blue);
 
         // Side-facing hood/head.
         fill_rect(hdc, x + 14, y + 3, x + 34, y + 21, outline);
@@ -1139,11 +1139,12 @@ unsafe fn draw_side_push_sprite(
         fill_rect(hdc, x + 22, y + 9, x + 36, y + 20, face);
         fill_rect(hdc, x + 31, y + 12, x + 33, y + 15, outline);
         fill_rect(hdc, x + 27, y + 17, x + 33, y + 19, cheek);
-        fill_rect(hdc, x + 12, y + 10, x + 19, y + 23, hair);
-        fill_rect(hdc, x + 14, y + 16, x + 18, y + 27, hair_blue);
+        fill_rect(hdc, x + 11, y + 9, x + 20, y + 24, hair);
+        fill_rect(hdc, x + 14, y + 14, x + 20, y + 29, hair_blue);
         fill_rect(hdc, x + 16, y, x + 24, y + 7, hood);
         fill_rect(hdc, x + 28, y - 2, x + 35, y + 7, hood);
-        fill_rect(hdc, x + 30, y - 5, x + 35, y - 2, COLORREF(0x00D7DCE8));
+        fill_rect(hdc, x + 30, y - 5, x + 35, y - 2, hood_shadow);
+        fill_rect(hdc, x + 19, y + 5, x + 34, y + 8, hood_shadow);
         fill_rect(hdc, x + 22, y + 7, x + 25, y + 11, COLORREF(0x00FFFFFF));
         fill_rect(hdc, x + 26, y + 7, x + 29, y + 10, COLORREF(0x00FFFFFF));
         fill_rect(hdc, x + 30, y + 7, x + 33, y + 10, COLORREF(0x00FFFFFF));

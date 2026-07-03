@@ -102,16 +102,14 @@ struct UpdaterPanelState {
 }
 
 #[cfg(target_os = "windows")]
-#[derive(Clone, Copy)]
-struct UpdaterSpriteRun {
-    x: i32,
-    y: i32,
+struct UpdaterSpriteBitmap {
     width: i32,
-    color: windows::Win32::Foundation::COLORREF,
+    height: i32,
+    bgra: Vec<u8>,
 }
 
 #[cfg(target_os = "windows")]
-#[allow(dead_code)]
+#[allow(dead_code)] // Alternate IP variants are selected by changing UPDATER_HELPER_SPRITE_VARIANT.
 #[derive(Clone, Copy)]
 enum UpdaterHelperSpriteVariant {
     Gura,
@@ -127,7 +125,7 @@ const UPDATER_HELPER_SPRITE_VARIANT: UpdaterHelperSpriteVariant =
 static UPDATER_PANEL_STATE: OnceLock<Arc<Mutex<UpdaterPanelState>>> = OnceLock::new();
 
 #[cfg(target_os = "windows")]
-static UPDATER_HELPER_SPRITE_RUNS: OnceLock<Vec<UpdaterSpriteRun>> = OnceLock::new();
+static UPDATER_HELPER_SPRITE_BITMAP: OnceLock<Option<UpdaterSpriteBitmap>> = OnceLock::new();
 
 // ========== 版本相关 ==========
 
@@ -1107,12 +1105,12 @@ unsafe fn draw_pixel_courier_scene(
 }
 
 #[cfg(target_os = "windows")]
-fn updater_helper_sprite_runs() -> &'static [UpdaterSpriteRun] {
-    UPDATER_HELPER_SPRITE_RUNS
-        .get_or_init(|| build_updater_sprite_runs(updater_helper_sprite_bytes(
+fn updater_helper_sprite_bitmap() -> Option<&'static UpdaterSpriteBitmap> {
+    UPDATER_HELPER_SPRITE_BITMAP
+        .get_or_init(|| decode_updater_sprite_bitmap(updater_helper_sprite_bytes(
             UPDATER_HELPER_SPRITE_VARIANT,
         )))
-        .as_slice()
+        .as_ref()
 }
 
 #[cfg(target_os = "windows")]
@@ -1126,75 +1124,98 @@ fn updater_helper_sprite_bytes(variant: UpdaterHelperSpriteVariant) -> &'static 
 }
 
 #[cfg(target_os = "windows")]
-fn build_updater_sprite_runs(bytes: &[u8]) -> Vec<UpdaterSpriteRun> {
-    use windows::Win32::Foundation::COLORREF;
-
+fn decode_updater_sprite_bitmap(bytes: &[u8]) -> Option<UpdaterSpriteBitmap> {
     let Ok(image) = image::load_from_memory(bytes).map(|image| image.to_rgba8()) else {
-        return Vec::new();
+        return None;
     };
 
     let (width, height) = image.dimensions();
-    let mut runs = Vec::new();
-    for y in 0..height {
-        let mut run_start: Option<(u32, COLORREF)> = None;
-        for x in 0..width {
-            let pixel = image.get_pixel(x, y).0;
-            let color = if pixel[3] > 96 {
-                Some(COLORREF(
-                    pixel[0] as u32 | ((pixel[1] as u32) << 8) | ((pixel[2] as u32) << 16),
-                ))
-            } else {
-                None
-            };
-
-            match (run_start, color) {
-                (Some((start, active_color)), Some(next_color))
-                    if active_color == next_color =>
-                {
-                    run_start = Some((start, active_color));
-                }
-                (Some((start, active_color)), next_color) => {
-                    runs.push(UpdaterSpriteRun {
-                        x: start as i32,
-                        y: y as i32,
-                        width: (x - start) as i32,
-                        color: active_color,
-                    });
-                    run_start = next_color.map(|color| (x, color));
-                }
-                (None, Some(next_color)) => {
-                    run_start = Some((x, next_color));
-                }
-                (None, None) => {}
-            }
-        }
-
-        if let Some((start, active_color)) = run_start {
-            runs.push(UpdaterSpriteRun {
-                x: start as i32,
-                y: y as i32,
-                width: (width - start) as i32,
-                color: active_color,
-            });
-        }
+    let mut bgra = Vec::with_capacity((width * height * 4) as usize);
+    for pixel in image.pixels() {
+        let [r, g, b, a] = pixel.0;
+        let premultiply = |channel: u8| ((channel as u16 * a as u16 + 127) / 255) as u8;
+        bgra.push(premultiply(b));
+        bgra.push(premultiply(g));
+        bgra.push(premultiply(r));
+        bgra.push(a);
     }
 
-    runs
+    Some(UpdaterSpriteBitmap {
+        width: width as i32,
+        height: height as i32,
+        bgra,
+    })
 }
 
 #[cfg(target_os = "windows")]
 unsafe fn draw_updater_helper_sprite(hdc: windows::Win32::Graphics::Gdi::HDC, x: i32, y: i32) {
+    use std::ffi::c_void;
+    use windows::Win32::Graphics::Gdi::{
+        AlphaBlend, CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, SelectObject,
+        AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION,
+        DIB_RGB_COLORS,
+    };
+
+    let Some(sprite) = updater_helper_sprite_bitmap() else {
+        return;
+    };
+
+    let bitmap_info = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: sprite.width,
+            biHeight: -sprite.height,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            biSizeImage: sprite.bgra.len() as u32,
+            biXPelsPerMeter: 0,
+            biYPelsPerMeter: 0,
+            biClrUsed: 0,
+            biClrImportant: 0,
+        },
+        ..Default::default()
+    };
+
     unsafe {
-        for run in updater_helper_sprite_runs() {
-            fill_rect(
-                hdc,
-                x + run.x,
-                y + run.y,
-                x + run.x + run.width,
-                y + run.y + 1,
-                run.color,
-            );
+        let mut bits: *mut c_void = std::ptr::null_mut();
+        let Ok(bitmap) = CreateDIBSection(None, &bitmap_info, DIB_RGB_COLORS, &mut bits, None, 0)
+        else {
+            return;
+        };
+        if bits.is_null() {
+            let _ = DeleteObject(bitmap.into());
+            return;
         }
+        std::ptr::copy_nonoverlapping(sprite.bgra.as_ptr(), bits as *mut u8, sprite.bgra.len());
+
+        let sprite_hdc = CreateCompatibleDC(Some(hdc));
+        if sprite_hdc.is_invalid() {
+            let _ = DeleteObject(bitmap.into());
+            return;
+        }
+        let old_bitmap = SelectObject(sprite_hdc, bitmap.into());
+        let _ = AlphaBlend(
+            hdc,
+            x,
+            y,
+            sprite.width,
+            sprite.height,
+            sprite_hdc,
+            0,
+            0,
+            sprite.width,
+            sprite.height,
+            BLENDFUNCTION {
+                BlendOp: AC_SRC_OVER as u8,
+                BlendFlags: 0,
+                SourceConstantAlpha: 255,
+                AlphaFormat: AC_SRC_ALPHA as u8,
+            },
+        );
+        let _ = SelectObject(sprite_hdc, old_bitmap);
+        let _ = DeleteDC(sprite_hdc);
+        let _ = DeleteObject(bitmap.into());
     }
 }
 

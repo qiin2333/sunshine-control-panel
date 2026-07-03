@@ -8,8 +8,6 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 const UPDATER_HELPER_ARG: &str = "--updater-helper";
 const UPDATE_RESULT_ARG: &str = "--update-result";
-#[cfg(target_os = "windows")]
-const ERROR_ELEVATION_REQUIRED: i32 = 740;
 
 // ========== 常量定义 ==========
 const GITHUB_API_URL: &str = "https://api.github.com/repos/qiin2333/sunshine/releases";
@@ -104,7 +102,30 @@ struct UpdaterPanelState {
 }
 
 #[cfg(target_os = "windows")]
+struct UpdaterSpriteBitmap {
+    width: i32,
+    height: i32,
+    bgra: Vec<u8>,
+}
+
+#[cfg(target_os = "windows")]
+#[allow(dead_code)] // Alternate IP variants are selected by changing UPDATER_HELPER_SPRITE_VARIANT.
+#[derive(Clone, Copy)]
+enum UpdaterHelperSpriteVariant {
+    Gura,
+    SunGirl,
+}
+
+#[cfg(target_os = "windows")]
+// Change this constant to swap the updater helper IP without touching rendering code.
+const UPDATER_HELPER_SPRITE_VARIANT: UpdaterHelperSpriteVariant =
+    UpdaterHelperSpriteVariant::SunGirl;
+
+#[cfg(target_os = "windows")]
 static UPDATER_PANEL_STATE: OnceLock<Arc<Mutex<UpdaterPanelState>>> = OnceLock::new();
+
+#[cfg(target_os = "windows")]
+static UPDATER_HELPER_SPRITE_BITMAP: OnceLock<Option<UpdaterSpriteBitmap>> = OnceLock::new();
 
 // ========== 版本相关 ==========
 
@@ -558,10 +579,12 @@ fn run_updater_worker(state: UpdaterHelperState, hwnd: isize) {
     update_updater_panel(hwnd, 0, "准备更新", "正在等待控制面板关闭...");
     wait_for_parent_exit(state.parent_pid);
 
-    update_updater_panel(hwnd, 1, "正在安装更新", "这可能需要一两分钟，请不要重复启动。");
+    update_updater_panel(hwnd, 1, "正在关闭 Sunshine", "正在关闭 Sunshine 服务，随后安装更新...");
+    stop_sunshine_for_update();
+    update_updater_panel(hwnd, 2, "正在安装更新", "这可能需要一两分钟，请不要重复启动。");
     let install_result = run_installer_and_wait(&state);
 
-    update_updater_panel(hwnd, 2, "正在完成", "安装已结束，正在准备重新打开控制面板。");
+    update_updater_panel(hwnd, 3, "正在完成", "安装已结束，正在准备重新打开控制面板。");
     let helper_result = match install_result {
         Ok(code) => UpdaterHelperResult {
             success: code == 0,
@@ -777,7 +800,7 @@ fn invalidate_updater_progress(hwnd: windows::Win32::Foundation::HWND) {
         left: 18,
         top: 126,
         right: 542,
-        bottom: 178,
+        bottom: 226,
     };
     let _ = unsafe { InvalidateRect(Some(hwnd), Some(&rect), false) };
 }
@@ -850,7 +873,6 @@ fn draw_updater_panel(hwnd: windows::Win32::Foundation::HWND) {
             COLORREF(0x00BBC539)
         };
         let gura_light = COLORREF(0x00DFE76E);
-        let gura_pale = COLORREF(0x00EFF3A5);
         fill_rect(mem_hdc, 0, 0, client.right, 4, accent);
         fill_rect(mem_hdc, client.right - 108, 0, client.right, 4, gura_light);
         fill_rect(mem_hdc, 0, client.bottom - 3, client.right, client.bottom, COLORREF(0x0035323D));
@@ -910,62 +932,7 @@ fn draw_updater_panel(hwnd: windows::Win32::Foundation::HWND) {
             COLORREF(0x00B8D5E6),
         );
 
-        let progress_left = 22;
-        let progress_top = 154;
-        let progress_width = client.right - 44;
-        fill_rect(mem_hdc, progress_left, progress_top, progress_left + progress_width, progress_top + 18, COLORREF(0x00423F4A));
-
-        let progress = match state.step {
-            0 => progress_width / 5,
-            1 => progress_width / 2,
-            2 => progress_width * 4 / 5,
-            _ => progress_width,
-        };
-        let block_gap = 4;
-        let block_count = 28;
-        let block_width = (progress_width - block_gap * (block_count - 1)) / block_count;
-        let active_blocks = ((progress * block_count) / progress_width).max(1);
-        for i in 0..block_count {
-            let x = progress_left + i * (block_width + block_gap);
-            let active = i < active_blocks;
-            let shimmer = state.step == 1
-                && !state.failed
-                && active
-                && i == ((state.animation_tick / 2) as i32 % active_blocks.max(1));
-            fill_rect(
-                mem_hdc,
-                x,
-                progress_top + 4,
-                x + block_width,
-                progress_top + 14,
-                if shimmer {
-                    gura_pale
-                } else if active {
-                    accent
-                } else {
-                    COLORREF(0x0035323D)
-                },
-            );
-        }
-
-        let percent = match state.step {
-            0 => "20%",
-            1 => "50%",
-            2 => "80%",
-            _ => "100%",
-        };
-        draw_text_styled(
-            mem_hdc,
-            percent,
-            client.right - 78,
-            progress_top - 24,
-            client.right - 22,
-            progress_top - 4,
-            DT_LEFT | DT_SINGLELINE | DT_VCENTER,
-            12,
-            700,
-            accent,
-        );
+        draw_pixel_courier_scene(mem_hdc, &state, 22, 144, client.right - 44, accent, gura_light);
 
         let steps = ["PREP", "INST", "DONE", "OPEN"];
         let step_top = 196;
@@ -1059,6 +1026,197 @@ unsafe fn fill_rect(
         )
     };
     let _ = unsafe { windows::Win32::Graphics::Gdi::DeleteObject(brush.into()) };
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn draw_pixel_courier_scene(
+    hdc: windows::Win32::Graphics::Gdi::HDC,
+    state: &UpdaterPanelState,
+    left: i32,
+    top: i32,
+    width: i32,
+    accent: windows::Win32::Foundation::COLORREF,
+    gura_light: windows::Win32::Foundation::COLORREF,
+) {
+    use windows::Win32::Foundation::COLORREF;
+    use windows::Win32::Graphics::Gdi::{DT_LEFT, DT_SINGLELINE, DT_VCENTER};
+
+    let bottom = top + 44;
+    let track_right = left + width;
+    let muted = COLORREF(0x008C8173);
+
+    unsafe {
+        fill_rect(hdc, left, top, track_right, bottom, COLORREF(0x00211F26));
+        fill_rect(hdc, left + 2, top + 2, track_right - 2, bottom - 2, COLORREF(0x002F2C35));
+        fill_rect(hdc, left + 10, bottom - 9, track_right - 10, bottom - 6, COLORREF(0x00423F4A));
+
+        let dash_count = 18;
+        let dash_gap = (width - 36) / dash_count;
+        for i in 0..dash_count {
+            let x = left + 18 + i * dash_gap;
+            let lit = !state.failed && ((i + state.animation_tick as i32 / 2) % 4 == 0);
+            fill_rect(
+                hdc,
+                x,
+                bottom - 15,
+                x + 8,
+                bottom - 12,
+                if lit { gura_light } else { COLORREF(0x00423F4A) },
+            );
+        }
+
+        let walking = !state.failed && state.step < 3;
+        let travel = (width - 128).max(1);
+        let courier_x = if state.failed {
+            left + width / 2 - 18
+        } else if state.step >= 3 {
+            track_right - 88
+        } else {
+            left + 24 + ((state.animation_tick as i32 * 5) % travel)
+        };
+        let bob = if walking && (state.animation_tick / 3) % 2 == 0 { -2 } else { 0 };
+        fill_rect(hdc, left + 12, top + 8, left + 34, top + 29, COLORREF(0x00423F4A));
+        fill_rect(hdc, left + 16, top + 4, left + 30, top + 8, muted);
+        fill_rect(hdc, track_right - 36, top + 8, track_right - 14, top + 29, COLORREF(0x00423F4A));
+        fill_rect(hdc, track_right - 32, top + 4, track_right - 18, top + 8, accent);
+
+        draw_updater_helper_sprite(hdc, courier_x, bottom - 61 + bob);
+
+        let label = if state.failed {
+            "推送中断"
+        } else if state.step >= 3 {
+            "推送完成"
+        } else {
+            "推送更新包中"
+        };
+        draw_text_styled(
+            hdc,
+            label,
+            track_right - 112,
+            top + 4,
+            track_right - 8,
+            top + 24,
+            DT_LEFT | DT_SINGLELINE | DT_VCENTER,
+            12,
+            700,
+            if state.failed { COLORREF(0x00A5A5D4) } else { accent },
+        );
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn updater_helper_sprite_bitmap() -> Option<&'static UpdaterSpriteBitmap> {
+    UPDATER_HELPER_SPRITE_BITMAP
+        .get_or_init(|| decode_updater_sprite_bitmap(updater_helper_sprite_bytes(
+            UPDATER_HELPER_SPRITE_VARIANT,
+        )))
+        .as_ref()
+}
+
+#[cfg(target_os = "windows")]
+fn updater_helper_sprite_bytes(variant: UpdaterHelperSpriteVariant) -> &'static [u8] {
+    match variant {
+        UpdaterHelperSpriteVariant::Gura => include_bytes!("../assets/updater-helper-gura.png"),
+        UpdaterHelperSpriteVariant::SunGirl => {
+            include_bytes!("../assets/updater-helper-sun-girl.png")
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn decode_updater_sprite_bitmap(bytes: &[u8]) -> Option<UpdaterSpriteBitmap> {
+    let Ok(image) = image::load_from_memory(bytes).map(|image| image.to_rgba8()) else {
+        return None;
+    };
+
+    let (width, height) = image.dimensions();
+    let mut bgra = Vec::with_capacity((width * height * 4) as usize);
+    for pixel in image.pixels() {
+        let [r, g, b, a] = pixel.0;
+        let premultiply = |channel: u8| ((channel as u16 * a as u16 + 127) / 255) as u8;
+        bgra.push(premultiply(b));
+        bgra.push(premultiply(g));
+        bgra.push(premultiply(r));
+        bgra.push(a);
+    }
+
+    Some(UpdaterSpriteBitmap {
+        width: width as i32,
+        height: height as i32,
+        bgra,
+    })
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn draw_updater_helper_sprite(hdc: windows::Win32::Graphics::Gdi::HDC, x: i32, y: i32) {
+    use std::ffi::c_void;
+    use windows::Win32::Graphics::Gdi::{
+        AlphaBlend, CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, SelectObject,
+        AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION,
+        DIB_RGB_COLORS,
+    };
+
+    let Some(sprite) = updater_helper_sprite_bitmap() else {
+        return;
+    };
+
+    let bitmap_info = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: sprite.width,
+            biHeight: -sprite.height,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            biSizeImage: sprite.bgra.len() as u32,
+            biXPelsPerMeter: 0,
+            biYPelsPerMeter: 0,
+            biClrUsed: 0,
+            biClrImportant: 0,
+        },
+        ..Default::default()
+    };
+
+    unsafe {
+        let mut bits: *mut c_void = std::ptr::null_mut();
+        let Ok(bitmap) = CreateDIBSection(None, &bitmap_info, DIB_RGB_COLORS, &mut bits, None, 0)
+        else {
+            return;
+        };
+        if bits.is_null() {
+            let _ = DeleteObject(bitmap.into());
+            return;
+        }
+        std::ptr::copy_nonoverlapping(sprite.bgra.as_ptr(), bits as *mut u8, sprite.bgra.len());
+
+        let sprite_hdc = CreateCompatibleDC(Some(hdc));
+        if sprite_hdc.is_invalid() {
+            let _ = DeleteObject(bitmap.into());
+            return;
+        }
+        let old_bitmap = SelectObject(sprite_hdc, bitmap.into());
+        let _ = AlphaBlend(
+            hdc,
+            x,
+            y,
+            sprite.width,
+            sprite.height,
+            sprite_hdc,
+            0,
+            0,
+            sprite.width,
+            sprite.height,
+            BLENDFUNCTION {
+                BlendOp: AC_SRC_OVER as u8,
+                BlendFlags: 0,
+                SourceConstantAlpha: 255,
+                AlphaFormat: AC_SRC_ALPHA as u8,
+            },
+        );
+        let _ = SelectObject(sprite_hdc, old_bitmap);
+        let _ = DeleteDC(sprite_hdc);
+        let _ = DeleteObject(bitmap.into());
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -1379,6 +1537,7 @@ fn kill_process(process_name: &str) {
 }
 
 /// 通过 HTTP API 关闭 Sunshine（不需要管理员权限）
+#[allow(dead_code)]
 async fn stop_sunshine_via_api() -> Result<(), String> {
     use crate::sunshine;
 
@@ -1438,8 +1597,17 @@ fn force_kill_sunshine_processes() {
     std::thread::sleep(Duration::from_secs(2));
 }
 
-/// 关闭Sunshine和GUI进程
+/// 关闭 Sunshine 服务和残留进程
 #[cfg(target_os = "windows")]
+fn stop_sunshine_for_update() {
+    info!("正在关闭 Sunshine 以安装更新...");
+    stop_sunshine_service();
+    force_kill_sunshine_processes();
+    info!("Sunshine 服务和相关进程已为更新关闭。");
+}
+
+#[cfg(target_os = "windows")]
+#[allow(dead_code)]
 async fn stop_sunshine_and_gui() -> Result<(), String> {
     info!("🛑 正在关闭Sunshine和GUI进程...");
 
@@ -1706,22 +1874,7 @@ fn prepare_updater_helper(
 
 #[cfg(target_os = "windows")]
 fn launch_updater_helper(helper_exe: &Path, state_path: &Path) -> Result<(), String> {
-    use std::os::windows::process::CommandExt;
-    use std::process::Command;
-
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-    match Command::new(helper_exe)
-        .arg(UPDATER_HELPER_ARG)
-        .arg(state_path)
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
-    {
-        Ok(_) => Ok(()),
-        Err(e) if e.raw_os_error() == Some(ERROR_ELEVATION_REQUIRED) => {
-            launch_updater_helper_elevated(helper_exe, state_path)
-        }
-        Err(e) => Err(format!("launch updater helper failed: {}", e)),
-    }
+    launch_updater_helper_elevated(helper_exe, state_path)
 }
 
 #[cfg(target_os = "windows")]
@@ -1770,15 +1923,8 @@ pub async fn install_update(
     {
         info!("🔧 开始安装更新: {}", file_path);
 
-        // 先关闭Sunshine和GUI
+        // 先启动更新助手；如果用户取消 UAC，串流仍然保持运行。
         emit_install_progress(&app_handle, "preparing", None, false);
-        emit_install_progress(&app_handle, "stopping-service", None, false);
-        if let Err(e) = stop_sunshine_and_gui().await {
-            emit_install_progress(&app_handle, "failed", Some(&e), true);
-            return Err(e);
-        }
-        emit_install_progress(&app_handle, "service-stopped", None, false);
-
         // 检查文件扩展名
         let path = std::path::Path::new(&file_path);
         let extension = path

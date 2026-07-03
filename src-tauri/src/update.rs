@@ -8,8 +8,6 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 const UPDATER_HELPER_ARG: &str = "--updater-helper";
 const UPDATE_RESULT_ARG: &str = "--update-result";
-#[cfg(target_os = "windows")]
-const ERROR_ELEVATION_REQUIRED: i32 = 740;
 
 // ========== 常量定义 ==========
 const GITHUB_API_URL: &str = "https://api.github.com/repos/qiin2333/sunshine/releases";
@@ -558,10 +556,16 @@ fn run_updater_worker(state: UpdaterHelperState, hwnd: isize) {
     update_updater_panel(hwnd, 0, "准备更新", "正在等待控制面板关闭...");
     wait_for_parent_exit(state.parent_pid);
 
-    update_updater_panel(hwnd, 1, "正在安装更新", "这可能需要一两分钟，请不要重复启动。");
-    let install_result = run_installer_and_wait(&state);
+    update_updater_panel(hwnd, 1, "正在关闭 Sunshine", "正在关闭 Sunshine 服务，随后安装更新...");
+    let install_result = match stop_sunshine_for_update() {
+        Ok(()) => {
+            update_updater_panel(hwnd, 2, "正在安装更新", "这可能需要一两分钟，请不要重复启动。");
+            run_installer_and_wait(&state)
+        }
+        Err(error) => Err(error),
+    };
 
-    update_updater_panel(hwnd, 2, "正在完成", "安装已结束，正在准备重新打开控制面板。");
+    update_updater_panel(hwnd, 3, "正在完成", "安装已结束，正在准备重新打开控制面板。");
     let helper_result = match install_result {
         Ok(code) => UpdaterHelperResult {
             success: code == 0,
@@ -1379,6 +1383,7 @@ fn kill_process(process_name: &str) {
 }
 
 /// 通过 HTTP API 关闭 Sunshine（不需要管理员权限）
+#[allow(dead_code)]
 async fn stop_sunshine_via_api() -> Result<(), String> {
     use crate::sunshine;
 
@@ -1438,8 +1443,18 @@ fn force_kill_sunshine_processes() {
     std::thread::sleep(Duration::from_secs(2));
 }
 
-/// 关闭Sunshine和GUI进程
+/// 关闭 Sunshine 服务和残留进程
 #[cfg(target_os = "windows")]
+fn stop_sunshine_for_update() -> Result<(), String> {
+    info!("正在关闭 Sunshine 以安装更新...");
+    stop_sunshine_service();
+    force_kill_sunshine_processes();
+    info!("Sunshine 服务和相关进程已为更新关闭。");
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+#[allow(dead_code)]
 async fn stop_sunshine_and_gui() -> Result<(), String> {
     info!("🛑 正在关闭Sunshine和GUI进程...");
 
@@ -1706,22 +1721,7 @@ fn prepare_updater_helper(
 
 #[cfg(target_os = "windows")]
 fn launch_updater_helper(helper_exe: &Path, state_path: &Path) -> Result<(), String> {
-    use std::os::windows::process::CommandExt;
-    use std::process::Command;
-
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-    match Command::new(helper_exe)
-        .arg(UPDATER_HELPER_ARG)
-        .arg(state_path)
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
-    {
-        Ok(_) => Ok(()),
-        Err(e) if e.raw_os_error() == Some(ERROR_ELEVATION_REQUIRED) => {
-            launch_updater_helper_elevated(helper_exe, state_path)
-        }
-        Err(e) => Err(format!("launch updater helper failed: {}", e)),
-    }
+    launch_updater_helper_elevated(helper_exe, state_path)
 }
 
 #[cfg(target_os = "windows")]
@@ -1770,15 +1770,8 @@ pub async fn install_update(
     {
         info!("🔧 开始安装更新: {}", file_path);
 
-        // 先关闭Sunshine和GUI
+        // 先启动更新助手；如果用户取消 UAC，串流仍然保持运行。
         emit_install_progress(&app_handle, "preparing", None, false);
-        emit_install_progress(&app_handle, "stopping-service", None, false);
-        if let Err(e) = stop_sunshine_and_gui().await {
-            emit_install_progress(&app_handle, "failed", Some(&e), true);
-            return Err(e);
-        }
-        emit_install_progress(&app_handle, "service-stopped", None, false);
-
         // 检查文件扩展名
         let path = std::path::Path::new(&file_path);
         let extension = path

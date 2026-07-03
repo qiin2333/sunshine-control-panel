@@ -111,6 +111,18 @@ struct UpdaterSpriteRun {
 }
 
 #[cfg(target_os = "windows")]
+#[allow(dead_code)]
+#[derive(Clone, Copy)]
+enum UpdaterHelperSpriteVariant {
+    Gura,
+    Fox,
+}
+
+#[cfg(target_os = "windows")]
+// Change this constant to swap the updater helper IP without touching rendering code.
+const UPDATER_HELPER_SPRITE_VARIANT: UpdaterHelperSpriteVariant = UpdaterHelperSpriteVariant::Gura;
+
+#[cfg(target_os = "windows")]
 static UPDATER_PANEL_STATE: OnceLock<Arc<Mutex<UpdaterPanelState>>> = OnceLock::new();
 
 #[cfg(target_os = "windows")]
@@ -1095,64 +1107,76 @@ unsafe fn draw_pixel_courier_scene(
 
 #[cfg(target_os = "windows")]
 fn updater_helper_sprite_runs() -> &'static [UpdaterSpriteRun] {
+    UPDATER_HELPER_SPRITE_RUNS
+        .get_or_init(|| build_updater_sprite_runs(updater_helper_sprite_bytes(
+            UPDATER_HELPER_SPRITE_VARIANT,
+        )))
+        .as_slice()
+}
+
+#[cfg(target_os = "windows")]
+fn updater_helper_sprite_bytes(variant: UpdaterHelperSpriteVariant) -> &'static [u8] {
+    match variant {
+        UpdaterHelperSpriteVariant::Gura => include_bytes!("../assets/updater-helper-gura.png"),
+        UpdaterHelperSpriteVariant::Fox => include_bytes!("../assets/updater-helper-fox.png"),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn build_updater_sprite_runs(bytes: &[u8]) -> Vec<UpdaterSpriteRun> {
     use windows::Win32::Foundation::COLORREF;
 
-    UPDATER_HELPER_SPRITE_RUNS
-        .get_or_init(|| {
-            let bytes = include_bytes!("../assets/updater-helper-gura.png");
-            let Ok(image) = image::load_from_memory(bytes).map(|image| image.to_rgba8()) else {
-                return Vec::new();
+    let Ok(image) = image::load_from_memory(bytes).map(|image| image.to_rgba8()) else {
+        return Vec::new();
+    };
+
+    let (width, height) = image.dimensions();
+    let mut runs = Vec::new();
+    for y in 0..height {
+        let mut run_start: Option<(u32, COLORREF)> = None;
+        for x in 0..width {
+            let pixel = image.get_pixel(x, y).0;
+            let color = if pixel[3] > 96 {
+                Some(COLORREF(
+                    pixel[0] as u32 | ((pixel[1] as u32) << 8) | ((pixel[2] as u32) << 16),
+                ))
+            } else {
+                None
             };
 
-            let (width, height) = image.dimensions();
-            let mut runs = Vec::new();
-            for y in 0..height {
-                let mut run_start: Option<(u32, COLORREF)> = None;
-                for x in 0..width {
-                    let pixel = image.get_pixel(x, y).0;
-                    let color = if pixel[3] > 96 {
-                        Some(COLORREF(
-                            pixel[0] as u32 | ((pixel[1] as u32) << 8) | ((pixel[2] as u32) << 16),
-                        ))
-                    } else {
-                        None
-                    };
-
-                    match (run_start, color) {
-                        (Some((start, active_color)), Some(next_color))
-                            if active_color == next_color =>
-                        {
-                            run_start = Some((start, active_color));
-                        }
-                        (Some((start, active_color)), next_color) => {
-                            runs.push(UpdaterSpriteRun {
-                                x: start as i32,
-                                y: y as i32,
-                                width: (x - start) as i32,
-                                color: active_color,
-                            });
-                            run_start = next_color.map(|color| (x, color));
-                        }
-                        (None, Some(next_color)) => {
-                            run_start = Some((x, next_color));
-                        }
-                        (None, None) => {}
-                    }
+            match (run_start, color) {
+                (Some((start, active_color)), Some(next_color))
+                    if active_color == next_color =>
+                {
+                    run_start = Some((start, active_color));
                 }
-
-                if let Some((start, active_color)) = run_start {
+                (Some((start, active_color)), next_color) => {
                     runs.push(UpdaterSpriteRun {
                         x: start as i32,
                         y: y as i32,
-                        width: (width - start) as i32,
+                        width: (x - start) as i32,
                         color: active_color,
                     });
+                    run_start = next_color.map(|color| (x, color));
                 }
+                (None, Some(next_color)) => {
+                    run_start = Some((x, next_color));
+                }
+                (None, None) => {}
             }
+        }
 
-            runs
-        })
-        .as_slice()
+        if let Some((start, active_color)) = run_start {
+            runs.push(UpdaterSpriteRun {
+                x: start as i32,
+                y: y as i32,
+                width: (width - start) as i32,
+                color: active_color,
+            });
+        }
+    }
+
+    runs
 }
 
 #[cfg(target_os = "windows")]

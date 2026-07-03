@@ -104,6 +104,20 @@ struct UpdaterPanelState {
 #[cfg(target_os = "windows")]
 static UPDATER_PANEL_STATE: OnceLock<Arc<Mutex<UpdaterPanelState>>> = OnceLock::new();
 
+#[cfg(target_os = "windows")]
+const GURA_PIXEL_PNG: &[u8] = include_bytes!("../../src/renderer/public/gura-pix.png");
+
+#[cfg(target_os = "windows")]
+struct PixelSpriteRun {
+    x: i32,
+    y: i32,
+    width: i32,
+    color: u32,
+}
+
+#[cfg(target_os = "windows")]
+static GURA_PIXEL_SPRITE_RUNS: OnceLock<Vec<PixelSpriteRun>> = OnceLock::new();
+
 // ========== 版本相关 ==========
 
 /// 获取当前 Sunshine 版本
@@ -850,7 +864,6 @@ fn draw_updater_panel(hwnd: windows::Win32::Foundation::HWND) {
             COLORREF(0x00BBC539)
         };
         let gura_light = COLORREF(0x00DFE76E);
-        let gura_pale = COLORREF(0x00EFF3A5);
         fill_rect(mem_hdc, 0, 0, client.right, 4, accent);
         fill_rect(mem_hdc, client.right - 108, 0, client.right, 4, gura_light);
         fill_rect(mem_hdc, 0, client.bottom - 3, client.right, client.bottom, COLORREF(0x0035323D));
@@ -910,7 +923,7 @@ fn draw_updater_panel(hwnd: windows::Win32::Foundation::HWND) {
             COLORREF(0x00B8D5E6),
         );
 
-        draw_pixel_courier_scene(mem_hdc, &state, 22, 144, client.right - 44, accent, gura_light, gura_pale);
+        draw_pixel_courier_scene(mem_hdc, &state, 22, 144, client.right - 44, accent, gura_light);
 
         let steps = ["PREP", "INST", "DONE", "OPEN"];
         let step_top = 196;
@@ -1015,7 +1028,6 @@ unsafe fn draw_pixel_courier_scene(
     width: i32,
     accent: windows::Win32::Foundation::COLORREF,
     gura_light: windows::Win32::Foundation::COLORREF,
-    gura_pale: windows::Win32::Foundation::COLORREF,
 ) {
     use windows::Win32::Foundation::COLORREF;
     use windows::Win32::Graphics::Gdi::{DT_LEFT, DT_SINGLELINE, DT_VCENTER};
@@ -1054,15 +1066,13 @@ unsafe fn draw_pixel_courier_scene(
             left + 24 + ((state.animation_tick as i32 * 5) % travel)
         };
         let bob = if walking && (state.animation_tick / 3) % 2 == 0 { -2 } else { 0 };
-        let frame = walking && (state.animation_tick / 4) % 2 == 0;
-
         fill_rect(hdc, left + 12, top + 8, left + 34, top + 29, COLORREF(0x00423F4A));
         fill_rect(hdc, left + 16, top + 4, left + 30, top + 8, muted);
         fill_rect(hdc, track_right - 36, top + 8, track_right - 14, top + 29, COLORREF(0x00423F4A));
         fill_rect(hdc, track_right - 32, top + 4, track_right - 18, top + 8, accent);
 
-        draw_pixel_package(hdc, courier_x + 33, top + 12 + bob, 3, accent);
-        draw_pixel_courier(hdc, courier_x, top + 6 + bob, 3, frame, state.failed, accent, gura_light, gura_pale);
+        draw_gura_pixel_sprite(hdc, courier_x, top - 7 + bob);
+        draw_pixel_package(hdc, courier_x + 46, top + 14 + bob, 3, accent);
 
         let label = if state.failed {
             "搬运中断"
@@ -1074,16 +1084,140 @@ unsafe fn draw_pixel_courier_scene(
         draw_text_styled(
             hdc,
             label,
-            left + 8,
-            bottom + 2,
-            track_right,
-            bottom + 22,
+            track_right - 112,
+            top + 4,
+            track_right - 8,
+            top + 24,
             DT_LEFT | DT_SINGLELINE | DT_VCENTER,
             12,
             700,
             if state.failed { COLORREF(0x00A5A5D4) } else { accent },
         );
     }
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn draw_gura_pixel_sprite(hdc: windows::Win32::Graphics::Gdi::HDC, x: i32, y: i32) {
+    let runs = GURA_PIXEL_SPRITE_RUNS.get_or_init(build_gura_pixel_sprite_runs);
+    unsafe {
+        for run in runs {
+            fill_rect(
+                hdc,
+                x + run.x,
+                y + run.y,
+                x + run.x + run.width,
+                y + run.y + 1,
+                windows::Win32::Foundation::COLORREF(run.color),
+            );
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn build_gura_pixel_sprite_runs() -> Vec<PixelSpriteRun> {
+    let Ok(image) = image::load_from_memory(GURA_PIXEL_PNG).map(|image| image.to_rgba8()) else {
+        return Vec::new();
+    };
+
+    let (source_width, source_height) = image.dimensions();
+    if source_width == 0 || source_height == 0 {
+        return Vec::new();
+    }
+
+    let background = image.get_pixel(0, 0).0;
+    let is_visible = |rgba: [u8; 4]| -> bool {
+        rgba[3] > 16
+            && (rgba[0].abs_diff(background[0]) > 8
+                || rgba[1].abs_diff(background[1]) > 8
+                || rgba[2].abs_diff(background[2]) > 8)
+    };
+
+    let mut min_x = source_width;
+    let mut min_y = source_height;
+    let mut max_x = 0;
+    let mut max_y = 0;
+    for y in 0..source_height {
+        for x in 0..source_width {
+            if is_visible(image.get_pixel(x, y).0) {
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+            }
+        }
+    }
+
+    if min_x > max_x || min_y > max_y {
+        return Vec::new();
+    }
+
+    let crop_width = max_x - min_x + 1;
+    let crop_height = max_y - min_y + 1;
+    let target_height = 52u32;
+    let target_width = ((crop_width * target_height) / crop_height).clamp(1, 68);
+    let mut runs = Vec::new();
+
+    for ty in 0..target_height {
+        let source_y = min_y + (ty * crop_height / target_height);
+        let mut run_start: Option<u32> = None;
+        let mut run_color = 0u32;
+
+        for tx in 0..target_width {
+            let source_x = min_x + (tx * crop_width / target_width);
+            let rgba = image.get_pixel(source_x, source_y).0;
+            let color = if is_visible(rgba) {
+                Some(rgba_to_colorref(rgba))
+            } else {
+                None
+            };
+
+            match (run_start, color) {
+                (Some(start), Some(color)) if color == run_color => {
+                    run_start = Some(start);
+                }
+                (Some(start), Some(color)) => {
+                    runs.push(PixelSpriteRun {
+                        x: start as i32,
+                        y: ty as i32,
+                        width: (tx - start) as i32,
+                        color: run_color,
+                    });
+                    run_start = Some(tx);
+                    run_color = color;
+                }
+                (None, Some(color)) => {
+                    run_start = Some(tx);
+                    run_color = color;
+                }
+                (Some(start), None) => {
+                    runs.push(PixelSpriteRun {
+                        x: start as i32,
+                        y: ty as i32,
+                        width: (tx - start) as i32,
+                        color: run_color,
+                    });
+                    run_start = None;
+                }
+                (None, None) => {}
+            }
+        }
+
+        if let Some(start) = run_start {
+            runs.push(PixelSpriteRun {
+                x: start as i32,
+                y: ty as i32,
+                width: (target_width - start) as i32,
+                color: run_color,
+            });
+        }
+    }
+
+    runs
+}
+
+#[cfg(target_os = "windows")]
+fn rgba_to_colorref(rgba: [u8; 4]) -> u32 {
+    u32::from(rgba[0]) | (u32::from(rgba[1]) << 8) | (u32::from(rgba[2]) << 16)
 }
 
 #[cfg(target_os = "windows")]
@@ -1103,56 +1237,6 @@ unsafe fn draw_pixel_package(
         fill_rect(hdc, x + scale * 3, y, x + scale * 5, y + scale * 8, COLORREF(0x0035323D));
         fill_rect(hdc, x + scale, y + scale * 3, x + scale * 7, y + scale * 4, accent);
         fill_rect(hdc, x + scale * 5, y + scale * 5, x + scale * 7, y + scale * 7, COLORREF(0x00EFF3A5));
-    }
-}
-
-#[cfg(target_os = "windows")]
-unsafe fn draw_pixel_courier(
-    hdc: windows::Win32::Graphics::Gdi::HDC,
-    x: i32,
-    y: i32,
-    scale: i32,
-    frame: bool,
-    failed: bool,
-    accent: windows::Win32::Foundation::COLORREF,
-    gura_light: windows::Win32::Foundation::COLORREF,
-    gura_pale: windows::Win32::Foundation::COLORREF,
-) {
-    use windows::Win32::Foundation::COLORREF;
-
-    let outline = COLORREF(0x00211F26);
-    let face = COLORREF(0x00DCEAFF);
-    let cheek = COLORREF(0x00B7B6E8);
-    let body = if failed { COLORREF(0x00A5A5D4) } else { accent };
-
-    unsafe {
-        fill_rect(hdc, x + scale * 2, y + scale * 12, x + scale * 12, y + scale * 13, outline);
-        fill_rect(hdc, x + scale * 3, y, x + scale * 10, y + scale, outline);
-        fill_rect(hdc, x + scale * 2, y + scale, x + scale * 11, y + scale * 5, gura_pale);
-        fill_rect(hdc, x + scale * 3, y + scale * 2, x + scale * 10, y + scale * 6, face);
-        fill_rect(hdc, x + scale * 4, y + scale * 3, x + scale * 5, y + scale * 4, outline);
-        fill_rect(hdc, x + scale * 8, y + scale * 3, x + scale * 9, y + scale * 4, outline);
-        fill_rect(hdc, x + scale * 6, y + scale * 5, x + scale * 8, y + scale * 6, cheek);
-        fill_rect(hdc, x + scale * 2, y + scale * 2, x + scale * 3, y + scale * 4, gura_light);
-        fill_rect(hdc, x + scale * 10, y + scale * 2, x + scale * 11, y + scale * 4, gura_light);
-        fill_rect(hdc, x + scale * 4, y + scale * 6, x + scale * 9, y + scale * 10, body);
-        fill_rect(hdc, x + scale * 5, y + scale * 6, x + scale * 8, y + scale * 8, gura_light);
-        fill_rect(hdc, x + scale * 4, y + scale * 10, x + scale * 9, y + scale * 11, outline);
-        fill_rect(hdc, x + scale * 2, y + scale * 7, x + scale * 4, y + scale * 9, body);
-        fill_rect(hdc, x + scale * 9, y + scale * 7, x + scale * 12, y + scale * 9, body);
-        fill_rect(hdc, x + scale * 11, y + scale * 8, x + scale * 13, y + scale * 10, face);
-
-        if frame {
-            fill_rect(hdc, x + scale * 4, y + scale * 11, x + scale * 6, y + scale * 13, body);
-            fill_rect(hdc, x + scale * 8, y + scale * 11, x + scale * 10, y + scale * 13, body);
-            fill_rect(hdc, x + scale * 3, y + scale * 13, x + scale * 6, y + scale * 14, outline);
-            fill_rect(hdc, x + scale * 8, y + scale * 13, x + scale * 11, y + scale * 14, outline);
-        } else {
-            fill_rect(hdc, x + scale * 3, y + scale * 11, x + scale * 5, y + scale * 13, body);
-            fill_rect(hdc, x + scale * 8, y + scale * 11, x + scale * 10, y + scale * 13, body);
-            fill_rect(hdc, x + scale * 2, y + scale * 13, x + scale * 5, y + scale * 14, outline);
-            fill_rect(hdc, x + scale * 9, y + scale * 13, x + scale * 12, y + scale * 14, outline);
-        }
     }
 }
 

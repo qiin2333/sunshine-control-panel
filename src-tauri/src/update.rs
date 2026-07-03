@@ -1071,15 +1071,20 @@ unsafe fn draw_pixel_courier_scene(
         fill_rect(hdc, track_right - 36, top + 8, track_right - 14, top + 29, COLORREF(0x00423F4A));
         fill_rect(hdc, track_right - 32, top + 4, track_right - 18, top + 8, accent);
 
+        let package_x = courier_x + 48;
+        let package_y = top + 10 + bob;
+        draw_push_dust(hdc, courier_x - 10, bottom - 13, state.animation_tick, gura_light);
         draw_gura_pixel_sprite(hdc, courier_x, top - 7 + bob);
-        draw_pixel_package(hdc, courier_x + 46, top + 14 + bob, 3, accent);
+        draw_push_arms(hdc, courier_x + 35, top + 20 + bob, package_x + 3, accent);
+        draw_pixel_package(hdc, package_x, package_y, 4, accent);
+        draw_package_push_marks(hdc, package_x + 3, package_y + 8, accent);
 
         let label = if state.failed {
-            "搬运中断"
+            "推送中断"
         } else if state.step >= 3 {
-            "搬运完成"
+            "推送完成"
         } else {
-            "搬运更新包中"
+            "推送更新包中"
         };
         draw_text_styled(
             hdc,
@@ -1093,6 +1098,62 @@ unsafe fn draw_pixel_courier_scene(
             700,
             if state.failed { COLORREF(0x00A5A5D4) } else { accent },
         );
+    }
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn draw_push_dust(
+    hdc: windows::Win32::Graphics::Gdi::HDC,
+    x: i32,
+    y: i32,
+    tick: u32,
+    color: windows::Win32::Foundation::COLORREF,
+) {
+    unsafe {
+        for i in 0..3 {
+            let offset = ((tick as i32 / 2) + i * 9) % 24;
+            let dot_x = x - offset;
+            let dot_y = y + (i % 2) * 4;
+            fill_rect(hdc, dot_x, dot_y, dot_x + 5, dot_y + 2, color);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn draw_push_arms(
+    hdc: windows::Win32::Graphics::Gdi::HDC,
+    left: i32,
+    top: i32,
+    right: i32,
+    accent: windows::Win32::Foundation::COLORREF,
+) {
+    use windows::Win32::Foundation::COLORREF;
+
+    unsafe {
+        fill_rect(hdc, left, top, right, top + 3, COLORREF(0x00211F26));
+        fill_rect(hdc, left + 1, top + 1, right - 1, top + 2, COLORREF(0x00DCEAFF));
+        fill_rect(hdc, left + 2, top + 8, right, top + 11, COLORREF(0x00211F26));
+        fill_rect(hdc, left + 3, top + 9, right - 1, top + 10, accent);
+        fill_rect(hdc, right - 2, top - 1, right + 3, top + 4, COLORREF(0x00DCEAFF));
+        fill_rect(hdc, right - 2, top + 7, right + 3, top + 12, COLORREF(0x00DCEAFF));
+    }
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn draw_package_push_marks(
+    hdc: windows::Win32::Graphics::Gdi::HDC,
+    x: i32,
+    y: i32,
+    accent: windows::Win32::Foundation::COLORREF,
+) {
+    use windows::Win32::Foundation::COLORREF;
+
+    unsafe {
+        fill_rect(hdc, x - 5, y - 2, x + 2, y + 4, COLORREF(0x00DCEAFF));
+        fill_rect(hdc, x - 5, y + 8, x + 2, y + 14, COLORREF(0x00DCEAFF));
+        fill_rect(hdc, x, y, x + 10, y + 2, COLORREF(0x0035323D));
+        fill_rect(hdc, x, y + 6, x + 8, y + 8, COLORREF(0x0035323D));
+        fill_rect(hdc, x + 2, y + 12, x + 12, y + 14, accent);
     }
 }
 

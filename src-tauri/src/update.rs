@@ -777,7 +777,7 @@ fn invalidate_updater_progress(hwnd: windows::Win32::Foundation::HWND) {
         left: 18,
         top: 126,
         right: 542,
-        bottom: 178,
+        bottom: 226,
     };
     let _ = unsafe { InvalidateRect(Some(hwnd), Some(&rect), false) };
 }
@@ -910,62 +910,7 @@ fn draw_updater_panel(hwnd: windows::Win32::Foundation::HWND) {
             COLORREF(0x00B8D5E6),
         );
 
-        let progress_left = 22;
-        let progress_top = 154;
-        let progress_width = client.right - 44;
-        fill_rect(mem_hdc, progress_left, progress_top, progress_left + progress_width, progress_top + 18, COLORREF(0x00423F4A));
-
-        let progress = match state.step {
-            0 => progress_width / 5,
-            1 => progress_width / 2,
-            2 => progress_width * 4 / 5,
-            _ => progress_width,
-        };
-        let block_gap = 4;
-        let block_count = 28;
-        let block_width = (progress_width - block_gap * (block_count - 1)) / block_count;
-        let active_blocks = ((progress * block_count) / progress_width).max(1);
-        for i in 0..block_count {
-            let x = progress_left + i * (block_width + block_gap);
-            let active = i < active_blocks;
-            let shimmer = state.step == 1
-                && !state.failed
-                && active
-                && i == ((state.animation_tick / 2) as i32 % active_blocks.max(1));
-            fill_rect(
-                mem_hdc,
-                x,
-                progress_top + 4,
-                x + block_width,
-                progress_top + 14,
-                if shimmer {
-                    gura_pale
-                } else if active {
-                    accent
-                } else {
-                    COLORREF(0x0035323D)
-                },
-            );
-        }
-
-        let percent = match state.step {
-            0 => "20%",
-            1 => "50%",
-            2 => "80%",
-            _ => "100%",
-        };
-        draw_text_styled(
-            mem_hdc,
-            percent,
-            client.right - 78,
-            progress_top - 24,
-            client.right - 22,
-            progress_top - 4,
-            DT_LEFT | DT_SINGLELINE | DT_VCENTER,
-            12,
-            700,
-            accent,
-        );
+        draw_pixel_courier_scene(mem_hdc, &state, 22, 144, client.right - 44, accent, gura_light, gura_pale);
 
         let steps = ["PREP", "INST", "DONE", "OPEN"];
         let step_top = 196;
@@ -1059,6 +1004,156 @@ unsafe fn fill_rect(
         )
     };
     let _ = unsafe { windows::Win32::Graphics::Gdi::DeleteObject(brush.into()) };
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn draw_pixel_courier_scene(
+    hdc: windows::Win32::Graphics::Gdi::HDC,
+    state: &UpdaterPanelState,
+    left: i32,
+    top: i32,
+    width: i32,
+    accent: windows::Win32::Foundation::COLORREF,
+    gura_light: windows::Win32::Foundation::COLORREF,
+    gura_pale: windows::Win32::Foundation::COLORREF,
+) {
+    use windows::Win32::Foundation::COLORREF;
+    use windows::Win32::Graphics::Gdi::{DT_LEFT, DT_SINGLELINE, DT_VCENTER};
+
+    let bottom = top + 44;
+    let track_right = left + width;
+    let muted = COLORREF(0x008C8173);
+
+    unsafe {
+        fill_rect(hdc, left, top, track_right, bottom, COLORREF(0x00211F26));
+        fill_rect(hdc, left + 2, top + 2, track_right - 2, bottom - 2, COLORREF(0x002F2C35));
+        fill_rect(hdc, left + 10, bottom - 9, track_right - 10, bottom - 6, COLORREF(0x00423F4A));
+
+        let dash_count = 18;
+        let dash_gap = (width - 36) / dash_count;
+        for i in 0..dash_count {
+            let x = left + 18 + i * dash_gap;
+            let lit = !state.failed && ((i + state.animation_tick as i32 / 2) % 4 == 0);
+            fill_rect(
+                hdc,
+                x,
+                bottom - 15,
+                x + 8,
+                bottom - 12,
+                if lit { gura_light } else { COLORREF(0x00423F4A) },
+            );
+        }
+
+        let walking = !state.failed && state.step < 3;
+        let travel = (width - 128).max(1);
+        let courier_x = if state.failed {
+            left + width / 2 - 18
+        } else if state.step >= 3 {
+            track_right - 88
+        } else {
+            left + 24 + ((state.animation_tick as i32 * 5) % travel)
+        };
+        let bob = if walking && (state.animation_tick / 3) % 2 == 0 { -2 } else { 0 };
+        let frame = walking && (state.animation_tick / 4) % 2 == 0;
+
+        fill_rect(hdc, left + 12, top + 8, left + 34, top + 29, COLORREF(0x00423F4A));
+        fill_rect(hdc, left + 16, top + 4, left + 30, top + 8, muted);
+        fill_rect(hdc, track_right - 36, top + 8, track_right - 14, top + 29, COLORREF(0x00423F4A));
+        fill_rect(hdc, track_right - 32, top + 4, track_right - 18, top + 8, accent);
+
+        draw_pixel_package(hdc, courier_x + 33, top + 12 + bob, 3, accent);
+        draw_pixel_courier(hdc, courier_x, top + 6 + bob, 3, frame, state.failed, accent, gura_light, gura_pale);
+
+        let label = if state.failed {
+            "搬运中断"
+        } else if state.step >= 3 {
+            "搬运完成"
+        } else {
+            "搬运更新包中"
+        };
+        draw_text_styled(
+            hdc,
+            label,
+            left + 8,
+            bottom + 2,
+            track_right,
+            bottom + 22,
+            DT_LEFT | DT_SINGLELINE | DT_VCENTER,
+            12,
+            700,
+            if state.failed { COLORREF(0x00A5A5D4) } else { accent },
+        );
+    }
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn draw_pixel_package(
+    hdc: windows::Win32::Graphics::Gdi::HDC,
+    x: i32,
+    y: i32,
+    scale: i32,
+    accent: windows::Win32::Foundation::COLORREF,
+) {
+    use windows::Win32::Foundation::COLORREF;
+
+    unsafe {
+        fill_rect(hdc, x, y + scale, x + scale * 8, y + scale * 8, COLORREF(0x004B5EA5));
+        fill_rect(hdc, x + scale, y, x + scale * 7, y + scale, COLORREF(0x006A78D0));
+        fill_rect(hdc, x + scale, y + scale * 2, x + scale * 7, y + scale * 7, COLORREF(0x005D6BBA));
+        fill_rect(hdc, x + scale * 3, y, x + scale * 5, y + scale * 8, COLORREF(0x0035323D));
+        fill_rect(hdc, x + scale, y + scale * 3, x + scale * 7, y + scale * 4, accent);
+        fill_rect(hdc, x + scale * 5, y + scale * 5, x + scale * 7, y + scale * 7, COLORREF(0x00EFF3A5));
+    }
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn draw_pixel_courier(
+    hdc: windows::Win32::Graphics::Gdi::HDC,
+    x: i32,
+    y: i32,
+    scale: i32,
+    frame: bool,
+    failed: bool,
+    accent: windows::Win32::Foundation::COLORREF,
+    gura_light: windows::Win32::Foundation::COLORREF,
+    gura_pale: windows::Win32::Foundation::COLORREF,
+) {
+    use windows::Win32::Foundation::COLORREF;
+
+    let outline = COLORREF(0x00211F26);
+    let face = COLORREF(0x00DCEAFF);
+    let cheek = COLORREF(0x00B7B6E8);
+    let body = if failed { COLORREF(0x00A5A5D4) } else { accent };
+
+    unsafe {
+        fill_rect(hdc, x + scale * 2, y + scale * 12, x + scale * 12, y + scale * 13, outline);
+        fill_rect(hdc, x + scale * 3, y, x + scale * 10, y + scale, outline);
+        fill_rect(hdc, x + scale * 2, y + scale, x + scale * 11, y + scale * 5, gura_pale);
+        fill_rect(hdc, x + scale * 3, y + scale * 2, x + scale * 10, y + scale * 6, face);
+        fill_rect(hdc, x + scale * 4, y + scale * 3, x + scale * 5, y + scale * 4, outline);
+        fill_rect(hdc, x + scale * 8, y + scale * 3, x + scale * 9, y + scale * 4, outline);
+        fill_rect(hdc, x + scale * 6, y + scale * 5, x + scale * 8, y + scale * 6, cheek);
+        fill_rect(hdc, x + scale * 2, y + scale * 2, x + scale * 3, y + scale * 4, gura_light);
+        fill_rect(hdc, x + scale * 10, y + scale * 2, x + scale * 11, y + scale * 4, gura_light);
+        fill_rect(hdc, x + scale * 4, y + scale * 6, x + scale * 9, y + scale * 10, body);
+        fill_rect(hdc, x + scale * 5, y + scale * 6, x + scale * 8, y + scale * 8, gura_light);
+        fill_rect(hdc, x + scale * 4, y + scale * 10, x + scale * 9, y + scale * 11, outline);
+        fill_rect(hdc, x + scale * 2, y + scale * 7, x + scale * 4, y + scale * 9, body);
+        fill_rect(hdc, x + scale * 9, y + scale * 7, x + scale * 12, y + scale * 9, body);
+        fill_rect(hdc, x + scale * 11, y + scale * 8, x + scale * 13, y + scale * 10, face);
+
+        if frame {
+            fill_rect(hdc, x + scale * 4, y + scale * 11, x + scale * 6, y + scale * 13, body);
+            fill_rect(hdc, x + scale * 8, y + scale * 11, x + scale * 10, y + scale * 13, body);
+            fill_rect(hdc, x + scale * 3, y + scale * 13, x + scale * 6, y + scale * 14, outline);
+            fill_rect(hdc, x + scale * 8, y + scale * 13, x + scale * 11, y + scale * 14, outline);
+        } else {
+            fill_rect(hdc, x + scale * 3, y + scale * 11, x + scale * 5, y + scale * 13, body);
+            fill_rect(hdc, x + scale * 8, y + scale * 11, x + scale * 10, y + scale * 13, body);
+            fill_rect(hdc, x + scale * 2, y + scale * 13, x + scale * 5, y + scale * 14, outline);
+            fill_rect(hdc, x + scale * 9, y + scale * 13, x + scale * 12, y + scale * 14, outline);
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]

@@ -130,6 +130,45 @@ pub fn webview_heartbeat(webview: tauri::Webview) {
         .insert(label, std::time::Instant::now());
 }
 
+/// Resize the About window to match its web content height.
+#[tauri::command]
+pub fn resize_about_window(window: tauri::Window, height: f64) -> Result<(), String> {
+    if window.label() != ABOUT_WINDOW_ID {
+        return Err("resize_about_window can only be called from the About window".to_string());
+    }
+
+    if !height.is_finite() {
+        return Err("Invalid about window height".to_string());
+    }
+
+    let scale_factor = window
+        .scale_factor()
+        .map_err(|e| format!("Failed to get window scale factor: {}", e))?;
+    let current_size = window
+        .inner_size()
+        .map_err(|e| format!("Failed to get window size: {}", e))?;
+    let current_width = current_size.width as f64 / scale_factor;
+    let current_height = current_size.height as f64 / scale_factor;
+    let max_height = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .map(|monitor| (monitor.size().height as f64 / scale_factor - 120.0).max(420.0))
+        .unwrap_or(900.0);
+    let target_height = height.clamp(420.0, max_height);
+
+    if (current_height - target_height).abs() < 1.0 {
+        return Ok(());
+    }
+
+    window
+        .set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+            current_width,
+            target_height,
+        )))
+        .map_err(|e| format!("Failed to resize about window: {}", e))
+}
+
 /// 通过 WebView2 COM API 强制重新加载页面（在渲染进程崩溃后仍可工作）
 #[cfg(target_os = "windows")]
 fn reload_webview_via_com<R: Runtime>(window: &WebviewWindow<R>) {

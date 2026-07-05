@@ -12,14 +12,27 @@
         box-sizing: border-box;
       }
 
+      html,
+      body {
+        width: 100%;
+        overflow-x: hidden;
+        overflow-y: auto;
+        scrollbar-width: none;
+      }
+
       body {
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         background: linear-gradient(135deg, #4a9eff 0%, #7ab8ff 50%, #a2d2ff 100%);
         min-height: 100vh;
         display: flex;
         align-items: center;
+        align-items: safe center;
         justify-content: center;
         color: #3a7ed5;
+      }
+
+      ::-webkit-scrollbar {
+        display: none;
       }
 
       .about-container {
@@ -214,8 +227,46 @@
       }
 
       const $ = (id) => document.getElementById(id)
+      // Keep a little breathing room around the measured card when resizing the native window.
+      const ABOUT_WINDOW_VERTICAL_MARGIN = 48
       let text = pickSimpleMessages(MESSAGES)
       let latestData = null
+      let resizeInvoke = null
+      let resizeObserver = null
+      let pendingResizeFrame = 0
+      let lastReportedHeight = 0
+
+      const notifyShellHeight = () => {
+        if (pendingResizeFrame) {
+          cancelAnimationFrame(pendingResizeFrame)
+        }
+
+        pendingResizeFrame = requestAnimationFrame(async () => {
+          pendingResizeFrame = 0
+
+          const container = document.querySelector('.about-container')
+          if (!container) {
+            return
+          }
+
+          const height = Math.ceil(container.getBoundingClientRect().height + ABOUT_WINDOW_VERTICAL_MARGIN)
+          if (Math.abs(height - lastReportedHeight) < 1) {
+            return
+          }
+
+          lastReportedHeight = height
+
+          try {
+            if (!resizeInvoke) {
+              const { invoke } = await import('@tauri-apps/api/core')
+              resizeInvoke = invoke
+            }
+            await resizeInvoke('resize_about_window', { height })
+          } catch (error) {
+            console.warn('Failed to notify shell about height change:', error)
+          }
+        })
+      }
 
       const applyStaticText = () => {
         document.querySelectorAll('[data-i18n]').forEach((element) => {
@@ -235,6 +286,7 @@
         } else {
           updateUI(latestData)
         }
+        notifyShellHeight()
       }
 
       const createInfoItem = (label, value, fontSize = '14px') => {
@@ -274,6 +326,7 @@
         const infoGrid = $('info-grid')
         infoGrid.replaceChildren(...rows.map((row) => createInfoItem(row.label, row.value, row.fontSize)))
         infoGrid.classList.toggle('multi-row', rows.length > 3)
+        notifyShellHeight()
       }
 
       const updateUI = (data) => {
@@ -311,6 +364,13 @@
       const init = () => {
         applyLocale(getInitialSimpleLocale())
         syncSimpleLocaleFromSunshine(MESSAGES, applyLocale)
+        const container = document.querySelector('.about-container')
+        if (container && 'ResizeObserver' in window) {
+          resizeObserver = new ResizeObserver(notifyShellHeight)
+          resizeObserver.observe(container)
+        }
+        window.addEventListener('resize', notifyShellHeight)
+        notifyShellHeight()
         loadSystemInfo()
       }
 

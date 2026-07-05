@@ -15,7 +15,9 @@
       html,
       body {
         width: 100%;
-        overflow: hidden;
+        overflow-x: hidden;
+        overflow-y: auto;
+        scrollbar-width: none;
       }
 
       body {
@@ -24,6 +26,7 @@
         min-height: 100vh;
         display: flex;
         align-items: center;
+        align-items: safe center;
         justify-content: center;
         color: #3a7ed5;
       }

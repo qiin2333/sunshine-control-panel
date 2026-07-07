@@ -80,7 +80,7 @@ const STORAGE_KEY = 'rtss-monitoring-config'
 
 const DEFAULT_CONFIG = {
   interval_ms: 1000,
-  metrics: ['session_state', 'stream_fps', 'stream_bitrate'],
+  metrics: ['session_state', 'stream_fps', 'stream_bitrate', 'host_perf_p95'],
   title_color: 'FFD700',
   label_color: 'AAAAAA',
   value_color: '00FF00',
@@ -115,6 +115,7 @@ const metricGroups = computed(() => {
   const isZh = locale.value === 'zh'
   const groups = [
     { id: 'session', label: isZh ? '串流会话' : 'Streaming', metrics: [] },
+    { id: 'host_perf', label: isZh ? '主机性能' : 'Host Performance', metrics: [] },
     { id: 'process', label: isZh ? '进程性能' : 'Process', metrics: [] },
   ]
   for (const m of availableMetrics.value) {

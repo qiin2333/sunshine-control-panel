@@ -1069,6 +1069,31 @@ pub async fn rtss_get_available_metrics() -> Vec<MetricDef> {
             id: "capture_method".into(), label_zh: "捕获方式".into(),
             label_en: "Capture".into(), group: "session".into(),
         },
+        // 主机串流性能
+        MetricDef {
+            id: "host_perf_p95".into(), label_zh: "Host P95".into(),
+            label_en: "Host P95".into(), group: "host_perf".into(),
+        },
+        MetricDef {
+            id: "host_perf_avg".into(), label_zh: "Host Avg".into(),
+            label_en: "Host Avg".into(), group: "host_perf".into(),
+        },
+        MetricDef {
+            id: "host_perf_fps".into(), label_zh: "Host FPS".into(),
+            label_en: "Host FPS".into(), group: "host_perf".into(),
+        },
+        MetricDef {
+            id: "host_perf_budget".into(), label_zh: "Budget".into(),
+            label_en: "Budget".into(), group: "host_perf".into(),
+        },
+        MetricDef {
+            id: "pipeline_encode".into(), label_zh: "Encode".into(),
+            label_en: "Encode".into(), group: "host_perf".into(),
+        },
+        MetricDef {
+            id: "pipeline_total".into(), label_zh: "Pipeline Total".into(),
+            label_en: "Pipeline Total".into(), group: "host_perf".into(),
+        },
         // 进程性能
         MetricDef {
             id: "process_cpu".into(), label_zh: "CPU 占用".into(),
@@ -1636,6 +1661,127 @@ async fn fetch_session_info() -> std::collections::HashMap<String, String> {
     map
 }
 
+fn format_ms_value(value: Option<f64>) -> String {
+    value
+        .map(|v| format!("{:.2} ms", v))
+        .unwrap_or_else(|| "-".into())
+}
+
+fn format_percent_value(value: Option<f64>) -> String {
+    value
+        .map(|v| format!("{:.0}%", v))
+        .unwrap_or_else(|| "-".into())
+}
+
+fn get_number_at<'a>(value: &'a serde_json::Value, path: &[&str]) -> Option<f64> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    current.as_f64()
+}
+
+fn insert_host_perf_defaults(map: &mut std::collections::HashMap<String, String>, value: &str) {
+    for key in [
+        "host_perf_p95",
+        "host_perf_avg",
+        "host_perf_fps",
+        "host_perf_budget",
+        "pipeline_encode",
+        "pipeline_total",
+    ] {
+        map.insert(key.into(), value.into());
+    }
+}
+
+static HOST_PERF_CLIENT: Lazy<Option<reqwest::Client>> = Lazy::new(|| {
+    reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .ok()
+});
+
+async fn fetch_host_perf_info() -> std::collections::HashMap<String, String> {
+    use std::collections::HashMap;
+    let mut map = HashMap::new();
+
+    let proxy_url = crate::proxy_server::get_proxy_url();
+    let url = format!("{}/api/perf/current", proxy_url);
+
+    let Some(client) = HOST_PERF_CLIENT.as_ref() else {
+        insert_host_perf_defaults(&mut map, "N/A");
+        return map;
+    };
+
+    let body = match client.get(&url).send().await {
+        Ok(resp) => match resp.json::<serde_json::Value>().await {
+            Ok(body) => body,
+            Err(e) => {
+                debug!("failed to parse Sunshine perf snapshot: {}", e);
+                insert_host_perf_defaults(&mut map, "N/A");
+                return map;
+            }
+        },
+        Err(e) => {
+            debug!("failed to fetch Sunshine perf snapshot: {}", e);
+            insert_host_perf_defaults(&mut map, "N/A");
+            return map;
+        }
+    };
+
+    let sessions = body.get("sessions").and_then(|v| v.as_array());
+    let latest_session_id = body.get("latest_session_id").and_then(|v| v.as_u64());
+    let session = sessions.and_then(|items| {
+        items
+            .iter()
+            .find(|item| {
+                item.get("active").and_then(|v| v.as_bool()).unwrap_or(false)
+                    && latest_session_id.map_or(true, |id| {
+                        item.get("session_id").and_then(|v| v.as_u64()) == Some(id)
+                    })
+            })
+            .or_else(|| {
+                items.iter().find(|item| {
+                    item.get("active").and_then(|v| v.as_bool()).unwrap_or(false)
+                })
+            })
+    });
+
+    let Some(session) = session else {
+        insert_host_perf_defaults(&mut map, "-");
+        return map;
+    };
+
+    let fps = session.get("fps").and_then(|v| v.as_f64()).unwrap_or(60.0).max(1.0);
+    let frame_budget_ms = 1000.0 / fps;
+    let host_p95 = get_number_at(session, &["host_latency", "p95_ms"]);
+    let budget_usage = host_p95.map(|p95| (p95 / frame_budget_ms) * 100.0);
+
+    map.insert("host_perf_p95".into(), format_ms_value(host_p95));
+    map.insert(
+        "host_perf_avg".into(),
+        format_ms_value(get_number_at(session, &["host_latency", "avg_ms"])),
+    );
+    map.insert(
+        "host_perf_fps".into(),
+        get_number_at(session, &["host_latency", "recent_fps"])
+            .map(|v| format!("{:.1}", v))
+            .unwrap_or_else(|| "-".into()),
+    );
+    map.insert("host_perf_budget".into(), format_percent_value(budget_usage));
+    map.insert(
+        "pipeline_encode".into(),
+        format_ms_value(get_number_at(session, &["pipeline", "encode", "p95_ms"])),
+    );
+    map.insert(
+        "pipeline_total".into(),
+        format_ms_value(get_number_at(session, &["pipeline", "total", "p95_ms"])),
+    );
+
+    map
+}
+
 /// 构建 OSD 格式化文本
 fn format_osd_text(
     config: &MonitoringConfig,
@@ -1674,6 +1820,12 @@ fn format_osd_text(
             "stream_hdr" => "HDR",
             "app_name" => "App",
             "capture_method" => "Capture",
+            "host_perf_p95" => "Host P95",
+            "host_perf_avg" => "Host Avg",
+            "host_perf_fps" => "Host FPS",
+            "host_perf_budget" => "Budget",
+            "pipeline_encode" => "Encode",
+            "pipeline_total" => "Pipe",
             "process_cpu" => "CPU",
             "process_mem" => "Mem",
             "process_threads" => "Threads",
@@ -1725,6 +1877,23 @@ async fn monitoring_loop(config: MonitoringConfig) {
         // 捕获方式（从 sunshine.conf 读取，独立于会话）
         if config.metrics.iter().any(|m| m == "capture_method") {
             metrics.insert("capture_method".into(), get_capture_method());
+        }
+
+        let needs_host_perf = config.metrics.iter().any(|m| {
+            matches!(
+                m.as_str(),
+                "host_perf_p95"
+                    | "host_perf_avg"
+                    | "host_perf_fps"
+                    | "host_perf_budget"
+                    | "pipeline_encode"
+                    | "pipeline_total"
+            )
+        });
+
+        if needs_host_perf {
+            let host_perf_info = fetch_host_perf_info().await;
+            metrics.extend(host_perf_info);
         }
 
         // 是否需要进程统计

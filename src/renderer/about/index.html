@@ -190,6 +190,7 @@
         setDocumentLocale,
         syncSimpleLocaleFromSunshine,
       } from '../shared/simple-i18n.js'
+      import { createAdaptiveSizeObserver } from '../shared/adaptive-window-size.js'
 
       const MESSAGES = {
         zh: {
@@ -232,40 +233,31 @@
       let text = pickSimpleMessages(MESSAGES)
       let latestData = null
       let resizeInvoke = null
-      let resizeObserver = null
-      let pendingResizeFrame = 0
-      let lastReportedHeight = 0
+      let sizeObserver = null
 
       const notifyShellHeight = () => {
-        if (pendingResizeFrame) {
-          cancelAnimationFrame(pendingResizeFrame)
-        }
+        sizeObserver?.schedule()
+      }
 
-        pendingResizeFrame = requestAnimationFrame(async () => {
-          pendingResizeFrame = 0
-
-          const container = document.querySelector('.about-container')
-          if (!container) {
-            return
-          }
-
-          const height = Math.ceil(container.getBoundingClientRect().height + ABOUT_WINDOW_VERTICAL_MARGIN)
-          if (Math.abs(height - lastReportedHeight) < 1) {
-            return
-          }
-
-          lastReportedHeight = height
-
-          try {
-            if (!resizeInvoke) {
-              const { invoke } = await import('@tauri-apps/api/core')
-              resizeInvoke = invoke
+      const initWindowSizing = () => {
+        sizeObserver = createAdaptiveSizeObserver({
+          getElement: () => document.querySelector('.about-container'),
+          measureSize: (container) => ({
+            height: Math.ceil(container.getBoundingClientRect().height + ABOUT_WINDOW_VERTICAL_MARGIN),
+          }),
+          applySize: async ({ height }) => {
+            try {
+              if (!resizeInvoke) {
+                const { invoke } = await import('@tauri-apps/api/core')
+                resizeInvoke = invoke
+              }
+              await resizeInvoke('resize_about_window', { height })
+            } catch (error) {
+              console.warn('Failed to notify shell about height change:', error)
             }
-            await resizeInvoke('resize_about_window', { height })
-          } catch (error) {
-            console.warn('Failed to notify shell about height change:', error)
-          }
+          },
         })
+        sizeObserver.start()
       }
 
       const applyStaticText = () => {
@@ -364,13 +356,7 @@
       const init = () => {
         applyLocale(getInitialSimpleLocale())
         syncSimpleLocaleFromSunshine(MESSAGES, applyLocale)
-        const container = document.querySelector('.about-container')
-        if (container && 'ResizeObserver' in window) {
-          resizeObserver = new ResizeObserver(notifyShellHeight)
-          resizeObserver.observe(container)
-        }
-        window.addEventListener('resize', notifyShellHeight)
-        notifyShellHeight()
+        initWindowSizing()
         loadSystemInfo()
       }
 

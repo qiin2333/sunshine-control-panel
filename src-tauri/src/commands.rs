@@ -1,4 +1,4 @@
-use crate::windows;
+use crate::{toolbar, windows};
 use base64::Engine as _;
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
@@ -97,6 +97,9 @@ pub async fn open_tool_window(app: AppHandle, tool_name: String) -> Result<(), S
         }
         "logs" | "log_console" => {
             windows::open_log_console(&app);
+        }
+        "performance" | "host_performance" => {
+            toolbar::create_tool_window_internal(&app, "performance");
         }
         _ => return Err(format!("Unknown tool name: {}", tool_name)),
     }

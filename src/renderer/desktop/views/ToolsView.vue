@@ -19,7 +19,19 @@
         </div>
       </DesktopCard>
 
-      <!-- DPI 调节器 -->
+      <!-- Host performance panel -->
+      <DesktopCard variant="primary" hoverable class="tool-panel-card host-performance-card">
+        <template #title>
+          <span class="title-icon"><Monitor /></span>
+          {{ t.tools.hostPerformance }}
+        </template>
+
+        <div class="tool-panel-content">
+          <HostPerformanceTool :embedded="true" />
+        </div>
+      </DesktopCard>
+
+      <!-- DPI adjuster -->
       <DesktopCard variant="secondary" hoverable class="tool-panel-card dpi-card">
         <template #title>
           <span class="title-icon"><Search /></span>
@@ -149,6 +161,7 @@ import DesktopGrid from '../components/DesktopGrid.vue'
 // 工具组件 - 复用工具栏的工具
 import BitrateTool from '../../tool-window/tools/BitrateTool.vue'
 import DpiAdjusterTool from '../../tool-window/tools/DpiAdjusterTool.vue'
+import HostPerformanceTool from '../../tool-window/tools/HostPerformanceTool.vue'
 import ShortcutsTool from '../../tool-window/tools/ShortcutsTool.vue'
 
 const { t } = useI18n()
@@ -311,6 +324,7 @@ onMounted(async () => {
 }
 
 .bitrate-card,
+.host-performance-card,
 .dpi-card {
   min-height: 320px;
 }

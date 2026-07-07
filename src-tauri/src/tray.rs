@@ -29,6 +29,7 @@ struct TrayStrings {
     show_toolbar: &'static str,
     prevent_sleep: &'static str,
     rtss_control: &'static str,
+    host_performance: &'static str,
     log_console: &'static str,
     open_desktop: &'static str,
     web_stream: &'static str,
@@ -48,6 +49,7 @@ const ZH_STRINGS: TrayStrings = TrayStrings {
     show_toolbar: "🐾 显示桌宠",
     prevent_sleep: "💤 不许睡",
     rtss_control: "🎯 RTSS 控制",
+    host_performance: "📊 主机性能",
     log_console: "🔍 打开日志控制台",
     open_desktop: "🖥️ 打开桌面 UI",
     web_stream: "🌙 Web 串流服务",
@@ -67,6 +69,7 @@ const EN_STRINGS: TrayStrings = TrayStrings {
     show_toolbar: "🐾 Show Toolbar",
     prevent_sleep: "💤 Prevent Sleep",
     rtss_control: "🎯 RTSS Control",
+    host_performance: "📊 Host Performance",
     log_console: "🔍 Log Console",
     open_desktop: "🖥️ Desktop UI",
     web_stream: "🌙 Web Streaming",
@@ -188,6 +191,7 @@ fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let show_toolbar = MenuItem::with_id(app, "show_toolbar", s.show_toolbar, true, None::<&str>)?;
 
     let rtss_control = MenuItem::with_id(app, "rtss_control", s.rtss_control, true, None::<&str>)?;
+    let host_performance = MenuItem::with_id(app, "host_performance", s.host_performance, true, None::<&str>)?;
     let log_console = MenuItem::with_id(app, "log_console", s.log_console, true, None::<&str>)?;
     #[cfg(any(debug_assertions, feature = "beta"))]
     let web_stream = MenuItem::with_id(app, "web_stream", s.web_stream, true, None::<&str>)?;
@@ -233,6 +237,7 @@ fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     items.push(&prevent_sleep);
 
     items.push(&rtss_control);
+    items.push(&host_performance);
     items.push(&log_console);
     items.push(&open_desktop);
     #[cfg(any(debug_assertions, feature = "beta"))]
@@ -298,6 +303,10 @@ pub fn handle_tray_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) {
         "rtss_control" => {
             info!("🎯 托盘菜单：打开 RTSS 控制");
             toolbar::create_tool_window_internal(app, "rtss");
+        }
+        "host_performance" => {
+            info!("📊 托盘菜单：打开主机性能监控");
+            toolbar::create_tool_window_internal(app, "performance");
         }
         "log_console" => windows::open_log_console(app),
         "web_stream" => open_web_stream_settings(app),

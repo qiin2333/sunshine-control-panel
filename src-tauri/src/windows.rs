@@ -3,11 +3,20 @@ use log::{debug, error, info, warn};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::Mutex;
-use tauri::{AppHandle, Manager, Runtime, WebviewWindow};
+use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewWindow};
 
 /// WebView 心跳追踪表：记录各窗口最近一次 JS 心跳的时间戳
 static HEARTBEAT_MAP: Lazy<Mutex<HashMap<String, std::time::Instant>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
+
+#[derive(Default)]
+struct ToolWindowMoveSave {
+    version: u64,
+    position: Option<PhysicalPosition<i32>>,
+}
+
+static TOOL_WINDOW_MOVE_SAVE: Lazy<Mutex<ToolWindowMoveSave>> =
+    Lazy::new(|| Mutex::new(ToolWindowMoveSave::default()));
 
 /// 心跳超时阈值（秒）：超过此时间未收到心跳则认为渲染进程可能崩溃
 const HEARTBEAT_STALE_SECS: u64 = 30;
@@ -17,8 +26,108 @@ const ABOUT_WINDOW_ID: &str = "about";
 const LOG_CONSOLE_WINDOW_ID: &str = "log_console";
 const PIN_WINDOW_ID: &str = "pin_pairing";
 const DESKTOP_WINDOW_ID: &str = "desktop";
+const TOOL_WINDOW_ID: &str = "tool_window";
 #[cfg(debug_assertions)]
 const DEBUG_PAGE_WINDOW_ID: &str = "debug_page";
+
+fn schedule_tool_window_position_save(app: AppHandle, position: PhysicalPosition<i32>) {
+    let version = {
+        let mut state = TOOL_WINDOW_MOVE_SAVE.lock().unwrap();
+        state.version = state.version.wrapping_add(1);
+        state.position = Some(position);
+        state.version
+    };
+
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+
+        let position = {
+            let state = TOOL_WINDOW_MOVE_SAVE.lock().unwrap();
+            if state.version != version {
+                return;
+            }
+            state.position
+        };
+
+        if let Some(position) = position {
+            crate::toolbar::save_tool_window_position_internal(
+                &app,
+                position.x as f64,
+                position.y as f64,
+            );
+        }
+    });
+}
+
+fn clamp_axis(value: i32, min: i32, max: i32) -> i32 {
+    if max < min {
+        min
+    } else {
+        value.clamp(min, max)
+    }
+}
+
+pub fn clamp_window_position_to_monitor(
+    position: PhysicalPosition<i32>,
+    monitor_position: PhysicalPosition<i32>,
+    monitor_size: PhysicalSize<u32>,
+    scale_factor: f64,
+    logical_width: f64,
+    logical_height: f64,
+    margin_logical: f64,
+) -> PhysicalPosition<i32> {
+    let scale = if scale_factor.is_finite() && scale_factor > 0.0 {
+        scale_factor
+    } else {
+        1.0
+    };
+    let margin = (margin_logical * scale).round() as i32;
+    let width = (logical_width * scale).round() as i32;
+    let height = (logical_height * scale).round() as i32;
+    let min_x = monitor_position.x + margin;
+    let min_y = monitor_position.y + margin;
+    let max_x = monitor_position.x + monitor_size.width as i32 - width - margin;
+    let max_y = monitor_position.y + monitor_size.height as i32 - height - margin;
+
+    PhysicalPosition::new(
+        clamp_axis(position.x, min_x, max_x),
+        clamp_axis(position.y, min_y, max_y),
+    )
+}
+
+fn constrain_tool_window_to_visible_area(
+    window: &tauri::Window,
+    logical_width: f64,
+    logical_height: f64,
+    margin_logical: f64,
+) -> Result<(), String> {
+    let Some(monitor) = window
+        .current_monitor()
+        .map_err(|e| format!("Failed to get current monitor: {}", e))?
+    else {
+        return Ok(());
+    };
+    let position = window
+        .outer_position()
+        .map_err(|e| format!("Failed to get window position: {}", e))?;
+    let target_position = clamp_window_position_to_monitor(
+        position,
+        *monitor.position(),
+        *monitor.size(),
+        monitor.scale_factor(),
+        logical_width,
+        logical_height,
+        margin_logical,
+    );
+
+    if target_position != position {
+        window
+            .set_position(target_position)
+            .map_err(|e| format!("Failed to constrain tool window position: {}", e))?;
+    }
+
+    Ok(())
+}
 
 /// WebView 可见性控制初始化脚本
 /// 窗口最小化或隐藏到托盘时，模拟 Page Visibility API 状态变化，触发 Chromium 内置节流：
@@ -167,6 +276,47 @@ pub fn resize_about_window(window: tauri::Window, height: f64) -> Result<(), Str
             target_height,
         )))
         .map_err(|e| format!("Failed to resize about window: {}", e))
+}
+
+/// Resize the floating tool window to match its web content size.
+#[tauri::command]
+pub fn resize_tool_window(window: tauri::Window, width: f64, height: f64) -> Result<(), String> {
+    if window.label() != TOOL_WINDOW_ID {
+        return Err("resize_tool_window can only be called from the tool window".to_string());
+    }
+
+    if !width.is_finite() || !height.is_finite() {
+        return Err("Invalid tool window size".to_string());
+    }
+
+    let scale_factor = window
+        .scale_factor()
+        .map_err(|e| format!("Failed to get window scale factor: {}", e))?;
+    let current_size = window
+        .inner_size()
+        .map_err(|e| format!("Failed to get window size: {}", e))?;
+    let current_width = current_size.width as f64 / scale_factor;
+    let current_height = current_size.height as f64 / scale_factor;
+    let max_height = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .map(|monitor| (monitor.size().height as f64 / scale_factor - 32.0).max(180.0))
+        .unwrap_or(900.0);
+    let target_width = width.clamp(320.0, 560.0);
+    let target_height = height.clamp(180.0, max_height);
+
+    if (current_width - target_width).abs() >= 1.0 || (current_height - target_height).abs() >= 1.0
+    {
+        window
+            .set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+                target_width,
+                target_height,
+            )))
+            .map_err(|e| format!("Failed to resize tool window: {}", e))?;
+    }
+
+    constrain_tool_window_to_visible_area(&window, target_width, target_height, 16.0)
 }
 
 /// 通过 WebView2 COM API 强制重新加载页面（在渲染进程崩溃后仍可工作）
@@ -804,6 +954,11 @@ fn set_webview_window_visibility<R: Runtime>(ww: &WebviewWindow<R>, visible: boo
 /// 处理窗口事件
 pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     match event {
+        tauri::WindowEvent::Moved(position) => {
+            if window.label() == TOOL_WINDOW_ID {
+                schedule_tool_window_position_save(window.app_handle().clone(), *position);
+            }
+        }
         tauri::WindowEvent::CloseRequested { api, .. } => {
             match window.label() {
                 "main" => {
@@ -815,6 +970,15 @@ pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
                 "toolbar" => {
                     if let Ok(position) = window.outer_position() {
                         crate::toolbar::save_toolbar_position_internal(
+                            &window.app_handle(),
+                            position.x as f64,
+                            position.y as f64,
+                        );
+                    }
+                }
+                TOOL_WINDOW_ID => {
+                    if let Ok(position) = window.outer_position() {
+                        crate::toolbar::save_tool_window_position_internal(
                             &window.app_handle(),
                             position.x as f64,
                             position.y as f64,

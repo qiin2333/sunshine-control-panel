@@ -74,7 +74,7 @@
       {{ t.dashboard.quickActions }}
     </div>
 
-    <div class="desktop-grid cols-3">
+    <div class="desktop-grid cols-4">
       <div class="desktop-card action-card fade-in" tabindex="0" @click="openWebUI" @keydown.enter="openWebUI">
         <div class="action-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -99,6 +99,20 @@
         <div class="action-info">
           <span class="action-title">{{ t.dashboard.restartService }}</span>
           <span class="action-desc">{{ t.dashboard.restartServiceDesc }}</span>
+        </div>
+        <div class="action-arrow">→</div>
+      </div>
+
+      <div class="desktop-card action-card fade-in" tabindex="0" @click="openHostPerformance" @keydown.enter="openHostPerformance">
+        <div class="action-icon performance">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 12h4l3-7 4 14 3-7h4"/>
+            <path d="M4 20h16"/>
+          </svg>
+        </div>
+        <div class="action-info">
+          <span class="action-title">{{ t.dashboard.hostPerformance }}</span>
+          <span class="action-desc">{{ t.dashboard.hostPerformanceDesc }}</span>
         </div>
         <div class="action-arrow">→</div>
       </div>
@@ -437,6 +451,16 @@ async function openLogs() {
   }
 }
 
+async function openHostPerformance() {
+  if (invoke.value) {
+    try {
+      await invoke.value('open_tool_window', { toolName: 'performance' })
+    } catch (e) {
+      console.error('Failed to open host performance monitor:', e)
+    }
+  }
+}
+
 async function loadMemoryInfo() {
   if (!invoke.value) return
   try {
@@ -661,6 +685,11 @@ onUnmounted(() => {
     &.warning {
       background: rgba(var(--fd-status-warning-rgb, 255, 215, 0), 0.1);
       color: var(--fd-status-warning, #ffd700);
+    }
+
+    &.performance {
+      background: rgba(var(--fd-status-success-rgb, 0, 255, 136), 0.12);
+      color: var(--fd-status-success, #00ff88);
     }
 
     svg {

@@ -181,6 +181,7 @@ fn main() {
             file_transfer::send_file_to_client,
             windows::webview_heartbeat,
             windows::resize_about_window,
+            windows::resize_tool_window,
             rtss::get_rtss_status,
             rtss::rtss_set_osd,
             rtss::rtss_clear_osd,

@@ -1,5 +1,5 @@
 <template>
-  <div class="tool-window-overlay" @click.self="closeWindow">
+  <div class="tool-window-overlay" :class="{ 'monitor-overlay': isMonitorTool }" @click.self="handleOverlayClick">
     <div class="tool-panel" @click.stop>
       <component :is="currentTool" v-if="currentTool" @close="closeWindow" />
 
@@ -12,13 +12,15 @@
 </template>
 
 <script setup>
-import { shallowRef, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
+import { computed, shallowRef, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useI18n } from '../desktop/i18n/index.js'
 
 const { t } = useI18n()
 
 const currentTool = shallowRef(null)
+const toolType = shallowRef('dpi')
+const isMonitorTool = computed(() => toolType.value === 'performance')
 
 const closeWindow = async () => {
   try {
@@ -41,15 +43,20 @@ const handleKeyDown = (e) => {
   }
 }
 
+const handleOverlayClick = () => {
+  if (!isMonitorTool.value) {
+    closeWindow()
+  }
+}
+
 onMounted(async () => {
-  const toolType = getToolType()
-  console.log('加载工具:', toolType)
+  toolType.value = getToolType()
 
   // 添加键盘事件监听
   window.addEventListener('keydown', handleKeyDown)
 
   try {
-    switch (toolType) {
+    switch (toolType.value) {
       case 'dpi':
         currentTool.value = defineAsyncComponent(() => import('./tools/DpiAdjusterTool.vue'))
         break
@@ -62,11 +69,14 @@ onMounted(async () => {
       case 'rtss':
         currentTool.value = defineAsyncComponent(() => import('./tools/RtssOsdTool.vue'))
         break
+      case 'performance':
+        currentTool.value = defineAsyncComponent(() => import('./tools/HostPerformanceTool.vue'))
+        break
       case 'pet':
         currentTool.value = defineAsyncComponent(() => import('./tools/PetSettingsTool.vue'))
         break
       default:
-        console.error('未知的工具类型:', toolType)
+        console.error('未知的工具类型:', toolType.value)
     }
   } catch (error) {
     console.error('加载工具失败:', error)
@@ -91,6 +101,27 @@ onUnmounted(() => {
   overflow: hidden;
   cursor: pointer;
   animation: overlayIn 0.2s ease;
+}
+
+.tool-window-overlay.monitor-overlay {
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: 0;
+  box-sizing: border-box;
+  background: transparent;
+  backdrop-filter: none;
+  cursor: default;
+}
+
+.tool-window-overlay.monitor-overlay .tool-panel {
+  width: 100vw;
+  max-width: none;
+  max-height: none;
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+  overflow: visible;
+  animation: none;
 }
 
 @keyframes overlayIn {

@@ -102,14 +102,8 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
         if show_toolbar && !show_desktop {
             info!("🔧 将在应用启动后打开工具栏");
             tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
-            let main_thread_handle = app_handle.clone();
-            let toolbar_app = app_handle.clone();
-            if let Err(e) = main_thread_handle.run_on_main_thread(move || {
-                if let Err(e) = toolbar::create_toolbar_window_internal(&toolbar_app) {
-                    error!("failed to create toolbar window: {}", e);
-                }
-            }) {
-                error!("failed to dispatch toolbar creation to main thread: {}", e);
+            if let Err(e) = toolbar::create_toolbar_window_internal(&app_handle) {
+                error!("❌ 创建工具栏失败: {}", e);
             }
         }
 

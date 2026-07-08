@@ -201,16 +201,36 @@
               </div>
 
               <div class="two-column-layout">
-                <el-form-item
-                  v-for="item in colourSwitchFields"
-                  :key="item.key"
-                  :label="t.vddSettings[item.labelKey]"
-                >
+                <el-form-item :label="t.vddSettings.colorDepthProfile" class="span-two">
                   <div class="field-stack">
-                    <div class="field-inline-control">
-                      <el-switch v-model="settings[item.groupKey][item.valueKey]" />
-                    </div>
-                    <span class="form-tip">{{ t.vddSettings[item.tipKey] }}</span>
+                    <el-radio-group v-model="colorDepthProfile" class="color-depth-group">
+                      <el-radio-button :label="COLOR_DEPTH_DEFAULT">
+                        {{ t.vddSettings.colorDepthDefault }}
+                      </el-radio-button>
+                      <el-radio-button :label="COLOR_DEPTH_SDR10">
+                        {{ t.vddSettings.sdr10bit }}
+                      </el-radio-button>
+                      <el-radio-button :label="COLOR_DEPTH_HDR12">
+                        {{ t.vddSettings.hdr12bit }}
+                      </el-radio-button>
+                      <el-radio-button
+                        v-if="isColorDepthConflict"
+                        :label="COLOR_DEPTH_CONFLICT"
+                        disabled
+                      >
+                        {{ t.vddSettings.colorDepthConflict }}
+                      </el-radio-button>
+                    </el-radio-group>
+                    <span class="form-tip">{{ t.vddSettings.colorDepthMutualExclusiveTip }}</span>
+                    <el-alert
+                      v-if="isColorDepthConflict"
+                      type="warning"
+                      show-icon
+                      :closable="false"
+                      class="inline-alert"
+                    >
+                      {{ t.vddSettings.colorDepthConflictTip }}
+                    </el-alert>
                   </div>
                 </el-form-item>
 
@@ -437,10 +457,10 @@ const capabilityBadges = [
   { key: 'refresh', tone: 'refresh', text: '240Hz', sub: 'high refresh' },
   { key: 'sync', tone: 'sync', text: 'VRR', sub: 'adaptive sync' },
 ]
-const colourSwitchFields = [
-  { key: 'sdr10bit', groupKey: 'colour', valueKey: 'SDR10bit', labelKey: 'sdr10bit', tipKey: 'sdr10bitTip' },
-  { key: 'hdr12bit', groupKey: 'colour', valueKey: 'HDRPlus', labelKey: 'hdr12bit', tipKey: 'hdr12bitTip' },
-]
+const COLOR_DEPTH_DEFAULT = 'default'
+const COLOR_DEPTH_SDR10 = 'sdr10'
+const COLOR_DEPTH_HDR12 = 'hdr12'
+const COLOR_DEPTH_CONFLICT = 'conflict'
 
 const createInitialSettings = () => ({
   monitors: { count: 1 },
@@ -608,6 +628,28 @@ const presetSummary = computed(() => getVddText('presetsSummary', {
 }))
 const traceDisplayPath = computed(() => traceStatus.value.latest_file || t.value.vddSettings.vddTraceNoFile)
 const hasCustomEdidIssue = computed(() => settings.edid.CustomEdid && !edidFileExists.value)
+const isColorDepthConflict = computed(() => settings.colour.SDR10bit && settings.colour.HDRPlus)
+const colorDepthProfile = computed({
+  get() {
+    if (settings.colour.SDR10bit && settings.colour.HDRPlus) {
+      return COLOR_DEPTH_CONFLICT
+    }
+
+    if (settings.colour.SDR10bit) {
+      return COLOR_DEPTH_SDR10
+    }
+
+    if (settings.colour.HDRPlus) {
+      return COLOR_DEPTH_HDR12
+    }
+
+    return COLOR_DEPTH_DEFAULT
+  },
+  set(value) {
+    settings.colour.SDR10bit = value === COLOR_DEPTH_SDR10
+    settings.colour.HDRPlus = value === COLOR_DEPTH_HDR12
+  },
+})
 const currentEdidModeLabel = computed(() => {
   if (!settings.edid.CustomEdid) {
     return t.value.vddSettings.builtInMode

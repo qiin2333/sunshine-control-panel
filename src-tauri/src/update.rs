@@ -579,12 +579,27 @@ fn run_updater_worker(state: UpdaterHelperState, hwnd: isize) {
     update_updater_panel(hwnd, 0, "准备更新", "正在等待控制面板关闭...");
     wait_for_parent_exit(state.parent_pid);
 
-    update_updater_panel(hwnd, 1, "正在关闭 Sunshine", "正在关闭 Sunshine 服务，随后安装更新...");
+    update_updater_panel(
+        hwnd,
+        1,
+        "正在关闭 Sunshine",
+        "正在关闭 Sunshine 服务，随后安装更新...",
+    );
     stop_sunshine_for_update();
-    update_updater_panel(hwnd, 2, "正在安装更新", "这可能需要一两分钟，请不要重复启动。");
+    update_updater_panel(
+        hwnd,
+        2,
+        "正在安装更新",
+        "这可能需要一两分钟，请不要重复启动。",
+    );
     let install_result = run_installer_and_wait(&state);
 
-    update_updater_panel(hwnd, 3, "正在完成", "安装已结束，正在准备重新打开控制面板。");
+    update_updater_panel(
+        hwnd,
+        3,
+        "正在完成",
+        "安装已结束，正在准备重新打开控制面板。",
+    );
     let helper_result = match install_result {
         Ok(code) => UpdaterHelperResult {
             success: code == 0,
@@ -629,16 +644,14 @@ fn run_updater_worker(state: UpdaterHelperState, hwnd: isize) {
 #[cfg(target_os = "windows")]
 fn run_updater_panel(state: UpdaterHelperState) -> Result<(), String> {
     use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
-    use windows::Win32::Graphics::Gdi::{
-        InvalidateRect, COLOR_WINDOW, HBRUSH,
-    };
     use windows::Win32::Graphics::Dwm::DwmSetWindowAttribute;
+    use windows::Win32::Graphics::Gdi::{HBRUSH, InvalidateRect};
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, PostQuitMessage,
-        RegisterClassW, SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow, TranslateMessage,
-        CS_DROPSHADOW, CS_HREDRAW, CS_VREDRAW, HWND_TOPMOST, MSG, SWP_SHOWWINDOW, SW_SHOW,
-        WINDOW_STYLE, WNDCLASSW, WM_APP, WM_CLOSE, WM_DESTROY, WM_NCHITTEST, WM_PAINT,
-        WM_ERASEBKGND, WM_TIMER, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+        CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW,
+        HWND_TOPMOST, LWA_COLORKEY, MSG, PostQuitMessage, RegisterClassW, SW_SHOW, SWP_SHOWWINDOW,
+        SetForegroundWindow, SetLayeredWindowAttributes, SetTimer, SetWindowPos, ShowWindow,
+        TranslateMessage, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_NCHITTEST,
+        WM_PAINT, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
     };
     use windows::core::PCWSTR;
 
@@ -650,7 +663,7 @@ fn run_updater_panel(state: UpdaterHelperState) -> Result<(), String> {
     ) -> LRESULT {
         match msg {
             WM_PAINT => {
-                draw_updater_panel(hwnd);
+                draw_updater_panel_cutout(hwnd);
                 LRESULT(0)
             }
             WM_ERASEBKGND => LRESULT(1),
@@ -664,7 +677,8 @@ fn run_updater_panel(state: UpdaterHelperState) -> Result<(), String> {
                 LRESULT(0)
             }
             WM_DESTROY => {
-                let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::KillTimer(Some(hwnd), 1) };
+                let _ =
+                    unsafe { windows::Win32::UI::WindowsAndMessaging::KillTimer(Some(hwnd), 1) };
                 unsafe { PostQuitMessage(0) };
                 LRESULT(0)
             }
@@ -673,9 +687,7 @@ fn run_updater_panel(state: UpdaterHelperState) -> Result<(), String> {
                 invalidate_updater_progress(hwnd);
                 LRESULT(0)
             }
-            WM_NCHITTEST => {
-                LRESULT(windows::Win32::UI::WindowsAndMessaging::HTCAPTION as isize)
-            }
+            WM_NCHITTEST => LRESULT(windows::Win32::UI::WindowsAndMessaging::HTCAPTION as isize),
             x if x == WM_APP + 1 => {
                 let _ = unsafe { InvalidateRect(Some(hwnd), None, false) };
                 LRESULT(0)
@@ -700,10 +712,10 @@ fn run_updater_panel(state: UpdaterHelperState) -> Result<(), String> {
     let class_name = to_wide_null("SunshineUpdaterPanel");
     let window_title = to_wide_null("Sunshine 正在更新");
     let wnd_class = WNDCLASSW {
-        style: CS_HREDRAW | CS_VREDRAW | CS_DROPSHADOW,
+        style: CS_HREDRAW | CS_VREDRAW,
         lpfnWndProc: Some(wnd_proc),
         hInstance: HINSTANCE(std::ptr::null_mut()),
-        hbrBackground: HBRUSH((COLOR_WINDOW.0 + 1) as *mut _),
+        hbrBackground: HBRUSH(std::ptr::null_mut()),
         lpszClassName: PCWSTR(class_name.as_ptr()),
         ..Default::default()
     };
@@ -711,12 +723,12 @@ fn run_updater_panel(state: UpdaterHelperState) -> Result<(), String> {
     unsafe { RegisterClassW(&wnd_class) };
 
     let width = 560;
-    let height = 300;
+    let height = 240;
     let (x, y) = updater_panel_position(width, height);
 
     let hwnd = unsafe {
         CreateWindowExW(
-            WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
             PCWSTR(class_name.as_ptr()),
             PCWSTR(window_title.as_ptr()),
             WINDOW_STYLE(WS_POPUP.0),
@@ -733,6 +745,8 @@ fn run_updater_panel(state: UpdaterHelperState) -> Result<(), String> {
     .map_err(|e| format!("create updater panel failed: {}", e))?;
 
     unsafe {
+        let _ =
+            SetLayeredWindowAttributes(hwnd, updater_panel_transparent_key(), 255, LWA_COLORKEY);
         // DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUND = 2. Windows 10 ignores it.
         let corner_preference: u32 = 2;
         let _ = DwmSetWindowAttribute(
@@ -747,7 +761,17 @@ fn run_updater_panel(state: UpdaterHelperState) -> Result<(), String> {
     std::thread::spawn(move || run_updater_worker(state, hwnd_value));
 
     let _ = unsafe { ShowWindow(hwnd, SW_SHOW) };
-    let _ = unsafe { SetWindowPos(hwnd, Some(HWND_TOPMOST), x, y, width, height, SWP_SHOWWINDOW) };
+    let _ = unsafe {
+        SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            x,
+            y,
+            width,
+            height,
+            SWP_SHOWWINDOW,
+        )
+    };
     let _ = unsafe { SetTimer(Some(hwnd), 1, 90, None) };
     let _ = unsafe { SetForegroundWindow(hwnd) };
     let _ = unsafe { windows::Win32::Graphics::Gdi::UpdateWindow(hwnd) };
@@ -797,10 +821,10 @@ fn invalidate_updater_progress(hwnd: windows::Win32::Foundation::HWND) {
     use windows::Win32::Graphics::Gdi::InvalidateRect;
 
     let rect = RECT {
-        left: 18,
-        top: 126,
-        right: 542,
-        bottom: 226,
+        left: 0,
+        top: 0,
+        right: 560,
+        bottom: 240,
     };
     let _ = unsafe { InvalidateRect(Some(hwnd), Some(&rect), false) };
 }
@@ -833,173 +857,56 @@ fn updater_panel_position(width: i32, height: i32) -> (i32, i32) {
 }
 
 #[cfg(target_os = "windows")]
-fn draw_updater_panel(hwnd: windows::Win32::Foundation::HWND) {
-    use windows::Win32::Foundation::{COLORREF, RECT};
-    use windows::Win32::Graphics::Gdi::{
-        BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
-        EndPaint, SelectObject, SetBkMode, DT_LEFT, DT_SINGLELINE, DT_VCENTER, DT_WORDBREAK,
-        PAINTSTRUCT, SRCCOPY, TRANSPARENT,
-    };
-    use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
+fn updater_panel_transparent_key() -> windows::Win32::Foundation::COLORREF {
+    windows::Win32::Foundation::COLORREF(0x00FF00FF)
+}
 
-    let state = UPDATER_PANEL_STATE
-        .get()
-        .and_then(|state| state.lock().ok().map(|state| state.clone()))
-        .unwrap_or_else(|| UpdaterPanelState {
-            title: "正在安装更新".to_string(),
-            subtitle: "请稍等片刻。".to_string(),
-            step: 1,
-            failed: false,
-            animation_tick: 0,
-        });
+#[cfg(target_os = "windows")]
+#[derive(Clone, Copy)]
+struct UpdaterPanelPalette {
+    accent: windows::Win32::Foundation::COLORREF,
+    paper: windows::Win32::Foundation::COLORREF,
+    paper_shadow: windows::Win32::Foundation::COLORREF,
+    muted_ink: windows::Win32::Foundation::COLORREF,
+    tape: windows::Win32::Foundation::COLORREF,
+    cardboard: windows::Win32::Foundation::COLORREF,
+    cardboard_light: windows::Win32::Foundation::COLORREF,
+    cardboard_dark: windows::Win32::Foundation::COLORREF,
+    floor: windows::Win32::Foundation::COLORREF,
+}
 
-    unsafe {
-        let mut ps = PAINTSTRUCT::default();
-        let paint_hdc = BeginPaint(hwnd, &mut ps);
-        let mut client = RECT::default();
-        let _ = GetClientRect(hwnd, &mut client);
-        let width = client.right - client.left;
-        let height = client.bottom - client.top;
-        let mem_hdc = CreateCompatibleDC(Some(paint_hdc));
-        let mem_bitmap = CreateCompatibleBitmap(paint_hdc, width, height);
-        let old_bitmap = SelectObject(mem_hdc, mem_bitmap.into());
+#[cfg(target_os = "windows")]
+fn updater_panel_palette(failed: bool) -> UpdaterPanelPalette {
+    use windows::Win32::Foundation::COLORREF;
 
-        fill_rect(mem_hdc, 0, 0, client.right, client.bottom, COLORREF(0x0028262D));
-        fill_rect(mem_hdc, 0, 0, client.right, 44, COLORREF(0x0035323D));
-
-        let accent = if state.failed {
+    UpdaterPanelPalette {
+        accent: if failed {
             COLORREF(0x00A5A5D4)
         } else {
             COLORREF(0x00BBC539)
-        };
-        let gura_light = COLORREF(0x00DFE76E);
-        fill_rect(mem_hdc, 0, 0, client.right, 4, accent);
-        fill_rect(mem_hdc, client.right - 108, 0, client.right, 4, gura_light);
-        fill_rect(mem_hdc, 0, client.bottom - 3, client.right, client.bottom, COLORREF(0x0035323D));
-        fill_rect(mem_hdc, 16, 58, client.right - 16, 60, COLORREF(0x00423F4A));
-        fill_rect(mem_hdc, 16, 242, client.right - 16, 244, COLORREF(0x00423F4A));
+        },
+        paper: COLORREF(0x00DDF5FF),
+        paper_shadow: COLORREF(0x004B3F3A),
+        muted_ink: COLORREF(0x00705F5A),
+        tape: COLORREF(0x0097E7FF),
+        cardboard: COLORREF(0x005AB7E0),
+        cardboard_light: COLORREF(0x006AC4EA),
+        cardboard_dark: COLORREF(0x003985B7),
+        floor: COLORREF(0x00646D80),
+    }
+}
 
-        for i in 0..5 {
-            let x = client.right - 34 - (i * 14);
-            fill_rect(
-                mem_hdc,
-                x,
-                17,
-                x + 8,
-                25,
-                if i % 2 == 0 { accent } else { gura_light },
-            );
-        }
+#[cfg(target_os = "windows")]
+fn updater_panel_progress(state: &UpdaterPanelState) -> i32 {
+    if state.failed {
+        return 58;
+    }
 
-        let _ = SetBkMode(mem_hdc, TRANSPARENT);
-        draw_text_styled(
-            mem_hdc,
-            "SUNSHINE UPDATE",
-            22,
-            15,
-            client.right - 32,
-            36,
-            DT_LEFT | DT_SINGLELINE | DT_VCENTER,
-            15,
-            700,
-            accent,
-        );
-
-        draw_text_styled(
-            mem_hdc,
-            &state.title,
-            22,
-            76,
-            client.right - 32,
-            104,
-            DT_LEFT | DT_SINGLELINE | DT_VCENTER,
-            18,
-            700,
-            COLORREF(0x00B8D5E6),
-        );
-
-        let status_line = format!("> {}", state.subtitle);
-        draw_text_styled(
-            mem_hdc,
-            &status_line,
-            22,
-            110,
-            client.right - 32,
-            136,
-            DT_LEFT | DT_WORDBREAK,
-            13,
-            500,
-            COLORREF(0x00B8D5E6),
-        );
-
-        draw_pixel_courier_scene(mem_hdc, &state, 22, 144, client.right - 44, accent, gura_light);
-
-        let steps = ["PREP", "INST", "DONE", "OPEN"];
-        let step_top = 196;
-        let step_left = 22;
-        let step_width = client.right - 44;
-        let slot = step_width / 4;
-        for (index, label) in steps.iter().enumerate() {
-            let x = step_left + (index as i32 * slot);
-            let done = index <= state.step;
-            let marker = if state.failed && index == state.step {
-                "[!]"
-            } else if done {
-                "[x]"
-            } else {
-                "[ ]"
-            };
-            let text = format!("{} {}", marker, label);
-            draw_text_styled(
-                mem_hdc,
-                &text,
-                x,
-                step_top,
-                x + slot - 8,
-                step_top + 24,
-                DT_LEFT | DT_SINGLELINE,
-                12,
-                if done { 700 } else { 500 },
-                if done {
-                    accent
-                } else {
-                    COLORREF(0x008C8173)
-                },
-            );
-            if index > 0 {
-                fill_rect(
-                    mem_hdc,
-                    x - slot + 80,
-                    step_top + 8,
-                    x - 10,
-                    step_top + 10,
-                    if done {
-                        accent
-                    } else {
-                        COLORREF(0x00423F4A)
-                    },
-                );
-            }
-        }
-
-        draw_text_styled(
-            mem_hdc,
-            "安装期间可以暂时离开，完成后会自动回到控制面板。",
-            22,
-            258,
-            client.right - 32,
-            284,
-            DT_LEFT | DT_WORDBREAK,
-            12,
-            500,
-            COLORREF(0x00B8D5E6),
-        );
-
-        let _ = BitBlt(paint_hdc, 0, 0, width, height, Some(mem_hdc), 0, 0, SRCCOPY);
-        let _ = SelectObject(mem_hdc, old_bitmap);
-        let _ = DeleteObject(mem_bitmap.into());
-        let _ = DeleteDC(mem_hdc);
-        let _ = EndPaint(hwnd, &ps);
+    match state.step {
+        0 => 18,
+        1 => 46,
+        2 => 74,
+        _ => 100,
     }
 }
 
@@ -1029,87 +936,185 @@ unsafe fn fill_rect(
 }
 
 #[cfg(target_os = "windows")]
-unsafe fn draw_pixel_courier_scene(
-    hdc: windows::Win32::Graphics::Gdi::HDC,
-    state: &UpdaterPanelState,
-    left: i32,
-    top: i32,
-    width: i32,
-    accent: windows::Win32::Foundation::COLORREF,
-    gura_light: windows::Win32::Foundation::COLORREF,
-) {
-    use windows::Win32::Foundation::COLORREF;
-    use windows::Win32::Graphics::Gdi::{DT_LEFT, DT_SINGLELINE, DT_VCENTER};
+fn draw_updater_panel_cutout(hwnd: windows::Win32::Foundation::HWND) {
+    use windows::Win32::Foundation::{COLORREF, RECT};
+    use windows::Win32::Graphics::Gdi::{
+        BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DT_LEFT, DT_WORDBREAK,
+        DeleteDC, DeleteObject, EndPaint, PAINTSTRUCT, SRCCOPY, SelectObject, SetBkMode,
+        TRANSPARENT,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
 
-    let bottom = top + 44;
-    let track_right = left + width;
-    let muted = COLORREF(0x008C8173);
+    let state = UPDATER_PANEL_STATE
+        .get()
+        .and_then(|state| state.lock().ok().map(|state| state.clone()))
+        .unwrap_or_else(|| UpdaterPanelState {
+            title: "正在安装更新".to_string(),
+            subtitle: "请稍等片刻。".to_string(),
+            step: 1,
+            failed: false,
+            animation_tick: 0,
+        });
 
     unsafe {
-        fill_rect(hdc, left, top, track_right, bottom, COLORREF(0x00211F26));
-        fill_rect(hdc, left + 2, top + 2, track_right - 2, bottom - 2, COLORREF(0x002F2C35));
-        fill_rect(hdc, left + 10, bottom - 9, track_right - 10, bottom - 6, COLORREF(0x00423F4A));
+        let mut ps = PAINTSTRUCT::default();
+        let paint_hdc = BeginPaint(hwnd, &mut ps);
+        let mut client = RECT::default();
+        let _ = GetClientRect(hwnd, &mut client);
+        let width = client.right - client.left;
+        let height = client.bottom - client.top;
+        let mem_hdc = CreateCompatibleDC(Some(paint_hdc));
+        let mem_bitmap = CreateCompatibleBitmap(paint_hdc, width, height);
+        let old_bitmap = SelectObject(mem_hdc, mem_bitmap.into());
 
-        let dash_count = 18;
-        let dash_gap = (width - 36) / dash_count;
-        for i in 0..dash_count {
-            let x = left + 18 + i * dash_gap;
+        fill_rect(
+            mem_hdc,
+            0,
+            0,
+            client.right,
+            client.bottom,
+            updater_panel_transparent_key(),
+        );
+
+        let palette = updater_panel_palette(state.failed);
+
+        let walking = !state.failed && state.step < 3;
+        let bob = if walking && (state.animation_tick / 3) % 2 == 0 {
+            -2
+        } else {
+            0
+        };
+        let push = if walking {
+            (state.animation_tick as i32 % 8) - 4
+        } else {
+            0
+        };
+        let progress = updater_panel_progress(&state);
+
+        let _ = SetBkMode(mem_hdc, TRANSPARENT);
+
+        fill_rect(mem_hdc, 90, 162, 430, 167, palette.floor);
+        for i in 0..16 {
+            let x = 104 + i * 20;
             let lit = !state.failed && ((i + state.animation_tick as i32 / 2) % 4 == 0);
             fill_rect(
-                hdc,
+                mem_hdc,
                 x,
-                bottom - 15,
-                x + 8,
-                bottom - 12,
-                if lit { gura_light } else { COLORREF(0x00423F4A) },
+                154,
+                x + 10,
+                159,
+                if lit {
+                    palette.accent
+                } else {
+                    COLORREF(0x00A09690)
+                },
             );
         }
 
-        let walking = !state.failed && state.step < 3;
-        let travel = (width - 128).max(1);
-        let courier_x = if state.failed {
-            left + width / 2 - 18
-        } else if state.step >= 3 {
-            track_right - 88
-        } else {
-            left + 24 + ((state.animation_tick as i32 * 5) % travel)
-        };
-        let bob = if walking && (state.animation_tick / 3) % 2 == 0 { -2 } else { 0 };
-        fill_rect(hdc, left + 12, top + 8, left + 34, top + 29, COLORREF(0x00423F4A));
-        fill_rect(hdc, left + 16, top + 4, left + 30, top + 8, muted);
-        fill_rect(hdc, track_right - 36, top + 8, track_right - 14, top + 29, COLORREF(0x00423F4A));
-        fill_rect(hdc, track_right - 32, top + 4, track_right - 18, top + 8, accent);
-
-        draw_updater_helper_sprite(hdc, courier_x, bottom - 61 + bob);
-
-        let label = if state.failed {
-            "推送中断"
-        } else if state.step >= 3 {
-            "推送完成"
-        } else {
-            "推送更新包中"
-        };
-        draw_text_styled(
-            hdc,
-            label,
-            track_right - 112,
-            top + 4,
-            track_right - 8,
-            top + 24,
-            DT_LEFT | DT_SINGLELINE | DT_VCENTER,
-            12,
-            700,
-            if state.failed { COLORREF(0x00A5A5D4) } else { accent },
+        let box_left = 222;
+        let box_top = 80;
+        let box_right = 382;
+        let box_bottom = 160;
+        fill_rect(
+            mem_hdc,
+            box_left + 10,
+            box_top + 10,
+            box_right + 10,
+            box_bottom + 10,
+            palette.paper_shadow,
         );
+        fill_rect(
+            mem_hdc,
+            box_left,
+            box_top,
+            box_right,
+            box_bottom,
+            palette.cardboard,
+        );
+        fill_rect(
+            mem_hdc,
+            box_left + 8,
+            box_top + 8,
+            box_right - 8,
+            box_bottom - 8,
+            palette.cardboard_light,
+        );
+        fill_rect(
+            mem_hdc,
+            box_left + 70,
+            box_top,
+            box_left + 92,
+            box_bottom,
+            palette.tape,
+        );
+        fill_rect(
+            mem_hdc,
+            box_left,
+            box_top + 34,
+            box_right,
+            box_top + 48,
+            palette.cardboard_dark,
+        );
+        fill_rect(
+            mem_hdc,
+            box_left + 14,
+            box_bottom - 24,
+            box_left + 14 + ((box_right - box_left - 28) * progress / 100),
+            box_bottom - 14,
+            palette.accent,
+        );
+        fill_rect(
+            mem_hdc,
+            box_left + 14,
+            box_bottom - 14,
+            box_right - 14,
+            box_bottom - 11,
+            palette.cardboard_dark,
+        );
+        fill_rect(
+            mem_hdc,
+            128 + push,
+            154,
+            206 + push,
+            164,
+            COLORREF(0x006A5B55),
+        );
+        draw_updater_helper_sprite(mem_hdc, 138 + push, 96 + bob);
+        fill_rect(mem_hdc, 214, 118, 226, 132, palette.cardboard_dark);
+        fill_rect(mem_hdc, 216, 124, 228, 138, palette.cardboard_dark);
+
+        let status_line = format!("{} - {}", state.title, state.subtitle);
+        fill_rect(mem_hdc, 72, 186, 512, 224, palette.paper_shadow);
+        fill_rect(mem_hdc, 64, 178, 504, 216, palette.paper);
+        fill_rect(mem_hdc, 82, 172, 132, 184, palette.tape);
+        fill_rect(mem_hdc, 438, 210, 488, 222, palette.tape);
+        draw_text_styled(
+            mem_hdc,
+            &status_line,
+            82,
+            186,
+            486,
+            210,
+            DT_LEFT | DT_WORDBREAK,
+            13,
+            500,
+            palette.muted_ink,
+        );
+
+        let _ = BitBlt(paint_hdc, 0, 0, width, height, Some(mem_hdc), 0, 0, SRCCOPY);
+        let _ = SelectObject(mem_hdc, old_bitmap);
+        let _ = DeleteObject(mem_bitmap.into());
+        let _ = DeleteDC(mem_hdc);
+        let _ = EndPaint(hwnd, &ps);
     }
 }
 
 #[cfg(target_os = "windows")]
 fn updater_helper_sprite_bitmap() -> Option<&'static UpdaterSpriteBitmap> {
     UPDATER_HELPER_SPRITE_BITMAP
-        .get_or_init(|| decode_updater_sprite_bitmap(updater_helper_sprite_bytes(
-            UPDATER_HELPER_SPRITE_VARIANT,
-        )))
+        .get_or_init(|| {
+            decode_updater_sprite_bitmap(updater_helper_sprite_bytes(UPDATER_HELPER_SPRITE_VARIANT))
+        })
         .as_ref()
 }
 
@@ -1151,9 +1156,8 @@ fn decode_updater_sprite_bitmap(bytes: &[u8]) -> Option<UpdaterSpriteBitmap> {
 unsafe fn draw_updater_helper_sprite(hdc: windows::Win32::Graphics::Gdi::HDC, x: i32, y: i32) {
     use std::ffi::c_void;
     use windows::Win32::Graphics::Gdi::{
-        AlphaBlend, CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, SelectObject,
-        AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION,
-        DIB_RGB_COLORS,
+        AC_SRC_ALPHA, AC_SRC_OVER, AlphaBlend, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION,
+        CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, SelectObject,
     };
 
     let Some(sprite) = updater_helper_sprite_bitmap() else {
@@ -1233,12 +1237,16 @@ unsafe fn draw_text_styled(
     color: windows::Win32::Foundation::COLORREF,
 ) {
     use windows::Win32::Graphics::Gdi::{
-        CreateFontW, DeleteObject, SelectObject, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET,
-        DEFAULT_PITCH, FF_DONTCARE, NONANTIALIASED_QUALITY, OUT_DEFAULT_PRECIS,
+        CLIP_DEFAULT_PRECIS, CreateFontW, DEFAULT_CHARSET, DEFAULT_PITCH, DeleteObject,
+        FF_DONTCARE, NONANTIALIASED_QUALITY, OUT_DEFAULT_PRECIS, SelectObject,
     };
     use windows::core::PCWSTR;
 
-    let face = to_wide_null(if text.is_ascii() { "Cascadia Mono" } else { "SimSun" });
+    let face = to_wide_null(if text.is_ascii() {
+        "Cascadia Mono"
+    } else {
+        "SimSun"
+    });
     let font = unsafe {
         CreateFontW(
             -size,
@@ -1710,7 +1718,12 @@ fn emit_download_progress(
     );
 }
 
-fn emit_install_progress(app_handle: &AppHandle, stage: &str, detail: Option<&str>, terminal: bool) {
+fn emit_install_progress(
+    app_handle: &AppHandle,
+    stage: &str,
+    detail: Option<&str>,
+    terminal: bool,
+) {
     let _ = app_handle.emit(
         "install-progress",
         serde_json::json!({
@@ -1867,7 +1880,8 @@ fn prepare_updater_helper(
 
     let state_content = serde_json::to_string_pretty(&state)
         .map_err(|e| format!("serialize updater state failed: {}", e))?;
-    fs::write(&state_path, state_content).map_err(|e| format!("write updater state failed: {}", e))?;
+    fs::write(&state_path, state_content)
+        .map_err(|e| format!("write updater state failed: {}", e))?;
 
     Ok((helper_exe, state_path))
 }
@@ -1880,7 +1894,7 @@ fn launch_updater_helper(helper_exe: &Path, state_path: &Path) -> Result<(), Str
 #[cfg(target_os = "windows")]
 fn launch_updater_helper_elevated(helper_exe: &Path, state_path: &Path) -> Result<(), String> {
     use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::Shell::{ShellExecuteExW, SHELLEXECUTEINFOW};
+    use windows::Win32::UI::Shell::{SHELLEXECUTEINFOW, ShellExecuteExW};
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
     use windows::core::PCWSTR;
 

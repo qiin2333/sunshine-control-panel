@@ -141,6 +141,7 @@ let sessionNotifyTimer = null
 let lastSessionIds = new Set()
 let settingsListener = null
 let updateUnlisten = null
+let desktopNavigateUnlisten = null
 
 function applyRuntimeSettings() {
   document.documentElement.dataset.fdDevMode = desktopSettings.value.devMode ? 'true' : 'false'
@@ -212,6 +213,20 @@ async function setupUpdateNotifications() {
   }
 }
 
+async function setupDesktopNavigationEvents() {
+  try {
+    const { listen } = await import('@tauri-apps/api/event')
+    desktopNavigateUnlisten = await listen('desktop-navigate', (event) => {
+      const target = String(event.payload || '')
+      if (viewMap[target]) {
+        activeNav.value = target
+      }
+    })
+  } catch {
+    // event API unavailable outside Tauri
+  }
+}
+
 onMounted(async () => {
   try {
     const tauri = await import('@tauri-apps/api/core')
@@ -223,6 +238,7 @@ onMounted(async () => {
   applyRuntimeSettings()
   settingsListener = () => applyRuntimeSettings()
   window.addEventListener(DESKTOP_SETTINGS_UPDATED, settingsListener)
+  await setupDesktopNavigationEvents()
   await setupUpdateNotifications()
   await pollSessionsForNotifications(true)
   sessionNotifyTimer = setInterval(() => pollSessionsForNotifications(false), 15000)
@@ -232,6 +248,7 @@ onUnmounted(() => {
   if (sessionNotifyTimer) clearInterval(sessionNotifyTimer)
   if (settingsListener) window.removeEventListener(DESKTOP_SETTINGS_UPDATED, settingsListener)
   if (updateUnlisten) updateUnlisten()
+  if (desktopNavigateUnlisten) desktopNavigateUnlisten()
 })
 
 // 导航点击处理

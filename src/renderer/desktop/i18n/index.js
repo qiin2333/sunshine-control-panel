@@ -66,7 +66,6 @@ async function listenTrayLocaleChanged() {
         currentLocale.value = newLocale
         localStorage.setItem('language', newLocale)
         // 同步到 Sunshine 配置
-        syncLocaleToSunshine(newLocale)
       }
     })
   } catch {

@@ -1,12 +1,24 @@
-use tauri::{
-    menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
-    tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, Runtime,
-};
-use std::{sync::Mutex, time::Duration};
 use log::{debug, error, info, warn};
+use std::{sync::Mutex, time::Duration};
+use tauri::{
+    AppHandle, Emitter, Manager, Runtime,
+    tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
+};
 
-use crate::{toolbar, update, utils, windows, moonlight_web};
+#[cfg(target_os = "windows")]
+use crate::desktop_settings;
+use crate::{sunshine, toolbar, tray_config, update, utils, windows};
+
+mod actions;
+mod events;
+mod icons;
+mod main_panel;
+mod menu;
+
+pub use actions::{cleanup_prevent_sleep, handle_tray_menu_event};
+use menu::{build_tray_menu, tray_status_label};
+#[cfg(test)]
+use menu::{compact_menu_text, tray_notification_label};
 
 // 托盘图标 ID
 const TRAY_ID: &str = "main-tray";
@@ -21,10 +33,77 @@ static SUNSHINE_USER_MODE_STATE: Mutex<bool> = Mutex::new(false);
 // 当前语言状态管理 ("zh" 或 "en")
 static CURRENT_LOCALE: Mutex<Option<String>> = Mutex::new(None);
 
+// Last icon name applied from the Sunshine core state. This avoids repeatedly
+// decoding the same .ico file during the polling loop.
+static CURRENT_CORE_ICON: Mutex<Option<String>> = Mutex::new(None);
+static CURRENT_TRAY_STATE: Mutex<Option<sunshine::TrayState>> = Mutex::new(None);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CoreConnectionState {
+    Connecting,
+    Connected,
+    Disconnected,
+}
+
+static CORE_CONNECTION_STATE: Mutex<CoreConnectionState> =
+    Mutex::new(CoreConnectionState::Connecting);
+
+static MAIN_PANEL_BRIDGE: main_panel::Bridge = main_panel::Bridge::new();
+
+pub(crate) fn emit_message<R: Runtime>(app: &AppHandle<R>, msg_type: &str, message: &str) {
+    let payload = serde_json::json!({
+        "type": msg_type,
+        "message": message
+    });
+    let mut has_visible_window = false;
+
+    for label in ["main", "desktop"] {
+        if let Some(window) = app.get_webview_window(label) {
+            has_visible_window |= window.is_visible().unwrap_or(false);
+            let _ = window.emit("show-message", &payload);
+        }
+    }
+
+    if msg_type == "error" && !has_visible_window {
+        use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+
+        app.dialog()
+            .message(message)
+            .title("Sunshine Error")
+            .kind(MessageDialogKind::Error)
+            .show(|_| {});
+    }
+}
+
 /// 托盘菜单翻译结构
 struct TrayStrings {
-    open_website: &'static str,
+    status_idle: &'static str,
+    status_streaming: &'static str,
+    status_paused: &'static str,
+    status_pairing: &'static str,
+    status_notification: &'static str,
+    status_connecting: &'static str,
+    status_disconnected: &'static str,
+    notification: &'static str,
+    complete_pairing: &'static str,
+    open_main_panel: &'static str,
+    interfaces_menu: &'static str,
+    display_menu: &'static str,
+    tools_menu: &'static str,
+    settings_menu: &'static str,
+    advanced_menu: &'static str,
+    help_menu: &'static str,
+    open_sunshine: &'static str,
     vdd_settings: &'static str,
+    vdd_create: &'static str,
+    vdd_close: &'static str,
+    vdd_keep: &'static str,
+    vdd_headless: &'static str,
+    import_config: &'static str,
+    export_config: &'static str,
+    reset_config: &'static str,
+    clear_cache: &'static str,
+    reset_display: &'static str,
     restart_user_mode: &'static str,
     show_toolbar: &'static str,
     prevent_sleep: &'static str,
@@ -32,66 +111,198 @@ struct TrayStrings {
     host_performance: &'static str,
     log_console: &'static str,
     open_desktop: &'static str,
+    #[cfg(target_os = "windows")]
+    auto_start: &'static str,
+    #[cfg(any(debug_assertions, feature = "beta"))]
     web_stream: &'static str,
+    #[cfg(debug_assertions)]
     debug_page: &'static str,
     check_update: &'static str,
     about: &'static str,
     quit: &'static str,
     language: &'static str,
+    star_project: &'static str,
+    visit_project_sunshine: &'static str,
+    visit_project_moonlight: &'static str,
+    restart: &'static str,
     tooltip: &'static str,
     tooltip_admin: &'static str,
 }
 
 const ZH_STRINGS: TrayStrings = TrayStrings {
-    open_website: "🌐 打开官网",
-    vdd_settings: "📱 设置虚拟显示器（VDD）",
-    restart_user_mode: "☀ 用户模式运行 Sunshine",
-    show_toolbar: "🐾 显示桌宠",
-    prevent_sleep: "💤 不许睡",
-    rtss_control: "🎯 RTSS 控制",
-    host_performance: "📊 主机性能",
-    log_console: "🔍 打开日志控制台",
-    open_desktop: "🖥️ 打开桌面 UI",
-    web_stream: "🌙 Web 串流服务",
-    debug_page: "🐛 打开调试页面",
-    check_update: "🔄 检查更新",
-    about: "ℹ️ 关于",
-    quit: "退出程序",
-    language: "🌍 语言 / Language",
+    status_idle: "空闲",
+    status_streaming: "串流中",
+    status_paused: "串流已暂停",
+    status_pairing: "等待配对",
+    status_notification: "有新通知",
+    status_connecting: "正在连接",
+    status_disconnected: "未连接",
+    notification: "通知",
+    complete_pairing: "完成配对",
+    open_main_panel: "打开主面板",
+    interfaces_menu: "其他界面",
+    display_menu: "显示",
+    tools_menu: "工具",
+    settings_menu: "设置",
+    advanced_menu: "高级",
+    help_menu: "帮助",
+    open_sunshine: "Web 管理界面",
+    vdd_settings: "虚拟显示器设置",
+    vdd_create: "创建虚拟显示器",
+    vdd_close: "关闭虚拟显示器",
+    vdd_keep: "串流结束后保留",
+    vdd_headless: "无头模式自动创建",
+    import_config: "导入配置",
+    export_config: "导出配置",
+    reset_config: "重置配置",
+    clear_cache: "清理缓存",
+    reset_display: "重置显示",
+    restart_user_mode: "以用户模式运行 Sunshine",
+    show_toolbar: "显示桌面工具栏",
+    prevent_sleep: "阻止系统休眠",
+    rtss_control: "RTSS 控制",
+    host_performance: "主机性能",
+    log_console: "日志控制台",
+    open_desktop: "大屏模式",
+    #[cfg(target_os = "windows")]
+    auto_start: "开机运行",
+    #[cfg(any(debug_assertions, feature = "beta"))]
+    web_stream: "Web 串流服务",
+    #[cfg(debug_assertions)]
+    debug_page: "调试页面",
+    check_update: "检查更新",
+    about: "关于 Sunshine",
+    quit: "退出托盘",
+    language: "语言",
+    star_project: "项目主页",
+    visit_project_sunshine: "Sunshine 源代码",
+    visit_project_moonlight: "Moonlight 源代码",
+    restart: "重启 Sunshine",
     tooltip: "Sunshine GUI",
     tooltip_admin: "Sunshine GUI (管理员)",
 };
 
 const EN_STRINGS: TrayStrings = TrayStrings {
-    open_website: "🌐 Open Website",
-    vdd_settings: "📱 Virtual Display (VDD)",
-    restart_user_mode: "☀ Run Sunshine in User Mode",
-    show_toolbar: "🐾 Show Toolbar",
-    prevent_sleep: "💤 Prevent Sleep",
-    rtss_control: "🎯 RTSS Control",
-    host_performance: "📊 Host Performance",
-    log_console: "🔍 Log Console",
-    open_desktop: "🖥️ Desktop UI",
-    web_stream: "🌙 Web Streaming",
-    debug_page: "🐛 Debug Page",
-    check_update: "🔄 Check for Updates",
-    about: "ℹ️ About",
-    quit: "Quit",
-    language: "🌍 语言 / Language",
+    status_idle: "Idle",
+    status_streaming: "Streaming",
+    status_paused: "Stream paused",
+    status_pairing: "Pairing",
+    status_notification: "New notification",
+    status_connecting: "Connecting",
+    status_disconnected: "Disconnected",
+    notification: "Notification",
+    complete_pairing: "Complete pairing",
+    open_main_panel: "Open Main Panel",
+    interfaces_menu: "Other Interfaces",
+    display_menu: "Display",
+    tools_menu: "Tools",
+    settings_menu: "Settings",
+    advanced_menu: "Advanced",
+    help_menu: "Help",
+    open_sunshine: "Web Management UI",
+    vdd_settings: "Virtual Display Settings",
+    vdd_create: "Create Virtual Display",
+    vdd_close: "Close Virtual Display",
+    vdd_keep: "Keep After Streaming",
+    vdd_headless: "Auto-create When Headless",
+    import_config: "Import Config",
+    export_config: "Export Config",
+    reset_config: "Reset Config",
+    clear_cache: "Clear Cache",
+    reset_display: "Reset Display",
+    restart_user_mode: "Run Sunshine in User Mode",
+    show_toolbar: "Show Desktop Toolbar",
+    prevent_sleep: "Prevent System Sleep",
+    rtss_control: "RTSS Control",
+    host_performance: "Host Performance",
+    log_console: "Log Console",
+    open_desktop: "Large Screen Mode",
+    #[cfg(target_os = "windows")]
+    auto_start: "Run at Startup",
+    #[cfg(any(debug_assertions, feature = "beta"))]
+    web_stream: "Web Streaming",
+    #[cfg(debug_assertions)]
+    debug_page: "Debug Page",
+    check_update: "Check for Updates",
+    about: "About Sunshine",
+    quit: "Quit Tray",
+    language: "Language",
+    star_project: "Project Website",
+    visit_project_sunshine: "Sunshine Source Code",
+    visit_project_moonlight: "Moonlight Source Code",
+    restart: "Restart Sunshine",
     tooltip: "Sunshine GUI",
     tooltip_admin: "Sunshine GUI (Admin)",
+};
+
+const JA_STRINGS: TrayStrings = TrayStrings {
+    status_idle: "待機中",
+    status_streaming: "ストリーミング中",
+    status_paused: "ストリーム一時停止",
+    status_pairing: "ペアリング待機中",
+    status_notification: "新しい通知",
+    status_connecting: "接続中",
+    status_disconnected: "未接続",
+    notification: "通知",
+    complete_pairing: "ペアリングを完了",
+    open_main_panel: "メインパネルを開く",
+    interfaces_menu: "その他のインターフェース",
+    display_menu: "ディスプレイ",
+    tools_menu: "ツール",
+    settings_menu: "設定",
+    advanced_menu: "詳細設定",
+    help_menu: "ヘルプ",
+    open_sunshine: "Web 管理画面",
+    vdd_settings: "仮想ディスプレイ設定",
+    vdd_create: "仮想ディスプレイを作成",
+    vdd_close: "仮想ディスプレイを閉じる",
+    vdd_keep: "ストリーミング後も保持",
+    vdd_headless: "ヘッドレス時に自動作成",
+    import_config: "設定をインポート",
+    export_config: "設定をエクスポート",
+    reset_config: "設定をリセット",
+    clear_cache: "キャッシュを消去",
+    reset_display: "ディスプレイをリセット",
+    restart_user_mode: "ユーザーモードで Sunshine を実行",
+    show_toolbar: "デスクトップツールバーを表示",
+    prevent_sleep: "システムのスリープを防止",
+    rtss_control: "RTSS コントロール",
+    host_performance: "ホストパフォーマンス",
+    log_console: "ログコンソール",
+    open_desktop: "大画面モード",
+    #[cfg(target_os = "windows")]
+    auto_start: "起動時に実行",
+    #[cfg(any(debug_assertions, feature = "beta"))]
+    web_stream: "Web ストリーミング",
+    #[cfg(debug_assertions)]
+    debug_page: "デバッグページ",
+    check_update: "更新を確認",
+    about: "Sunshine について",
+    quit: "トレイを終了",
+    language: "言語",
+    star_project: "プロジェクトサイト",
+    visit_project_sunshine: "Sunshine ソースコード",
+    visit_project_moonlight: "Moonlight ソースコード",
+    restart: "Sunshine を再起動",
+    tooltip: "Sunshine GUI",
+    tooltip_admin: "Sunshine GUI (管理者)",
 };
 
 fn get_tray_strings() -> &'static TrayStrings {
     let locale = CURRENT_LOCALE.lock().unwrap();
     match locale.as_deref() {
         Some("en") => &EN_STRINGS,
+        Some("ja") => &JA_STRINGS,
         _ => &ZH_STRINGS,
     }
 }
 
 fn get_current_locale() -> String {
-    CURRENT_LOCALE.lock().unwrap().clone().unwrap_or_else(|| "zh".to_string())
+    CURRENT_LOCALE
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap_or_else(|| "zh".to_string())
 }
 
 #[cfg(target_os = "windows")]
@@ -126,49 +337,429 @@ mod power {
 }
 
 /// 创建系统托盘
-pub fn create_system_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+pub fn create_system_tray<R: Runtime + 'static>(app: &AppHandle<R>) -> tauri::Result<()> {
     #[cfg(target_os = "windows")]
     init_sunshine_user_mode_state(app);
 
-    let menu = build_tray_menu(app)?;
-    let s = get_tray_strings();
-    let tooltip = if utils::is_running_as_admin().unwrap_or(false) {
-        s.tooltip_admin
-    } else {
-        s.tooltip
-    };
-
-    TrayIconBuilder::with_id(TRAY_ID)
-        .menu(&menu)
-        .icon(app.default_window_icon().unwrap().clone())
-        .tooltip(tooltip)
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| handle_tray_menu_event(app, event.id().as_ref()))
-        .on_tray_icon_event(|tray, event| match event {
-            TrayIconEvent::Click { button: MouseButton::Left, .. } => handle_tray_click(tray.app_handle()),
-            TrayIconEvent::DoubleClick { button: MouseButton::Left, .. } => handle_tray_double_click(tray.app_handle()),
-            _ => {}
-        })
-        .build(app)?;
+    sync_tray_locale(app);
+    build_owned_system_tray(app)?;
+    events::start_tray_state_monitoring(app);
 
     Ok(())
 }
 
+fn normalize_tray_locale(locale: &str) -> &'static str {
+    let locale = locale.trim().to_ascii_lowercase();
+    if locale.starts_with("zh") {
+        "zh"
+    } else if locale.starts_with("ja") {
+        "ja"
+    } else {
+        "en"
+    }
+}
+
+fn sync_tray_locale<R: Runtime + 'static>(app: &AppHandle<R>) {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let locale = match sunshine::get_sunshine_locale().await {
+            Ok(locale) => locale,
+            Err(api_error) => match sunshine::parse_sunshine_config().await {
+                Ok(config) => config.locale.unwrap_or_else(|| "en".to_string()),
+                Err(config_error) => {
+                    debug!(
+                        "Failed to restore tray locale: {}; {}",
+                        api_error, config_error
+                    );
+                    return;
+                }
+            },
+        };
+        let locale = normalize_tray_locale(&locale).to_string();
+        let changed = {
+            let mut current_locale = CURRENT_LOCALE.lock().unwrap();
+            if current_locale.is_some() {
+                false
+            } else {
+                *current_locale = Some(locale);
+                true
+            }
+        };
+
+        if changed {
+            let rebuild_handle = app_handle.clone();
+            if let Err(e) = app_handle.run_on_main_thread(move || {
+                rebuild_tray_menu(&rebuild_handle);
+            }) {
+                debug!("Failed to rebuild tray after locale sync: {}", e);
+            }
+        }
+    });
+}
+
+fn build_owned_system_tray<R: Runtime + 'static>(app: &AppHandle<R>) -> tauri::Result<()> {
+    if app.tray_by_id(TRAY_ID).is_some() {
+        return Ok(());
+    }
+    let menu = build_tray_menu(app)?;
+    let tooltip = default_tray_tooltip();
+    let tray_icon = icons::load_initial_tray_icon(app);
+
+    TrayIconBuilder::with_id(TRAY_ID)
+        .menu(&menu)
+        .icon(tray_icon)
+        .tooltip(tooltip)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| handle_tray_menu_event(app, event.id().as_ref()))
+        .on_tray_icon_event(|tray, event| match event {
+            TrayIconEvent::Click {
+                button: MouseButton::Left,
+                ..
+            } => handle_tray_click(tray.app_handle()),
+            TrayIconEvent::DoubleClick {
+                button: MouseButton::Left,
+                ..
+            } => handle_tray_double_click(tray.app_handle()),
+            _ => {}
+        })
+        .build(app)?;
+
+    info!("GUI tray created for the current user session");
+
+    Ok(())
+}
+
+fn open_desktop_gui_from_tray<R: Runtime>(app: &AppHandle<R>, source: &str) {
+    if let Err(e) = windows::open_desktop_window(app) {
+        error!("Failed to open desktop GUI from tray {}: {}", source, e);
+    }
+}
+
+fn open_main_panel_from_tray<R: Runtime>(app: &AppHandle<R>, source: &str) {
+    if let Some(window) = app.get_webview_window("main") {
+        windows::show_and_activate_window(&window);
+        return;
+    }
+
+    if let Err(e) = windows::create_main_window(app) {
+        error!("Failed to open main panel from tray {}: {}", source, e);
+    }
+}
+
+pub fn mark_main_panel_loading() {
+    MAIN_PANEL_BRIDGE.mark_loading();
+}
+
+fn emit_to_main_when_ready<R: Runtime>(
+    app: &AppHandle<R>,
+    event: &str,
+    payload: serde_json::Value,
+) {
+    MAIN_PANEL_BRIDGE.emit_or_queue(app, event, payload);
+}
+
+#[tauri::command]
+pub fn main_panel_loading() {
+    mark_main_panel_loading();
+}
+
+#[tauri::command]
+pub fn main_panel_ready(app: AppHandle) {
+    MAIN_PANEL_BRIDGE.mark_ready(&app);
+}
+
+fn default_tray_tooltip() -> &'static str {
+    let s = get_tray_strings();
+    if utils::is_running_as_admin().unwrap_or(false) {
+        s.tooltip_admin
+    } else {
+        s.tooltip
+    }
+}
+
+fn tray_tooltip_from_state(state: &sunshine::TrayState) -> String {
+    let tooltip = state.tooltip.trim();
+    if !tooltip.is_empty() && !(state.status == "idle" && tooltip == "Sunshine") {
+        return tooltip.to_string();
+    }
+
+    match state.status.as_str() {
+        "idle" => "Sunshine - Idle".to_string(),
+        "streaming" if !state.app_name.is_empty() => format!("Streaming {}", state.app_name),
+        "streaming" => "Streaming".to_string(),
+        "paused" if !state.app_name.is_empty() => format!("Stream paused: {}", state.app_name),
+        "paused" => "Stream paused".to_string(),
+        "pairing" if !state.pairing_client_name.is_empty() => {
+            format!("Pairing request: {}", state.pairing_client_name)
+        }
+        "pairing" => "Pairing request".to_string(),
+        "notification" if !state.notification.title.trim().is_empty() => {
+            state.notification.title.trim().to_string()
+        }
+        "notification" if !state.notification.message.trim().is_empty() => {
+            state.notification.message.trim().to_string()
+        }
+        "notification" => "Sunshine notification".to_string(),
+        _ => default_tray_tooltip().to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tray_state(status: &str) -> sunshine::TrayState {
+        sunshine::TrayState {
+            status: status.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn idle_tooltip_shows_explicit_state() {
+        let mut state = tray_state("idle");
+        state.tooltip = "Sunshine".to_string();
+
+        assert_eq!(tray_tooltip_from_state(&state), "Sunshine - Idle");
+    }
+
+    #[test]
+    fn explicit_tooltip_is_preserved() {
+        let mut state = tray_state("idle");
+        state.tooltip = "Sunshine - Ready".to_string();
+
+        assert_eq!(tray_tooltip_from_state(&state), "Sunshine - Ready");
+    }
+
+    #[test]
+    fn streaming_tooltip_includes_app_name() {
+        let mut state = tray_state("streaming");
+        state.app_name = "Steam Big Picture".to_string();
+
+        assert_eq!(
+            tray_tooltip_from_state(&state),
+            "Streaming Steam Big Picture"
+        );
+    }
+
+    #[test]
+    fn paused_tooltip_includes_app_name() {
+        let mut state = tray_state("paused");
+        state.app_name = "Desktop".to_string();
+
+        assert_eq!(tray_tooltip_from_state(&state), "Stream paused: Desktop");
+    }
+
+    #[test]
+    fn pairing_tooltip_includes_client_name() {
+        let mut state = tray_state("pairing");
+        state.pairing_client_name = "Moonlight".to_string();
+
+        assert_eq!(
+            tray_tooltip_from_state(&state),
+            "Pairing request: Moonlight"
+        );
+    }
+
+    #[test]
+    fn notification_tooltip_prefers_title_then_message() {
+        let mut state = tray_state("notification");
+        state.notification.title = "Update available".to_string();
+        state.notification.message = "A new Sunshine build is ready".to_string();
+        assert_eq!(tray_tooltip_from_state(&state), "Update available");
+
+        state.notification.title.clear();
+        assert_eq!(
+            tray_tooltip_from_state(&state),
+            "A new Sunshine build is ready"
+        );
+    }
+
+    #[test]
+    fn pairing_notification_label_names_the_client() {
+        let mut state = tray_state("pairing");
+        state.pairing_client_name = "Moonlight Client".to_string();
+        state.notification.active = true;
+        state.notification.action = "open_pin".to_string();
+
+        assert_eq!(
+            tray_notification_label(&ZH_STRINGS, &state),
+            "完成配对: Moonlight Client"
+        );
+    }
+
+    #[test]
+    fn menu_status_includes_streamed_app() {
+        let mut state = tray_state("streaming");
+        state.app_name = "Desktop".to_string();
+
+        assert_eq!(
+            tray_status_label(&ZH_STRINGS, Some(&state), CoreConnectionState::Connected),
+            "Sunshine · 串流中: Desktop"
+        );
+    }
+
+    #[test]
+    fn menu_status_uses_connecting_without_core_state() {
+        assert_eq!(
+            tray_status_label(&EN_STRINGS, None, CoreConnectionState::Connecting),
+            "Sunshine · Connecting"
+        );
+    }
+
+    #[test]
+    fn menu_status_distinguishes_disconnected_core() {
+        assert_eq!(
+            tray_status_label(&EN_STRINGS, None, CoreConnectionState::Disconnected),
+            "Sunshine · Disconnected"
+        );
+    }
+
+    #[test]
+    fn tray_locale_normalizes_supported_language_variants() {
+        assert_eq!(normalize_tray_locale("zh-CN"), "zh");
+        assert_eq!(normalize_tray_locale("ja-JP"), "ja");
+        assert_eq!(normalize_tray_locale("en-US"), "en");
+        assert_eq!(normalize_tray_locale("fr-FR"), "en");
+    }
+
+    #[test]
+    fn primary_desktop_actions_have_clear_localized_labels() {
+        assert_eq!(ZH_STRINGS.open_desktop, "大屏模式");
+        #[cfg(target_os = "windows")]
+        assert_eq!(ZH_STRINGS.auto_start, "开机运行");
+        assert_eq!(EN_STRINGS.open_desktop, "Large Screen Mode");
+        #[cfg(target_os = "windows")]
+        assert_eq!(EN_STRINGS.auto_start, "Run at Startup");
+    }
+
+    #[test]
+    fn long_dynamic_menu_text_is_compacted() {
+        assert_eq!(compact_menu_text("1234567890", 8), "12345...");
+        assert_eq!(compact_menu_text("  short  ", 8), "short");
+    }
+}
+
+fn apply_tray_state<R: Runtime + 'static>(app: &AppHandle<R>, state: &sunshine::TrayState) {
+    let connection_changed = {
+        let mut connection = CORE_CONNECTION_STATE.lock().unwrap();
+        let changed = *connection != CoreConnectionState::Connected;
+        *connection = CoreConnectionState::Connected;
+        changed
+    };
+    let state_changed = {
+        let mut current_state = CURRENT_TRAY_STATE.lock().unwrap();
+        let changed = current_state
+            .as_ref()
+            .map(|current_state| {
+                current_state.status != state.status
+                    || current_state.app_name != state.app_name
+                    || current_state.pairing_client_name != state.pairing_client_name
+                    || current_state.vdd != state.vdd
+                    || current_state.notification != state.notification
+            })
+            .unwrap_or(true);
+        *current_state = Some(state.clone());
+        changed
+    };
+    let should_rebuild_menu = connection_changed || state_changed;
+
+    if state.owner != "gui" {
+        if app.remove_tray_by_id(TRAY_ID).is_some() {
+            info!(
+                "Removed GUI tray because core tray owner is '{}'",
+                state.owner
+            );
+            *CURRENT_CORE_ICON.lock().unwrap() = None;
+        }
+        return;
+    }
+
+    if let Err(e) = build_owned_system_tray(app) {
+        error!("Failed to create GUI tray for core owner: {}", e);
+        return;
+    }
+
+    if should_rebuild_menu {
+        rebuild_tray_menu(app);
+    }
+
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let tooltip = tray_tooltip_from_state(state);
+        if let Err(e) = tray.set_tooltip(Some(tooltip.as_str())) {
+            debug!("Failed to update tray tooltip from core state: {}", e);
+        }
+    }
+    icons::apply_tray_icon(app, state.icon.as_str());
+}
+
+fn apply_core_disconnected<R: Runtime + 'static>(app: &AppHandle<R>) {
+    let connection_changed = {
+        let mut connection = CORE_CONNECTION_STATE.lock().unwrap();
+        let changed = *connection != CoreConnectionState::Disconnected;
+        *connection = CoreConnectionState::Disconnected;
+        changed
+    };
+    let had_state = CURRENT_TRAY_STATE.lock().unwrap().take().is_some();
+
+    if let Err(e) = build_owned_system_tray(app) {
+        error!(
+            "Failed to keep GUI tray available while core is offline: {}",
+            e
+        );
+        return;
+    }
+    if connection_changed || had_state {
+        rebuild_tray_menu(app);
+    }
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let tooltip =
+            tray_status_label(get_tray_strings(), None, CoreConnectionState::Disconnected);
+        let _ = tray.set_tooltip(Some(tooltip.as_str()));
+    }
+    icons::apply_tray_icon(app, "default");
+}
+
+fn apply_tray_state_on_main_thread<R: Runtime + 'static>(
+    app: &AppHandle<R>,
+    state: sunshine::TrayState,
+) {
+    let app_handle = app.clone();
+    if let Err(e) = app.run_on_main_thread(move || {
+        apply_tray_state(&app_handle, &state);
+    }) {
+        debug!("Failed to schedule tray state update on main thread: {}", e);
+    }
+}
+
 /// 初始化 Sunshine 用户模式状态（仅 Windows）
 #[cfg(target_os = "windows")]
-fn init_sunshine_user_mode_state<R: Runtime>(app: &AppHandle<R>) {
+fn init_sunshine_user_mode_state<R: Runtime + 'static>(app: &AppHandle<R>) {
     // 使用默认值 false，避免阻塞启动
     *SUNSHINE_USER_MODE_STATE.lock().unwrap() = false;
-    
+
     // 异步更新 Sunshine 用户模式状态（不阻塞启动；阻塞的 sc/tasklist 放在 spawn_blocking 中）
-    let _app_handle = app.clone();
+    let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        match tokio::task::spawn_blocking(crate::sunshine::is_sunshine_running_in_user_mode_impl).await {
+        match tokio::task::spawn_blocking(crate::sunshine::is_sunshine_running_in_user_mode_impl)
+            .await
+        {
             Ok(Ok(is_user_mode)) => {
-                *SUNSHINE_USER_MODE_STATE.lock().unwrap() = is_user_mode;
+                let changed = {
+                    let mut state = SUNSHINE_USER_MODE_STATE.lock().unwrap();
+                    let changed = *state != is_user_mode;
+                    *state = is_user_mode;
+                    changed
+                };
                 debug!("✅ Sunshine 用户模式状态已异步更新: {}", is_user_mode);
+                if changed {
+                    let rebuild_handle = app_handle.clone();
+                    let _ = app_handle.run_on_main_thread(move || {
+                        rebuild_tray_menu(&rebuild_handle);
+                    });
+                }
             }
             Ok(Err(e)) => {
                 debug!("⚠️ 检查 Sunshine 用户模式状态失败: {}", e);
@@ -180,326 +771,36 @@ fn init_sunshine_user_mode_state<R: Runtime>(app: &AppHandle<R>) {
     });
 }
 
-/// 构建托盘菜单
-fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
-    let s = get_tray_strings();
-    let current_locale = get_current_locale();
-
-    let open_website = MenuItem::with_id(app, "open_website", s.open_website, true, None::<&str>)?;
-    let vdd_settings = MenuItem::with_id(app, "vdd_settings", s.vdd_settings, true, None::<&str>)?;
-    
-    let show_toolbar = MenuItem::with_id(app, "show_toolbar", s.show_toolbar, true, None::<&str>)?;
-
-    let rtss_control = MenuItem::with_id(app, "rtss_control", s.rtss_control, true, None::<&str>)?;
-    let host_performance = MenuItem::with_id(app, "host_performance", s.host_performance, true, None::<&str>)?;
-    let log_console = MenuItem::with_id(app, "log_console", s.log_console, true, None::<&str>)?;
-    #[cfg(any(debug_assertions, feature = "beta"))]
-    let web_stream = MenuItem::with_id(app, "web_stream", s.web_stream, true, None::<&str>)?;
-    let check_update = MenuItem::with_id(app, "check_update", s.check_update, true, None::<&str>)?;
-    let about = MenuItem::with_id(app, "about", s.about, true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", s.quit, true, None::<&str>)?;
-
-    // 语言子菜单
-    let lang_zh = CheckMenuItem::with_id(app, "lang_zh", "中文", true, current_locale == "zh", None::<&str>)?;
-    let lang_en = CheckMenuItem::with_id(app, "lang_en", "English", true, current_locale == "en", None::<&str>)?;
-    let lang_submenu = Submenu::with_id_and_items(app, "language", s.language, true, &[&lang_zh, &lang_en])?;
-
-    let separator1 = PredefinedMenuItem::separator(app)?;
-    let separator2 = PredefinedMenuItem::separator(app)?;
-    let separator3 = PredefinedMenuItem::separator(app)?;
-
-    #[cfg(target_os = "windows")]
-    let restart_user_mode = {
-        let is_user_mode = *SUNSHINE_USER_MODE_STATE.lock().unwrap();
-        CheckMenuItem::with_id(app, "restart_user_mode", s.restart_user_mode, true, is_user_mode, None::<&str>)?
-    };
-
-    #[cfg(target_os = "windows")]
-    let prevent_sleep = {
-        let is_preventing = *PREVENT_SLEEP_STATE.lock().unwrap();
-        CheckMenuItem::with_id(app, "prevent_sleep", s.prevent_sleep, true, is_preventing, None::<&str>)?
-    };
-
-    let open_desktop = MenuItem::with_id(app, "open_desktop", s.open_desktop, true, None::<&str>)?;
-    #[cfg(debug_assertions)]
-    let debug_page = MenuItem::with_id(app, "debug_page", s.debug_page, true, None::<&str>)?;
-    #[cfg(debug_assertions)]
-    let separator_debug = PredefinedMenuItem::separator(app)?;
-
-    let mut items: Vec<&dyn tauri::menu::IsMenuItem<R>> = vec![&open_website, &separator1, &vdd_settings];
-
-    #[cfg(target_os = "windows")]
-    items.push(&restart_user_mode);
-
-    items.push(&show_toolbar);
-
-    #[cfg(target_os = "windows")]
-    items.push(&prevent_sleep);
-
-    items.push(&rtss_control);
-    items.push(&host_performance);
-    items.push(&log_console);
-    items.push(&open_desktop);
-    #[cfg(any(debug_assertions, feature = "beta"))]
-    items.push(&web_stream);
-
-    #[cfg(debug_assertions)]
-    items.extend([&separator_debug as &dyn tauri::menu::IsMenuItem<R>, &debug_page]);
-
-    items.extend([&separator2 as &dyn tauri::menu::IsMenuItem<R>, &check_update, &about, &lang_submenu, &separator3, &quit]);
-
-    Menu::with_items(app, &items)
-}
-
 /// 处理托盘单击事件
 pub fn handle_tray_click<R: Runtime>(app: &AppHandle<R>) {
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-
-        if let Some(window) = app.get_webview_window("main") {
-            let is_visible = window.is_visible().unwrap_or(false);
-            let is_minimized = window.is_minimized().unwrap_or(false);
-            let is_focused = window.is_focused().unwrap_or(false);
-
-            debug!("📊 窗口状态: visible={}, minimized={}, focused={}", is_visible, is_minimized, is_focused);
-
-            if is_visible && !is_minimized && is_focused {
-                debug!("🔽 单击：隐藏窗口");
-                let _ = window.hide();
-            } else {
-                debug!("🔼 单击：显示窗口");
-                windows::show_and_activate_window(&window);
-            }
-        }
-    });
+    open_main_panel_from_tray(app, "click");
 }
-
 /// 处理托盘双击事件
 pub fn handle_tray_double_click<R: Runtime>(app: &AppHandle<R>) {
-    if let Some(window) = app.get_webview_window("main") {
-        debug!("🔼🔼 双击托盘：强制显示窗口");
-        windows::show_and_activate_window(&window);
-    }
+    open_main_panel_from_tray(app, "double click");
 }
-
-/// 处理托盘菜单事件
-pub fn handle_tray_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) {
-    match menu_id {
-        "open_website" => {
-            info!("🌐 托盘菜单：打开官网");
-            utils::open_url_in_browser("https://www.alkaidlab.com/");
-        }
-        "open_desktop" => {
-            info!("🖥️ 托盘菜单：打开桌面 UI");
-            if let Err(e) = windows::open_desktop_window(app) {
-                error!("❌ 打开桌面 UI 失败: {}", e);
-            }
-        }
-        "vdd_settings" => open_vdd_settings(app),
-        #[cfg(target_os = "windows")]
-        "restart_user_mode" => toggle_sunshine_mode(app),
-        "show_toolbar" => toggle_toolbar(app),
-        "rtss_control" => {
-            info!("🎯 托盘菜单：打开 RTSS 控制");
-            toolbar::create_tool_window_internal(app, "rtss");
-        }
-        "host_performance" => {
-            info!("📊 托盘菜单：打开主机性能监控");
-            toolbar::create_tool_window_internal(app, "performance");
-        }
-        "log_console" => windows::open_log_console(app),
-        "web_stream" => open_web_stream_settings(app),
-        #[cfg(target_os = "windows")]
-        "prevent_sleep" => toggle_prevent_sleep(),
-        #[cfg(debug_assertions)]
-        "debug_page" => {
-            info!("🐛 托盘菜单：打开调试页面");
-            windows::open_debug_page(app);
-        }
-        "check_update" => check_for_updates(app),
-        "about" => {
-            info!("ℹ️ 托盘菜单：显示关于对话框");
-            let _ = windows::open_about_window(app);
-        }
-        "quit" => {
-            info!("🚪 托盘菜单：退出应用");
-            #[cfg(target_os = "windows")]
-            cleanup_prevent_sleep();
-            moonlight_web::cleanup();
-            std::process::exit(0);
-        }
-        "lang_zh" => switch_tray_locale(app, "zh"),
-        "lang_en" => switch_tray_locale(app, "en"),
-        _ => warn!("⚠️ 未知的托盘菜单事件: {}", menu_id),
-    }
-}
-
-/// 打开 VDD 设置
-fn open_vdd_settings<R: Runtime>(app: &AppHandle<R>) {
-    if let Some(window) = app.get_webview_window("main") {
-        info!("📱 托盘菜单：打开VDD设置");
-        windows::show_and_activate_window(&window);
-        let _ = window.emit("open-vdd-settings", ());
-    }
-}
-
-/// 从托盘打开 Web 串流设置
-fn open_web_stream_settings<R: Runtime>(app: &AppHandle<R>) {
-    if let Some(window) = app.get_webview_window("main") {
-        info!("🌙 托盘菜单：打开 Web 串流设置");
-        windows::show_and_activate_window(&window);
-        let _ = window.emit("open-web-stream", ());
-    }
-}
-
-/// 更新 Sunshine 用户模式状态
-#[cfg(target_os = "windows")]
-async fn update_sunshine_mode_state(check_label: &str) {
-    let is_user_mode = tokio::task::spawn_blocking(crate::sunshine::is_sunshine_running_in_user_mode_impl)
-        .await
-        .ok()
-        .and_then(|r| r.ok())
-        .unwrap_or(false);
-    *SUNSHINE_USER_MODE_STATE.lock().unwrap() = is_user_mode;
-    info!("✅ Sunshine 用户模式状态已更新({}): {}", check_label, is_user_mode);
-}
-
-/// 切换 Sunshine 运行模式
-#[cfg(target_os = "windows")]
-fn toggle_sunshine_mode<R: Runtime>(app: &AppHandle<R>) {
-    info!("🔄 托盘菜单：切换 Sunshine 模式");
-    let app_handle = app.clone();
-
-    tauri::async_runtime::spawn(async move {
-        match crate::sunshine::toggle_sunshine_mode().await {
-            Ok(msg) => {
-                info!("✅ {}", msg);
-                emit_message(&app_handle, "success", &msg);
-
-                // 切换由 UAC 提升的 PowerShell 在后台执行，需预留 UAC + stop + start
-                // 两次检查以减少"中间状态"导致的误判
-                tokio::time::sleep(Duration::from_secs(6)).await;
-                update_sunshine_mode_state("首次").await;
-
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                update_sunshine_mode_state("二次").await;
-            }
-            Err(e) => {
-                error!("❌ 切换 Sunshine 模式失败: {}", e);
-                emit_message(&app_handle, "error", &format!("切换失败: {}", e));
-            }
-        }
-    });
-}
-
-/// 切换工具栏显示/隐藏
-fn toggle_toolbar<R: Runtime>(app: &AppHandle<R>) {
-    info!("🔧 托盘菜单：切换工具栏显示/隐藏");
-
-    if let Some(toolbar_window) = app.get_webview_window("toolbar") {
-        let _ = toolbar_window.close();
-    } else {
-        if let Err(e) = toolbar::create_toolbar_window_internal(app) {
-            error!("❌ 创建工具栏失败: {}", e);
-        }
-    }
-}
-
-/// 检查更新（托盘菜单触发，`manual = true`）
-fn check_for_updates<R: Runtime>(app: &AppHandle<R>) {
-    info!("🔄 托盘菜单：检查更新");
-    let app_handle = app.clone();
-
-    if let Some(window) = app.get_webview_window("main") {
-        windows::show_and_activate_window(&window);
-    }
-
-    let include_prerelease = update::get_include_prerelease(app);
-    tauri::async_runtime::spawn(async move {
-        match update::check_for_updates_internal(true, include_prerelease).await {
-            Ok(Some(update_info)) => {
-                if update_info.is_latest {
-                    info!("✅ 已是最新版本: {}", update_info.version);
-                } else {
-                    info!("🎉 发现新版本: {}", update_info.version);
-                }
-                update::save_last_check_time(&app_handle);
-                if let Some(window) = app_handle.get_webview_window("main") {
-                    let _ = window.emit("update-available", &update_info);
-                }
-            }
-            Ok(None) => {
-                // manual=true 时此分支不会触发
-                debug!("✅ 已是最新版本");
-                update::save_last_check_time(&app_handle);
-            }
-            Err(e) => {
-                error!("❌ 检查更新失败: {}", e);
-                if let Some(window) = app_handle.get_webview_window("main") {
-                    let _ = window.emit("update-check-result", serde_json::json!({
-                        "error": e
-                    }));
-                }
-            }
-        }
-    });
-}
-
-/// 发送消息到主窗口
-fn emit_message<R: Runtime>(app: &AppHandle<R>, msg_type: &str, message: &str) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.emit("show-message", serde_json::json!({
-            "type": msg_type,
-            "message": message
-        }));
-    }
-}
-
-
-/// 切换防止睡眠功能
-#[cfg(target_os = "windows")]
-fn toggle_prevent_sleep() {
-    let mut state = PREVENT_SLEEP_STATE.lock().unwrap();
-    let new_state = !*state;
-
-    let result = if new_state {
-        info!("🌙 托盘菜单：启用防止睡眠");
-        power::enable_prevent_sleep()
-    } else {
-        info!("💤 托盘菜单：禁用防止睡眠");
-        power::disable_prevent_sleep()
-    };
-
-    match result {
-        Ok(()) => *state = new_state,
-        Err(e) => error!("❌ 切换防止睡眠失败: {}", e),
-    }
-}
-
-/// 清理防止睡眠状态（在应用退出时调用）
-#[cfg(target_os = "windows")]
-pub fn cleanup_prevent_sleep() {
-    if *PREVENT_SLEEP_STATE.lock().unwrap() {
-        match power::disable_prevent_sleep() {
-            Ok(()) => info!("✅ 已清理防止睡眠状态"),
-            Err(e) => error!("❌ 清理防止睡眠状态失败: {}", e),
-        }
-    }
-}
-
 /// 从托盘菜单切换语言
 fn switch_tray_locale<R: Runtime>(app: &AppHandle<R>, locale: &str) {
     info!("🌍 托盘菜单：切换语言为 {}", locale);
-    *CURRENT_LOCALE.lock().unwrap() = Some(locale.to_string());
+    let locale = locale.to_string();
+    *CURRENT_LOCALE.lock().unwrap() = Some(locale.clone());
     rebuild_tray_menu(app);
+    let locale_to_persist = locale.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = sunshine::set_sunshine_locale(locale_to_persist.clone()).await {
+            warn!(
+                "Failed to persist tray locale '{}': {}",
+                locale_to_persist, e
+            );
+        }
+    });
     // 通知前端同步语言
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.emit("tray-locale-changed", locale);
+        let _ = window.emit("tray-locale-changed", locale.as_str());
     }
     // 同时通知 desktop 窗口
     if let Some(window) = app.get_webview_window("desktop") {
-        let _ = window.emit("tray-locale-changed", locale);
+        let _ = window.emit("tray-locale-changed", locale.as_str());
     }
 }
 
@@ -512,12 +813,12 @@ fn rebuild_tray_menu<R: Runtime>(app: &AppHandle<R>) {
                     error!("❌ 重建托盘菜单失败: {}", e);
                 }
                 // 更新 tooltip
-                let s = get_tray_strings();
-                let tooltip = if utils::is_running_as_admin().unwrap_or(false) {
-                    s.tooltip_admin
-                } else {
-                    s.tooltip
-                };
+                let tooltip = CURRENT_TRAY_STATE
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .map(tray_tooltip_from_state)
+                    .unwrap_or_else(|| default_tray_tooltip().to_string());
                 let _ = tray.set_tooltip(Some(tooltip));
             }
             Err(e) => error!("❌ 构建托盘菜单失败: {}", e),
@@ -526,6 +827,10 @@ fn rebuild_tray_menu<R: Runtime>(app: &AppHandle<R>) {
 }
 
 /// Tauri 命令：前端通知 tray 同步语言
+pub fn refresh_menu<R: Runtime>(app: &AppHandle<R>) {
+    rebuild_tray_menu(app);
+}
+
 #[tauri::command]
 pub fn set_tray_locale(app: AppHandle, locale: String) {
     info!("🌍 前端同步语言到托盘: {}", locale);

@@ -29,9 +29,9 @@
 use std::collections::VecDeque;
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicI64, AtomicU8, Ordering},
 };
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use clipboard_rs::{
@@ -43,7 +43,7 @@ use serde::Serialize;
 use tauri::async_runtime::JoinHandle;
 use tokio::sync::Notify;
 
-use crate::sunshine::{create_https_client, get_sunshine_url};
+use crate::sunshine::{create_https_client, create_sse_https_client, get_sunshine_url};
 
 const WIRE_VERSION: u8 = 1;
 const KIND_TEXT: u8 = 1;
@@ -67,12 +67,17 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 const SSE_RECONNECT_BACKOFF: Duration = Duration::from_secs(3);
 const ECHO_TTL: Duration = Duration::from_secs(5);
 
+const TRANSPORT_STOPPED: u8 = 0;
+const TRANSPORT_CONNECTING: u8 = 1;
+const TRANSPORT_CONNECTED: u8 = 2;
+const TRANSPORT_DISCONNECTED: u8 = 3;
+
+static TRANSPORT_STATE: AtomicU8 = AtomicU8::new(TRANSPORT_STOPPED);
+static LAST_CONNECTED_AT_MS: AtomicI64 = AtomicI64::new(0);
+static LAST_TRANSPORT_ERROR: Mutex<Option<String>> = Mutex::new(None);
+
 fn create_sse_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .connect_timeout(Duration::from_secs(10))
-        .build()
-        .map_err(|e| format!("创建 SSE HTTP 客户端失败: {}", e))
+    create_sse_https_client().map_err(|e| format!("创建 SSE HTTP 客户端失败: {}", e))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -198,12 +203,37 @@ struct State {
 static AGENT: once_cell::sync::Lazy<Mutex<State>> =
     once_cell::sync::Lazy::new(|| Mutex::new(State::default()));
 
-#[derive(Serialize, Clone, Copy)]
+#[derive(Serialize, Clone)]
 pub struct ClipboardStatus {
     /// Local user-session agent is running (watcher + SSE pump active).
     pub agent_active: bool,
     /// Sunshine service has clipboard sync allowed (config not force-disabled).
-    pub service_allowed: bool,
+    pub service_allowed: Option<bool>,
+    pub transport_state: &'static str,
+    pub last_connected_at_ms: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+}
+
+fn set_transport_state(state: u8, error: Option<String>) {
+    TRANSPORT_STATE.store(state, Ordering::Release);
+    *LAST_TRANSPORT_ERROR.lock().unwrap() = error;
+    if state == TRANSPORT_CONNECTED {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        LAST_CONNECTED_AT_MS.store(now, Ordering::Release);
+    }
+}
+
+fn transport_state_name(state: u8) -> &'static str {
+    match state {
+        TRANSPORT_CONNECTING => "connecting",
+        TRANSPORT_CONNECTED => "connected",
+        TRANSPORT_DISCONNECTED => "disconnected",
+        _ => "stopped",
+    }
 }
 
 // ---------- Outbound watcher ----------
@@ -570,11 +600,13 @@ async fn sse_pump(stop: Arc<Notify>, echo: Arc<Mutex<EchoState>>) {
             _ = stop.notified() => return,
             _ = tokio::time::sleep(Duration::from_millis(0)) => {}
         }
+        set_transport_state(TRANSPORT_CONNECTING, None);
 
         let url = match get_sunshine_url().await {
             Ok(u) => u,
             Err(e) => {
                 warn!("clipboard SSE: get_sunshine_url: {e}");
+                set_transport_state(TRANSPORT_DISCONNECTED, Some(e));
                 if wait_or_stop(&stop, SSE_RECONNECT_BACKOFF).await {
                     return;
                 }
@@ -587,6 +619,7 @@ async fn sse_pump(stop: Arc<Notify>, echo: Arc<Mutex<EchoState>>) {
             Ok(c) => c,
             Err(e) => {
                 warn!("clipboard SSE: client: {e}");
+                set_transport_state(TRANSPORT_DISCONNECTED, Some(e));
                 if wait_or_stop(&stop, SSE_RECONNECT_BACKOFF).await {
                     return;
                 }
@@ -603,6 +636,7 @@ async fn sse_pump(stop: Arc<Notify>, echo: Arc<Mutex<EchoState>>) {
             Ok(r) => r,
             Err(e) => {
                 debug!("clipboard SSE connect failed: {e}");
+                set_transport_state(TRANSPORT_DISCONNECTED, Some(e.to_string()));
                 if wait_or_stop(&stop, SSE_RECONNECT_BACKOFF).await {
                     return;
                 }
@@ -610,13 +644,16 @@ async fn sse_pump(stop: Arc<Notify>, echo: Arc<Mutex<EchoState>>) {
             }
         };
         if !resp.status().is_success() {
+            let error = format!("service returned {}", resp.status());
             warn!("clipboard SSE bad status: {}", resp.status());
+            set_transport_state(TRANSPORT_DISCONNECTED, Some(error));
             if wait_or_stop(&stop, SSE_RECONNECT_BACKOFF).await {
                 return;
             }
             continue;
         }
         info!("clipboard SSE connected");
+        set_transport_state(TRANSPORT_CONNECTED, None);
         let mut stream = resp.bytes_stream();
         let mut buf = Vec::<u8>::new();
 
@@ -643,10 +680,15 @@ async fn sse_pump(stop: Arc<Notify>, echo: Arc<Mutex<EchoState>>) {
                     }
                     Some(Err(e)) => {
                         debug!("clipboard SSE read error: {e}");
+                        set_transport_state(TRANSPORT_DISCONNECTED, Some(e.to_string()));
                         break;
                     }
                     None => {
                         debug!("clipboard SSE stream ended");
+                        set_transport_state(
+                            TRANSPORT_DISCONNECTED,
+                            Some("event stream ended".to_string()),
+                        );
                         break;
                     }
                 }
@@ -708,6 +750,7 @@ pub fn start() -> Result<(), String> {
     if st.enabled {
         return Ok(());
     }
+    set_transport_state(TRANSPORT_CONNECTING, None);
 
     let stop = Arc::new(Notify::new());
     let echo = st.echo.clone();
@@ -781,6 +824,7 @@ pub fn stop() {
     if let Some(t) = hb {
         t.abort();
     }
+    set_transport_state(TRANSPORT_STOPPED, None);
     info!("clipboard sync agent stopped");
 }
 
@@ -788,33 +832,30 @@ fn agent_active() -> bool {
     AGENT.lock().unwrap().enabled
 }
 
-async fn query_service_allowed() -> bool {
+async fn query_service_allowed() -> Option<bool> {
     // Service exposes the effective gate at /api/v1/clipboard/capability.
-    // Treat any failure (Sunshine down, network blip) as "unknown but allowed"
-    // so the indicator doesn't flicker red on every reconnect.
+    // Keep transport errors distinct from a deliberate service-side disable.
     let url = match get_sunshine_url().await {
         Ok(u) => u,
-        Err(_) => return true,
+        Err(_) => return None,
     };
     let client = match create_https_client() {
         Ok(c) => c,
-        Err(_) => return true,
+        Err(_) => return None,
     };
     let endpoint = format!("{}/api/v1/clipboard/capability", url.trim_end_matches('/'));
     let resp = match client.post(&endpoint).send().await {
         Ok(r) => r,
-        Err(_) => return true,
+        Err(_) => return None,
     };
     if !resp.status().is_success() {
-        return true;
+        return None;
     }
     let json: serde_json::Value = match resp.json().await {
         Ok(v) => v,
-        Err(_) => return true,
+        Err(_) => return None,
     };
-    json.get("clipboard_sync")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true)
+    json.get("clipboard_sync").and_then(|v| v.as_bool())
 }
 
 /// Start the agent in the background at app launch. The agent is harmless
@@ -822,6 +863,7 @@ async fn query_service_allowed() -> bool {
 /// rejected and outbound posts will 4xx, so we just keep retrying quietly.
 pub fn auto_start() {
     if let Err(e) = start() {
+        set_transport_state(TRANSPORT_DISCONNECTED, Some(e.clone()));
         warn!("clipboard auto-start failed: {e}");
     }
 }
@@ -830,8 +872,26 @@ pub fn auto_start() {
 
 #[tauri::command]
 pub async fn clipboard_sync_status() -> ClipboardStatus {
+    let transport_state = TRANSPORT_STATE.load(Ordering::Acquire);
+    let last_connected_at_ms = LAST_CONNECTED_AT_MS.load(Ordering::Acquire);
     ClipboardStatus {
         agent_active: agent_active(),
         service_allowed: query_service_allowed().await,
+        transport_state: transport_state_name(transport_state),
+        last_connected_at_ms: (last_connected_at_ms > 0).then_some(last_connected_at_ms),
+        last_error: LAST_TRANSPORT_ERROR.lock().unwrap().clone(),
+    }
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+
+    #[test]
+    fn transport_state_names_cover_the_agent_lifecycle() {
+        assert_eq!(transport_state_name(TRANSPORT_STOPPED), "stopped");
+        assert_eq!(transport_state_name(TRANSPORT_CONNECTING), "connecting");
+        assert_eq!(transport_state_name(TRANSPORT_CONNECTED), "connected");
+        assert_eq!(transport_state_name(TRANSPORT_DISCONNECTED), "disconnected");
     }
 }

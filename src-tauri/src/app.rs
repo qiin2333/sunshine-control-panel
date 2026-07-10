@@ -18,9 +18,8 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
     let args: Vec<String> = std::env::args().collect();
     let show_toolbar = args.iter().any(|arg| arg == "--toolbar" || arg == "-t");
     let show_desktop = args.iter().any(|arg| arg == "--desktop" || arg == "-d");
-    let explicit_minimized = args
-        .iter()
-        .any(|arg| arg == "--minimized" || arg == "--hidden");
+    let agent_only = args.iter().any(|arg| arg == "--hidden");
+    let explicit_minimized = args.iter().any(|arg| arg == "--minimized");
     let desktop_settings = crate::desktop_settings::load_desktop_settings_from_disk();
     let send_to_client_paths = crate::file_transfer::parse_send_to_client_args(&args);
     let is_send_to_client = !send_to_client_paths.is_empty();
@@ -32,11 +31,16 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
         .map_or(false, |arg| arg.contains("/pin"));
 
     let app_handle = app.handle().clone();
+    windows::register_agent_restart();
     crate::desktop_settings::apply_startup_settings(&app_handle, &desktop_settings);
     let start_minimized = explicit_minimized || desktop_settings.start_minimized;
 
-    // 创建窗口：桌面模式或工具栏模式时不创建主窗口
-    let main_window_created = if show_desktop {
+    // Agent-only startup keeps tray and session services alive without
+    // allocating a hidden WebView. UI windows are created on demand.
+    let main_window_created = if agent_only {
+        info!("Starting Sunshine user agent without WebView windows");
+        false
+    } else if show_desktop {
         info!("🖥️ 检测到 --desktop 参数，启动桌面 UI 模式");
         if start_minimized {
             windows::create_desktop_window_hidden(&app_handle)?;
@@ -69,7 +73,6 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
     }
     register_global_shortcuts(app)?;
     setup_menu_event_handler(app);
-    start_proxy_server_async();
 
     // 剪贴板同步：用户会话 agent 默认随面板启动；服务端如果禁用了则 SSE 自然失败，
     // 不需要额外开关。
@@ -117,6 +120,14 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
     });
 
     Ok(())
+}
+
+pub fn shutdown_application() {
+    crate::clipboard::stop();
+    #[cfg(target_os = "windows")]
+    crate::tray::cleanup_prevent_sleep();
+    crate::moonlight_web::cleanup();
+    crate::windows::unregister_agent_restart();
 }
 
 /// 注册全局快捷键
@@ -177,35 +188,6 @@ fn setup_menu_event_handler(app: &mut App) {
     });
 }
 
-/// 异步启动代理服务器
-fn start_proxy_server_async() {
-    tauri::async_runtime::spawn(async {
-        // 检查是否设置了 WEBUI_DEV_TARGET 环境变量（用于开发模式）
-        if let Ok(dev_target) = std::env::var("WEBUI_DEV_TARGET") {
-            info!("🛠️ [开发模式] 检测到 WEBUI_DEV_TARGET 环境变量");
-            info!("🎯 代理目标: {}", dev_target);
-            proxy_server::set_sunshine_target(dev_target);
-        } else {
-            // 获取 Sunshine URL 并配置代理目标
-            match sunshine::get_sunshine_url().await {
-                Ok(url) => {
-                    info!("🎯 Sunshine URL: {}", url);
-                    let base_url = url.trim_end_matches('/').to_string();
-                    proxy_server::set_sunshine_target(base_url);
-                }
-                Err(e) => {
-                    log::warn!("⚠️  无法获取 Sunshine URL，使用默认: {}", e);
-                }
-            }
-        }
-
-        // 启动代理服务器
-        if let Err(e) = proxy_server::start_proxy_server().await {
-            error!("❌ 代理服务器启动失败: {}", e);
-        }
-    });
-}
-
 /// 处理单实例逻辑
 pub fn handle_single_instance(app: &AppHandle, args: Vec<String>) {
     info!("🔔 检测到第二个实例启动，激活现有窗口");
@@ -223,6 +205,11 @@ pub fn handle_single_instance(app: &AppHandle, args: Vec<String>) {
     if !quick_share_folder_paths.is_empty() {
         info!("file mapping quick share request detected");
         crate::file_mapping::dispatch_cli_quick_share(quick_share_folder_paths);
+        return;
+    }
+
+    if args.iter().any(|arg| arg == "--hidden") {
+        info!("User agent is already running; ignoring duplicate hidden startup");
         return;
     }
 
@@ -255,6 +242,14 @@ pub fn handle_single_instance(app: &AppHandle, args: Vec<String>) {
         info!("📍 检测到 URL 参数: {}", url);
 
         // 检测 URL 中是否包含 /pin 路径
+        match sunshine::set_runtime_sunshine_url(url) {
+            Ok(base_url) => {
+                proxy_server::set_sunshine_target(base_url);
+                proxy_server::reset_fast_fail();
+            }
+            Err(e) => warn!("Invalid Sunshine URL from second instance: {}", e),
+        }
+
         if url.contains("/pin") {
             info!("🔐 检测到 /pin 路径，打开 PIN 配对窗口");
             if let Err(e) = windows::open_pin_window(app) {
@@ -264,5 +259,11 @@ pub fn handle_single_instance(app: &AppHandle, args: Vec<String>) {
         }
     }
 
+    if app.get_webview_window("main").is_none() {
+        if let Err(e) = windows::create_main_window(app) {
+            error!("Failed to create main panel for second instance: {}", e);
+            return;
+        }
+    }
     windows::activate_main_window(app, target_url);
 }

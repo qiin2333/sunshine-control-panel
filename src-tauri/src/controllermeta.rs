@@ -16,17 +16,13 @@ use tauri::Manager;
 
 // ========== 常量 ==========
 
-const GITHUB_API_LATEST: &str =
-    "https://api.github.com/repos/HK560/ControllerMeta/releases/latest";
+const GITHUB_API_LATEST: &str = "https://api.github.com/repos/HK560/ControllerMeta/releases/latest";
 const BINARY_NAME: &str = "ControllerMeta.exe";
 const INSTALL_SUBDIR: &str = "controllermeta";
 const DOWNLOAD_PROGRESS_EVENT: &str = "controllermeta-download-progress";
 
 /// GitHub API 加速代理前缀（按优先级试探，最后才直连）
-const API_PROXY_PREFIXES: &[&str] = &[
-    "https://ghapi.hackhub.cn/",
-    "https://mirror.ghproxy.com/",
-];
+const API_PROXY_PREFIXES: &[&str] = &["https://ghapi.hackhub.cn/", "https://mirror.ghproxy.com/"];
 
 /// GitHub Release 资产下载加速代理
 const DOWNLOAD_PROXY_PREFIXES: &[&str] = &[
@@ -36,8 +32,7 @@ const DOWNLOAD_PROXY_PREFIXES: &[&str] = &[
 ];
 
 /// 已启动的子进程句柄（仅用于判断是否由我们拉起）
-static CHILD_PROCESS: Lazy<Mutex<Option<std::process::Child>>> =
-    Lazy::new(|| Mutex::new(None));
+static CHILD_PROCESS: Lazy<Mutex<Option<std::process::Child>>> = Lazy::new(|| Mutex::new(None));
 
 // ========== 数据结构 ==========
 
@@ -130,11 +125,7 @@ fn is_process_running() -> bool {
     {
         use std::os::windows::process::CommandExt;
         if let Ok(output) = std::process::Command::new("tasklist")
-            .args([
-                "/FI",
-                &format!("IMAGENAME eq {}", BINARY_NAME),
-                "/NH",
-            ])
+            .args(["/FI", &format!("IMAGENAME eq {}", BINARY_NAME), "/NH"])
             .creation_flags(0x08000000)
             .output()
         {
@@ -307,13 +298,11 @@ pub async fn controllermeta_download(
         }
     }
 
-    let response = response_opt
-        .ok_or_else(|| format!("所有下载源均失败: {}", last_err))?;
+    let response = response_opt.ok_or_else(|| format!("所有下载源均失败: {}", last_err))?;
 
     let total_size = response.content_length().unwrap_or(0);
     let install_dir = get_install_dir();
-    std::fs::create_dir_all(&install_dir)
-        .map_err(|e| format!("创建安装目录失败: {}", e))?;
+    std::fs::create_dir_all(&install_dir).map_err(|e| format!("创建安装目录失败: {}", e))?;
 
     // 下载到临时文件，完成后再原子重命名到目标位置（避免覆盖运行中的 exe）
     let final_path = get_binary_path();
@@ -323,8 +312,8 @@ pub async fn controllermeta_download(
         let _ = std::fs::remove_file(&temp_path);
     }
 
-    let mut file = std::fs::File::create(&temp_path)
-        .map_err(|e| format!("创建临时文件失败: {}", e))?;
+    let mut file =
+        std::fs::File::create(&temp_path).map_err(|e| format!("创建临时文件失败: {}", e))?;
 
     let mut stream = response.bytes_stream();
     let mut downloaded: u64 = 0;
@@ -332,8 +321,7 @@ pub async fn controllermeta_download(
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| format!("下载数据失败: {}", e))?;
-        std::io::Write::write_all(&mut file, &chunk)
-            .map_err(|e| format!("写入文件失败: {}", e))?;
+        std::io::Write::write_all(&mut file, &chunk).map_err(|e| format!("写入文件失败: {}", e))?;
         downloaded += chunk.len() as u64;
 
         if let Some(ref w) = window {
@@ -446,8 +434,7 @@ pub async fn controllermeta_uninstall() -> Result<String, String> {
     if !install_dir.exists() {
         return Ok("not-installed".to_string());
     }
-    std::fs::remove_dir_all(&install_dir)
-        .map_err(|e| format!("删除安装目录失败: {}", e))?;
+    std::fs::remove_dir_all(&install_dir).map_err(|e| format!("删除安装目录失败: {}", e))?;
     info!("🗑️ ControllerMeta 已卸载: {:?}", install_dir);
     Ok("uninstalled".to_string())
 }

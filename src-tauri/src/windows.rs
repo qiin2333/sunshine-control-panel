@@ -5,8 +5,24 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewWindow};
 
-/// WebView 心跳追踪表：记录各窗口最近一次 JS 心跳的时间戳
-static HEARTBEAT_MAP: Lazy<Mutex<HashMap<String, std::time::Instant>>> =
+struct HeartbeatState {
+    created_at: std::time::Instant,
+    last_beat: Option<std::time::Instant>,
+}
+
+impl HeartbeatState {
+    fn new() -> Self {
+        Self {
+            created_at: std::time::Instant::now(),
+            last_beat: None,
+        }
+    }
+}
+
+/// WebView heartbeat state is scoped to one window lifetime. Reusing a stale
+/// timestamp for a newly-created window with the same label can make the
+/// recovery monitor reload that window while its first page is still loading.
+static HEARTBEAT_MAP: Lazy<Mutex<HashMap<String, HeartbeatState>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Default)]
@@ -20,6 +36,9 @@ static TOOL_WINDOW_MOVE_SAVE: Lazy<Mutex<ToolWindowMoveSave>> =
 
 /// 心跳超时阈值（秒）：超过此时间未收到心跳则认为渲染进程可能崩溃
 const HEARTBEAT_STALE_SECS: u64 = 30;
+/// Cold WebView2 startup and the first local-proxy navigation can be slower
+/// than a normal heartbeat interval. Recovery must not disrupt that startup.
+const HEARTBEAT_STARTUP_GRACE_SECS: u64 = 90;
 
 const MAIN_WINDOW_ID: &str = "main";
 const ABOUT_WINDOW_ID: &str = "about";
@@ -29,6 +48,35 @@ const DESKTOP_WINDOW_ID: &str = "desktop";
 const TOOL_WINDOW_ID: &str = "tool_window";
 #[cfg(debug_assertions)]
 const DEBUG_PAGE_WINDOW_ID: &str = "debug_page";
+
+#[cfg(target_os = "windows")]
+pub fn register_agent_restart() {
+    use windows::Win32::System::Recovery::{
+        REGISTER_APPLICATION_RESTART_FLAGS, RegisterApplicationRestart,
+    };
+    use windows::core::w;
+
+    if let Err(e) =
+        unsafe { RegisterApplicationRestart(w!("--hidden"), REGISTER_APPLICATION_RESTART_FLAGS(0)) }
+    {
+        warn!("Failed to register GUI agent restart: {}", e);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn register_agent_restart() {}
+
+#[cfg(target_os = "windows")]
+pub fn unregister_agent_restart() {
+    use windows::Win32::System::Recovery::UnregisterApplicationRestart;
+
+    if let Err(e) = unsafe { UnregisterApplicationRestart() } {
+        debug!("Failed to unregister GUI agent restart: {}", e);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn unregister_agent_restart() {}
 
 fn schedule_tool_window_position_save(app: AppHandle, position: PhysicalPosition<i32>) {
     let version = {
@@ -233,10 +281,20 @@ pub fn disable_context_menu<R: Runtime>(_window: &WebviewWindow<R>) {}
 #[tauri::command]
 pub fn webview_heartbeat(webview: tauri::Webview) {
     let label = webview.label().to_string();
+    let mut map = HEARTBEAT_MAP.lock().unwrap();
+    let state = map.entry(label).or_insert_with(HeartbeatState::new);
+    state.last_beat = Some(std::time::Instant::now());
+}
+
+fn begin_webview_heartbeat(window_id: &str) {
     HEARTBEAT_MAP
         .lock()
         .unwrap()
-        .insert(label, std::time::Instant::now());
+        .insert(window_id.to_string(), HeartbeatState::new());
+}
+
+fn end_webview_heartbeat(window_id: &str) {
+    HEARTBEAT_MAP.lock().unwrap().remove(window_id);
 }
 
 /// Resize the About window to match its web content height.
@@ -343,8 +401,12 @@ fn check_and_recover_webview<R: Runtime>(window: &WebviewWindow<R>) {
     let is_stale = {
         let map = HEARTBEAT_MAP.lock().unwrap();
         match map.get(&label) {
-            Some(last_beat) => last_beat.elapsed().as_secs() > HEARTBEAT_STALE_SECS,
-            None => false, // 尚未收到过心跳，不视为崩溃（可能是刚创建的窗口）
+            Some(state) if state.created_at.elapsed().as_secs() >= HEARTBEAT_STARTUP_GRACE_SECS => {
+                state
+                    .last_beat
+                    .is_some_and(|last_beat| last_beat.elapsed().as_secs() > HEARTBEAT_STALE_SECS)
+            }
+            Some(_) | None => false,
         }
     };
 
@@ -358,7 +420,7 @@ fn check_and_recover_webview<R: Runtime>(window: &WebviewWindow<R>) {
         HEARTBEAT_MAP
             .lock()
             .unwrap()
-            .insert(label, std::time::Instant::now());
+            .insert(label, HeartbeatState::new());
     }
 }
 
@@ -577,7 +639,6 @@ pub fn open_log_console<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
-/// 打开 PIN 配对窗口（单例模式）
 pub fn open_pin_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(window) = app.get_webview_window(PIN_WINDOW_ID) {
         let _ = window.unminimize();
@@ -659,6 +720,7 @@ fn create_main_window_internal<R: Runtime>(
     app: &AppHandle<R>,
     visible: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    proxy_server::ensure_started();
     if app.get_webview_window(MAIN_WINDOW_ID).is_some() {
         debug!("主窗口已存在，跳过创建");
         return Ok(());
@@ -666,6 +728,9 @@ fn create_main_window_internal<R: Runtime>(
 
     let visibility_desc = if visible { "" } else { "隐藏的" };
     info!("🪟 创建{}主窗口...", visibility_desc);
+
+    crate::tray::mark_main_panel_loading();
+    begin_webview_heartbeat(MAIN_WINDOW_ID);
 
     let window = tauri::WebviewWindowBuilder::new(
         app,
@@ -683,7 +748,10 @@ fn create_main_window_internal<R: Runtime>(
     .disable_drag_drop_handler()
     .initialization_script(WEBVIEW_VISIBILITY_INIT_SCRIPT)
     .build()
-    .map_err(|e| format!("创建{}主窗口失败: {}", visibility_desc, e))?;
+    .map_err(|e| {
+        end_webview_heartbeat(MAIN_WINDOW_ID);
+        format!("创建{}主窗口失败: {}", visibility_desc, e)
+    })?;
 
     // 设置 DWM 圆角，让系统级合成器裁剪窗口圆角
     #[cfg(target_os = "windows")]
@@ -717,6 +785,8 @@ fn create_desktop_window_internal<R: Runtime>(
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!("🖥️ 创建桌面 UI 窗口...");
 
+    begin_webview_heartbeat(DESKTOP_WINDOW_ID);
+
     let window = tauri::WebviewWindowBuilder::new(
         app,
         DESKTOP_WINDOW_ID,
@@ -734,7 +804,10 @@ fn create_desktop_window_internal<R: Runtime>(
     .disable_drag_drop_handler()
     .initialization_script(WEBVIEW_VISIBILITY_INIT_SCRIPT)
     .build()
-    .map_err(|e| format!("创建桌面窗口失败: {}", e))?;
+    .map_err(|e| {
+        end_webview_heartbeat(DESKTOP_WINDOW_ID);
+        format!("创建桌面窗口失败: {}", e)
+    })?;
 
     #[cfg(target_os = "windows")]
     apply_dwm_rounded_corners(&window);
@@ -768,11 +841,16 @@ pub fn activate_main_window(app: &tauri::AppHandle, target_url: Option<String>) 
         target_url
     );
 
+    if app.get_webview_window(MAIN_WINDOW_ID).is_none() {
+        info!("主窗口尚未创建，正在从用户会话 agent 按需创建");
+        if let Err(e) = create_main_window(app) {
+            error!("❌ 按需创建主窗口失败: {}", e);
+            return;
+        }
+    }
+
     let Some(window) = app.get_webview_window(MAIN_WINDOW_ID) else {
-        error!("❌ 未找到主窗口 '{}'", MAIN_WINDOW_ID);
-        // 列出所有现有窗口以便诊断
-        let windows: Vec<_> = app.webview_windows().keys().cloned().collect();
-        error!("   当前存在的窗口: {:?}", windows);
+        error!("❌ 主窗口创建后仍不可用");
         return;
     };
 
@@ -959,13 +1037,15 @@ pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
                 schedule_tool_window_position_save(window.app_handle().clone(), *position);
             }
         }
-        tauri::WindowEvent::CloseRequested { api, .. } => {
+        tauri::WindowEvent::CloseRequested { .. } => {
+            end_webview_heartbeat(window.label());
             match window.label() {
                 "main" => {
-                    api.prevent_close();
-                    let _ = window.hide();
-                    // 窗口隐藏到托盘时，将 WebView 设为休眠状态
+                    // Let the WebView close so the user agent returns to its
+                    // headless baseline. The tray and session services keep
+                    // the application event loop alive.
                     set_webview_visibility(window, false);
+                    crate::tray::mark_main_panel_loading();
                 }
                 "toolbar" => {
                     if let Ok(position) = window.outer_position() {

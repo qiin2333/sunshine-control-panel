@@ -139,8 +139,7 @@ $result | ConvertTo-Json -Compress
     // 若 PnP 过滤漏判（device_status 仍是 'NotFound' 或为空），用服务状态兜底——
     // ViGEmBus 是 KERNEL_DRIVER，service Running 即代表驱动已加载并对外可用，
     // 实测设备 InstanceId 占用通用槽位 ROOT\SYSTEM\xxxx 时第一档过滤会漏。
-    let pnp_running =
-        probe.installed && probe.device_status == "OK" && probe.device_problem == 0;
+    let pnp_running = probe.installed && probe.device_status == "OK" && probe.device_problem == 0;
     let service_running = probe.service_state.eq_ignore_ascii_case("Running");
     let running = probe.installed && (pnp_running || service_running);
     let version_ok = parse_major_minor(&probe.version)

@@ -12,11 +12,10 @@
 
 #![cfg(target_os = "windows")]
 
-use windows::core::{GUID, PCWSTR};
 use windows::Win32::Devices::DeviceAndDriverInstallation::{
+    DIGCF_DEVICEINTERFACE, DIGCF_PRESENT, HDEVINFO, SP_DEVICE_INTERFACE_DATA,
     SetupDiDestroyDeviceInfoList, SetupDiEnumDeviceInterfaces, SetupDiGetClassDevsW,
-    SetupDiGetDeviceInterfaceDetailW, DIGCF_DEVICEINTERFACE, DIGCF_PRESENT, HDEVINFO,
-    SP_DEVICE_INTERFACE_DATA,
+    SetupDiGetDeviceInterfaceDetailW,
 };
 use windows::Win32::Foundation::{CloseHandle, GetLastError, HANDLE};
 use windows::Win32::Storage::FileSystem::{
@@ -24,6 +23,7 @@ use windows::Win32::Storage::FileSystem::{
     FILE_SHARE_WRITE, OPEN_EXISTING,
 };
 use windows::Win32::System::IO::DeviceIoControl;
+use windows::core::{GUID, PCWSTR};
 
 // {DA9F8C2B-7E4F-49A1-9D4E-6F2B0E1A0C4D}
 // MUST stay byte-identical with `GUID_DEVINTERFACE_ZAKO_VDD_CONTROL` in
@@ -133,7 +133,11 @@ unsafe fn resolve_interface_path() -> Option<Vec<u16>> {
         // ABI-required cbSize is the *declared* size: 8 on 64-bit (4 bytes
         // cbSize + 2 bytes [u16; 1] + 2 bytes padding), 6 on 32-bit.
         let mut buffer = vec![0u8; required_size as usize];
-        let cb_size: u32 = if cfg!(target_pointer_width = "64") { 8 } else { 6 };
+        let cb_size: u32 = if cfg!(target_pointer_width = "64") {
+            8
+        } else {
+            6
+        };
         buffer[..4].copy_from_slice(&cb_size.to_le_bytes());
 
         let detail_ptr = buffer.as_mut_ptr() as *mut _;
@@ -220,7 +224,9 @@ pub fn send_command(command: &str) -> IoctlResult {
             IoctlResult::Success
         } else {
             let err = GetLastError().0;
-            IoctlResult::Failed(format!("DeviceIoControl(IOCTL_VDD_COMMAND) failed (err={err})"))
+            IoctlResult::Failed(format!(
+                "DeviceIoControl(IOCTL_VDD_COMMAND) failed (err={err})"
+            ))
         }
     }
 }

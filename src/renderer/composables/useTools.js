@@ -6,6 +6,7 @@ import { useI18n } from '../desktop/i18n/index.js'
 // Module-scoped reactive flag so all sidebar instances share state.
 const clipboardSyncEnabled = ref(false)
 let clipboardSyncInitialised = false
+let clipboardSyncPollTimer = null
 
 /**
  * 工具操作 Composable
@@ -465,7 +466,7 @@ export function useTools() {
     try {
       const { invoke } = await import('@tauri-apps/api/core')
       const status = await invoke('clipboard_sync_status')
-      clipboardSyncEnabled.value = !!status?.agent_active
+      clipboardSyncEnabled.value = status?.transport_state === 'connected' && status?.service_allowed !== false
       return status
     } catch (err) {
       console.warn('[clipboard] status query failed:', err)
@@ -480,12 +481,17 @@ export function useTools() {
       ElMessage.warning(msg.statusUnavailable)
       return
     }
-    if (status.agent_active && status.service_allowed) {
-      ElMessage.success(msg.active)
-    } else if (!status.agent_active && status.service_allowed) {
+    if (!status.agent_active || status.transport_state === 'stopped') {
       ElMessage.warning(msg.agentInactive)
-    } else if (status.agent_active && !status.service_allowed) {
+    } else if (status.service_allowed === false) {
       ElMessage.warning(msg.serviceDisabled)
+    } else if (status.transport_state === 'connected') {
+      ElMessage.success(msg.active)
+    } else if (status.transport_state === 'connecting') {
+      ElMessage.info(msg.connecting)
+    } else if (status.transport_state === 'disconnected') {
+      const detail = status.last_error ? `: ${status.last_error}` : ''
+      ElMessage.warning(`${msg.disconnected}${detail}`)
     } else {
       ElMessage.info(msg.inactive)
     }
@@ -496,6 +502,11 @@ export function useTools() {
     if (clipboardSyncInitialised) return
     clipboardSyncInitialised = true
     await refreshClipboardSyncStatus()
+    clipboardSyncPollTimer = window.setInterval(refreshClipboardSyncStatus, 5000)
+    window.addEventListener('beforeunload', () => {
+      if (clipboardSyncPollTimer) window.clearInterval(clipboardSyncPollTimer)
+      clipboardSyncPollTimer = null
+    }, { once: true })
   }
 
   return {

@@ -1,10 +1,10 @@
+use log::{debug, error, info, warn};
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::{Mutex, RwLock};
 use url::Url;
-use log::{info, warn, error, debug};
-use once_cell::sync::Lazy;
-use std::sync::Mutex;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SunshineConfig {
@@ -17,6 +17,38 @@ pub struct SunshineConfig {
 
 // 缓存 Sunshine 路径，避免重复查找和记录日志
 static SUNSHINE_PATH_CACHE: Lazy<Mutex<Option<PathBuf>>> = Lazy::new(|| Mutex::new(None));
+static RUNTIME_SUNSHINE_URL: Lazy<RwLock<Option<String>>> = Lazy::new(|| RwLock::new(None));
+static HTTPS_CLIENT: Lazy<Result<reqwest::Client, String>> = Lazy::new(|| {
+    reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))
+});
+static SSE_HTTPS_CLIENT: Lazy<Result<reqwest::Client, String>> = Lazy::new(|| {
+    reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Create Sunshine event client failed: {}", e))
+});
+
+pub const TRAY_PROTOCOL_VERSION: u32 = 1;
+const CORE_COMPATIBILITY_CHECK_ARG: &str = "--check-core-compatibility";
+
+pub fn try_run_core_compatibility_check_from_args() -> bool {
+    if !std::env::args().any(|arg| arg == CORE_COMPATIBILITY_CHECK_ARG) {
+        return false;
+    }
+
+    let compatible = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())
+        .and_then(|runtime| runtime.block_on(get_tray_state()).map(|_| ()));
+
+    std::process::exit(if compatible.is_ok() { 0 } else { 2 });
+}
 
 fn get_sunshine_path() -> PathBuf {
     // 先检查缓存
@@ -26,27 +58,27 @@ fn get_sunshine_path() -> PathBuf {
             return cached_path.clone();
         }
     }
-    
+
     // 缓存未命中，查找路径
     let path = get_sunshine_path_internal();
-    
+
     // 更新缓存
     {
         let mut cache = SUNSHINE_PATH_CACHE.lock().unwrap();
         *cache = Some(path.clone());
     }
-    
+
     path
 }
 
 fn get_sunshine_path_internal() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
-        use winreg::enums::*;
         use winreg::RegKey;
-        
+        use winreg::enums::*;
+
         let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-        
+
         // 尝试多个可能的注册表位置
         let registry_paths = [
             r"SOFTWARE\AlkaidLab\Sunshine",
@@ -54,7 +86,7 @@ fn get_sunshine_path_internal() -> PathBuf {
             r"SOFTWARE\WOW6432Node\LizardByte\Sunshine",
             r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine",
         ];
-        
+
         for reg_path in &registry_paths {
             if let Ok(sunshine_key) = hklm.open_subkey(reg_path) {
                 // 尝试读取多个可能的键名
@@ -69,20 +101,20 @@ fn get_sunshine_path_internal() -> PathBuf {
                 }
             }
         }
-        
+
         // 尝试默认安装路径
         let default_paths = [
             PathBuf::from(r"C:\Program Files\Sunshine"),
             PathBuf::from(r"C:\Program Files (x86)\Sunshine"),
         ];
-        
+
         for path in &default_paths {
             if path.exists() {
                 info!("✅ 使用默认 Sunshine 路径: {:?}", path);
                 return path.clone();
             }
         }
-        
+
         warn!("⚠️  无法找到 Sunshine 安装路径，使用默认路径");
         PathBuf::from(r"C:\Program Files\Sunshine")
     }
@@ -96,9 +128,7 @@ fn get_sunshine_path_internal() -> PathBuf {
 /// 获取 Sunshine 安装路径（暴露给前端）
 #[tauri::command]
 pub fn get_sunshine_install_path() -> String {
-    get_sunshine_path()
-        .to_string_lossy()
-        .to_string()
+    get_sunshine_path().to_string_lossy().to_string()
 }
 
 /// 获取 Sunshine 安装路径（内部使用，返回 PathBuf）
@@ -124,7 +154,7 @@ pub fn assets_dir() -> PathBuf {
 #[tauri::command]
 pub async fn get_sunshine_version() -> Result<String, String> {
     let sunshine_exe = get_sunshine_path().join("sunshine.exe");
-    
+
     if !sunshine_exe.exists() {
         return Ok("Unknown".to_string());
     }
@@ -144,21 +174,21 @@ pub async fn get_sunshine_version() -> Result<String, String> {
         .arg("--version")
         .output()
         .map_err(|e| e.to_string())?;
-    
+
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let combined = format!("{}{}", stdout, stderr);
-    
+
     // 按优先级匹配版本号模式
     let patterns = [
-        r"v?(\d+\.\d+\.\d+\.杂鱼)",           // 完整版本号（含"杂鱼"）
-        r"(\d+\.\d+\.\d+\.杂鱼)",             // 不带 v 前缀
-        r"Sunshine\s+v?([\d.]+(?:\.杂鱼)?)",  // "Sunshine v..." 格式
+        r"v?(\d+\.\d+\.\d+\.杂鱼)",              // 完整版本号（含"杂鱼"）
+        r"(\d+\.\d+\.\d+\.杂鱼)",                // 不带 v 前缀
+        r"Sunshine\s+v?([\d.]+(?:\.杂鱼)?)",     // "Sunshine v..." 格式
         r"version\s*:?\s*v?([\d.]+(?:\.杂鱼)?)", // "version: ..." 格式
-        r"v?(\d+\.\d+\.\d+(?:\.杂鱼)?)",      // 标准版本号
-        r"(\d+\.\d+(?:\.杂鱼)?)",             // 简化版本号
+        r"v?(\d+\.\d+\.\d+(?:\.杂鱼)?)",         // 标准版本号
+        r"(\d+\.\d+(?:\.杂鱼)?)",                // 简化版本号
     ];
-    
+
     for pattern_str in &patterns {
         if let Ok(pattern) = regex::Regex::new(pattern_str) {
             if let Some(cap) = pattern.captures(&combined) {
@@ -170,14 +200,14 @@ pub async fn get_sunshine_version() -> Result<String, String> {
             }
         }
     }
-    
+
     Ok("Unknown".to_string())
 }
 
 #[tauri::command]
 pub async fn parse_sunshine_config() -> Result<SunshineConfig, String> {
     let config_path = get_sunshine_path().join("config").join("sunshine.conf");
-    
+
     if !config_path.exists() {
         return Ok(SunshineConfig {
             port: Some("47989".to_string()),
@@ -187,10 +217,9 @@ pub async fn parse_sunshine_config() -> Result<SunshineConfig, String> {
             locale: None,
         });
     }
-    
-    let content = std::fs::read_to_string(config_path)
-        .map_err(|e| e.to_string())?;
-    
+
+    let content = std::fs::read_to_string(config_path).map_err(|e| e.to_string())?;
+
     let mut config = SunshineConfig {
         port: None,
         adapter_name: None,
@@ -198,17 +227,17 @@ pub async fn parse_sunshine_config() -> Result<SunshineConfig, String> {
         fps: None,
         locale: None,
     };
-    
+
     for line in content.lines() {
         let line = line.trim();
         if line.starts_with('#') || line.is_empty() {
             continue;
         }
-        
+
         if let Some((key, value)) = line.split_once('=') {
             let key = key.trim();
             let value = value.trim();
-            
+
             match key {
                 "port" => config.port = Some(value.to_string()),
                 "adapter_name" => config.adapter_name = Some(value.to_string()),
@@ -219,7 +248,7 @@ pub async fn parse_sunshine_config() -> Result<SunshineConfig, String> {
             }
         }
     }
-    
+
     Ok(config)
 }
 
@@ -237,17 +266,22 @@ pub async fn get_sunshine_url() -> Result<String, String> {
     }
 
     // 优先检查命令行参数
+    if let Some(url) = get_runtime_sunshine_url() {
+        return Ok(url);
+    }
+
     if let Some(url) = get_command_line_url() {
         return parse_url_to_base(&url).ok_or_else(|| url);
     }
-    
+
     // 从配置文件读取端口
     let config = parse_sunshine_config().await?;
-    
-    let port = config.port
+
+    let port = config
+        .port
         .and_then(|p| p.parse::<u16>().ok())
         .unwrap_or(DEFAULT_SUNSHINE_PORT);
-    
+
     // Sunshine Web UI 端口 = 配置端口 + 1
     Ok(format!("https://127.0.0.1:{}", port + 1))
 }
@@ -260,10 +294,24 @@ fn parse_url_to_base(url: &str) -> Option<String> {
     })
 }
 
+pub fn set_runtime_sunshine_url(url: &str) -> Result<String, String> {
+    let base = parse_url_to_base(url).ok_or_else(|| format!("Invalid Sunshine URL: {}", url))?;
+    if let Ok(mut runtime_url) = RUNTIME_SUNSHINE_URL.write() {
+        *runtime_url = Some(base.clone());
+    }
+    Ok(base)
+}
+
+fn get_runtime_sunshine_url() -> Option<String> {
+    RUNTIME_SUNSHINE_URL
+        .read()
+        .ok()
+        .and_then(|runtime_url| runtime_url.clone())
+}
+
 #[tauri::command]
 pub fn get_command_line_url() -> Option<String> {
-    std::env::args()
-        .find_map(|arg| arg.strip_prefix("--url=").map(String::from))
+    std::env::args().find_map(|arg| arg.strip_prefix("--url=").map(String::from))
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -275,12 +323,205 @@ pub struct SessionInfo {
     pub width: u32,
     pub height: u32,
     pub fps: u32,
-    pub bitrate: u32,  // Current bitrate in Kbps
+    pub bitrate: u32, // Current bitrate in Kbps
     pub host_audio: bool,
     pub enable_hdr: bool,
     pub enable_mic: bool,
     pub app_name: String,
     pub app_id: i32,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
+pub struct TrayVddState {
+    #[serde(default)]
+    pub active: bool,
+    #[serde(default)]
+    pub keep_enabled: bool,
+    #[serde(default)]
+    pub headless_create_enabled: bool,
+    #[serde(default)]
+    pub cooldown: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
+pub struct TrayNotificationState {
+    #[serde(default)]
+    pub id: u64,
+    #[serde(default)]
+    pub active: bool,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub message: String,
+    #[serde(default)]
+    pub icon: String,
+    #[serde(default)]
+    pub action: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct TrayState {
+    #[serde(default)]
+    pub protocol_version: u32,
+    #[serde(default)]
+    pub instance_id: String,
+    #[serde(default)]
+    pub owner: String,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub icon: String,
+    #[serde(default)]
+    pub tooltip: String,
+    #[serde(default)]
+    pub app_name: String,
+    #[serde(default)]
+    pub pairing_client_name: String,
+    #[serde(default)]
+    pub revision: u64,
+    #[serde(default)]
+    pub updated_at_ms: i64,
+    #[serde(default)]
+    pub vdd: TrayVddState,
+    #[serde(default)]
+    pub notification: TrayNotificationState,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct TrayActionResponse {
+    #[serde(default)]
+    pub status: bool,
+    #[serde(default)]
+    pub action: String,
+    #[serde(default)]
+    pub message: String,
+    #[serde(default)]
+    pub error: String,
+    #[serde(default)]
+    pub tray_state: Option<TrayState>,
+}
+
+fn validate_tray_state(state: &TrayState) -> Result<(), String> {
+    if state.protocol_version != TRAY_PROTOCOL_VERSION {
+        return Err(format!(
+            "Unsupported tray protocol version {} (expected {})",
+            state.protocol_version, TRAY_PROTOCOL_VERSION
+        ));
+    }
+    if state.instance_id.is_empty() {
+        return Err("Tray state is missing core instance_id".to_string());
+    }
+    if !matches!(state.owner.as_str(), "gui" | "core" | "disabled") {
+        return Err(format!("Unsupported tray owner '{}'", state.owner));
+    }
+    if !state.capabilities.iter().any(|value| value == "state-v1") {
+        return Err("Tray state is missing required state-v1 capability".to_string());
+    }
+    Ok(())
+}
+
+pub(crate) fn parse_tray_state_json(response_text: &str) -> Result<TrayState, String> {
+    let state: TrayState = serde_json::from_str(response_text)
+        .map_err(|e| format!("Parse tray state failed: {}; body: {}", e, response_text))?;
+    validate_tray_state(&state)?;
+    Ok(state)
+}
+
+#[cfg(test)]
+mod tray_protocol_tests {
+    use super::*;
+
+    fn valid_state() -> TrayState {
+        TrayState {
+            protocol_version: TRAY_PROTOCOL_VERSION,
+            instance_id: "core-instance".to_string(),
+            owner: "gui".to_string(),
+            capabilities: vec!["state-v1".to_string(), "actions-v1".to_string()],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn accepts_supported_tray_protocol() {
+        assert!(validate_tray_state(&valid_state()).is_ok());
+    }
+
+    #[test]
+    fn rejects_incomplete_tray_protocol() {
+        let mut state = valid_state();
+        state.instance_id.clear();
+        assert!(validate_tray_state(&state).is_err());
+
+        let mut state = valid_state();
+        state.owner = "unknown".to_string();
+        assert!(validate_tray_state(&state).is_err());
+
+        let mut state = valid_state();
+        state.capabilities.clear();
+        assert!(validate_tray_state(&state).is_err());
+    }
+}
+
+async fn post_tray_action_request(
+    action: &str,
+    enabled: Option<bool>,
+    notification_id: Option<u64>,
+) -> Result<TrayActionResponse, String> {
+    let sunshine_url = get_sunshine_url().await?;
+    let action_url = format!("{}/api/tray/action", sunshine_url.trim_end_matches('/'));
+
+    let client = create_https_client()?;
+    let mut body = serde_json::json!({ "action": action });
+    if let Some(enabled) = enabled {
+        body["enabled"] = serde_json::json!(enabled);
+    }
+    if let Some(notification_id) = notification_id {
+        body["notification_id"] = serde_json::json!(notification_id);
+    }
+
+    let response = client
+        .post(&action_url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Post tray action failed: {}", e))?;
+
+    let status = response.status();
+    let response_text = response
+        .text()
+        .await
+        .map_err(|e| format!("Read tray action response failed: {}", e))?;
+
+    if !status.is_success() {
+        return Err(format!(
+            "Tray action failed (status {}): {}",
+            status, response_text
+        ));
+    }
+
+    let result: TrayActionResponse = serde_json::from_str(&response_text)
+        .map_err(|e| format!("Parse tray action failed: {}; body: {}", e, response_text))?;
+    let state = result
+        .tray_state
+        .as_ref()
+        .ok_or_else(|| "Tray action response is missing tray_state".to_string())?;
+    validate_tray_state(state)?;
+    Ok(result)
+}
+
+pub async fn post_tray_action(
+    action: &str,
+    enabled: Option<bool>,
+) -> Result<TrayActionResponse, String> {
+    post_tray_action_request(action, enabled, None).await
+}
+
+pub async fn acknowledge_tray_notification(
+    notification_id: u64,
+) -> Result<TrayActionResponse, String> {
+    post_tray_action_request("notification_ack", None, Some(notification_id)).await
 }
 
 impl SessionInfo {
@@ -313,10 +554,7 @@ impl SessionInfo {
                 .get("height")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32,
-            fps: session_obj
-                .get("fps")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32,
+            fps: session_obj.get("fps").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
             bitrate: session_obj
                 .get("bitrate")
                 .and_then(|v| v.as_u64())
@@ -346,23 +584,54 @@ impl SessionInfo {
     }
 }
 
+pub async fn get_tray_state() -> Result<TrayState, String> {
+    let sunshine_url = get_sunshine_url().await?;
+    let tray_state_url = format!("{}/api/tray/state", sunshine_url.trim_end_matches('/'));
+
+    let client = create_https_client()?;
+    let response = client
+        .get(&tray_state_url)
+        .send()
+        .await
+        .map_err(|e| format!("Request tray state failed: {}", e))?;
+
+    let status = response.status();
+    let response_text = response
+        .text()
+        .await
+        .map_err(|e| format!("Read tray state response failed: {}", e))?;
+
+    if !status.is_success() {
+        return Err(format!(
+            "Tray state request failed (status {}): {}",
+            status, response_text
+        ));
+    }
+
+    parse_tray_state_json(&response_text)
+}
+
 pub fn create_https_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .danger_accept_invalid_certs(true) // Sunshine 使用自签名证书
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))
+    HTTPS_CLIENT.as_ref().cloned().map_err(Clone::clone)
+}
+
+pub fn create_sse_https_client() -> Result<reqwest::Client, String> {
+    SSE_HTTPS_CLIENT.as_ref().cloned().map_err(Clone::clone)
 }
 
 /// POST 配置数据到 Sunshine Config API
 /// 封装了获取 URL、创建客户端、POST 请求和错误处理的完整流程
-pub async fn post_sunshine_config(config_data: &serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
-    let sunshine_url = get_sunshine_url().await
+pub async fn post_sunshine_config(
+    config_data: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    let sunshine_url = get_sunshine_url()
+        .await
         .map_err(|e| format!("Cannot get Sunshine URL: {}", e))?;
     let config_url = format!("{}/api/config", sunshine_url.trim_end_matches('/'));
 
     let client = create_https_client()?;
-    let response = client.post(&config_url)
+    let response = client
+        .post(&config_url)
         .json(config_data)
         .send()
         .await
@@ -373,69 +642,85 @@ pub async fn post_sunshine_config(config_data: &serde_json::Map<String, serde_js
     } else {
         let status = response.status();
         let error_body = response.text().await.unwrap_or_default();
-        Err(format!("Sunshine Config API 返回错误 (状态: {}): {}", status, error_body))
+        Err(format!(
+            "Sunshine Config API 返回错误 (状态: {}): {}",
+            status, error_body
+        ))
     }
 }
 
 #[tauri::command]
 pub async fn get_active_sessions() -> Result<Vec<SessionInfo>, String> {
     let sunshine_url = get_sunshine_url().await?;
-    let sessions_url = format!("{}/api/runtime/sessions", sunshine_url.trim_end_matches('/'));
-    
+    let sessions_url = format!(
+        "{}/api/runtime/sessions",
+        sunshine_url.trim_end_matches('/')
+    );
+
     debug!("📡 获取活动会话: {}", sessions_url);
-    
+
     let client = create_https_client()?;
-    
+
     let response = client
         .get(&sessions_url)
         .send()
         .await
         .map_err(|e| format!("请求会话信息失败: {}", e))?;
-    
+
     let status = response.status();
 
     debug!("📡 获取 sessions 响应状态码: {}", status);
-    
+
     // 检查 Content-Type
-    let content_type = response.headers()
+    let content_type = response
+        .headers()
         .get("content-type")
         .and_then(|h| h.to_str().ok())
         .unwrap_or("")
         .to_lowercase();
-    
-    let response_text = response.text().await
+
+    let response_text = response
+        .text()
+        .await
         .map_err(|e| format!("读取响应失败: {}", e))?;
 
     debug!("📡 获取 sessions 响应内容: {}", response_text);
-    
+
     // 如果是 404 或 XML 响应，返回空数组（没有会话是正常情况）
-    if status == 404 || content_type.contains("xml") || response_text.trim_start().starts_with("<?xml") {
+    if status == 404
+        || content_type.contains("xml")
+        || response_text.trim_start().starts_with("<?xml")
+    {
         debug!("⚠️ 没有活动会话 (404 或 XML 响应)");
         return Ok(Vec::new());
     }
-    
+
     // 如果状态码不是成功，但也不是 404，返回错误
     if !status.is_success() {
         error!("❌ 错误响应: {}", response_text);
-        return Err(format!("获取会话信息失败 (状态: {}): {}", status, response_text));
+        return Err(format!(
+            "获取会话信息失败 (状态: {}): {}",
+            status, response_text
+        ));
     }
-    
+
     // 尝试解析 JSON
     let json: serde_json::Value = serde_json::from_str(&response_text)
         .map_err(|e| format!("解析 JSON 失败: {}，响应内容: {}", e, response_text))?;
-    
+
     debug!("📡 解析后的 JSON: {:#}", json);
-    
+
     // 检查 API 响应状态
     if let Some(success) = json.get("success").and_then(|v| v.as_bool()) {
         if !success {
-            let error_msg = json.get("status_message")
+            let error_msg = json
+                .get("status_message")
                 .and_then(|v| v.as_str())
                 .unwrap_or("未知错误");
             return Err(format!("API 返回错误: {}", error_msg));
         }
     }
-    
+
     // 解析会话列表
     let sessions = json
         .get("sessions")
@@ -452,34 +737,35 @@ pub async fn get_active_sessions() -> Result<Vec<SessionInfo>, String> {
             debug!("📡 JSON 结构: {:#}", json);
             Vec::new()
         });
-    
+
     info!("✅ 获取到 {} 个活动会话", sessions.len());
     Ok(sessions)
 }
 
 #[tauri::command]
 pub async fn change_bitrate(client_name: String, bitrate: u32) -> Result<String, String> {
-    
     // 验证码率范围
     if !(1..=800000).contains(&bitrate) {
         return Err("码率值必须在 1-800000 Kbps 之间".to_string());
     }
-    
+
     // 构建请求 URL
     let sunshine_url = get_sunshine_url().await?;
-    let base_url = Url::parse(&sunshine_url)
-        .map_err(|e| format!("解析 Sunshine URL 失败: {}", e))?;
-    
-    let mut change_bitrate_url = base_url.join("api/runtime/bitrate")
+    let base_url =
+        Url::parse(&sunshine_url).map_err(|e| format!("解析 Sunshine URL 失败: {}", e))?;
+
+    let mut change_bitrate_url = base_url
+        .join("api/runtime/bitrate")
         .map_err(|e| format!("构建 URL 失败: {}", e))?;
-    
-    change_bitrate_url.query_pairs_mut()
+
+    change_bitrate_url
+        .query_pairs_mut()
         .append_pair("bitrate", &bitrate.to_string())
         .append_pair("clientname", &client_name);
-    
+
     info!("📡 调整码率: {} -> {} Kbps", client_name, bitrate);
     debug!("📡 请求 URL: {}", change_bitrate_url);
-    
+
     // 发送请求
     let client = create_https_client()?;
     let response = client
@@ -487,16 +773,16 @@ pub async fn change_bitrate(client_name: String, bitrate: u32) -> Result<String,
         .send()
         .await
         .map_err(|e| format!("请求调整码率失败: {}", e))?;
-    
+
     let status = response.status();
     debug!("📡 HTTP 状态码: {}", status);
-    
+
     // 读取响应内容
     let response_text = response
         .text()
         .await
         .map_err(|e| format!("读取响应失败: {}", e))?;
-    
+
     // 检查 HTTP 状态码
     if !status.is_success() {
         return Err(match status.as_u16() {
@@ -504,14 +790,14 @@ pub async fn change_bitrate(client_name: String, bitrate: u32) -> Result<String,
             403 => "访问被拒绝，仅允许 localhost 访问".to_string(),
             _ => format!("HTTP 错误 (状态码: {}): {}", status, response_text),
         });
-        }
-    
+    }
+
     // 解析 JSON 响应
     let json: serde_json::Value = serde_json::from_str(&response_text)
         .map_err(|e| format!("解析 JSON 失败: {}，响应内容: {}", e, response_text))?;
-    
+
     debug!("📡 解析后的 JSON: {:#}", json);
-    
+
     // 检查响应状态
     match json.get("success").and_then(|v| v.as_bool()) {
         Some(true) => {
@@ -519,22 +805,27 @@ pub async fn change_bitrate(client_name: String, bitrate: u32) -> Result<String,
             Ok(format!("码率已调整为 {} Kbps", bitrate))
         }
         Some(false) => {
-            let error_msg = json.get("status_message")
+            let error_msg = json
+                .get("status_message")
                 .and_then(|v| v.as_str())
                 .unwrap_or("未知错误");
-            let status_code = json.get("status_code")
+            let status_code = json
+                .get("status_code")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
-            
+
             error!("❌ 码率调整失败: {} (状态码: {})", error_msg, status_code);
-            
+
             // 根据状态码提供详细提示
             let error_message = if status_code == 404 {
-                format!("码率调整失败: {}\n\n提示：请确认客户端名称是否正确，或会话是否处于 RUNNING 状态", error_msg)
+                format!(
+                    "码率调整失败: {}\n\n提示：请确认客户端名称是否正确，或会话是否处于 RUNNING 状态",
+                    error_msg
+                )
             } else {
                 format!("码率调整失败: {}", error_msg)
             };
-            
+
             Err(error_message)
         }
         None => {
@@ -549,8 +840,8 @@ pub async fn change_bitrate(client_name: String, bitrate: u32) -> Result<String,
 pub(crate) fn is_sunshine_running_in_user_mode_impl() -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {
-        use std::process::Command;
         use std::os::windows::process::CommandExt;
+        use std::process::Command;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
 
         // 检查服务是否正在运行（服务名不区分大小写，只需检查一次）
@@ -595,14 +886,14 @@ pub async fn is_sunshine_running_in_user_mode() -> Result<bool, String> {
     }
 }
 
-
 /// 构建停止 Sunshine 的命令片段
 #[cfg(target_os = "windows")]
 fn build_stop_sunshine_command() -> String {
     "net stop SunshineService 2>$null; \
      net stop sunshineservice 2>$null; \
      taskkill /IM sunshine.exe /F 2>$null; \
-     Start-Sleep -Seconds 1".to_string()
+     Start-Sleep -Seconds 1"
+        .to_string()
 }
 
 /// 构建启动服务模式的命令片段
@@ -632,13 +923,13 @@ pub async fn toggle_sunshine_mode() -> Result<String, String> {
             .unwrap_or(false);
         let sunshine_path = get_sunshine_path();
         let sunshine_exe = sunshine_path.join("sunshine.exe");
-        
+
         if !sunshine_exe.exists() {
             return Err(format!("找不到 sunshine.exe: {}", sunshine_exe.display()));
         }
-        
+
         let stop_cmd = build_stop_sunshine_command();
-        
+
         let (mode_name, command) = if is_user_mode {
             info!("🔄 切换 Sunshine 模式：用户模式 → 服务模式");
             let start_cmd = build_start_service_command(&sunshine_path);
@@ -651,13 +942,13 @@ pub async fn toggle_sunshine_mode() -> Result<String, String> {
             );
             ("用户模式", format!("{}; {}", stop_cmd, start_cmd))
         };
-        
+
         crate::utils::execute_powershell_command(&command, &format!("切换到{}失败", mode_name))?;
-        
+
         info!("✅ 切换到{}命令已启动，正在后台执行...", mode_name);
         Ok(format!("正在切换到{}", mode_name))
     }
-    
+
     #[cfg(not(target_os = "windows"))]
     {
         Err("此功能仅支持 Windows".to_string())
@@ -669,18 +960,18 @@ pub async fn restart_sunshine_service() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         info!("🔄 开始重启 Sunshine 服务...");
-        
+
         let sunshine_path = get_sunshine_path();
         let stop_cmd = build_stop_sunshine_command();
         let start_cmd = build_start_service_command(&sunshine_path);
         let command = format!("{}; {}", stop_cmd, start_cmd);
-        
+
         crate::utils::execute_powershell_command(&command, "启动重启命令失败")?;
-        
+
         info!("✅ 重启命令已启动，正在后台执行...");
         Ok("success".to_string())
     }
-    
+
     #[cfg(not(target_os = "windows"))]
     {
         Err("此功能仅支持 Windows".to_string())
@@ -697,19 +988,23 @@ pub async fn restart_sunshine_in_user_mode() -> Result<String, String> {
 /// 获取 Sunshine 配置中的 locale 设置（通过 API 获取实时值）
 #[tauri::command]
 pub async fn get_sunshine_locale() -> Result<String, String> {
-    let sunshine_url = get_sunshine_url().await
+    let sunshine_url = get_sunshine_url()
+        .await
         .map_err(|e| format!("Cannot get Sunshine URL: {}", e))?;
 
     let locale_url = format!("{}/api/configLocale", sunshine_url.trim_end_matches('/'));
     let client = create_https_client()?;
 
-    let response = client.get(&locale_url)
+    let response = client
+        .get(&locale_url)
         .send()
         .await
         .map_err(|e| format!("Failed to get locale from Sunshine API: {}", e))?;
 
     if response.status().is_success() {
-        let json: serde_json::Value = response.json().await
+        let json: serde_json::Value = response
+            .json()
+            .await
             .map_err(|e| format!("Failed to parse locale response: {}", e))?;
         Ok(json["locale"].as_str().unwrap_or("en").to_string())
     } else {
@@ -723,7 +1018,8 @@ pub async fn get_sunshine_locale() -> Result<String, String> {
 /// 先读取完整配置，合并 locale 字段后再写回，避免覆盖其他配置项
 #[tauri::command]
 pub async fn set_sunshine_locale(locale: String) -> Result<String, String> {
-    let mut config_data = crate::vdd::read_full_sunshine_config().await
+    let mut config_data = crate::vdd::read_full_sunshine_config()
+        .await
         .unwrap_or_default();
     config_data.insert("locale".to_string(), serde_json::json!(locale));
 

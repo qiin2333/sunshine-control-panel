@@ -1,5 +1,6 @@
 param(
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [switch]$Beta
 )
 
 $ErrorActionPreference = 'Stop'
@@ -9,17 +10,15 @@ $TauriRoot = Join-Path $ProjectRoot 'src-tauri'
 $InstallerRoot = Join-Path $TauriRoot 'installer'
 $StageDir = Join-Path $InstallerRoot 'staging'
 $DistDir = Join-Path $InstallerRoot 'dist'
-$IssFile = Join-Path $InstallerRoot 'sunshine-gui-overlay.iss'
+$NsiFile = Join-Path $InstallerRoot 'sunshine-gui-component.nsi'
 
-function Find-Iscc {
-    $cmd = Get-Command iscc.exe -ErrorAction SilentlyContinue
-    $programFilesX86 = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
-
+function Find-MakeNsis {
+    $cmd = Get-Command makensis.exe -ErrorAction SilentlyContinue
     $candidates = @(
         $(if ($cmd) { $cmd.Source }),
-        "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
-        "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
-        $(if ($programFilesX86) { Join-Path $programFilesX86 'Inno Setup 6\ISCC.exe' })
+        "$env:ProgramFiles\NSIS\makensis.exe",
+        "${env:ProgramFiles(x86)}\NSIS\makensis.exe",
+        'C:\msys64\ucrt64\bin\makensis.exe'
     ) | Where-Object { $_ -and (Test-Path $_) }
 
     return $candidates | Select-Object -First 1
@@ -32,10 +31,13 @@ function Resolve-GuiExe {
         (Join-Path $TauriRoot 'target\x86_64-pc-windows-gnu\release\sunshine-gui.exe')
     )
 
-    foreach ($path in $paths) {
-        if (Test-Path $path) {
-            return $path
-        }
+    $candidates = $paths |
+        Where-Object { Test-Path $_ } |
+        ForEach-Object { Get-Item $_ } |
+        Sort-Object LastWriteTime -Descending
+
+    if ($candidates) {
+        return $candidates[0].FullName
     }
 
     throw 'sunshine-gui.exe not found. Please build the GUI first.'
@@ -58,13 +60,17 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'build:renderer failed' }
 
         Write-Host '==> Building Tauri GUI (release)' -ForegroundColor Cyan
-        cargo build --release --manifest-path (Join-Path $TauriRoot 'Cargo.toml')
+        $cargoArgs = @('build', '--release', '--manifest-path', (Join-Path $TauriRoot 'Cargo.toml'))
+        if ($Beta) {
+            $cargoArgs += @('--features', 'beta')
+        }
+        cargo @cargoArgs
         if ($LASTEXITCODE -ne 0) { throw 'cargo build --release failed' }
     }
 
-    $iscc = Find-Iscc
-    if (-not $iscc) {
-        throw 'ISCC.exe from Inno Setup 6 was not found'
+    $makensis = Find-MakeNsis
+    if (-not $makensis) {
+        throw 'makensis.exe from NSIS was not found'
     }
 
     $packageJson = Get-Content (Join-Path $ProjectRoot 'package.json') -Raw | ConvertFrom-Json
@@ -82,15 +88,20 @@ try {
         Copy-Item $loader (Join-Path $StageDir 'WebView2Loader.dll') -Force
     }
 
-    Write-Host '==> Building GUI overlay installer' -ForegroundColor Cyan
-    & $iscc "/DMyAppVersion=$version" "/DSourceDir=$StageDir" "/DOutputDir=$DistDir" $IssFile
-    if ($LASTEXITCODE -ne 0) { throw 'ISCC build failed' }
+    Write-Host '==> Building GUI component installer with NSIS' -ForegroundColor Cyan
+    & $makensis '/INPUTCHARSET' 'UTF8' "/DVERSION=$version" "/DSOURCE_DIR=$StageDir" "/DOUTPUT_DIR=$DistDir" $NsiFile
+    if ($LASTEXITCODE -ne 0) { throw 'NSIS GUI component installer build failed' }
 
     Write-Host ''
-    Write-Host 'GUI overlay installer generated:' -ForegroundColor Green
-    Get-ChildItem $DistDir -Filter 'Sunshine-GUI-Overlay-*.exe' | Sort-Object LastWriteTime -Descending | Select-Object -First 1 | ForEach-Object {
+    Write-Host 'GUI component installer generated:' -ForegroundColor Green
+    Get-ChildItem $DistDir -Filter 'Sunshine-GUI-Setup-*.exe' | Sort-Object LastWriteTime -Descending | Select-Object -First 1 | ForEach-Object {
         Write-Host ('   ' + $_.FullName) -ForegroundColor Green
+        Write-Host ('   SHA256: ' + (Get-FileHash $_.FullName -Algorithm SHA256).Hash) -ForegroundColor Green
     }
+
+    # Staging is only an NSIS input cache. Keep failed-build staging for
+    # diagnostics, but remove it after a successful package is produced.
+    Remove-Item $StageDir -Force -Recurse
 }
 finally {
     Pop-Location

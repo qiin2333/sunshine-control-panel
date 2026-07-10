@@ -173,7 +173,12 @@ fn find_best_download_asset(assets: &[GitHubAsset]) -> (Option<String>, Option<S
     // 优先选择Windows安装包
     for asset in assets {
         let name = asset.name.to_lowercase();
-        if name.contains("windows") || name.ends_with(".msi") || name.ends_with(".exe") {
+        let is_gui_component = name.contains("sunshine-gui-setup")
+            || name.contains("sunshine-gui-overlay")
+            || name == "sunshine-gui.exe";
+        if !is_gui_component
+            && (name.contains("windows") || name.ends_with(".msi") || name.ends_with(".exe"))
+        {
             return (
                 Some(asset.browser_download_url.clone()),
                 Some(asset.name.clone()),
@@ -181,8 +186,14 @@ fn find_best_download_asset(assets: &[GitHubAsset]) -> (Option<String>, Option<S
         }
     }
 
-    // 如果没找到Windows安装包，选择第一个可用文件
-    if let Some(asset) = assets.first() {
+    // 没有标准 Windows 安装包时，只允许回退到非 GUI 组件资产。
+    // GUI 组件有独立安装生命周期，不能被完整 Sunshine 更新器误装。
+    if let Some(asset) = assets.iter().find(|asset| {
+        let name = asset.name.to_lowercase();
+        !name.contains("sunshine-gui-setup")
+            && !name.contains("sunshine-gui-overlay")
+            && name != "sunshine-gui.exe"
+    }) {
         (
             Some(asset.browser_download_url.clone()),
             Some(asset.name.clone()),
@@ -579,13 +590,22 @@ fn run_updater_worker(state: UpdaterHelperState, hwnd: isize) {
     update_updater_panel(hwnd, 0, "准备更新", "正在等待控制面板关闭...");
     wait_for_parent_exit(state.parent_pid);
 
-    update_updater_panel(
-        hwnd,
-        1,
-        "正在关闭 Sunshine",
-        "正在关闭 Sunshine 服务，随后安装更新...",
-    );
-    stop_sunshine_for_update();
+    if is_gui_component_installer(Path::new(&state.installer_path)) {
+        update_updater_panel(
+            hwnd,
+            1,
+            "正在更新 GUI",
+            "Sunshine 核心和当前串流将保持运行。",
+        );
+    } else {
+        update_updater_panel(
+            hwnd,
+            1,
+            "正在关闭 Sunshine",
+            "正在关闭 Sunshine 服务，随后安装更新...",
+        );
+        stop_sunshine_for_update();
+    }
     update_updater_panel(
         hwnd,
         2,
@@ -638,6 +658,60 @@ fn run_updater_worker(state: UpdaterHelperState, hwnd: isize) {
             windows::Win32::Foundation::WPARAM(0),
             windows::Win32::Foundation::LPARAM(0),
         );
+    }
+}
+
+fn is_gui_component_installer(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.to_ascii_lowercase().starts_with("sunshine-gui-setup-"))
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod component_installer_tests {
+    use super::*;
+
+    #[test]
+    fn recognizes_gui_component_installer_name() {
+        assert!(is_gui_component_installer(Path::new(
+            "Sunshine-GUI-Setup-1.2.3.exe"
+        )));
+        assert!(!is_gui_component_installer(Path::new("Sunshine.exe")));
+    }
+
+    #[test]
+    fn full_update_asset_ignores_gui_component() {
+        let assets = vec![
+            GitHubAsset {
+                name: "Sunshine-GUI-Setup-1.2.3.exe".to_string(),
+                browser_download_url: "https://example.invalid/gui".to_string(),
+            },
+            GitHubAsset {
+                name: "Sunshine-Windows-1.2.3.exe".to_string(),
+                browser_download_url: "https://example.invalid/full".to_string(),
+            },
+        ];
+
+        let (url, name) = find_best_download_asset(&assets);
+        assert_eq!(url.as_deref(), Some("https://example.invalid/full"));
+        assert_eq!(name.as_deref(), Some("Sunshine-Windows-1.2.3.exe"));
+    }
+
+    #[test]
+    fn full_update_returns_none_for_gui_only_release() {
+        let assets = vec![
+            GitHubAsset {
+                name: "Sunshine-GUI-Setup-1.2.3.exe".to_string(),
+                browser_download_url: "https://example.invalid/gui-setup".to_string(),
+            },
+            GitHubAsset {
+                name: "sunshine-gui.exe".to_string(),
+                browser_download_url: "https://example.invalid/gui-exe".to_string(),
+            },
+        ];
+
+        assert_eq!(find_best_download_asset(&assets), (None, None));
     }
 }
 

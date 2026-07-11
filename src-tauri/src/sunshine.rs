@@ -363,6 +363,10 @@ pub struct TrayVddState {
     pub headless_create_enabled: bool,
     #[serde(default)]
     pub cooldown: bool,
+    #[serde(default)]
+    pub awaiting_confirmation: bool,
+    #[serde(default)]
+    pub confirmation_operation_id: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
@@ -523,6 +527,7 @@ async fn post_tray_action_request(
     action: &str,
     enabled: Option<bool>,
     notification_id: Option<u64>,
+    operation_id: Option<u64>,
 ) -> Result<TrayActionResponse, String> {
     let action_url = local_tray_endpoint("action").await?;
 
@@ -533,6 +538,9 @@ async fn post_tray_action_request(
     }
     if let Some(notification_id) = notification_id {
         body["notification_id"] = serde_json::json!(notification_id);
+    }
+    if let Some(operation_id) = operation_id {
+        body["operation_id"] = serde_json::json!(operation_id);
     }
 
     let response = client
@@ -569,13 +577,17 @@ pub async fn post_tray_action(
     action: &str,
     enabled: Option<bool>,
 ) -> Result<TrayActionResponse, String> {
-    post_tray_action_request(action, enabled, None).await
+    post_tray_action_request(action, enabled, None, None).await
 }
 
 pub async fn acknowledge_tray_notification(
     notification_id: u64,
 ) -> Result<TrayActionResponse, String> {
-    post_tray_action_request("notification_ack", None, Some(notification_id)).await
+    post_tray_action_request("notification_ack", None, Some(notification_id), None).await
+}
+
+pub async fn confirm_vdd_keep(operation_id: u64, keep: bool) -> Result<TrayActionResponse, String> {
+    post_tray_action_request("vdd_confirm_keep", Some(keep), None, Some(operation_id)).await
 }
 
 impl SessionInfo {

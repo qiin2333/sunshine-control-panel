@@ -14,6 +14,8 @@ mod events;
 mod icons;
 mod main_panel;
 mod menu;
+#[cfg(target_os = "windows")]
+mod vdd_confirmation;
 
 pub use actions::{cleanup_prevent_sleep, handle_tray_menu_event};
 use menu::{build_tray_menu, tray_status_label};

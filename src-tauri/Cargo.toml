@@ -74,6 +74,7 @@ windows = { version = "0.62.2", features = [
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Imaging",
     "Win32_UI",
+    "Win32_UI_Controls",
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",
     "Win32_UI_HiDpi",

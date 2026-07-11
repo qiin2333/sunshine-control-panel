@@ -108,6 +108,10 @@ fn apply_if_new<R: Runtime + 'static>(
     };
     if is_new {
         *last_state_key = Some((state.instance_id.clone(), state.revision));
+        #[cfg(target_os = "windows")]
+        if state.vdd.awaiting_confirmation && state.vdd.confirmation_operation_id != 0 {
+            vdd_confirmation::show(app, state.vdd.confirmation_operation_id);
+        }
         apply_tray_state_on_main_thread(app, state);
     }
 }
@@ -162,7 +166,11 @@ mod tests {
             "instance_id": "core-instance",
             "owner": "gui",
             "capabilities": ["state-v1", "events-v1"],
-            "revision": revision
+            "revision": revision,
+            "vdd": {
+                "awaiting_confirmation": true,
+                "confirmation_operation_id": 42
+            }
         })
         .to_string()
     }
@@ -178,6 +186,8 @@ mod tests {
             .expect("valid event")
             .expect("state payload");
         assert_eq!(state.revision, 7);
+        assert!(state.vdd.awaiting_confirmation);
+        assert_eq!(state.vdd.confirmation_operation_id, 42);
         assert!(buffer.is_empty());
     }
 

@@ -50,12 +50,11 @@ impl Bridge {
             }
         };
 
-        if emit_now {
-            if let Some(window) = app.get_webview_window("main") {
-                if let Err(e) = window.emit(event, payload) {
-                    error!("Failed to emit main panel event '{}': {}", event, e);
-                }
-            }
+        if emit_now
+            && let Some(window) = app.get_webview_window("main")
+            && let Err(e) = window.emit(event, payload)
+        {
+            error!("Failed to emit main panel event '{}': {}", event, e);
         }
     }
 

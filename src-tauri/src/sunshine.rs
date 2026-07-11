@@ -190,14 +190,13 @@ pub async fn get_sunshine_version() -> Result<String, String> {
     ];
 
     for pattern_str in &patterns {
-        if let Ok(pattern) = regex::Regex::new(pattern_str) {
-            if let Some(cap) = pattern.captures(&combined) {
-                if let Some(version) = cap.get(1) {
-                    let version_str = version.as_str().to_string();
-                    debug!("✅ 解析到版本号: {}", version_str);
-                    return Ok(version_str);
-                }
-            }
+        if let Ok(pattern) = regex::Regex::new(pattern_str)
+            && let Some(cap) = pattern.captures(&combined)
+            && let Some(version) = cap.get(1)
+        {
+            let version_str = version.as_str().to_string();
+            debug!("✅ 解析到版本号: {}", version_str);
+            return Ok(version_str);
         }
     }
 
@@ -271,7 +270,7 @@ pub async fn get_sunshine_url() -> Result<String, String> {
     }
 
     if let Some(url) = get_command_line_url() {
-        return parse_url_to_base(&url).ok_or_else(|| url);
+        return parse_url_to_base(&url).ok_or(url);
     }
 
     // 从配置文件读取端口
@@ -294,6 +293,19 @@ fn local_sunshine_url_from_config(config: &SunshineConfig) -> String {
         .and_then(|p| p.parse::<u16>().ok())
         .unwrap_or(DEFAULT_SUNSHINE_PORT);
     format!("https://127.0.0.1:{}", port + 1)
+}
+
+async fn local_tray_endpoint(resource: &str) -> Result<String, String> {
+    let sunshine_url = get_local_sunshine_url().await?;
+    Ok(format!(
+        "{}/api/tray/{}",
+        sunshine_url.trim_end_matches('/'),
+        resource
+    ))
+}
+
+pub async fn get_tray_events_url() -> Result<String, String> {
+    local_tray_endpoint("events").await
 }
 
 fn parse_url_to_base(url: &str) -> Option<String> {
@@ -512,8 +524,7 @@ async fn post_tray_action_request(
     enabled: Option<bool>,
     notification_id: Option<u64>,
 ) -> Result<TrayActionResponse, String> {
-    let sunshine_url = get_local_sunshine_url().await?;
-    let action_url = format!("{}/api/tray/action", sunshine_url.trim_end_matches('/'));
+    let action_url = local_tray_endpoint("action").await?;
 
     let client = create_https_client()?;
     let mut body = serde_json::json!({ "action": action });
@@ -628,8 +639,7 @@ impl SessionInfo {
 }
 
 pub async fn get_tray_state() -> Result<TrayState, String> {
-    let sunshine_url = get_local_sunshine_url().await?;
-    let tray_state_url = format!("{}/api/tray/state", sunshine_url.trim_end_matches('/'));
+    let tray_state_url = local_tray_endpoint("state").await?;
 
     let client = create_https_client()?;
     let response = client
@@ -754,14 +764,12 @@ pub async fn get_active_sessions() -> Result<Vec<SessionInfo>, String> {
     debug!("📡 解析后的 JSON: {:#}", json);
 
     // 检查 API 响应状态
-    if let Some(success) = json.get("success").and_then(|v| v.as_bool()) {
-        if !success {
-            let error_msg = json
-                .get("status_message")
-                .and_then(|v| v.as_str())
-                .unwrap_or("未知错误");
-            return Err(format!("API 返回错误: {}", error_msg));
-        }
+    if json.get("success").and_then(|v| v.as_bool()) == Some(false) {
+        let error_msg = json
+            .get("status_message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("未知错误");
+        return Err(format!("API 返回错误: {}", error_msg));
     }
 
     // 解析会话列表
@@ -889,7 +897,7 @@ pub(crate) fn is_sunshine_running_in_user_mode_impl() -> Result<bool, String> {
 
         // 检查服务是否正在运行（服务名不区分大小写，只需检查一次）
         if let Ok(result) = Command::new("sc")
-            .args(&["query", "SunshineService"])
+            .args(["query", "SunshineService"])
             .creation_flags(CREATE_NO_WINDOW)
             .output()
         {
@@ -901,7 +909,7 @@ pub(crate) fn is_sunshine_running_in_user_mode_impl() -> Result<bool, String> {
 
         // 服务未运行，检查 sunshine.exe 进程是否存在
         if let Ok(result) = Command::new("tasklist")
-            .args(&["/FI", "IMAGENAME eq sunshine.exe", "/FO", "CSV", "/NH"])
+            .args(["/FI", "IMAGENAME eq sunshine.exe", "/FO", "CSV", "/NH"])
             .creation_flags(CREATE_NO_WINDOW)
             .output()
         {

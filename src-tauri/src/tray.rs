@@ -479,7 +479,7 @@ fn default_tray_tooltip() -> &'static str {
 
 fn tray_tooltip_from_state(state: &sunshine::TrayState) -> String {
     let tooltip = state.tooltip.trim();
-    if !tooltip.is_empty() && !(state.status == "idle" && tooltip == "Sunshine") {
+    if !(tooltip.is_empty() || state.status == "idle" && tooltip == "Sunshine") {
         return tooltip.to_string();
     }
 

@@ -118,14 +118,13 @@ fn handle_tray_notification_action<R: Runtime>(app: &AppHandle<R>) {
         }
         _ => {
             open_main_panel_from_tray(app, "notification");
-            if supports_ack {
-                if let Some(notification_id) = notification
+            if supports_ack
+                && let Some(notification_id) = notification
                     .as_ref()
                     .map(|notification| notification.id)
                     .filter(|notification_id| *notification_id != 0)
-                {
-                    acknowledge_notification(app, notification_id);
-                }
+            {
+                acknowledge_notification(app, notification_id);
             }
         }
     }
@@ -288,11 +287,11 @@ fn open_main_window_view<R: Runtime + 'static>(
     event: &'static str,
     description: &'static str,
 ) {
-    if app.get_webview_window("main").is_none() {
-        if let Err(e) = windows::create_main_window(app) {
-            error!("Failed to create main window for {}: {}", description, e);
-            return;
-        }
+    if app.get_webview_window("main").is_none()
+        && let Err(e) = windows::create_main_window(app)
+    {
+        error!("Failed to create main window for {}: {}", description, e);
+        return;
     }
 
     if let Some(window) = app.get_webview_window("main") {
@@ -355,21 +354,19 @@ fn toggle_toolbar<R: Runtime>(app: &AppHandle<R>) {
 
     if let Some(toolbar_window) = app.get_webview_window("toolbar") {
         let _ = toolbar_window.close();
-    } else {
-        if let Err(e) = toolbar::create_toolbar_window_internal(app) {
-            error!("❌ 创建工具栏失败: {}", e);
-        }
+    } else if let Err(e) = toolbar::create_toolbar_window_internal(app) {
+        error!("❌ 创建工具栏失败: {}", e);
     }
 }
 
 /// 检查更新（托盘菜单触发，`manual = true`）
 fn check_for_updates<R: Runtime>(app: &AppHandle<R>) {
     info!("🔄 托盘菜单：检查更新");
-    if app.get_webview_window("main").is_none() {
-        if let Err(e) = windows::create_main_window(app) {
-            error!("Failed to create main window for update check: {}", e);
-            return;
-        }
+    if app.get_webview_window("main").is_none()
+        && let Err(e) = windows::create_main_window(app)
+    {
+        error!("Failed to create main window for update check: {}", e);
+        return;
     }
     let app_handle = app.clone();
 

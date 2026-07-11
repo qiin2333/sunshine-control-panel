@@ -277,13 +277,23 @@ pub async fn get_sunshine_url() -> Result<String, String> {
     // 从配置文件读取端口
     let config = parse_sunshine_config().await?;
 
+    Ok(local_sunshine_url_from_config(&config))
+}
+
+/// Resolve the Core instance installed on this machine. Tray traffic must not
+/// follow the remote target selected for the main window.
+pub async fn get_local_sunshine_url() -> Result<String, String> {
+    let config = parse_sunshine_config().await?;
+    Ok(local_sunshine_url_from_config(&config))
+}
+
+fn local_sunshine_url_from_config(config: &SunshineConfig) -> String {
     let port = config
         .port
+        .as_deref()
         .and_then(|p| p.parse::<u16>().ok())
         .unwrap_or(DEFAULT_SUNSHINE_PORT);
-
-    // Sunshine Web UI 端口 = 配置端口 + 1
-    Ok(format!("https://127.0.0.1:{}", port + 1))
+    format!("https://127.0.0.1:{}", port + 1)
 }
 
 fn parse_url_to_base(url: &str) -> Option<String> {
@@ -359,6 +369,30 @@ pub struct TrayNotificationState {
     pub action: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
+pub struct TrayOperationState {
+    #[serde(default)]
+    pub id: u64,
+    #[serde(default)]
+    pub action: String,
+    #[serde(default)]
+    pub state: String,
+    #[serde(default)]
+    pub message: String,
+    #[serde(default)]
+    pub error: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
+pub struct TrayProviderState {
+    #[serde(default)]
+    pub active: bool,
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub version: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct TrayState {
     #[serde(default)]
@@ -387,6 +421,10 @@ pub struct TrayState {
     pub vdd: TrayVddState,
     #[serde(default)]
     pub notification: TrayNotificationState,
+    #[serde(default)]
+    pub operation: TrayOperationState,
+    #[serde(default)]
+    pub provider: TrayProviderState,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -400,7 +438,19 @@ pub struct TrayActionResponse {
     #[serde(default)]
     pub error: String,
     #[serde(default)]
+    pub operation_id: u64,
+    #[serde(default)]
     pub tray_state: Option<TrayState>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TrayProviderLeaseResponse {
+    #[serde(default)]
+    pub status: bool,
+    #[serde(default)]
+    pub lease_id: String,
+    #[serde(default)]
+    pub error: String,
 }
 
 fn validate_tray_state(state: &TrayState) -> Result<(), String> {
@@ -462,6 +512,21 @@ mod tray_protocol_tests {
         state.capabilities.clear();
         assert!(validate_tray_state(&state).is_err());
     }
+
+    #[test]
+    fn local_tray_url_uses_the_configured_core_port() {
+        let config = SunshineConfig {
+            port: Some("48000".to_string()),
+            adapter_name: None,
+            resolutions: None,
+            fps: None,
+            locale: None,
+        };
+        assert_eq!(
+            local_sunshine_url_from_config(&config),
+            "https://127.0.0.1:48001"
+        );
+    }
 }
 
 async fn post_tray_action_request(
@@ -469,7 +534,7 @@ async fn post_tray_action_request(
     enabled: Option<bool>,
     notification_id: Option<u64>,
 ) -> Result<TrayActionResponse, String> {
-    let sunshine_url = get_sunshine_url().await?;
+    let sunshine_url = get_local_sunshine_url().await?;
     let action_url = format!("{}/api/tray/action", sunshine_url.trim_end_matches('/'));
 
     let client = create_https_client()?;
@@ -522,6 +587,69 @@ pub async fn acknowledge_tray_notification(
     notification_id: u64,
 ) -> Result<TrayActionResponse, String> {
     post_tray_action_request("notification_ack", None, Some(notification_id)).await
+}
+
+pub async fn register_tray_provider() -> Result<TrayProviderLeaseResponse, String> {
+    let sunshine_url = get_local_sunshine_url().await?;
+    let endpoint = format!(
+        "{}/api/tray/provider/register",
+        sunshine_url.trim_end_matches('/')
+    );
+    let response = create_https_client()?
+        .post(endpoint)
+        .json(&serde_json::json!({
+            "provider_id": "sunshine.gui.tauri",
+            "version": env!("CARGO_PKG_VERSION"),
+            "protocol_version": TRAY_PROTOCOL_VERSION,
+            "capabilities": ["native-menu", "desktop-ui", "notifications"]
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Register tray provider failed: {}", e))?;
+    parse_provider_lease_response(response, "register").await
+}
+
+pub async fn heartbeat_tray_provider(lease_id: &str) -> Result<(), String> {
+    let sunshine_url = get_local_sunshine_url().await?;
+    let endpoint = format!(
+        "{}/api/tray/provider/heartbeat",
+        sunshine_url.trim_end_matches('/')
+    );
+    let response = create_https_client()?
+        .post(endpoint)
+        .json(&serde_json::json!({ "lease_id": lease_id }))
+        .send()
+        .await
+        .map_err(|e| format!("Heartbeat tray provider failed: {}", e))?;
+    let lease = parse_provider_lease_response(response, "heartbeat").await?;
+    if lease.status {
+        Ok(())
+    } else {
+        Err(lease.error)
+    }
+}
+
+async fn parse_provider_lease_response(
+    response: reqwest::Response,
+    action: &str,
+) -> Result<TrayProviderLeaseResponse, String> {
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|e| format!("Read tray provider {} response failed: {}", action, e))?;
+    if !status.is_success() {
+        return Err(format!(
+            "Tray provider {} failed (status {}): {}",
+            action, status, body
+        ));
+    }
+    serde_json::from_str(&body).map_err(|e| {
+        format!(
+            "Parse tray provider {} response failed: {}; body: {}",
+            action, e, body
+        )
+    })
 }
 
 impl SessionInfo {
@@ -585,7 +713,7 @@ impl SessionInfo {
 }
 
 pub async fn get_tray_state() -> Result<TrayState, String> {
-    let sunshine_url = get_sunshine_url().await?;
+    let sunshine_url = get_local_sunshine_url().await?;
     let tray_state_url = format!("{}/api/tray/state", sunshine_url.trim_end_matches('/'));
 
     let client = create_https_client()?;

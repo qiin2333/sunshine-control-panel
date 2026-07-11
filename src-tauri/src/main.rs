@@ -52,6 +52,9 @@ fn configure_async_runtime() {
 }
 
 fn main() {
+    if desktop_settings::try_remove_auto_start_from_args() {
+        return;
+    }
     if update::try_run_updater_helper_from_args() {
         return;
     }

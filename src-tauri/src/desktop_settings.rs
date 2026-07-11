@@ -7,6 +7,28 @@ use tauri::Manager;
 
 const SETTINGS_FILE: &str = "desktop-settings.json";
 const RUN_VALUE_NAME: &str = "Sunshine GUI Desktop";
+const REMOVE_AUTO_START_ARG: &str = "--remove-autostart";
+
+pub fn try_remove_auto_start_from_args() -> bool {
+    if !std::env::args().any(|arg| arg == REMOVE_AUTO_START_ARG) {
+        return false;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use winreg::RegKey;
+        use winreg::enums::*;
+
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        if let Ok(run_key) = hkcu.open_subkey_with_flags(
+            r"Software\Microsoft\Windows\CurrentVersion\Run",
+            KEY_SET_VALUE,
+        ) {
+            let _ = run_key.delete_value(RUN_VALUE_NAME);
+        }
+    }
+    true
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]

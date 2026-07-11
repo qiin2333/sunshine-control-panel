@@ -7,7 +7,7 @@ use tauri::{
 
 #[cfg(target_os = "windows")]
 use crate::desktop_settings;
-use crate::{sunshine, toolbar, tray_config, update, utils, windows};
+use crate::{proxy_server, sunshine, toolbar, tray_config, update, utils, windows};
 
 mod actions;
 mod events;

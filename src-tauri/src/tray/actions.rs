@@ -12,7 +12,12 @@ pub fn handle_tray_menu_event<R: Runtime + 'static>(app: &AppHandle<R>, menu_id:
         #[cfg(target_os = "windows")]
         "auto_start" => toggle_auto_start(app),
         "vdd_settings" => open_vdd_settings(app),
-        "vdd_create" => run_tray_action(app, "vdd_create", None),
+        "vdd_create" => confirm_tray_action(
+            app,
+            "Create Virtual Display",
+            "This creates a virtual display and may change the Windows display layout. Continue?",
+            "vdd_create",
+        ),
         "vdd_close" => run_tray_action(app, "vdd_destroy", None),
         "vdd_toggle_keep_enabled" => run_vdd_toggle_action(
             app,
@@ -109,9 +114,7 @@ fn handle_tray_notification_action<R: Runtime>(app: &AppHandle<R>) {
         .map(|notification| notification.action.as_str())
     {
         Some("open_pin") => {
-            if let Err(e) = windows::open_pin_window(app) {
-                error!("Failed to open PIN window from tray notification: {}", e);
-            }
+            open_local_pin_window(app);
         }
         _ => {
             open_main_panel_from_tray(app, "notification");
@@ -126,6 +129,33 @@ fn handle_tray_notification_action<R: Runtime>(app: &AppHandle<R>) {
             }
         }
     }
+}
+
+fn open_local_pin_window<R: Runtime>(app: &AppHandle<R>) {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        match sunshine::get_local_sunshine_url().await {
+            Ok(url) => {
+                proxy_server::set_sunshine_target(url);
+                proxy_server::ensure_started();
+                let pin_handle = app_handle.clone();
+                if let Err(e) = app_handle.run_on_main_thread(move || {
+                    if let Err(e) = windows::open_pin_window(&pin_handle) {
+                        error!("Failed to open PIN window from tray notification: {}", e);
+                    }
+                }) {
+                    error!(
+                        "Failed to schedule PIN window from tray notification: {}",
+                        e
+                    );
+                }
+            }
+            Err(e) => {
+                error!("Failed to resolve local Sunshine URL for PIN window: {}", e);
+                emit_message(&app_handle, "error", &e);
+            }
+        }
+    });
 }
 
 fn acknowledge_notification<R: Runtime>(app: &AppHandle<R>, notification_id: u64) {
@@ -213,7 +243,7 @@ fn open_sunshine_web_ui<R: Runtime>(app: &AppHandle<R>) {
     let app_handle = app.clone();
 
     tauri::async_runtime::spawn(async move {
-        match sunshine::get_sunshine_url().await {
+        match sunshine::get_local_sunshine_url().await {
             Ok(url) => utils::open_url_in_browser(&url),
             Err(e) => {
                 error!("Failed to resolve Sunshine URL from tray: {}", e);

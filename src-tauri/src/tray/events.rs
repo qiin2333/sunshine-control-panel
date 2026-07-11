@@ -1,9 +1,12 @@
 use super::*;
 use futures_util::StreamExt as _;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 const RECONNECT_DELAY: Duration = Duration::from_secs(3);
 const LEGACY_POLL_INTERVAL: Duration = Duration::from_secs(3);
 const HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(30);
+const PROVIDER_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
+static PROVIDER_LEASE_MONITOR_STARTED: AtomicBool = AtomicBool::new(false);
 
 pub(super) fn start_tray_state_monitoring<R: Runtime + 'static>(app: &AppHandle<R>) {
     let app_handle = app.clone();
@@ -19,6 +22,13 @@ pub(super) fn start_tray_state_monitoring<R: Runtime + 'static>(app: &AppHandle<
                         .capabilities
                         .iter()
                         .any(|capability| capability == "events-v1");
+                    if state
+                        .capabilities
+                        .iter()
+                        .any(|capability| capability == "provider-lease-v1")
+                    {
+                        start_provider_lease_monitor();
+                    }
                     apply_if_new(&app_handle, &mut last_state_key, state);
 
                     if supports_events {
@@ -49,11 +59,37 @@ pub(super) fn start_tray_state_monitoring<R: Runtime + 'static>(app: &AppHandle<
     });
 }
 
+fn start_provider_lease_monitor() {
+    if PROVIDER_LEASE_MONITOR_STARTED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+
+    tauri::async_runtime::spawn(async move {
+        loop {
+            match sunshine::register_tray_provider().await {
+                Ok(lease) if lease.status && !lease.lease_id.is_empty() => {
+                    info!("Tray provider lease acquired");
+                    loop {
+                        tokio::time::sleep(PROVIDER_HEARTBEAT_INTERVAL).await;
+                        if let Err(e) = sunshine::heartbeat_tray_provider(&lease.lease_id).await {
+                            debug!("Tray provider lease ended: {}", e);
+                            break;
+                        }
+                    }
+                }
+                Ok(lease) => debug!("Tray provider lease was not granted: {}", lease.error),
+                Err(e) => debug!("Tray provider registration unavailable: {}", e),
+            }
+            tokio::time::sleep(RECONNECT_DELAY).await;
+        }
+    });
+}
+
 async fn consume_event_stream<R: Runtime + 'static>(
     app: &AppHandle<R>,
     last_state_key: &mut Option<(String, u64)>,
 ) -> Result<(), String> {
-    let sunshine_url = sunshine::get_sunshine_url().await?;
+    let sunshine_url = sunshine::get_local_sunshine_url().await?;
     let endpoint = format!("{}/api/tray/events", sunshine_url.trim_end_matches('/'));
     let response = sunshine::create_sse_https_client()?
         .get(endpoint)

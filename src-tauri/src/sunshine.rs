@@ -383,16 +383,6 @@ pub struct TrayOperationState {
     pub error: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
-pub struct TrayProviderState {
-    #[serde(default)]
-    pub active: bool,
-    #[serde(default)]
-    pub id: String,
-    #[serde(default)]
-    pub version: String,
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct TrayState {
     #[serde(default)]
@@ -423,8 +413,6 @@ pub struct TrayState {
     pub notification: TrayNotificationState,
     #[serde(default)]
     pub operation: TrayOperationState,
-    #[serde(default)]
-    pub provider: TrayProviderState,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -441,16 +429,6 @@ pub struct TrayActionResponse {
     pub operation_id: u64,
     #[serde(default)]
     pub tray_state: Option<TrayState>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct TrayProviderLeaseResponse {
-    #[serde(default)]
-    pub status: bool,
-    #[serde(default)]
-    pub lease_id: String,
-    #[serde(default)]
-    pub error: String,
 }
 
 fn validate_tray_state(state: &TrayState) -> Result<(), String> {
@@ -587,69 +565,6 @@ pub async fn acknowledge_tray_notification(
     notification_id: u64,
 ) -> Result<TrayActionResponse, String> {
     post_tray_action_request("notification_ack", None, Some(notification_id)).await
-}
-
-pub async fn register_tray_provider() -> Result<TrayProviderLeaseResponse, String> {
-    let sunshine_url = get_local_sunshine_url().await?;
-    let endpoint = format!(
-        "{}/api/tray/provider/register",
-        sunshine_url.trim_end_matches('/')
-    );
-    let response = create_https_client()?
-        .post(endpoint)
-        .json(&serde_json::json!({
-            "provider_id": "sunshine.gui.tauri",
-            "version": env!("CARGO_PKG_VERSION"),
-            "protocol_version": TRAY_PROTOCOL_VERSION,
-            "capabilities": ["native-menu", "desktop-ui", "notifications"]
-        }))
-        .send()
-        .await
-        .map_err(|e| format!("Register tray provider failed: {}", e))?;
-    parse_provider_lease_response(response, "register").await
-}
-
-pub async fn heartbeat_tray_provider(lease_id: &str) -> Result<(), String> {
-    let sunshine_url = get_local_sunshine_url().await?;
-    let endpoint = format!(
-        "{}/api/tray/provider/heartbeat",
-        sunshine_url.trim_end_matches('/')
-    );
-    let response = create_https_client()?
-        .post(endpoint)
-        .json(&serde_json::json!({ "lease_id": lease_id }))
-        .send()
-        .await
-        .map_err(|e| format!("Heartbeat tray provider failed: {}", e))?;
-    let lease = parse_provider_lease_response(response, "heartbeat").await?;
-    if lease.status {
-        Ok(())
-    } else {
-        Err(lease.error)
-    }
-}
-
-async fn parse_provider_lease_response(
-    response: reqwest::Response,
-    action: &str,
-) -> Result<TrayProviderLeaseResponse, String> {
-    let status = response.status();
-    let body = response
-        .text()
-        .await
-        .map_err(|e| format!("Read tray provider {} response failed: {}", action, e))?;
-    if !status.is_success() {
-        return Err(format!(
-            "Tray provider {} failed (status {}): {}",
-            action, status, body
-        ));
-    }
-    serde_json::from_str(&body).map_err(|e| {
-        format!(
-            "Parse tray provider {} response failed: {}; body: {}",
-            action, e, body
-        )
-    })
 }
 
 impl SessionInfo {

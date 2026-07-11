@@ -1,10 +1,34 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
+#[cfg(debug_assertions)]
+use tauri::Manager;
 
 const SETTINGS_FILE: &str = "desktop-settings.json";
 const RUN_VALUE_NAME: &str = "Sunshine GUI Desktop";
+const REMOVE_AUTO_START_ARG: &str = "--remove-autostart";
+
+pub fn try_remove_auto_start_from_args() -> bool {
+    if !std::env::args().any(|arg| arg == REMOVE_AUTO_START_ARG) {
+        return false;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use winreg::RegKey;
+        use winreg::enums::*;
+
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        if let Ok(run_key) = hkcu.open_subkey_with_flags(
+            r"Software\Microsoft\Windows\CurrentVersion\Run",
+            KEY_SET_VALUE,
+        ) {
+            let _ = run_key.delete_value(RUN_VALUE_NAME);
+        }
+    }
+    true
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -24,8 +48,8 @@ pub struct DesktopSettings {
 impl Default for DesktopSettings {
     fn default() -> Self {
         Self {
-            auto_start: false,
-            start_minimized: false,
+            auto_start: true,
+            start_minimized: true,
             auto_start_sunshine: true,
             file_mapping_menu_enabled: true,
             notifications: true,
@@ -102,11 +126,12 @@ pub fn set_file_mapping_menu_enabled(enabled: bool) -> Result<(), String> {
 #[cfg(target_os = "windows")]
 fn startup_command(start_minimized: bool) -> Result<String, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let mut command = format!("\"{}\" --desktop", exe.display());
-    if start_minimized {
-        command.push_str(" --minimized");
-    }
-    Ok(command)
+    let mode = if start_minimized {
+        "--hidden"
+    } else {
+        "--desktop"
+    };
+    Ok(format!("\"{}\" {}", exe.display(), mode))
 }
 
 #[cfg(target_os = "windows")]
@@ -118,7 +143,6 @@ fn apply_auto_start(settings: &DesktopSettings) -> Result<(), String> {
     let (run_key, _) = hkcu
         .create_subkey(r"Software\Microsoft\Windows\CurrentVersion\Run")
         .map_err(|e| e.to_string())?;
-
     if settings.auto_start {
         let command = startup_command(settings.start_minimized)?;
         run_key
@@ -136,7 +160,7 @@ fn apply_auto_start(_settings: &DesktopSettings) -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
-fn is_auto_start_registered() -> bool {
+pub fn is_auto_start_registered() -> bool {
     use winreg::RegKey;
     use winreg::enums::*;
 
@@ -148,8 +172,127 @@ fn is_auto_start_registered() -> bool {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn is_auto_start_registered() -> bool {
+pub fn is_auto_start_registered() -> bool {
     false
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ServiceStartMode {
+    Auto,
+    DelayedAuto,
+    Demand,
+    Disabled,
+}
+
+#[cfg(target_os = "windows")]
+fn sunshine_service_start_mode() -> Result<Option<ServiceStartMode>, String> {
+    use winreg::RegKey;
+    use winreg::enums::*;
+
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let service = match hklm.open_subkey(r"SYSTEM\CurrentControlSet\Services\SunshineService") {
+        Ok(service) => service,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    let start = service
+        .get_value::<u32, _>("Start")
+        .map_err(|error| error.to_string())?;
+    match start {
+        2 if service.get_value::<u32, _>("DelayedAutoStart").unwrap_or(0) != 0 => {
+            Ok(Some(ServiceStartMode::DelayedAuto))
+        }
+        2 => Ok(Some(ServiceStartMode::Auto)),
+        3 => Ok(Some(ServiceStartMode::Demand)),
+        4 => Ok(Some(ServiceStartMode::Disabled)),
+        value => Err(format!("Unsupported Sunshine service start type: {value}")),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn core_auto_start_ready(mode: Option<ServiceStartMode>) -> bool {
+    matches!(
+        mode,
+        None | Some(ServiceStartMode::Auto | ServiceStartMode::DelayedAuto)
+    )
+}
+
+#[cfg(not(target_os = "windows"))]
+fn core_auto_start_ready(_mode: Option<()>) -> bool {
+    true
+}
+
+pub fn is_combined_auto_start_enabled() -> bool {
+    #[cfg(target_os = "windows")]
+    let core_ready = sunshine_service_start_mode()
+        .map(core_auto_start_ready)
+        .unwrap_or(false);
+    #[cfg(not(target_os = "windows"))]
+    let core_ready = core_auto_start_ready(None);
+
+    is_auto_start_registered() && core_ready
+}
+
+#[cfg(target_os = "windows")]
+fn configure_sunshine_service_start(mode: ServiceStartMode) -> Result<(), String> {
+    let start_mode = match mode {
+        ServiceStartMode::Auto => "auto",
+        ServiceStartMode::DelayedAuto => "delayed-auto",
+        ServiceStartMode::Demand => "demand",
+        ServiceStartMode::Disabled => "disabled",
+    };
+    let script_path = std::env::temp_dir().join("sunshine-set-service-start.bat");
+    let script = format!(
+        "@echo off\r\nsc.exe config SunshineService start= {start_mode}\r\nexit /b %ERRORLEVEL%\r\n"
+    );
+    fs::write(&script_path, script).map_err(|e| e.to_string())?;
+    let result = crate::bat_runner::run_elevated(&script_path, "service-start", &[]);
+    let _ = fs::remove_file(&script_path);
+    result
+}
+
+pub fn set_combined_auto_start_enabled(enabled: bool) -> Result<(), String> {
+    let previous = load_desktop_settings_from_disk();
+    let mut settings = previous.clone();
+    settings.auto_start = enabled;
+    settings.auto_start_sunshine = enabled;
+
+    #[cfg(target_os = "windows")]
+    let previous_service_mode = sunshine_service_start_mode()?;
+    #[cfg(target_os = "windows")]
+    let mut service_changed = false;
+    #[cfg(target_os = "windows")]
+    if let Some(mode) = previous_service_mode {
+        let target_mode = if enabled {
+            ServiceStartMode::Auto
+        } else {
+            ServiceStartMode::Demand
+        };
+        if mode != target_mode {
+            configure_sunshine_service_start(target_mode)?;
+            service_changed = true;
+        }
+    }
+
+    if let Err(error) = save_desktop_settings_to_disk(&settings) {
+        #[cfg(target_os = "windows")]
+        if service_changed && let Some(mode) = previous_service_mode {
+            let _ = configure_sunshine_service_start(mode);
+        }
+        return Err(error);
+    }
+
+    if let Err(error) = apply_auto_start(&settings) {
+        let _ = save_desktop_settings_to_disk(&previous);
+        #[cfg(target_os = "windows")]
+        if service_changed && let Some(mode) = previous_service_mode {
+            let _ = configure_sunshine_service_start(mode);
+        }
+        return Err(error);
+    }
+
+    Ok(())
 }
 
 fn status() -> DesktopSettingsStatus {
@@ -177,6 +320,7 @@ pub async fn save_desktop_settings(
     normalize(&mut settings);
     save_desktop_settings_to_disk(&settings)?;
     apply_auto_start(&settings)?;
+    crate::tray::refresh_menu(&app);
     crate::logger::set_log_level(&settings.log_level);
     apply_dev_mode(&app, settings.dev_mode);
 
@@ -193,12 +337,15 @@ pub async fn save_desktop_settings(
 pub fn apply_startup_settings(app: &AppHandle, settings: &DesktopSettings) {
     crate::logger::set_log_level(&settings.log_level);
     apply_dev_mode(app, settings.dev_mode);
+    if let Err(e) = apply_auto_start(settings) {
+        log::warn!("Failed to reconcile GUI auto-start registration: {}", e);
+    }
     if settings.auto_start_sunshine {
         ensure_sunshine_started_async();
     }
 }
 
-fn apply_dev_mode(app: &AppHandle, enabled: bool) {
+fn apply_dev_mode(_app: &AppHandle, enabled: bool) {
     if !enabled {
         return;
     }
@@ -206,7 +353,7 @@ fn apply_dev_mode(app: &AppHandle, enabled: bool) {
     #[cfg(debug_assertions)]
     {
         for label in ["main", "desktop", "log_console"] {
-            if let Some(window) = app.get_webview_window(label) {
+            if let Some(window) = _app.get_webview_window(label) {
                 window.open_devtools();
             }
         }
@@ -275,5 +422,19 @@ async fn ensure_sunshine_started() -> Result<(), String> {
     #[cfg(not(target_os = "windows"))]
     {
         Ok(())
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn combined_startup_accepts_automatic_or_service_free_core() {
+        assert!(core_auto_start_ready(None));
+        assert!(core_auto_start_ready(Some(ServiceStartMode::Auto)));
+        assert!(core_auto_start_ready(Some(ServiceStartMode::DelayedAuto)));
+        assert!(!core_auto_start_ready(Some(ServiceStartMode::Demand)));
+        assert!(!core_auto_start_ready(Some(ServiceStartMode::Disabled)));
     }
 }

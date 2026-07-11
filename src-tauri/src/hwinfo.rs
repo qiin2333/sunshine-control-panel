@@ -1,9 +1,9 @@
 // HWiNFO 共享内存读取模块
 
 #[cfg(target_os = "windows")]
-use windows::Win32::System::Memory::*;
-#[cfg(target_os = "windows")]
 use windows::Win32::Foundation::*;
+#[cfg(target_os = "windows")]
+use windows::Win32::System::Memory::*;
 
 use serde::{Deserialize, Serialize};
 
@@ -182,7 +182,10 @@ pub fn read_hwinfo_shared_memory() -> Result<HwInfoData, String> {
                 id: read_u32(base),
                 instance: read_u32(base.add(4)),
                 name_original: read_string_from_ptr(base.add(8), HWINFO_SENSORS_STRING_LEN),
-                name_user: read_string_from_ptr(base.add(8 + HWINFO_SENSORS_STRING_LEN), HWINFO_SENSORS_STRING_LEN),
+                name_user: read_string_from_ptr(
+                    base.add(8 + HWINFO_SENSORS_STRING_LEN),
+                    HWINFO_SENSORS_STRING_LEN,
+                ),
             });
         }
 
@@ -195,12 +198,26 @@ pub fn read_hwinfo_shared_memory() -> Result<HwInfoData, String> {
                 sensor_index: read_u32(base.add(4)),
                 id: read_u32(base.add(8)),
                 label_original: read_string_from_ptr(base.add(12), HWINFO_SENSORS_STRING_LEN),
-                label_user: read_string_from_ptr(base.add(12 + HWINFO_SENSORS_STRING_LEN), HWINFO_SENSORS_STRING_LEN),
-                unit: read_string_from_ptr(base.add(12 + HWINFO_SENSORS_STRING_LEN * 2), HWINFO_UNIT_STRING_LEN),
-                value: read_f64(base.add(12 + HWINFO_SENSORS_STRING_LEN * 2 + HWINFO_UNIT_STRING_LEN)),
-                value_min: read_f64(base.add(12 + HWINFO_SENSORS_STRING_LEN * 2 + HWINFO_UNIT_STRING_LEN + 8)),
-                value_max: read_f64(base.add(12 + HWINFO_SENSORS_STRING_LEN * 2 + HWINFO_UNIT_STRING_LEN + 16)),
-                value_avg: read_f64(base.add(12 + HWINFO_SENSORS_STRING_LEN * 2 + HWINFO_UNIT_STRING_LEN + 24)),
+                label_user: read_string_from_ptr(
+                    base.add(12 + HWINFO_SENSORS_STRING_LEN),
+                    HWINFO_SENSORS_STRING_LEN,
+                ),
+                unit: read_string_from_ptr(
+                    base.add(12 + HWINFO_SENSORS_STRING_LEN * 2),
+                    HWINFO_UNIT_STRING_LEN,
+                ),
+                value: read_f64(
+                    base.add(12 + HWINFO_SENSORS_STRING_LEN * 2 + HWINFO_UNIT_STRING_LEN),
+                ),
+                value_min: read_f64(
+                    base.add(12 + HWINFO_SENSORS_STRING_LEN * 2 + HWINFO_UNIT_STRING_LEN + 8),
+                ),
+                value_max: read_f64(
+                    base.add(12 + HWINFO_SENSORS_STRING_LEN * 2 + HWINFO_UNIT_STRING_LEN + 16),
+                ),
+                value_avg: read_f64(
+                    base.add(12 + HWINFO_SENSORS_STRING_LEN * 2 + HWINFO_UNIT_STRING_LEN + 24),
+                ),
             });
         }
 
@@ -237,7 +254,9 @@ pub fn hwinfo_get_readings(reading_ids: Vec<u32>) -> Result<Vec<HwInfoReading>, 
     if reading_ids.is_empty() {
         Ok(data.readings)
     } else {
-        Ok(data.readings.into_iter()
+        Ok(data
+            .readings
+            .into_iter()
             .enumerate()
             .filter(|(i, _)| reading_ids.contains(&(*i as u32)))
             .map(|(_, r)| r)

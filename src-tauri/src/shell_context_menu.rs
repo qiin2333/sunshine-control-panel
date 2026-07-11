@@ -52,8 +52,8 @@ pub fn install_file_mapping_menu() -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 pub fn uninstall_file_mapping_menu() -> Result<(), String> {
-    use winreg::enums::*;
     use winreg::RegKey;
+    use winreg::enums::*;
 
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     for key in [
@@ -71,9 +71,13 @@ pub fn uninstall_file_mapping_menu() -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
-fn install_file_mapping_menu_key(key_path: &str, exe: &str, path_token: &str) -> Result<(), String> {
-    use winreg::enums::*;
+fn install_file_mapping_menu_key(
+    key_path: &str,
+    exe: &str,
+    path_token: &str,
+) -> Result<(), String> {
     use winreg::RegKey;
+    use winreg::enums::*;
 
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let (verb, _) = hkcu

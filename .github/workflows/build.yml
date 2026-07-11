@@ -1,6 +1,7 @@
 name: Build and Release
 
 on:
+  pull_request:
   push:
     tags:
       - 'v*'
@@ -86,8 +87,19 @@ jobs:
       - name: Build frontend
         run: npm run build:renderer
 
+      - name: Test Tauri backend
+        run: cargo test --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
+
       - name: Build Tauri (release)
         run: cargo build --manifest-path src-tauri/Cargo.toml --release --target x86_64-pc-windows-msvc
+
+      - name: Install NSIS
+        shell: pwsh
+        run: choco install nsis -y --no-progress
+
+      - name: Build GUI component installer
+        shell: pwsh
+        run: ./scripts/build-gui-component-installer.ps1 -SkipBuild
 
       - name: Prepare artifacts
         shell: pwsh
@@ -102,6 +114,14 @@ jobs:
           if (Test-Path "$targetDir/WebView2Loader.dll") {
             Copy-Item "$targetDir/WebView2Loader.dll" "$outDir/"
           }
+
+          $componentInstaller = Get-ChildItem "src-tauri/installer/dist/Sunshine-GUI-Setup-*.exe" |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if (-not $componentInstaller) {
+            throw "Sunshine GUI component installer was not generated"
+          }
+          Copy-Item $componentInstaller.FullName "$outDir/"
 
           # Print artifact sizes
           Get-ChildItem $outDir | ForEach-Object {

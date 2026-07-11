@@ -21,6 +21,7 @@ mod sunshine;
 mod system;
 mod toolbar;
 mod tray;
+mod tray_config;
 mod update;
 mod utils;
 mod vdd;
@@ -31,11 +32,39 @@ mod vmouse;
 mod windows;
 
 use log::info;
+use std::sync::OnceLock;
+
+static ASYNC_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+
+fn configure_async_runtime() {
+    let worker_threads = std::thread::available_parallelism()
+        .map(|count| count.get().min(4))
+        .unwrap_or(2);
+    let runtime = ASYNC_RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(worker_threads)
+            .thread_name("sunshine-gui-worker")
+            .enable_all()
+            .build()
+            .expect("failed to create the Sunshine GUI async runtime")
+    });
+    tauri::async_runtime::set(runtime.handle().clone());
+}
 
 fn main() {
+    if desktop_settings::try_remove_auto_start_from_args() {
+        return;
+    }
     if update::try_run_updater_helper_from_args() {
         return;
     }
+    if sunshine::try_run_core_compatibility_check_from_args() {
+        return;
+    }
+
+    // The agent mostly waits on local I/O. Bounding the shared runtime avoids
+    // allocating one worker per logical CPU on high-core-count hosts.
+    configure_async_runtime();
 
     // 设置 WebView2 浏览器参数以优化 GPU 占用和安全策略
     #[cfg(target_os = "windows")]
@@ -56,14 +85,21 @@ fn main() {
         ].join(" "));
     }
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .manage(app::AppState {
             main_window: std::sync::Mutex::new(None),
         })
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build());
+
+    let builder = if std::env::var_os("SUNSHINE_GUI_ALLOW_PARALLEL_INSTANCE").is_some() {
+        builder
+    } else {
+        builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             app::handle_single_instance(app, args);
         }))
+    };
+
+    let application = builder
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -125,6 +161,7 @@ fn main() {
             sunshine::restart_sunshine_service,
             proxy_server::get_proxy_url_command,
             proxy_server::refresh_sunshine_target,
+            proxy_server::wait_for_proxy_ready,
             utils::open_external_url,
             utils::restart_graphics_driver,
             utils::restart_as_admin,
@@ -202,7 +239,17 @@ fn main() {
             hwinfo::hwinfo_check_available,
             tray::set_tray_locale,
             tray::get_tray_locale,
+            tray::main_panel_loading,
+            tray::main_panel_ready,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    application.run(|_app, event| match event {
+        tauri::RunEvent::ExitRequested {
+            code: None, api, ..
+        } => api.prevent_exit(),
+        tauri::RunEvent::Exit => app::shutdown_application(),
+        _ => {}
+    });
 }

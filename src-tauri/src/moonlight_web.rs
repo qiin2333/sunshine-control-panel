@@ -1,12 +1,13 @@
+use log::{debug, info, warn};
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Mutex;
-use once_cell::sync::Lazy;
-use log::{info, warn, debug};
 use tauri::Manager;
 
 // ========== 常量 ==========
-const GITHUB_API_RELEASES: &str = "https://api.github.com/repos/MrCreativ3001/moonlight-web-stream/releases";
+const GITHUB_API_RELEASES: &str =
+    "https://api.github.com/repos/MrCreativ3001/moonlight-web-stream/releases";
 const DEFAULT_BIND_PORT: u16 = 47790;
 const SERVER_BINARY_NAME: &str = "web-server.exe";
 const PROCESS_CHECK_NAME: &str = "web-server.exe";
@@ -163,7 +164,9 @@ fn default_bind_address() -> String {
 /// 获取 moonlight-web 安装目录（%LOCALAPPDATA%\Sunshine\moonlight-web）
 fn get_install_dir() -> PathBuf {
     if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
-        return PathBuf::from(local_app_data).join("Sunshine").join("moonlight-web");
+        return PathBuf::from(local_app_data)
+            .join("Sunshine")
+            .join("moonlight-web");
     }
     // fallback: 与控制面板同级
     if let Ok(exe_path) = std::env::current_exe() {
@@ -203,7 +206,11 @@ pub async fn moonlight_web_get_status() -> Result<MoonlightWebStatus, String> {
 
     // 根据配置判断协议并生成访问 URL
     let access_url = if running {
-        let scheme = if has_https_certificate() { "https" } else { "http" };
+        let scheme = if has_https_certificate() {
+            "https"
+        } else {
+            "http"
+        };
         format!("{}://localhost:{}", scheme, port)
     } else {
         String::new()
@@ -320,11 +327,10 @@ pub async fn moonlight_web_get_config() -> Result<MoonlightWebConfig, String> {
         });
     }
 
-    let content = std::fs::read_to_string(&config_path)
-        .map_err(|e| format!("读取配置失败: {}", e))?;
+    let content =
+        std::fs::read_to_string(&config_path).map_err(|e| format!("读取配置失败: {}", e))?;
 
-    serde_json::from_str(&content)
-        .map_err(|e| format!("解析配置失败: {}", e))
+    serde_json::from_str(&content).map_err(|e| format!("解析配置失败: {}", e))
 }
 
 /// 保存 moonlight-web 配置
@@ -339,8 +345,7 @@ pub async fn moonlight_web_save_config(mut config: MoonlightWebConfig) -> Result
 
     // 确保目录存在
     if let Some(parent) = config_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("创建配置目录失败: {}", e))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败: {}", e))?;
     }
 
     // 更新本地端口缓存
@@ -348,11 +353,10 @@ pub async fn moonlight_web_save_config(mut config: MoonlightWebConfig) -> Result
         *BIND_PORT.lock().unwrap() = port;
     }
 
-    let json = serde_json::to_string_pretty(&config)
-        .map_err(|e| format!("序列化配置失败: {}", e))?;
+    let json =
+        serde_json::to_string_pretty(&config).map_err(|e| format!("序列化配置失败: {}", e))?;
 
-    std::fs::write(&config_path, json)
-        .map_err(|e| format!("写入配置失败: {}", e))?;
+    std::fs::write(&config_path, json).map_err(|e| format!("写入配置失败: {}", e))?;
 
     info!("✅ moonlight-web 配置已保存: {:?}", config_path);
     Ok("配置已保存".to_string())
@@ -389,7 +393,9 @@ pub async fn moonlight_web_check_release() -> Result<MoonlightWebRelease, String
     // 查找 Windows x86_64 的资源
     let asset = release.assets.iter().find(|a| {
         let name = a.name.to_lowercase();
-        name.contains("windows") && name.contains("x86_64") && (name.ends_with(".zip") || name.ends_with(".tar.gz"))
+        name.contains("windows")
+            && name.contains("x86_64")
+            && (name.ends_with(".zip") || name.ends_with(".tar.gz"))
     });
 
     Ok(MoonlightWebRelease {
@@ -403,9 +409,13 @@ pub async fn moonlight_web_check_release() -> Result<MoonlightWebRelease, String
 
 /// 下载并安装 moonlight-web
 #[tauri::command]
-pub async fn moonlight_web_download(url: String, version: String, app_handle: tauri::AppHandle) -> Result<String, String> {
-    use tauri::Emitter;
+pub async fn moonlight_web_download(
+    url: String,
+    version: String,
+    app_handle: tauri::AppHandle,
+) -> Result<String, String> {
     use futures_util::StreamExt;
+    use tauri::Emitter;
 
     info!("📥 开始下载 moonlight-web: {}", url);
 
@@ -431,22 +441,22 @@ pub async fn moonlight_web_download(url: String, version: String, app_handle: ta
 
     // 使用系统临时目录下载，避免安装目录权限问题
     let temp_dir = std::env::temp_dir();
-    let temp_ext = if url.to_lowercase().ends_with(".tar.gz") || url.to_lowercase().ends_with(".tgz") {
-        ".tar.gz"
-    } else {
-        ".zip"
-    };
+    let temp_ext =
+        if url.to_lowercase().ends_with(".tar.gz") || url.to_lowercase().ends_with(".tgz") {
+            ".tar.gz"
+        } else {
+            ".zip"
+        };
     let temp_path = temp_dir.join(format!("moonlight-web_download{}", temp_ext));
-    let mut file = std::fs::File::create(&temp_path)
-        .map_err(|e| format!("创建临时文件失败: {}", e))?;
+    let mut file =
+        std::fs::File::create(&temp_path).map_err(|e| format!("创建临时文件失败: {}", e))?;
 
     let mut stream = response.bytes_stream();
     let mut downloaded: u64 = 0;
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| format!("下载数据失败: {}", e))?;
-        std::io::Write::write_all(&mut file, &chunk)
-            .map_err(|e| format!("写入文件失败: {}", e))?;
+        std::io::Write::write_all(&mut file, &chunk).map_err(|e| format!("写入文件失败: {}", e))?;
         downloaded += chunk.len() as u64;
 
         // 发送进度事件
@@ -456,11 +466,14 @@ pub async fn moonlight_web_download(url: String, version: String, app_handle: ta
             } else {
                 0
             };
-            let _ = window.emit("moonlight-web-download-progress", serde_json::json!({
-                "progress": progress,
-                "downloaded": downloaded,
-                "total": total_size,
-            }));
+            let _ = window.emit(
+                "moonlight-web-download-progress",
+                serde_json::json!({
+                    "progress": progress,
+                    "downloaded": downloaded,
+                    "total": total_size,
+                }),
+            );
         }
     }
     drop(file);
@@ -472,8 +485,7 @@ pub async fn moonlight_web_download(url: String, version: String, app_handle: ta
     if extract_dir.exists() {
         let _ = std::fs::remove_dir_all(&extract_dir);
     }
-    std::fs::create_dir_all(&extract_dir)
-        .map_err(|e| format!("创建解压临时目录失败: {}", e))?;
+    std::fs::create_dir_all(&extract_dir).map_err(|e| format!("创建解压临时目录失败: {}", e))?;
 
     extract_archive(&temp_path, &extract_dir)?;
 
@@ -488,8 +500,7 @@ pub async fn moonlight_web_download(url: String, version: String, app_handle: ta
     };
 
     // 确保安装目录存在
-    std::fs::create_dir_all(&install_dir)
-        .map_err(|e| format!("创建安装目录失败: {}", e))?;
+    std::fs::create_dir_all(&install_dir).map_err(|e| format!("创建安装目录失败: {}", e))?;
 
     // 使用 robocopy 将文件复制到安装目录（更可靠，处理权限和覆盖）
     copy_dir_contents(&source_dir, &install_dir)?;
@@ -518,8 +529,7 @@ pub fn moonlight_web_get_install_path() -> String {
 pub async fn moonlight_web_generate_cert() -> Result<CertificateConfig, String> {
     let install_dir = get_install_dir();
     let server_dir = install_dir.join("server");
-    std::fs::create_dir_all(&server_dir)
-        .map_err(|e| format!("创建目录失败: {}", e))?;
+    std::fs::create_dir_all(&server_dir).map_err(|e| format!("创建目录失败: {}", e))?;
 
     let key_path = server_dir.join("key.pem");
     let cert_path = server_dir.join("cert.pem");
@@ -527,13 +537,16 @@ pub async fn moonlight_web_generate_cert() -> Result<CertificateConfig, String> 
     info!("🔐 正在生成自签名 HTTPS 证书...");
 
     // 使用 rcgen 生成自签名证书
-    let mut params = rcgen::CertificateParams::new(vec![
-        "localhost".to_string(),
-    ]).map_err(|e| format!("证书参数创建失败: {}", e))?;
+    let mut params = rcgen::CertificateParams::new(vec!["localhost".to_string()])
+        .map_err(|e| format!("证书参数创建失败: {}", e))?;
 
     // 添加 SAN（Subject Alternative Names）
     params.subject_alt_names = vec![
-        rcgen::SanType::DnsName("localhost".try_into().map_err(|e| format!("DNS name 无效: {}", e))?),
+        rcgen::SanType::DnsName(
+            "localhost"
+                .try_into()
+                .map_err(|e| format!("DNS name 无效: {}", e))?,
+        ),
         rcgen::SanType::IpAddress(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))),
         rcgen::SanType::IpAddress(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0))),
     ];
@@ -544,17 +557,22 @@ pub async fn moonlight_web_generate_cert() -> Result<CertificateConfig, String> 
 
     // 设置 DN
     params.distinguished_name = rcgen::DistinguishedName::new();
-    params.distinguished_name.push(rcgen::DnType::CommonName, "Moonlight Web Stream");
-    params.distinguished_name.push(rcgen::DnType::OrganizationName, "Sunshine Control Panel");
+    params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, "Moonlight Web Stream");
+    params
+        .distinguished_name
+        .push(rcgen::DnType::OrganizationName, "Sunshine Control Panel");
 
     let key_pair = rcgen::KeyPair::generate().map_err(|e| format!("密钥生成失败: {}", e))?;
-    let cert = params.self_signed(&key_pair).map_err(|e| format!("证书签名失败: {}", e))?;
+    let cert = params
+        .self_signed(&key_pair)
+        .map_err(|e| format!("证书签名失败: {}", e))?;
 
     // 写入文件
     std::fs::write(&key_path, key_pair.serialize_pem())
         .map_err(|e| format!("写入私钥失败: {}", e))?;
-    std::fs::write(&cert_path, cert.pem())
-        .map_err(|e| format!("写入证书失败: {}", e))?;
+    std::fs::write(&cert_path, cert.pem()).map_err(|e| format!("写入证书失败: {}", e))?;
 
     info!("✅ 自签名证书已生成: {:?}, {:?}", cert_path, key_path);
 
@@ -574,9 +592,13 @@ fn is_process_running() -> bool {
         let mut guard = CHILD_PROCESS.lock().unwrap();
         if let Some(ref mut child) = *guard {
             match child.try_wait() {
-                Ok(None) => return true,        // 还在运行
-                Ok(Some(_)) => { *guard = None; } // 已退出
-                Err(_) => { *guard = None; }
+                Ok(None) => return true, // 还在运行
+                Ok(Some(_)) => {
+                    *guard = None;
+                } // 已退出
+                Err(_) => {
+                    *guard = None;
+                }
             }
         }
     }
@@ -586,7 +608,11 @@ fn is_process_running() -> bool {
     {
         use std::os::windows::process::CommandExt;
         if let Ok(output) = std::process::Command::new("tasklist")
-            .args(["/FI", &format!("IMAGENAME eq {}", PROCESS_CHECK_NAME), "/NH"])
+            .args([
+                "/FI",
+                &format!("IMAGENAME eq {}", PROCESS_CHECK_NAME),
+                "/NH",
+            ])
             .creation_flags(0x08000000)
             .output()
         {
@@ -621,7 +647,8 @@ fn get_installed_version() -> Option<String> {
         {
             let stdout = String::from_utf8_lossy(&output.stdout);
             // --version 输出格式: "web-server 2.4.0"，只取最后的版本号
-            let version = stdout.trim()
+            let version = stdout
+                .trim()
                 .rsplit_once(' ')
                 .map(|(_, v)| v.to_string())
                 .unwrap_or_else(|| stdout.trim().to_string());
@@ -645,15 +672,21 @@ async fn ensure_config_exists() -> Result<(), String> {
                 let mut fixed = false;
                 if let Some(ws) = raw.get_mut("web_server").and_then(|v| v.as_object_mut()) {
                     // 修复 session_cookie_expiration: null（上游需要 Duration 结构）
-                    if ws.get("session_cookie_expiration").map_or(false, |v| v.is_null()) {
-                        ws.insert("session_cookie_expiration".to_string(),
-                            serde_json::json!({"secs": 86400, "nanos": 0}));
+                    if ws
+                        .get("session_cookie_expiration")
+                        .map_or(false, |v| v.is_null())
+                    {
+                        ws.insert(
+                            "session_cookie_expiration".to_string(),
+                            serde_json::json!({"secs": 86400, "nanos": 0}),
+                        );
                         fixed = true;
                     }
                 }
                 // 移除顶级 null 字段（上游不支持 null）
                 if let Some(obj) = raw.as_object_mut() {
-                    let null_keys: Vec<String> = obj.iter()
+                    let null_keys: Vec<String> = obj
+                        .iter()
                         .filter(|(_, v)| v.is_null())
                         .map(|(k, _)| k.clone())
                         .collect();
@@ -673,7 +706,9 @@ async fn ensure_config_exists() -> Result<(), String> {
             // 加载端口到缓存
             if let Ok(reread) = std::fs::read_to_string(&config_path) {
                 if let Ok(config) = serde_json::from_str::<MoonlightWebConfig>(&reread) {
-                    if let Some(port) = parse_port_from_bind_address(&config.web_server.bind_address) {
+                    if let Some(port) =
+                        parse_port_from_bind_address(&config.web_server.bind_address)
+                    {
                         *BIND_PORT.lock().unwrap() = port;
                     }
                 }
@@ -690,7 +725,10 @@ async fn ensure_config_exists() -> Result<(), String> {
             certificate: None,
             url_path_prefix: String::new(),
             session_cookie_secure: false,
-            session_cookie_expiration: Some(SessionExpiration { secs: 86400, nanos: 0 }),
+            session_cookie_expiration: Some(SessionExpiration {
+                secs: 86400,
+                nanos: 0,
+            }),
             first_login_create_admin: true,
             first_login_assign_global_hosts: true,
             default_user_id: None,
@@ -709,15 +747,13 @@ async fn ensure_config_exists() -> Result<(), String> {
 
     // 确保目录存在
     if let Some(parent) = config_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("创建配置目录失败: {}", e))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败: {}", e))?;
     }
 
-    let json = serde_json::to_string_pretty(&config)
-        .map_err(|e| format!("序列化配置失败: {}", e))?;
+    let json =
+        serde_json::to_string_pretty(&config).map_err(|e| format!("序列化配置失败: {}", e))?;
 
-    std::fs::write(&config_path, json)
-        .map_err(|e| format!("写入配置失败: {}", e))?;
+    std::fs::write(&config_path, json).map_err(|e| format!("写入配置失败: {}", e))?;
 
     info!("✅ 默认配置已生成: {:?}", config_path);
     Ok(())
@@ -749,14 +785,14 @@ fn copy_dir_contents(src: &PathBuf, dest: &PathBuf) -> Result<(), String> {
             .args([
                 &src.to_string_lossy().to_string(),
                 &dest.to_string_lossy().to_string(),
-                "/E",    // 递归包括空目录
-                "/NFL",  // 不列出文件名
-                "/NDL",  // 不列出目录名
-                "/NJH",  // 无 Job Header
-                "/NJS",  // 无 Job Summary
-                "/NC",   // 无文件类
-                "/NS",   // 无文件大小
-                "/NP",   // 无进度
+                "/E",   // 递归包括空目录
+                "/NFL", // 不列出文件名
+                "/NDL", // 不列出目录名
+                "/NJH", // 无 Job Header
+                "/NJS", // 无 Job Summary
+                "/NC",  // 无文件类
+                "/NS",  // 无文件大小
+                "/NP",  // 无进度
             ])
             .creation_flags(0x08000000)
             .output()
@@ -829,7 +865,13 @@ fn extract_zip(zip_path: &PathBuf, target_dir: &PathBuf) -> Result<(), String> {
         );
 
         let output = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps_cmd])
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &ps_cmd,
+            ])
             .creation_flags(0x08000000)
             .output()
             .map_err(|e| format!("执行解压命令失败: {}", e))?;
@@ -854,7 +896,12 @@ fn extract_tar_gz(archive_path: &PathBuf, target_dir: &PathBuf) -> Result<(), St
     {
         use std::os::windows::process::CommandExt;
         let output = std::process::Command::new("tar")
-            .args(["-xzf", &archive_path.to_string_lossy(), "-C", &target_dir.to_string_lossy()])
+            .args([
+                "-xzf",
+                &archive_path.to_string_lossy(),
+                "-C",
+                &target_dir.to_string_lossy(),
+            ])
             .creation_flags(0x08000000)
             .output()
             .map_err(|e| format!("执行 tar 解压失败: {}", e))?;

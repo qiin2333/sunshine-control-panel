@@ -71,7 +71,10 @@ pub fn dispatch_cli_quick_share(paths: Vec<String>) {
         match quick_share_folder_internal(paths).await {
             Ok(mapping) => {
                 let message = format!("已共享文件夹：{}\n{}", mapping.name, mapping.path);
-                info!("file mapping quick share created: {} ({})", mapping.name, mapping.path);
+                info!(
+                    "file mapping quick share created: {} ({})",
+                    mapping.name, mapping.path
+                );
                 show_quick_share_message("Sunshine 文件夹共享", &message, false);
             }
             Err(e) => {
@@ -216,7 +219,7 @@ fn strip_windows_verbatim_prefix(path: &str) -> String {
 fn show_quick_share_message(title: &str, message: &str, is_error: bool) {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{
-        MessageBoxW, MB_ICONERROR, MB_ICONINFORMATION, MB_OK,
+        MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MessageBoxW,
     };
     use windows::core::PCWSTR;
 

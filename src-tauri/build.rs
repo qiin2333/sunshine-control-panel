@@ -65,7 +65,10 @@ fn extract_commands() -> Vec<String> {
 /// 与 tauri-utils acl::build::autogenerate_command_permissions 的 slug 规则一致。
 /// 命令名前导 `_` 会被剥离避免出现 `allow--xxx` 这类双横线。
 fn allow_id(command: &str) -> String {
-    format!("allow-{}", command.trim_start_matches('_').replace('_', "-"))
+    format!(
+        "allow-{}",
+        command.trim_start_matches('_').replace('_', "-")
+    )
 }
 
 /// 生成 capability JSON 写入 capabilities 目录。
@@ -142,5 +145,3 @@ fn main() {
     tauri_build::try_build(Attributes::new().app_manifest(AppManifest::new().commands(leaked)))
         .expect("failed to run tauri-build");
 }
-
-

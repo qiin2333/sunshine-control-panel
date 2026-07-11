@@ -137,7 +137,8 @@ async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), Stri
 
         debug!("  🔧 执行 PowerShell 提权命令...");
 
-        let powershell_success = match run_elevated_powershell(&inner_command, "写入 VDD XML").await {
+        let powershell_success = match run_elevated_powershell(&inner_command, "写入 VDD XML").await
+        {
             Ok(()) => match fs::read_to_string(vdd_xml_path) {
                 Ok(written) if written == content => {
                     info!("  ✅ PowerShell 提权复制成功");
@@ -402,10 +403,7 @@ async fn sync_vdd_config_to_sunshine(settings: &VddSettings) -> Result<(), Strin
         && !trimmed.eq_ignore_ascii_case("default")
         && !trimmed.eq_ignore_ascii_case("auto")
     {
-        config_data.insert(
-            "adapter_name".to_string(),
-            serde_json::json!(trimmed),
-        );
+        config_data.insert("adapter_name".to_string(), serde_json::json!(trimmed));
         debug!("  ✓ GPU: {}", trimmed);
     } else if !trimmed.is_empty() {
         debug!(
@@ -660,8 +658,8 @@ fn is_vdd_trace_running() -> bool {
 
 fn build_vdd_trace_status() -> VddTraceStatus {
     let trace_dir = get_vdd_trace_dir();
-    let latest_file = latest_vdd_trace_file(&trace_dir)
-        .map(|path| path.to_string_lossy().into_owned());
+    let latest_file =
+        latest_vdd_trace_file(&trace_dir).map(|path| path.to_string_lossy().into_owned());
 
     VddTraceStatus {
         running: is_vdd_trace_running(),
@@ -826,7 +824,10 @@ pub async fn exec_pipe_cmd(command: String) -> Result<bool, String> {
                 let handle = handle.unwrap();
 
                 // 转换为 UTF-16LE
-                let cmd_wide: Vec<u16> = cmd_for_blocking.encode_utf16().chain(std::iter::once(0)).collect();
+                let cmd_wide: Vec<u16> = cmd_for_blocking
+                    .encode_utf16()
+                    .chain(std::iter::once(0))
+                    .collect();
                 let buffer = cmd_wide.as_ptr() as *const u8;
                 let buffer_len = (cmd_wide.len() * 2) as u32;
 

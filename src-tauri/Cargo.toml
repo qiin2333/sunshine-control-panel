@@ -74,6 +74,7 @@ windows = { version = "0.62.2", features = [
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Imaging",
     "Win32_UI",
+    "Win32_UI_Controls",
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",
     "Win32_UI_HiDpi",
@@ -82,6 +83,7 @@ windows = { version = "0.62.2", features = [
     "Win32_System_SystemInformation",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Performance",
+    "Win32_System_Recovery",
     "Win32_Devices_DeviceAndDriverInstallation",
 ] }
 # WebView2 COM 接口，用于访问 ICoreWebView2Settings4 等高级设置

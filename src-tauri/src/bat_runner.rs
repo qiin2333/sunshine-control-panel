@@ -51,10 +51,7 @@ pub fn run_elevated(bat_path: &Path, log_prefix: &str, extra_args: &[&str]) -> R
     let log_str = log_path.to_string_lossy().into_owned();
 
     // 把额外参数拼成 cmd-safe 的字符串：每个参数用双引号包裹
-    let args_cmd: String = extra_args
-        .iter()
-        .map(|a| format!(" \"{}\"", a))
-        .collect();
+    let args_cmd: String = extra_args.iter().map(|a| format!(" \"{}\"", a)).collect();
 
     if is_elevated() {
         // 已有管理员权限，cmd 自己重定向把全部输出落盘
@@ -76,8 +73,8 @@ pub fn run_elevated(bat_path: &Path, log_prefix: &str, extra_args: &[&str]) -> R
         }
     } else {
         // 写一份 wrapper bat，避免 PS+cmd 多层引号嵌套
-        let wrapper_path = std::env::temp_dir()
-            .join(format!("sunshine-{}-{}-wrap.bat", log_prefix, stem));
+        let wrapper_path =
+            std::env::temp_dir().join(format!("sunshine-{}-{}-wrap.bat", log_prefix, stem));
         {
             let mut f = std::fs::File::create(&wrapper_path)
                 .map_err(|e| format!("创建 wrapper 失败: {}", e))?;

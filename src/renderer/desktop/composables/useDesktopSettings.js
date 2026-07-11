@@ -5,8 +5,8 @@ export const DESKTOP_SETTINGS_KEY = 'sunshine-desktop-settings'
 export const DESKTOP_SETTINGS_UPDATED = 'desktop-settings-updated'
 
 export const defaultDesktopSettings = {
-  autoStart: false,
-  startMinimized: false,
+  autoStart: true,
+  startMinimized: true,
   autoStartSunshine: true,
   notifications: true,
   connectionNotify: true,

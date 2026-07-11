@@ -28,8 +28,11 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { invoke } from '@tauri-apps/api/core'
 import { sunshine } from '@/tauri-adapter.js'
 import SidebarMenu from './SidebarMenu.vue'
+
+invoke('main_panel_loading').catch(() => {})
 
 // Refs
 const loading = ref(true)
@@ -340,6 +343,7 @@ onMounted(async () => {
     })
 
     await currentWindow.listen('open-welcome', openWelcome)
+    await invoke('main_panel_ready')
   } catch (error) {
     console.error('初始化失败:', error)
     try {

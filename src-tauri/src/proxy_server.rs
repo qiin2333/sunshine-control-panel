@@ -1,19 +1,20 @@
 use axum::{
-    extract::Request,
-    response::{IntoResponse, Response},
     Router,
+    extract::Request,
     middleware::Next,
+    response::{IntoResponse, Response},
 };
 use bytes::Bytes;
-use tower_http::cors::CorsLayer;
-use std::net::SocketAddr;
-use std::sync::{Arc, RwLock};
+use log::{debug, error, info, warn};
 use once_cell::sync::Lazy;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU16, Ordering};
-use log::{info, warn, error, debug};
+use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
+use tokio::sync::Notify;
+use tower_http::cors::CorsLayer;
 
 /// 全局 Sunshine 目标 URL（动态配置）
-static SUNSHINE_TARGET: Lazy<Arc<RwLock<String>>> = 
+static SUNSHINE_TARGET: Lazy<Arc<RwLock<String>>> =
     Lazy::new(|| Arc::new(RwLock::new(String::from("https://localhost:47990"))));
 
 #[cfg(test)]
@@ -26,6 +27,12 @@ static LAST_CHECK_TIME: AtomicU64 = AtomicU64::new(0);
 
 /// 代理服务器实际使用的端口
 static PROXY_PORT: AtomicU16 = AtomicU16::new(48081);
+
+/// The page must not navigate to the local proxy until the listener is bound.
+/// On a cold GUI start the main window and the async proxy task otherwise race.
+static PROXY_READY: AtomicBool = AtomicBool::new(false);
+static PROXY_START_REQUESTED: AtomicBool = AtomicBool::new(false);
+static PROXY_READY_NOTIFY: Lazy<Notify> = Lazy::new(Notify::new);
 
 /// 快速失败冷却时间（秒）- 在此时间内不重试，超过后会重新尝试连接
 const FAST_FAIL_COOLDOWN_SECS: u64 = 3;
@@ -59,6 +66,59 @@ pub fn get_proxy_url_command() -> String {
     get_proxy_url()
 }
 
+/// Wait until the local proxy listener is ready before loading the main frame.
+#[tauri::command]
+pub async fn wait_for_proxy_ready() -> Result<String, String> {
+    ensure_started();
+    if PROXY_READY.load(Ordering::Acquire) {
+        return Ok(get_proxy_url());
+    }
+
+    let notified = PROXY_READY_NOTIFY.notified();
+    if PROXY_READY.load(Ordering::Acquire) {
+        return Ok(get_proxy_url());
+    }
+
+    tokio::time::timeout(std::time::Duration::from_secs(15), notified)
+        .await
+        .map_err(|_| "Timed out waiting for the local Sunshine proxy".to_string())?;
+
+    if PROXY_READY.load(Ordering::Acquire) {
+        Ok(get_proxy_url())
+    } else {
+        Err("The local Sunshine proxy stopped during startup".to_string())
+    }
+}
+
+/// Start the local Web UI proxy on first use. Hidden tray-only startup does
+/// not need the router, listener, or proxy HTTP clients resident in memory.
+pub fn ensure_started() {
+    if PROXY_READY.load(Ordering::Acquire) || PROXY_START_REQUESTED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+
+    tauri::async_runtime::spawn(async {
+        if let Ok(dev_target) = std::env::var("WEBUI_DEV_TARGET") {
+            info!("🛠️ [开发模式] 检测到 WEBUI_DEV_TARGET 环境变量");
+            info!("🎯 代理目标: {}", dev_target);
+            set_sunshine_target(dev_target);
+        } else {
+            match crate::sunshine::get_sunshine_url().await {
+                Ok(url) => {
+                    info!("🎯 Sunshine URL: {}", url);
+                    set_sunshine_target(url.trim_end_matches('/').to_string());
+                }
+                Err(e) => warn!("⚠️ 无法获取 Sunshine URL，使用默认: {}", e),
+            }
+        }
+
+        if let Err(e) = start_proxy_server().await {
+            error!("❌ 代理服务器启动失败: {}", e);
+        }
+        PROXY_START_REQUESTED.store(false, Ordering::Release);
+    });
+}
+
 /// 设置 Sunshine 目标 URL
 pub fn set_sunshine_target(url: String) {
     if let Ok(mut target) = SUNSHINE_TARGET.write() {
@@ -69,7 +129,8 @@ pub fn set_sunshine_target(url: String) {
 
 /// Dynamic Sunshine target helpers.
 fn get_sunshine_target() -> String {
-    SUNSHINE_TARGET.read()
+    SUNSHINE_TARGET
+        .read()
         .map(|url| url.clone())
         .unwrap_or_else(|_| "https://localhost:47990".to_string())
 }
@@ -110,21 +171,24 @@ async fn pna_middleware(req: Request, next: Next) -> Response {
     // 预定义常用的 header 值
     const PNA_HEADER: &str = "Access-Control-Allow-Private-Network";
     const PNA_VALUE: axum::http::HeaderValue = axum::http::HeaderValue::from_static("true");
-    
+
     // 检查是否是 OPTIONS 预检请求（CORS）
     if req.method() == axum::http::Method::OPTIONS {
         // 处理 CORS 预检请求，添加 PNA 支持
         return Response::builder()
             .status(axum::http::StatusCode::NO_CONTENT)
             .header("Access-Control-Allow-Origin", "*")
-            .header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD")
+            .header(
+                "Access-Control-Allow-Methods",
+                "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD",
+            )
             .header("Access-Control-Allow-Headers", "*")
             .header(PNA_HEADER, "true")
             .header("Access-Control-Max-Age", "86400")
             .body(axum::body::Body::empty())
             .unwrap();
     }
-    
+
     // 对于非 OPTIONS 请求，执行原有的处理器，然后在响应中添加 PNA 头部
     let mut response = next.run(req).await;
     response.headers_mut().insert(PNA_HEADER, PNA_VALUE);
@@ -133,15 +197,17 @@ async fn pna_middleware(req: Request, next: Next) -> Response {
 
 /// 启动本地代理服务器
 pub async fn start_proxy_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    PROXY_READY.store(false, Ordering::Release);
+
     let app = Router::new()
         .fallback(proxy_handler)
         .layer(CorsLayer::permissive())
         .layer(axum::middleware::from_fn(pna_middleware));
-    
+
     // 尝试在端口范围内找到可用端口
     let mut listener = None;
     let mut bound_port = PROXY_PORT_START;
-    
+
     for port in PROXY_PORT_START..=PROXY_PORT_END {
         let addr = SocketAddr::from(([127, 0, 0, 1], port));
         match tokio::net::TcpListener::bind(addr).await {
@@ -159,24 +225,34 @@ pub async fn start_proxy_server() -> Result<(), Box<dyn std::error::Error + Send
             }
         }
     }
-    
+
     let listener = match listener {
         Some(l) => l,
         None => {
-            error!("❌ 代理服务器绑定端口失败: 端口 {}-{} 均被占用", PROXY_PORT_START, PROXY_PORT_END);
+            error!(
+                "❌ 代理服务器绑定端口失败: 端口 {}-{} 均被占用",
+                PROXY_PORT_START, PROXY_PORT_END
+            );
             return Err(format!("无法绑定端口 {}-{}", PROXY_PORT_START, PROXY_PORT_END).into());
         }
     };
-    
+
     // 保存实际使用的端口
     PROXY_PORT.store(bound_port, Ordering::Relaxed);
-    info!("🚀 Sunshine 代理服务器已启动: http://127.0.0.1:{}", bound_port);
+    PROXY_READY.store(true, Ordering::Release);
+    PROXY_READY_NOTIFY.notify_waiters();
+    info!(
+        "🚀 Sunshine 代理服务器已启动: http://127.0.0.1:{}",
+        bound_port
+    );
     info!("   开始监听请求...");
-    
-    axum::serve(listener, app).await.map_err(|e| {
+
+    let result = axum::serve(listener, app).await.map_err(|e| {
         error!("❌ 代理服务器运行失败: {}", e);
         e.into()
-    })
+    });
+    PROXY_READY.store(false, Ordering::Release);
+    result
 }
 
 /// 获取当前时间戳（秒）
@@ -196,11 +272,11 @@ fn should_fast_fail() -> bool {
     if SUNSHINE_AVAILABLE.load(Ordering::Relaxed) {
         return false;
     }
-    
+
     // Sunshine 标记为不可用，检查是否已过冷却时间
     let last_check = LAST_CHECK_TIME.load(Ordering::Relaxed);
     let elapsed = current_timestamp().saturating_sub(last_check);
-    
+
     if elapsed >= FAST_FAIL_COOLDOWN_SECS {
         // 冷却时间已过，允许重试（重置状态为可用，让请求尝试连接）
         debug!("⏰ 快速失败冷却时间已过 ({}秒)，允许重试", elapsed);
@@ -233,11 +309,19 @@ pub fn reset_fast_fail() {
 /// 检查是否是连接错误
 fn is_connection_error(error: &str) -> bool {
     const CONNECTION_ERROR_PATTERNS: &[&str] = &[
-        "connection", "refused", "timed out", "timeout",
-        "unreachable", "error sending request", "network", "dns"
+        "connection",
+        "refused",
+        "timed out",
+        "timeout",
+        "unreachable",
+        "error sending request",
+        "network",
+        "dns",
     ];
     let error_lower = error.to_lowercase();
-    CONNECTION_ERROR_PATTERNS.iter().any(|p| error_lower.contains(p))
+    CONNECTION_ERROR_PATTERNS
+        .iter()
+        .any(|p| error_lower.contains(p))
 }
 
 fn is_timeout_error(error: &str) -> bool {
@@ -289,7 +373,7 @@ fn is_steam_api_request(path: &str) -> bool {
 /// 解析外部代理 URL
 fn parse_external_proxy_url(path: &str, query: &str) -> Option<String> {
     use url::form_urlencoded;
-    
+
     // 路径格式: /_proxy/{encoded_url}
     // 或者: /_proxy/?url={encoded_url}
     if let Some(encoded_url) = path.strip_prefix("/_proxy/") {
@@ -298,7 +382,7 @@ fn parse_external_proxy_url(path: &str, query: &str) -> Option<String> {
             return percent_decode_str(encoded_url);
         }
     }
-    
+
     // 检查查询参数
     if !query.is_empty() {
         for (key, value) in form_urlencoded::parse(query.as_bytes()) {
@@ -307,7 +391,7 @@ fn parse_external_proxy_url(path: &str, query: &str) -> Option<String> {
             }
         }
     }
-    
+
     None
 }
 
@@ -318,10 +402,9 @@ fn percent_decode_str(s: &str) -> Option<String> {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(byte) = u8::from_str_radix(
-                std::str::from_utf8(&bytes[i+1..i+3]).unwrap_or(""),
-                16
-            ) {
+            if let Ok(byte) =
+                u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
+            {
                 result.push(byte);
                 i += 3;
                 continue;
@@ -339,16 +422,21 @@ fn service_unavailable_response(is_api: bool) -> Response {
         // API 请求返回 JSON 格式错误
         (
             axum::http::StatusCode::SERVICE_UNAVAILABLE,
-            [(axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8")],
-            r#"{"success":false,"error":"Sunshine service is unavailable"}"#
-        ).into_response()
+            [(
+                axum::http::header::CONTENT_TYPE,
+                "application/json; charset=utf-8",
+            )],
+            r#"{"success":false,"error":"Sunshine service is unavailable"}"#,
+        )
+            .into_response()
     } else {
         // 页面请求返回 HTML 错误页面
         (
             axum::http::StatusCode::SERVICE_UNAVAILABLE,
             [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
-            ERROR_404_PAGE
-        ).into_response()
+            ERROR_404_PAGE,
+        )
+            .into_response()
     }
 }
 
@@ -373,9 +461,13 @@ fn proxy_error_response(
         };
         (
             status,
-            [(axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8")],
+            [(
+                axum::http::header::CONTENT_TYPE,
+                "application/json; charset=utf-8",
+            )],
             body.to_string(),
-        ).into_response()
+        )
+            .into_response()
     } else {
         (status, message).into_response()
     }
@@ -418,21 +510,21 @@ async fn proxy_handler(req: Request) -> Response {
     let path = uri.path().to_string();
     let query = uri.query().unwrap_or("").to_string();
     let headers = req.headers().clone();
-    
+
     // 检查是否是外部代理请求（用于绕过 CORS）
     if is_external_proxy_request(&path) {
         return handle_external_proxy(&path, &query, &method, &headers, req).await;
     }
-    
+
     // 检查是否是 Steam API 请求（需要特殊处理）
     if is_steam_api_request(&path) {
         return handle_steam_api(&path, &query, &method, &headers, req).await;
     }
-    
+
     // 判断是否是 API 请求
     let is_api = is_api_request(&path);
     let is_ai_api = is_ai_api_request(&path);
-    
+
     // 获取请求体
     let body = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
         Ok(bytes) => bytes,
@@ -441,37 +533,43 @@ async fn proxy_handler(req: Request) -> Response {
             return (axum::http::StatusCode::BAD_REQUEST, "读取请求体失败").into_response();
         }
     };
-    
+
     // 构建目标 URL
     let sunshine_base = get_sunshine_target();
-    
+
     let target_url = if query.is_empty() {
         format!("{}{}", sunshine_base, path)
     } else {
         format!("{}{}?{}", sunshine_base, path, query)
     };
-    
+
     #[cfg(debug_assertions)]
     if path == "/" || path.ends_with(".html") || path.starts_with("/api/") {
         debug!("📡 代理请求: {} {}", method, path);
     }
-    
+
     // 快速失败检查：在冷却时间内直接返回错误，避免大量无效请求。
     // AI 入口除外：它是用户显式触发的共享代理能力，需要真实尝试一次，
     // 否则会因为旧的全局不可用状态误报 "Sunshine service is unavailable"。
     if !is_ai_api && should_fast_fail() {
         return service_unavailable_response(is_api);
     }
-    
+
     // 请求 Sunshine
     match fetch_and_proxy(&target_url, &method, &headers, &body, is_ai_api).await {
         Ok(response) => {
             mark_available();
-            if method == axum::http::Method::POST && path == "/api/restart" && response.status().is_success() {
+            if method == axum::http::Method::POST
+                && path == "/api/restart"
+                && response.status().is_success()
+            {
                 tauri::async_runtime::spawn(async {
                     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
                     if let Err(e) = refresh_sunshine_target_internal().await {
-                        warn!("Failed to refresh Sunshine target after restart request: {}", e);
+                        warn!(
+                            "Failed to refresh Sunshine target after restart request: {}",
+                            e
+                        );
                     }
                 });
             }
@@ -485,7 +583,7 @@ async fn proxy_handler(req: Request) -> Response {
             let error_str = e.to_string();
             let error_kind = proxy_error_kind(&error_str);
             error!("❌ 代理错误 [{}] ({}): {}", path, error_kind, error_str);
-            
+
             if is_connection_error(&error_str) {
                 match refresh_sunshine_target_internal().await {
                     Ok(refreshed_base) if refreshed_base != sunshine_base => {
@@ -495,7 +593,9 @@ async fn proxy_handler(req: Request) -> Response {
                             format!("{}{}?{}", refreshed_base, path, query)
                         };
 
-                        match fetch_and_proxy(&refreshed_url, &method, &headers, &body, is_ai_api).await {
+                        match fetch_and_proxy(&refreshed_url, &method, &headers, &body, is_ai_api)
+                            .await
+                        {
                             Ok(response) => {
                                 mark_available();
                                 response
@@ -503,16 +603,25 @@ async fn proxy_handler(req: Request) -> Response {
                             Err(retry_err) => {
                                 let retry_error = retry_err.to_string();
                                 let retry_kind = proxy_error_kind(&retry_error);
-                                error!("Proxy retry failed [{}] ({}): {}", path, retry_kind, retry_error);
-                                connection_failure_response(is_ai_api, is_api, retry_kind, &retry_error)
+                                error!(
+                                    "Proxy retry failed [{}] ({}): {}",
+                                    path, retry_kind, retry_error
+                                );
+                                connection_failure_response(
+                                    is_ai_api,
+                                    is_api,
+                                    retry_kind,
+                                    &retry_error,
+                                )
                             }
                         }
                     }
-                    Ok(_) => {
-                        connection_failure_response(is_ai_api, is_api, error_kind, &error_str)
-                    }
+                    Ok(_) => connection_failure_response(is_ai_api, is_api, error_kind, &error_str),
                     Err(refresh_err) => {
-                        warn!("Failed to refresh Sunshine target after proxy error: {}", refresh_err);
+                        warn!(
+                            "Failed to refresh Sunshine target after proxy error: {}",
+                            refresh_err
+                        );
                         connection_failure_response(is_ai_api, is_api, error_kind, &error_str)
                     }
                 }
@@ -544,11 +653,15 @@ async fn handle_steam_api(
             return (axum::http::StatusCode::BAD_REQUEST, "读取请求体失败").into_response();
         }
     };
-    
+
     // 构建目标 URL
     let target_url = if path.starts_with("/steam-store/") {
         let api_path = path.strip_prefix("/steam-store").unwrap_or(path);
-        let params = if query.is_empty() { "l=schinese&cc=CN" } else { query };
+        let params = if query.is_empty() {
+            "l=schinese&cc=CN"
+        } else {
+            query
+        };
         format!("https://store.steampowered.com{}?{}", api_path, params)
     } else if path.starts_with("/steamgriddb/") {
         let api_path = path.strip_prefix("/steamgriddb").unwrap_or(path);
@@ -556,13 +669,17 @@ async fn handle_steam_api(
     } else {
         return (
             axum::http::StatusCode::BAD_REQUEST,
-            [(axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8")],
-            r#"{"success":false,"error":"Unknown Steam API path"}"#
-        ).into_response();
+            [(
+                axum::http::header::CONTENT_TYPE,
+                "application/json; charset=utf-8",
+            )],
+            r#"{"success":false,"error":"Unknown Steam API path"}"#,
+        )
+            .into_response();
     };
-    
+
     debug!("🎮 Steam API 代理请求: {} -> {}", path, target_url);
-    
+
     // 发送请求并构建响应
     let client = get_http_client();
     match send_request(client, &target_url, method, headers, &body).await {
@@ -571,9 +688,16 @@ async fn handle_steam_api(
             error!("❌ Steam API 请求失败: {}", e);
             (
                 axum::http::StatusCode::BAD_GATEWAY,
-                [(axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8")],
-                format!(r#"{{"success":false,"error":"Steam API request failed: {}"}}"#, e)
-            ).into_response()
+                [(
+                    axum::http::header::CONTENT_TYPE,
+                    "application/json; charset=utf-8",
+                )],
+                format!(
+                    r#"{{"success":false,"error":"Steam API request failed: {}"}}"#,
+                    e
+                ),
+            )
+                .into_response()
         }
     }
 }
@@ -582,11 +706,11 @@ async fn handle_steam_api(
 async fn build_cors_response(response: reqwest::Response) -> Response {
     let status = response.status();
     let resp_headers = response.headers().clone();
-    
+
     match response.bytes().await {
         Ok(body_bytes) => {
             let mut builder = axum::http::Response::builder().status(status.as_u16());
-            
+
             // 复制响应头（排除 CORS 和 transfer-encoding）
             for (key, value) in resp_headers.iter() {
                 let key_str = key.as_str().to_lowercase();
@@ -594,24 +718,38 @@ async fn build_cors_response(response: reqwest::Response) -> Response {
                     builder = builder.header(key.as_str(), value);
                 }
             }
-            
+
             // 添加 CORS 头部
             builder
                 .header("Access-Control-Allow-Origin", "*")
-                .header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+                .header(
+                    "Access-Control-Allow-Methods",
+                    "GET, POST, PUT, DELETE, OPTIONS",
+                )
                 .header("Access-Control-Allow-Headers", "*")
                 .body(axum::body::Body::from(body_bytes.to_vec()))
                 .unwrap_or_else(|_| {
-                    (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "构建响应失败").into_response()
+                    (
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        "构建响应失败",
+                    )
+                        .into_response()
                 })
         }
         Err(e) => {
             error!("❌ 读取响应失败: {}", e);
             (
                 axum::http::StatusCode::BAD_GATEWAY,
-                [(axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8")],
-                format!(r#"{{"success":false,"error":"Failed to read response: {}"}}"#, e)
-            ).into_response()
+                [(
+                    axum::http::header::CONTENT_TYPE,
+                    "application/json; charset=utf-8",
+                )],
+                format!(
+                    r#"{{"success":false,"error":"Failed to read response: {}"}}"#,
+                    e
+                ),
+            )
+                .into_response()
         }
     }
 }
@@ -630,12 +768,16 @@ async fn handle_external_proxy(
         None => {
             return (
                 axum::http::StatusCode::BAD_REQUEST,
-                [(axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8")],
-                r#"{"success":false,"error":"Missing or invalid URL parameter"}"#
-            ).into_response();
+                [(
+                    axum::http::header::CONTENT_TYPE,
+                    "application/json; charset=utf-8",
+                )],
+                r#"{"success":false,"error":"Missing or invalid URL parameter"}"#,
+            )
+                .into_response();
         }
     };
-    
+
     // 安全检查：只允许 HTTPS 请求到白名单域名
     let allowed_domains = [
         "github.io",
@@ -643,28 +785,36 @@ async fn handle_external_proxy(
         "github.com",
         "api.github.com",
     ];
-    
+
     let is_allowed = url::Url::parse(&target_url)
         .ok()
         .map(|u| {
             u.scheme() == "https"
                 && u.host_str()
-                    .map(|host| allowed_domains.iter().any(|d| host == *d || host.ends_with(&format!(".{}", d))))
+                    .map(|host| {
+                        allowed_domains
+                            .iter()
+                            .any(|d| host == *d || host.ends_with(&format!(".{}", d)))
+                    })
                     .unwrap_or(false)
         })
         .unwrap_or(false);
-    
+
     if !is_allowed {
         warn!("⚠️ 外部代理请求被拒绝（域名不在白名单）: {}", target_url);
         return (
             axum::http::StatusCode::FORBIDDEN,
-            [(axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8")],
-            r#"{"success":false,"error":"Domain not allowed"}"#
-        ).into_response();
+            [(
+                axum::http::header::CONTENT_TYPE,
+                "application/json; charset=utf-8",
+            )],
+            r#"{"success":false,"error":"Domain not allowed"}"#,
+        )
+            .into_response();
     }
-    
+
     debug!("🌐 外部代理请求: {}", target_url);
-    
+
     // 获取请求体
     let body = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
         Ok(bytes) => bytes,
@@ -673,47 +823,60 @@ async fn handle_external_proxy(
             return (axum::http::StatusCode::BAD_REQUEST, "读取请求体失败").into_response();
         }
     };
-    
+
     // 发送请求
     let client = get_http_client();
     match send_request(client, &target_url, method, headers, &body).await {
         Ok(response) => {
             let status = response.status();
             let resp_headers = response.headers().clone();
-            
+
             match response.bytes().await {
                 Ok(body) => {
-                    let mut builder = axum::http::Response::builder()
-                        .status(status.as_u16());
-                    
+                    let mut builder = axum::http::Response::builder().status(status.as_u16());
+
                     // 复制响应头（排除 CORS 相关头部，我们会添加自己的）
                     for (key, value) in resp_headers.iter() {
                         let key_str = key.as_str().to_lowercase();
-                        if !key_str.starts_with("access-control-") 
-                            && key_str != "transfer-encoding" 
+                        if !key_str.starts_with("access-control-") && key_str != "transfer-encoding"
                         {
                             builder = builder.header(key.as_str(), value);
                         }
                     }
-                    
+
                     // 添加 CORS 头部
                     builder = builder
                         .header("Access-Control-Allow-Origin", "*")
-                        .header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+                        .header(
+                            "Access-Control-Allow-Methods",
+                            "GET, POST, PUT, DELETE, OPTIONS",
+                        )
                         .header("Access-Control-Allow-Headers", "*");
-                    
-                    builder.body(axum::body::Body::from(body.to_vec()))
+
+                    builder
+                        .body(axum::body::Body::from(body.to_vec()))
                         .unwrap_or_else(|_| {
-                            (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "构建响应失败").into_response()
+                            (
+                                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                                "构建响应失败",
+                            )
+                                .into_response()
                         })
                 }
                 Err(e) => {
                     error!("❌ 读取外部响应失败: {}", e);
                     (
                         axum::http::StatusCode::BAD_GATEWAY,
-                        [(axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8")],
-                        format!(r#"{{"success":false,"error":"Failed to read response: {}"}}"#, e)
-                    ).into_response()
+                        [(
+                            axum::http::header::CONTENT_TYPE,
+                            "application/json; charset=utf-8",
+                        )],
+                        format!(
+                            r#"{{"success":false,"error":"Failed to read response: {}"}}"#,
+                            e
+                        ),
+                    )
+                        .into_response()
                 }
             }
         }
@@ -721,9 +884,16 @@ async fn handle_external_proxy(
             error!("❌ 外部代理请求失败: {}", e);
             (
                 axum::http::StatusCode::BAD_GATEWAY,
-                [(axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8")],
-                format!(r#"{{"success":false,"error":"External request failed: {}"}}"#, e)
-            ).into_response()
+                [(
+                    axum::http::header::CONTENT_TYPE,
+                    "application/json; charset=utf-8",
+                )],
+                format!(
+                    r#"{{"success":false,"error":"External request failed: {}"}}"#,
+                    e
+                ),
+            )
+                .into_response()
         }
     }
 }
@@ -769,27 +939,30 @@ async fn send_request(
         "HEAD" => client.head(url),
         _ => client.get(url),
     };
-    
+
     // 复制请求头（排除特殊头部）
     for (key, value) in headers.iter() {
         let key_str = key.as_str();
-        if !matches!(key_str, "host" | "connection" | "content-length" | "transfer-encoding") {
+        if !matches!(
+            key_str,
+            "host" | "connection" | "content-length" | "transfer-encoding"
+        ) {
             if let Ok(value_str) = value.to_str() {
                 req_builder = req_builder.header(key_str, value_str);
             }
         }
     }
-    
+
     if !body.is_empty() {
         req_builder = req_builder.body(body.clone());
     }
-    
+
     req_builder.send().await
 }
 
 /// 获取并代理内容
 async fn fetch_and_proxy(
-    url: &str, 
+    url: &str,
     method: &axum::http::Method,
     headers: &axum::http::HeaderMap,
     body: &Bytes,
@@ -800,7 +973,7 @@ async fn fetch_and_proxy(
     } else {
         get_http_client()
     };
-    
+
     // 尝试请求，HTTPS 失败时降级到 HTTP（仅限非连接错误）
     let response = match send_request(client, url, method, headers, body).await {
         Ok(resp) => resp,
@@ -811,16 +984,16 @@ async fn fetch_and_proxy(
         }
         Err(e) => return Err(e.into()),
     };
-    
+
     let status = response.status();
     let resp_headers = response.headers().clone();
     let content_type = resp_headers
         .get("content-type")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("text/html");
-    
+
     let body_bytes = response.bytes().await?.to_vec();
-    
+
     // 判断是否需要注入脚本
     let needs_injection = should_inject_script(url, content_type);
     let final_body = if needs_injection {
@@ -828,29 +1001,37 @@ async fn fetch_and_proxy(
     } else {
         body_bytes
     };
-    
+
     // 构建响应
     let mut res = axum::http::Response::builder().status(status.as_u16());
-    
+
     for (key, value) in resp_headers.iter() {
         let key_str = key.as_str().to_lowercase();
         // 排除内容长度、传输编码、内容编码，以及需要注入时排除缓存相关头部
-        if matches!(key_str.as_str(), "content-length" | "transfer-encoding" | "content-encoding") {
+        if matches!(
+            key_str.as_str(),
+            "content-length" | "transfer-encoding" | "content-encoding"
+        ) {
             continue;
         }
-        if needs_injection && matches!(key_str.as_str(), "cache-control" | "etag" | "last-modified" | "expires") {
+        if needs_injection
+            && matches!(
+                key_str.as_str(),
+                "cache-control" | "etag" | "last-modified" | "expires"
+            )
+        {
             continue;
         }
         res = res.header(key, value);
     }
-    
+
     // 需要注入脚本的页面添加无缓存头部
     if needs_injection {
         res = res.header("Cache-Control", "no-cache, no-store, must-revalidate");
         res = res.header("Pragma", "no-cache");
         res = res.header("Expires", "0");
     }
-    
+
     Ok(res.body(axum::body::Body::from(final_body))?)
 }
 
@@ -859,18 +1040,22 @@ fn should_inject_script(url: &str, content_type: &str) -> bool {
     if !content_type.contains("text/html") {
         return false;
     }
-    
+
     let path = url.rsplit('/').next().unwrap_or("");
-    matches!(path, "" | "apps" | "config" | "password" | "pin" | "troubleshooting" | "welcome")
-        || url.ends_with(".html")
+    matches!(
+        path,
+        "" | "apps" | "config" | "password" | "pin" | "troubleshooting" | "welcome"
+    ) || url.ends_with(".html")
         || url.ends_with(".htm")
 }
 
 /// 如果需要则注入脚本
 fn inject_if_needed(body: Vec<u8>) -> Vec<u8> {
     match String::from_utf8(body) {
-        Ok(html) if !html.contains("主题同步脚本已加载") 
-            && (html.contains("<html") || html.contains("<!DOCTYPE")) => {
+        Ok(html)
+            if !html.contains("主题同步脚本已加载")
+                && (html.contains("<html") || html.contains("<!DOCTYPE")) =>
+        {
             inject_theme_script(html).into_bytes()
         }
         Ok(html) => html.into_bytes(),
@@ -883,7 +1068,7 @@ fn inject_theme_script(html: String) -> String {
     let Some(pos) = html.find("</head>") else {
         return html;
     };
-    
+
     // 根据编译配置决定是否是生产环境
     let is_production = cfg!(not(debug_assertions));
     let production_flag = if is_production {
@@ -891,10 +1076,10 @@ fn inject_theme_script(html: String) -> String {
     } else {
         "window.TAURI_PRODUCTION = false;"
     };
-    
+
     let inject_size = INJECT_STYLES.len() + INJECT_SCRIPT.len() + production_flag.len() + 150;
     let mut result = String::with_capacity(html.len() + inject_size);
-    
+
     result.push_str(&html[..pos]);
     result.push_str("\n<!-- Tauri 样式优化 -->\n<style id=\"tauri-scrollbar-theme\">\n");
     result.push_str(INJECT_STYLES);
@@ -904,7 +1089,7 @@ fn inject_theme_script(html: String) -> String {
     result.push_str(INJECT_SCRIPT);
     result.push_str("\n</script>\n");
     result.push_str(&html[pos..]);
-    
+
     result
 }
 
@@ -914,20 +1099,15 @@ mod tests {
     use axum::body::Body;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    static TEST_LOCK: Lazy<tokio::sync::Mutex<()>> =
-        Lazy::new(|| tokio::sync::Mutex::new(()));
+    static TEST_LOCK: Lazy<tokio::sync::Mutex<()>> = Lazy::new(|| tokio::sync::Mutex::new(()));
 
     async fn unused_local_port() -> u16 {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         listener.local_addr().unwrap().port()
     }
 
     async fn spawn_one_shot_http_server(body: &'static str) -> String {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
         tokio::spawn(async move {
@@ -1001,7 +1181,10 @@ mod tests {
 
         reset_fast_fail();
 
-        assert!(status.is_success(), "unexpected status: {status}, body: {text}");
+        assert!(
+            status.is_success(),
+            "unexpected status: {status}, body: {text}"
+        );
         assert!(
             text.contains(marker),
             "AI API request was short-circuited instead of proxied: {text}"

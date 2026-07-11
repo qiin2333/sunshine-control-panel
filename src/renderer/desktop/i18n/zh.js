@@ -881,6 +881,8 @@ export const zh = {
     active: '剪贴板同步已激活：主机与客户端双向同步',
     agentInactive: '本地剪贴板同步代理未运行；请重启控制面板重试',
     serviceDisabled: '主机配置已强制禁用剪贴板同步 (clipboard_sync = false)',
+    connecting: '剪贴板同步正在连接 Sunshine 服务',
+    disconnected: '剪贴板同步已断开，正在后台重连',
     inactive: '剪贴板同步未启用',
   },
 

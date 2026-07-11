@@ -881,6 +881,8 @@ Output only one short sentence, no explanation. Reply in English.`,
     active: 'Clipboard sync is active: bidirectional host/client sync is available',
     agentInactive: 'The local clipboard sync agent is not running. Please restart the control panel and try again.',
     serviceDisabled: 'Clipboard sync is force-disabled by host config (clipboard_sync = false)',
+    connecting: 'Clipboard sync is connecting to the Sunshine service',
+    disconnected: 'Clipboard sync is disconnected and retrying in the background',
     inactive: 'Clipboard sync is not active',
   },
 

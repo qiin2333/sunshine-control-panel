@@ -14,8 +14,12 @@ if (document.readyState === 'loading') {
 
 async function initLoader() {
   try {
-    // 等待 1 秒显示占位动画
-    await new Promise((resolve) => setTimeout(resolve, 1000))
+    // Cold starts create the WebView and local proxy concurrently. Do not
+    // navigate the frame to a port that has not started listening yet.
+    await Promise.all([
+      invoke('wait_for_proxy_ready'),
+      new Promise((resolve) => setTimeout(resolve, 300)),
+    ])
 
     // 检查是否有命令行参数指定的 URL
     let sunshineUrl = await invoke('get_command_line_url')

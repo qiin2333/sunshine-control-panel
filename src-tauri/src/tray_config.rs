@@ -46,13 +46,13 @@ pub fn export_config<R: Runtime>(app: &AppHandle<R>) {
     });
 }
 
-pub fn reset_config<R: Runtime>(app: &AppHandle<R>) {
+pub fn reset_config<R: Runtime>(app: &AppHandle<R>, title: &'static str, message: &'static str) {
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
     let app_handle = app.clone();
     app.dialog()
-        .message("This clears sunshine.conf and Sunshine will fall back to defaults. Continue?")
-        .title("Reset Config")
+        .message(message)
+        .title(title)
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::YesNo)
         .show(move |confirmed| {

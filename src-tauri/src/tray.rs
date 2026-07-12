@@ -98,14 +98,20 @@ struct TrayStrings {
     open_sunshine: &'static str,
     vdd_settings: &'static str,
     vdd_create: &'static str,
+    vdd_create_confirm: &'static str,
     vdd_close: &'static str,
     vdd_keep: &'static str,
+    vdd_keep_confirm: &'static str,
     vdd_headless: &'static str,
+    vdd_headless_confirm: &'static str,
     import_config: &'static str,
     export_config: &'static str,
     reset_config: &'static str,
+    reset_config_confirm: &'static str,
     clear_cache: &'static str,
+    clear_cache_confirm: &'static str,
     reset_display: &'static str,
+    reset_display_confirm: &'static str,
     restart_user_mode: &'static str,
     show_toolbar: &'static str,
     prevent_sleep: &'static str,
@@ -152,16 +158,22 @@ const ZH_STRINGS: TrayStrings = TrayStrings {
     open_sunshine: "Web 管理界面",
     vdd_settings: "虚拟显示器设置",
     vdd_create: "创建虚拟显示器",
+    vdd_create_confirm: "创建虚拟显示器可能会更改 Windows 显示布局。是否继续？",
     vdd_close: "关闭虚拟显示器",
     vdd_keep: "串流结束后保留",
+    vdd_keep_confirm: "启用后，串流结束时将保留虚拟显示器，并可能更改 Windows 显示布局。是否继续？",
     vdd_headless: "无头模式自动创建",
+    vdd_headless_confirm: "这是实验性恢复功能：未检测到显示器时会自动创建虚拟显示器，并可能更改当前显示布局。是否继续？",
     import_config: "导入配置",
     export_config: "导出配置",
     reset_config: "重置配置",
+    reset_config_confirm: "这将清空 sunshine.conf，并让 Sunshine 恢复默认配置。是否继续？",
     clear_cache: "清理缓存",
+    clear_cache_confirm: "这将终止当前运行的应用，以便重建缓存状态。是否继续？",
     reset_display: "重置显示",
+    reset_display_confirm: "这将重置已保存的显示设备状态。是否继续？",
     restart_user_mode: "以用户模式运行 Sunshine",
-    show_toolbar: "显示桌面工具栏",
+    show_toolbar: "显示桌宠",
     prevent_sleep: "阻止系统休眠",
     rtss_control: "RTSS 控制",
     host_performance: "主机性能",
@@ -206,16 +218,22 @@ const EN_STRINGS: TrayStrings = TrayStrings {
     open_sunshine: "Web Management UI",
     vdd_settings: "Virtual Display Settings",
     vdd_create: "Create Virtual Display",
+    vdd_create_confirm: "This creates a virtual display and may change the Windows display layout. Continue?",
     vdd_close: "Close Virtual Display",
     vdd_keep: "Keep After Streaming",
+    vdd_keep_confirm: "Keep mode leaves the virtual display enabled after streaming ends and may change the Windows display layout. Continue?",
     vdd_headless: "Auto-create When Headless",
+    vdd_headless_confirm: "This experimental recovery feature creates a virtual display when no display is detected and may change the active display layout. Continue?",
     import_config: "Import Config",
     export_config: "Export Config",
     reset_config: "Reset Config",
+    reset_config_confirm: "This clears sunshine.conf and restores Sunshine defaults. Continue?",
     clear_cache: "Clear Cache",
+    clear_cache_confirm: "This terminates the running application so cached state can be rebuilt. Continue?",
     reset_display: "Reset Display",
+    reset_display_confirm: "This resets persisted display-device state. Continue?",
     restart_user_mode: "Run Sunshine in User Mode",
-    show_toolbar: "Show Desktop Toolbar",
+    show_toolbar: "Show Desktop Pet",
     prevent_sleep: "Prevent System Sleep",
     rtss_control: "RTSS Control",
     host_performance: "Host Performance",
@@ -260,16 +278,22 @@ const JA_STRINGS: TrayStrings = TrayStrings {
     open_sunshine: "Web 管理画面",
     vdd_settings: "仮想ディスプレイ設定",
     vdd_create: "仮想ディスプレイを作成",
+    vdd_create_confirm: "仮想ディスプレイを作成すると、Windows のディスプレイ配置が変更される場合があります。続行しますか？",
     vdd_close: "仮想ディスプレイを閉じる",
     vdd_keep: "ストリーミング後も保持",
+    vdd_keep_confirm: "有効にすると、ストリーミング終了後も仮想ディスプレイが保持され、Windows のディスプレイ配置が変更される場合があります。続行しますか？",
     vdd_headless: "ヘッドレス時に自動作成",
+    vdd_headless_confirm: "これは実験的な復旧機能です。ディスプレイが検出されない場合に仮想ディスプレイを作成し、現在の配置が変更される場合があります。続行しますか？",
     import_config: "設定をインポート",
     export_config: "設定をエクスポート",
     reset_config: "設定をリセット",
+    reset_config_confirm: "sunshine.conf を消去し、Sunshine の既定設定に戻します。続行しますか？",
     clear_cache: "キャッシュを消去",
+    clear_cache_confirm: "キャッシュ状態を再構築するため、実行中のアプリケーションを終了します。続行しますか？",
     reset_display: "ディスプレイをリセット",
+    reset_display_confirm: "保存されているディスプレイデバイスの状態をリセットします。続行しますか？",
     restart_user_mode: "ユーザーモードで Sunshine を実行",
-    show_toolbar: "デスクトップツールバーを表示",
+    show_toolbar: "デスクトップペットを表示",
     prevent_sleep: "システムのスリープを防止",
     rtss_control: "RTSS コントロール",
     host_performance: "ホストパフォーマンス",
@@ -632,6 +656,7 @@ mod tests {
     #[test]
     fn primary_desktop_actions_have_clear_localized_labels() {
         assert_eq!(ZH_STRINGS.open_desktop, "大屏模式");
+        assert_eq!(ZH_STRINGS.show_toolbar, "显示桌宠");
         #[cfg(target_os = "windows")]
         assert_eq!(ZH_STRINGS.auto_start, "开机运行");
         assert_eq!(EN_STRINGS.open_desktop, "Large Screen Mode");
@@ -639,6 +664,16 @@ mod tests {
         assert_eq!(EN_STRINGS.auto_start, "Run at Startup");
         assert_eq!(ZH_STRINGS.shutdown, "退出 Sunshine");
         assert_eq!(EN_STRINGS.shutdown, "Exit Sunshine");
+    }
+
+    #[test]
+    fn native_confirmations_use_localized_tray_text() {
+        assert!(ZH_STRINGS.vdd_create_confirm.contains("虚拟显示器"));
+        assert!(ZH_STRINGS.vdd_keep_confirm.contains("串流结束"));
+        assert!(ZH_STRINGS.vdd_headless_confirm.contains("实验性"));
+        assert!(ZH_STRINGS.reset_config_confirm.contains("默认配置"));
+        assert!(ZH_STRINGS.clear_cache_confirm.contains("缓存状态"));
+        assert!(ZH_STRINGS.reset_display_confirm.contains("显示设备"));
     }
 
     #[test]

@@ -77,7 +77,7 @@ pub fn handle_tray_menu_event<R: Runtime + 'static>(app: &AppHandle<R>, menu_id:
         "visit_project_moonlight" => {
             utils::open_url_in_browser("https://github.com/qiin2333/moonlight-vplus")
         }
-        "restart" => run_tray_action(app, "restart", None),
+        "restart" => restart_sunshine(app),
         _ => warn!("⚠️ 未知的托盘菜单事件: {}", menu_id),
     }
 }
@@ -228,6 +228,29 @@ fn run_tray_action<R: Runtime>(app: &AppHandle<R>, action: &'static str, enabled
                 debug!("Tray action '{}' skipped: {}", action, e);
                 emit_message(&app_handle, "error", &e);
             }
+        }
+    });
+}
+
+fn restart_sunshine<R: Runtime>(app: &AppHandle<R>) {
+    let app_handle = app.clone();
+
+    tauri::async_runtime::spawn(async move {
+        match sunshine::post_tray_action("restart", None).await {
+            Ok(response) if !response.status => {
+                let message = if response.error.is_empty() {
+                    "Sunshine restart was rejected".to_string()
+                } else {
+                    response.error
+                };
+                error!("Sunshine restart failed: {}", message);
+                emit_message(&app_handle, "error", &message);
+            }
+            Ok(_) => debug!("Sunshine restart requested"),
+            Err(error) => debug!(
+                "Sunshine restart disconnected before the response completed: {}",
+                error
+            ),
         }
     });
 }

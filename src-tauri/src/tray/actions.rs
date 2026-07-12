@@ -236,8 +236,8 @@ fn restart_sunshine<R: Runtime>(app: &AppHandle<R>) {
     let app_handle = app.clone();
 
     tauri::async_runtime::spawn(async move {
-        match sunshine::post_tray_action("restart", None).await {
-            Ok(response) if !response.status => {
+        match sunshine::post_tray_restart_action().await {
+            Ok(Some(response)) if !response.status => {
                 let message = if response.error.is_empty() {
                     "Sunshine restart was rejected".to_string()
                 } else {
@@ -247,10 +247,10 @@ fn restart_sunshine<R: Runtime>(app: &AppHandle<R>) {
                 emit_message(&app_handle, "error", &message);
             }
             Ok(_) => debug!("Sunshine restart requested"),
-            Err(error) => debug!(
-                "Sunshine restart disconnected before the response completed: {}",
-                error
-            ),
+            Err(error) => {
+                error!("Sunshine restart request failed: {}", error);
+                emit_message(&app_handle, "error", &error);
+            }
         }
     });
 }

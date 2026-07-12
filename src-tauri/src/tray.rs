@@ -121,7 +121,9 @@ struct TrayStrings {
     debug_page: &'static str,
     check_update: &'static str,
     about: &'static str,
-    quit: &'static str,
+    shutdown: &'static str,
+    shutdown_title: &'static str,
+    shutdown_message: &'static str,
     language: &'static str,
     star_project: &'static str,
     visit_project_sunshine: &'static str,
@@ -174,7 +176,9 @@ const ZH_STRINGS: TrayStrings = TrayStrings {
     debug_page: "调试页面",
     check_update: "检查更新",
     about: "关于 Sunshine",
-    quit: "退出托盘",
+    shutdown: "退出 Sunshine",
+    shutdown_title: "退出 Sunshine",
+    shutdown_message: "这将停止 Sunshine 服务、GUI 和托盘。确定要退出吗？",
     language: "语言",
     star_project: "项目主页",
     visit_project_sunshine: "Sunshine 源代码",
@@ -227,7 +231,9 @@ const EN_STRINGS: TrayStrings = TrayStrings {
     debug_page: "Debug Page",
     check_update: "Check for Updates",
     about: "About Sunshine",
-    quit: "Quit Tray",
+    shutdown: "Exit Sunshine",
+    shutdown_title: "Exit Sunshine",
+    shutdown_message: "This will stop the Sunshine service, GUI, and tray. Continue?",
     language: "Language",
     star_project: "Project Website",
     visit_project_sunshine: "Sunshine Source Code",
@@ -280,7 +286,9 @@ const JA_STRINGS: TrayStrings = TrayStrings {
     debug_page: "デバッグページ",
     check_update: "更新を確認",
     about: "Sunshine について",
-    quit: "トレイを終了",
+    shutdown: "Sunshine を終了",
+    shutdown_title: "Sunshine を終了",
+    shutdown_message: "Sunshine サービス、GUI、トレイを停止します。続行しますか？",
     language: "言語",
     star_project: "プロジェクトサイト",
     visit_project_sunshine: "Sunshine ソースコード",
@@ -633,6 +641,8 @@ mod tests {
         assert_eq!(EN_STRINGS.open_desktop, "Large Screen Mode");
         #[cfg(target_os = "windows")]
         assert_eq!(EN_STRINGS.auto_start, "Run at Startup");
+        assert_eq!(ZH_STRINGS.shutdown, "退出 Sunshine");
+        assert_eq!(EN_STRINGS.shutdown, "Exit Sunshine");
     }
 
     #[test]

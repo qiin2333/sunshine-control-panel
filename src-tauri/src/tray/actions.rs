@@ -73,10 +73,7 @@ pub fn handle_tray_menu_event<R: Runtime + 'static>(app: &AppHandle<R>, menu_id:
             info!("ℹ️ 托盘菜单：显示关于对话框");
             let _ = windows::open_about_window(app);
         }
-        "quit" => {
-            info!("🚪 托盘菜单：退出应用");
-            app.exit(0);
-        }
+        "shutdown" => shutdown_sunshine(app),
         "lang_zh" => switch_tray_locale(app, "zh"),
         "lang_en" => switch_tray_locale(app, "en"),
         "lang_ja" => switch_tray_locale(app, "ja"),
@@ -236,6 +233,43 @@ fn run_tray_action<R: Runtime>(app: &AppHandle<R>, action: &'static str, enabled
             }
         }
     });
+}
+
+fn shutdown_sunshine<R: Runtime>(app: &AppHandle<R>) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+
+    let strings = get_tray_strings();
+    let app_handle = app.clone();
+    app.dialog()
+        .message(strings.shutdown_message)
+        .title(strings.shutdown_title)
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::YesNo)
+        .show(move |confirmed| {
+            if !confirmed {
+                return;
+            }
+
+            let shutdown_handle = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                match sunshine::post_tray_action("shutdown", None).await {
+                    Ok(response) if response.status => shutdown_handle.exit(0),
+                    Ok(response) => {
+                        let message = if response.error.is_empty() {
+                            "Sunshine shutdown was rejected".to_string()
+                        } else {
+                            response.error
+                        };
+                        error!("Sunshine shutdown failed: {}", message);
+                        emit_message(&shutdown_handle, "error", &message);
+                    }
+                    Err(error) => {
+                        error!("Sunshine shutdown request failed: {}", error);
+                        emit_message(&shutdown_handle, "error", &error);
+                    }
+                }
+            });
+        });
 }
 
 fn open_sunshine_web_ui<R: Runtime>(app: &AppHandle<R>) {

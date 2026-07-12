@@ -218,6 +218,7 @@ def make_checker_preview(frame: Image.Image) -> Image.Image:
 def save_outputs(frames: list[Image.Image], output_dir: Path, name: str) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     gif_path = output_dir / f"{name}.gif"
+    frames_path = output_dir / f"{name}-frames.png"
     sheet_path = output_dir / f"{name}-sheet.png"
     preview_path = output_dir / f"{name}-preview.png"
     checker_path = output_dir / f"{name}-checker-preview.png"
@@ -231,6 +232,11 @@ def save_outputs(frames: list[Image.Image], output_dir: Path, name: str) -> None
         disposal=2,
     )
 
+    full_sheet = Image.new("RGBA", (SIZE[0] * len(frames), SIZE[1]), (0, 0, 0, 0))
+    for index, frame in enumerate(frames):
+        full_sheet.alpha_composite(frame, (index * SIZE[0], 0))
+    full_sheet.save(frames_path)
+
     sheet = Image.new("RGBA", (SIZE[0] * 6, SIZE[1]), (0, 0, 0, 0))
     for index, frame_no in enumerate([0, 4, 8, 12, 17, 23]):
         sheet.alpha_composite(frames[frame_no], (index * SIZE[0], 0))
@@ -240,6 +246,7 @@ def save_outputs(frames: list[Image.Image], output_dir: Path, name: str) -> None
     make_checker_preview(frames[12]).save(checker_path)
 
     print(gif_path)
+    print(frames_path)
     print(sheet_path)
     print(preview_path)
     print(checker_path)

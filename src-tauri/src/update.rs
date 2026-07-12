@@ -102,30 +102,17 @@ struct UpdaterPanelState {
 }
 
 #[cfg(target_os = "windows")]
-struct UpdaterSpriteBitmap {
+struct UpdaterAnimationFrame {
     width: i32,
     height: i32,
     bgra: Vec<u8>,
 }
 
 #[cfg(target_os = "windows")]
-#[allow(dead_code)] // Alternate IP variants are selected by changing UPDATER_HELPER_SPRITE_VARIANT.
-#[derive(Clone, Copy)]
-enum UpdaterHelperSpriteVariant {
-    Gura,
-    SunGirl,
-}
-
-#[cfg(target_os = "windows")]
-// Change this constant to swap the updater helper IP without touching rendering code.
-const UPDATER_HELPER_SPRITE_VARIANT: UpdaterHelperSpriteVariant =
-    UpdaterHelperSpriteVariant::SunGirl;
-
-#[cfg(target_os = "windows")]
 static UPDATER_PANEL_STATE: OnceLock<Arc<Mutex<UpdaterPanelState>>> = OnceLock::new();
 
 #[cfg(target_os = "windows")]
-static UPDATER_HELPER_SPRITE_BITMAP: OnceLock<Option<UpdaterSpriteBitmap>> = OnceLock::new();
+static UPDATER_CONSTRUCTION_FRAMES: OnceLock<Option<Vec<UpdaterAnimationFrame>>> = OnceLock::new();
 
 // ========== 版本相关 ==========
 
@@ -606,6 +593,7 @@ fn run_updater_worker(state: UpdaterHelperState, hwnd: isize) {
         );
         stop_sunshine_for_update();
     }
+
     update_updater_panel(
         hwnd,
         2,
@@ -660,7 +648,6 @@ fn run_updater_worker(state: UpdaterHelperState, hwnd: isize) {
         );
     }
 }
-
 fn is_gui_component_installer(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
@@ -718,14 +705,13 @@ mod component_installer_tests {
 #[cfg(target_os = "windows")]
 fn run_updater_panel(state: UpdaterHelperState) -> Result<(), String> {
     use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
-    use windows::Win32::Graphics::Dwm::DwmSetWindowAttribute;
-    use windows::Win32::Graphics::Gdi::{HBRUSH, InvalidateRect};
+    use windows::Win32::Graphics::Gdi::{BeginPaint, EndPaint, HBRUSH, PAINTSTRUCT};
     use windows::Win32::UI::WindowsAndMessaging::{
         CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW,
-        HWND_TOPMOST, LWA_COLORKEY, MSG, PostQuitMessage, RegisterClassW, SW_SHOW, SWP_SHOWWINDOW,
-        SetForegroundWindow, SetLayeredWindowAttributes, SetTimer, SetWindowPos, ShowWindow,
-        TranslateMessage, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_NCHITTEST,
-        WM_PAINT, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+        HWND_TOPMOST, MSG, PostQuitMessage, RegisterClassW, SW_SHOW, SWP_SHOWWINDOW,
+        SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow, TranslateMessage, WINDOW_STYLE,
+        WM_APP, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_NCHITTEST, WM_PAINT, WM_TIMER, WNDCLASSW,
+        WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
     };
     use windows::core::PCWSTR;
 
@@ -737,6 +723,9 @@ fn run_updater_panel(state: UpdaterHelperState) -> Result<(), String> {
     ) -> LRESULT {
         match msg {
             WM_PAINT => {
+                let mut ps = PAINTSTRUCT::default();
+                let _ = unsafe { BeginPaint(hwnd, &mut ps) };
+                let _ = unsafe { EndPaint(hwnd, &ps) };
                 draw_updater_panel_cutout(hwnd);
                 LRESULT(0)
             }
@@ -758,12 +747,12 @@ fn run_updater_panel(state: UpdaterHelperState) -> Result<(), String> {
             }
             WM_TIMER => {
                 tick_updater_panel();
-                invalidate_updater_progress(hwnd);
+                draw_updater_panel_cutout(hwnd);
                 LRESULT(0)
             }
             WM_NCHITTEST => LRESULT(windows::Win32::UI::WindowsAndMessaging::HTCAPTION as isize),
             x if x == WM_APP + 1 => {
-                let _ = unsafe { InvalidateRect(Some(hwnd), None, false) };
+                draw_updater_panel_cutout(hwnd);
                 LRESULT(0)
             }
             x if x == WM_APP + 2 => {
@@ -818,19 +807,6 @@ fn run_updater_panel(state: UpdaterHelperState) -> Result<(), String> {
     }
     .map_err(|e| format!("create updater panel failed: {}", e))?;
 
-    unsafe {
-        let _ =
-            SetLayeredWindowAttributes(hwnd, updater_panel_transparent_key(), 255, LWA_COLORKEY);
-        // DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUND = 2. Windows 10 ignores it.
-        let corner_preference: u32 = 2;
-        let _ = DwmSetWindowAttribute(
-            hwnd,
-            windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(33i32),
-            &corner_preference as *const u32 as *const std::ffi::c_void,
-            std::mem::size_of::<u32>() as u32,
-        );
-    }
-
     let hwnd_value = hwnd.0 as isize;
     std::thread::spawn(move || run_updater_worker(state, hwnd_value));
 
@@ -848,6 +824,7 @@ fn run_updater_panel(state: UpdaterHelperState) -> Result<(), String> {
     };
     let _ = unsafe { SetTimer(Some(hwnd), 1, 90, None) };
     let _ = unsafe { SetForegroundWindow(hwnd) };
+    draw_updater_panel_cutout(hwnd);
     let _ = unsafe { windows::Win32::Graphics::Gdi::UpdateWindow(hwnd) };
 
     let mut msg = MSG::default();
@@ -890,20 +867,6 @@ fn tick_updater_panel() {
 }
 
 #[cfg(target_os = "windows")]
-fn invalidate_updater_progress(hwnd: windows::Win32::Foundation::HWND) {
-    use windows::Win32::Foundation::RECT;
-    use windows::Win32::Graphics::Gdi::InvalidateRect;
-
-    let rect = RECT {
-        left: 0,
-        top: 0,
-        right: 560,
-        bottom: 240,
-    };
-    let _ = unsafe { InvalidateRect(Some(hwnd), Some(&rect), false) };
-}
-
-#[cfg(target_os = "windows")]
 fn current_updater_step() -> usize {
     UPDATER_PANEL_STATE
         .get()
@@ -931,93 +894,17 @@ fn updater_panel_position(width: i32, height: i32) -> (i32, i32) {
 }
 
 #[cfg(target_os = "windows")]
-fn updater_panel_transparent_key() -> windows::Win32::Foundation::COLORREF {
-    windows::Win32::Foundation::COLORREF(0x00FF00FF)
-}
-
-#[cfg(target_os = "windows")]
-#[derive(Clone, Copy)]
-struct UpdaterPanelPalette {
-    accent: windows::Win32::Foundation::COLORREF,
-    paper: windows::Win32::Foundation::COLORREF,
-    paper_shadow: windows::Win32::Foundation::COLORREF,
-    muted_ink: windows::Win32::Foundation::COLORREF,
-    tape: windows::Win32::Foundation::COLORREF,
-    cardboard: windows::Win32::Foundation::COLORREF,
-    cardboard_light: windows::Win32::Foundation::COLORREF,
-    cardboard_dark: windows::Win32::Foundation::COLORREF,
-    floor: windows::Win32::Foundation::COLORREF,
-}
-
-#[cfg(target_os = "windows")]
-fn updater_panel_palette(failed: bool) -> UpdaterPanelPalette {
-    use windows::Win32::Foundation::COLORREF;
-
-    UpdaterPanelPalette {
-        accent: if failed {
-            COLORREF(0x00A5A5D4)
-        } else {
-            COLORREF(0x00BBC539)
-        },
-        paper: COLORREF(0x00DDF5FF),
-        paper_shadow: COLORREF(0x004B3F3A),
-        muted_ink: COLORREF(0x00705F5A),
-        tape: COLORREF(0x0097E7FF),
-        cardboard: COLORREF(0x005AB7E0),
-        cardboard_light: COLORREF(0x006AC4EA),
-        cardboard_dark: COLORREF(0x003985B7),
-        floor: COLORREF(0x00646D80),
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn updater_panel_progress(state: &UpdaterPanelState) -> i32 {
-    if state.failed {
-        return 58;
-    }
-
-    match state.step {
-        0 => 18,
-        1 => 46,
-        2 => 74,
-        _ => 100,
-    }
-}
-
-#[cfg(target_os = "windows")]
-unsafe fn fill_rect(
-    hdc: windows::Win32::Graphics::Gdi::HDC,
-    left: i32,
-    top: i32,
-    right: i32,
-    bottom: i32,
-    color: windows::Win32::Foundation::COLORREF,
-) {
-    let brush = unsafe { windows::Win32::Graphics::Gdi::CreateSolidBrush(color) };
-    let _ = unsafe {
-        windows::Win32::Graphics::Gdi::FillRect(
-            hdc,
-            &windows::Win32::Foundation::RECT {
-                left,
-                top,
-                right,
-                bottom,
-            },
-            brush,
-        )
-    };
-    let _ = unsafe { windows::Win32::Graphics::Gdi::DeleteObject(brush.into()) };
-}
-
-#[cfg(target_os = "windows")]
 fn draw_updater_panel_cutout(hwnd: windows::Win32::Foundation::HWND) {
-    use windows::Win32::Foundation::{COLORREF, RECT};
+    use std::ffi::c_void;
+    use windows::Win32::Foundation::{POINT, RECT, SIZE};
     use windows::Win32::Graphics::Gdi::{
-        BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DT_LEFT, DT_WORDBREAK,
-        DeleteDC, DeleteObject, EndPaint, PAINTSTRUCT, SRCCOPY, SelectObject, SetBkMode,
-        TRANSPARENT,
+        AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION,
+        CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS, DT_LEFT, DT_WORDBREAK, DeleteDC,
+        DeleteObject, GetDC, ReleaseDC, SelectObject, SetBkMode, TRANSPARENT,
     };
-    use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetClientRect, GetWindowRect, ULW_ALPHA, UpdateLayeredWindow,
+    };
 
     let state = UPDATER_PANEL_STATE
         .get()
@@ -1031,137 +918,60 @@ fn draw_updater_panel_cutout(hwnd: windows::Win32::Foundation::HWND) {
         });
 
     unsafe {
-        let mut ps = PAINTSTRUCT::default();
-        let paint_hdc = BeginPaint(hwnd, &mut ps);
         let mut client = RECT::default();
         let _ = GetClientRect(hwnd, &mut client);
         let width = client.right - client.left;
         let height = client.bottom - client.top;
-        let mem_hdc = CreateCompatibleDC(Some(paint_hdc));
-        let mem_bitmap = CreateCompatibleBitmap(paint_hdc, width, height);
-        let old_bitmap = SelectObject(mem_hdc, mem_bitmap.into());
-
-        fill_rect(
-            mem_hdc,
-            0,
-            0,
-            client.right,
-            client.bottom,
-            updater_panel_transparent_key(),
-        );
-
-        let palette = updater_panel_palette(state.failed);
-
-        let walking = !state.failed && state.step < 3;
-        let bob = if walking && (state.animation_tick / 3) % 2 == 0 {
-            -2
-        } else {
-            0
-        };
-        let push = if walking {
-            (state.animation_tick as i32 % 8) - 4
-        } else {
-            0
-        };
-        let progress = updater_panel_progress(&state);
-
-        let _ = SetBkMode(mem_hdc, TRANSPARENT);
-
-        fill_rect(mem_hdc, 90, 162, 430, 167, palette.floor);
-        for i in 0..16 {
-            let x = 104 + i * 20;
-            let lit = !state.failed && ((i + state.animation_tick as i32 / 2) % 4 == 0);
-            fill_rect(
-                mem_hdc,
-                x,
-                154,
-                x + 10,
-                159,
-                if lit {
-                    palette.accent
-                } else {
-                    COLORREF(0x00A09690)
-                },
-            );
+        if width <= 0 || height <= 0 {
+            return;
         }
 
-        let box_left = 222;
-        let box_top = 80;
-        let box_right = 382;
-        let box_bottom = 160;
-        fill_rect(
-            mem_hdc,
-            box_left + 10,
-            box_top + 10,
-            box_right + 10,
-            box_bottom + 10,
-            palette.paper_shadow,
-        );
-        fill_rect(
-            mem_hdc,
-            box_left,
-            box_top,
-            box_right,
-            box_bottom,
-            palette.cardboard,
-        );
-        fill_rect(
-            mem_hdc,
-            box_left + 8,
-            box_top + 8,
-            box_right - 8,
-            box_bottom - 8,
-            palette.cardboard_light,
-        );
-        fill_rect(
-            mem_hdc,
-            box_left + 70,
-            box_top,
-            box_left + 92,
-            box_bottom,
-            palette.tape,
-        );
-        fill_rect(
-            mem_hdc,
-            box_left,
-            box_top + 34,
-            box_right,
-            box_top + 48,
-            palette.cardboard_dark,
-        );
-        fill_rect(
-            mem_hdc,
-            box_left + 14,
-            box_bottom - 24,
-            box_left + 14 + ((box_right - box_left - 28) * progress / 100),
-            box_bottom - 14,
-            palette.accent,
-        );
-        fill_rect(
-            mem_hdc,
-            box_left + 14,
-            box_bottom - 14,
-            box_right - 14,
-            box_bottom - 11,
-            palette.cardboard_dark,
-        );
-        fill_rect(
-            mem_hdc,
-            128 + push,
-            154,
-            206 + push,
-            164,
-            COLORREF(0x006A5B55),
-        );
-        draw_updater_helper_sprite(mem_hdc, 138 + push, 96 + bob);
-        fill_rect(mem_hdc, 214, 118, 226, 132, palette.cardboard_dark);
-        fill_rect(mem_hdc, 216, 124, 228, 138, palette.cardboard_dark);
+        let bitmap_info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: width,
+                biHeight: -height,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                biSizeImage: (width * height * 4) as u32,
+                biXPelsPerMeter: 0,
+                biYPelsPerMeter: 0,
+                biClrUsed: 0,
+                biClrImportant: 0,
+            },
+            ..Default::default()
+        };
+
+        let screen_hdc = GetDC(None);
+        let mut bits: *mut c_void = std::ptr::null_mut();
+        let Ok(bitmap) = CreateDIBSection(None, &bitmap_info, DIB_RGB_COLORS, &mut bits, None, 0)
+        else {
+            let _ = ReleaseDC(None, screen_hdc);
+            return;
+        };
+        if bits.is_null() {
+            let _ = DeleteObject(bitmap.into());
+            let _ = ReleaseDC(None, screen_hdc);
+            return;
+        }
+
+        let buffer_len = (width * height * 4) as usize;
+        let buffer = std::slice::from_raw_parts_mut(bits as *mut u8, buffer_len);
+        buffer.fill(0);
+
+        draw_updater_animation_frame(buffer, width, height, &state);
+        draw_updater_bottom_copy(buffer, width, height);
+        let mem_hdc = CreateCompatibleDC(Some(screen_hdc));
+        if mem_hdc.is_invalid() {
+            let _ = DeleteObject(bitmap.into());
+            let _ = ReleaseDC(None, screen_hdc);
+            return;
+        }
+        let old_bitmap = SelectObject(mem_hdc, bitmap.into());
 
         let status_line = format!("{} - {}", state.title, state.subtitle);
-        fill_rect(mem_hdc, 72, 186, 512, 224, palette.paper_shadow);
-        fill_rect(mem_hdc, 64, 178, 504, 216, palette.paper);
-        fill_rect(mem_hdc, 82, 172, 132, 184, palette.tape);
-        fill_rect(mem_hdc, 438, 210, 488, 222, palette.tape);
+        let _ = SetBkMode(mem_hdc, TRANSPARENT);
         draw_text_styled(
             mem_hdc,
             &status_line,
@@ -1172,129 +982,192 @@ fn draw_updater_panel_cutout(hwnd: windows::Win32::Foundation::HWND) {
             DT_LEFT | DT_WORDBREAK,
             13,
             500,
-            palette.muted_ink,
+            windows::Win32::Foundation::COLORREF(0x00705F5A),
         );
 
-        let _ = BitBlt(paint_hdc, 0, 0, width, height, Some(mem_hdc), 0, 0, SRCCOPY);
+        let mut window_rect = RECT::default();
+        let _ = GetWindowRect(hwnd, &mut window_rect);
+        let destination = POINT {
+            x: window_rect.left,
+            y: window_rect.top,
+        };
+        let size = SIZE {
+            cx: width,
+            cy: height,
+        };
+        let source = POINT { x: 0, y: 0 };
+        let blend = BLENDFUNCTION {
+            BlendOp: AC_SRC_OVER as u8,
+            BlendFlags: 0,
+            SourceConstantAlpha: 255,
+            AlphaFormat: AC_SRC_ALPHA as u8,
+        };
+        let _ = UpdateLayeredWindow(
+            hwnd,
+            Some(screen_hdc),
+            Some(&destination as *const POINT),
+            Some(&size as *const SIZE),
+            Some(mem_hdc),
+            Some(&source as *const POINT),
+            windows::Win32::Foundation::COLORREF(0),
+            Some(&blend as *const BLENDFUNCTION),
+            ULW_ALPHA,
+        );
+
         let _ = SelectObject(mem_hdc, old_bitmap);
-        let _ = DeleteObject(mem_bitmap.into());
         let _ = DeleteDC(mem_hdc);
-        let _ = EndPaint(hwnd, &ps);
+        let _ = DeleteObject(bitmap.into());
+        let _ = ReleaseDC(None, screen_hdc);
     }
 }
 
 #[cfg(target_os = "windows")]
-fn updater_helper_sprite_bitmap() -> Option<&'static UpdaterSpriteBitmap> {
-    UPDATER_HELPER_SPRITE_BITMAP
-        .get_or_init(|| {
-            decode_updater_sprite_bitmap(updater_helper_sprite_bytes(UPDATER_HELPER_SPRITE_VARIANT))
-        })
-        .as_ref()
-}
-
-#[cfg(target_os = "windows")]
-fn updater_helper_sprite_bytes(variant: UpdaterHelperSpriteVariant) -> &'static [u8] {
-    match variant {
-        UpdaterHelperSpriteVariant::Gura => include_bytes!("../assets/updater-helper-gura.png"),
-        UpdaterHelperSpriteVariant::SunGirl => {
-            include_bytes!("../assets/updater-helper-sun-girl.png")
-        }
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn decode_updater_sprite_bitmap(bytes: &[u8]) -> Option<UpdaterSpriteBitmap> {
-    let Ok(image) = image::load_from_memory(bytes).map(|image| image.to_rgba8()) else {
-        return None;
-    };
-
-    let (width, height) = image.dimensions();
-    let mut bgra = Vec::with_capacity((width * height * 4) as usize);
-    for pixel in image.pixels() {
-        let [r, g, b, a] = pixel.0;
-        let premultiply = |channel: u8| ((channel as u16 * a as u16 + 127) / 255) as u8;
-        bgra.push(premultiply(b));
-        bgra.push(premultiply(g));
-        bgra.push(premultiply(r));
-        bgra.push(a);
-    }
-
-    Some(UpdaterSpriteBitmap {
-        width: width as i32,
-        height: height as i32,
-        bgra,
-    })
-}
-
-#[cfg(target_os = "windows")]
-unsafe fn draw_updater_helper_sprite(hdc: windows::Win32::Graphics::Gdi::HDC, x: i32, y: i32) {
-    use std::ffi::c_void;
-    use windows::Win32::Graphics::Gdi::{
-        AC_SRC_ALPHA, AC_SRC_OVER, AlphaBlend, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION,
-        CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, SelectObject,
-    };
-
-    let Some(sprite) = updater_helper_sprite_bitmap() else {
+fn draw_updater_animation_frame(
+    buffer: &mut [u8],
+    width: i32,
+    height: i32,
+    state: &UpdaterPanelState,
+) {
+    let Some(frames) = updater_construction_frames() else {
         return;
     };
-
-    let bitmap_info = BITMAPINFO {
-        bmiHeader: BITMAPINFOHEADER {
-            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-            biWidth: sprite.width,
-            biHeight: -sprite.height,
-            biPlanes: 1,
-            biBitCount: 32,
-            biCompression: BI_RGB.0,
-            biSizeImage: sprite.bgra.len() as u32,
-            biXPelsPerMeter: 0,
-            biYPelsPerMeter: 0,
-            biClrUsed: 0,
-            biClrImportant: 0,
-        },
-        ..Default::default()
-    };
-
-    unsafe {
-        let mut bits: *mut c_void = std::ptr::null_mut();
-        let Ok(bitmap) = CreateDIBSection(None, &bitmap_info, DIB_RGB_COLORS, &mut bits, None, 0)
-        else {
-            return;
-        };
-        if bits.is_null() {
-            let _ = DeleteObject(bitmap.into());
-            return;
-        }
-        std::ptr::copy_nonoverlapping(sprite.bgra.as_ptr(), bits as *mut u8, sprite.bgra.len());
-
-        let sprite_hdc = CreateCompatibleDC(Some(hdc));
-        if sprite_hdc.is_invalid() {
-            let _ = DeleteObject(bitmap.into());
-            return;
-        }
-        let old_bitmap = SelectObject(sprite_hdc, bitmap.into());
-        let _ = AlphaBlend(
-            hdc,
-            x,
-            y,
-            sprite.width,
-            sprite.height,
-            sprite_hdc,
-            0,
-            0,
-            sprite.width,
-            sprite.height,
-            BLENDFUNCTION {
-                BlendOp: AC_SRC_OVER as u8,
-                BlendFlags: 0,
-                SourceConstantAlpha: 255,
-                AlphaFormat: AC_SRC_ALPHA as u8,
-            },
-        );
-        let _ = SelectObject(sprite_hdc, old_bitmap);
-        let _ = DeleteDC(sprite_hdc);
-        let _ = DeleteObject(bitmap.into());
+    if frames.is_empty() {
+        return;
     }
+
+    let frame_index = (state.animation_tick as usize) % frames.len();
+    let frame = &frames[frame_index];
+    let copy_width = width.min(frame.width).max(0) as usize;
+    let copy_height = height.min(frame.height).max(0) as usize;
+    let dst_stride = width as usize * 4;
+    let src_stride = frame.width as usize * 4;
+
+    for y in 0..copy_height {
+        let dst_start = y * dst_stride;
+        let src_start = y * src_stride;
+        let byte_len = copy_width * 4;
+        buffer[dst_start..dst_start + byte_len]
+            .copy_from_slice(&frame.bgra[src_start..src_start + byte_len]);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn draw_updater_bottom_copy(buffer: &mut [u8], width: i32, height: i32) {
+    fill_bgra_rect(buffer, width, height, 72, 186, 512, 224, (58, 63, 75, 220));
+    fill_bgra_rect(
+        buffer,
+        width,
+        height,
+        64,
+        178,
+        504,
+        216,
+        (255, 245, 221, 255),
+    );
+    fill_bgra_rect(
+        buffer,
+        width,
+        height,
+        82,
+        172,
+        132,
+        184,
+        (255, 231, 151, 255),
+    );
+    fill_bgra_rect(
+        buffer,
+        width,
+        height,
+        438,
+        210,
+        488,
+        222,
+        (255, 231, 151, 255),
+    );
+}
+
+#[cfg(target_os = "windows")]
+fn fill_bgra_rect(
+    buffer: &mut [u8],
+    width: i32,
+    height: i32,
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+    rgba: (u8, u8, u8, u8),
+) {
+    let left = left.clamp(0, width) as usize;
+    let top = top.clamp(0, height) as usize;
+    let right = right.clamp(0, width) as usize;
+    let bottom = bottom.clamp(0, height) as usize;
+    if left >= right || top >= bottom {
+        return;
+    }
+
+    let (r, g, b, a) = rgba;
+    let premultiply = |channel: u8| ((channel as u16 * a as u16 + 127) / 255) as u8;
+    let pixel = [premultiply(b), premultiply(g), premultiply(r), a];
+    let stride = width as usize * 4;
+
+    for y in top..bottom {
+        let row = y * stride;
+        for x in left..right {
+            let index = row + x * 4;
+            buffer[index..index + 4].copy_from_slice(&pixel);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn updater_construction_frames() -> Option<&'static [UpdaterAnimationFrame]> {
+    UPDATER_CONSTRUCTION_FRAMES
+        .get_or_init(decode_updater_construction_frames)
+        .as_deref()
+}
+
+#[cfg(target_os = "windows")]
+fn decode_updater_construction_frames() -> Option<Vec<UpdaterAnimationFrame>> {
+    let sheet = image::load_from_memory(updater_construction_frames_bytes())
+        .ok()?
+        .to_rgba8();
+    let (sheet_width, sheet_height) = sheet.dimensions();
+    if sheet_height != 240 || sheet_width < 560 || sheet_width % 560 != 0 {
+        return None;
+    }
+
+    let frame_width = 560;
+    let frame_height = sheet_height;
+    let frame_count = sheet_width / frame_width;
+    let mut decoded = Vec::with_capacity(frame_count as usize);
+
+    for frame_index in 0..frame_count {
+        let mut bgra = Vec::with_capacity((frame_width * frame_height * 4) as usize);
+        let left = frame_index * frame_width;
+        for y in 0..frame_height {
+            for x in 0..frame_width {
+                let [r, g, b, a] = sheet.get_pixel(left + x, y).0;
+                let premultiply = |channel: u8| ((channel as u16 * a as u16 + 127) / 255) as u8;
+                bgra.push(premultiply(b));
+                bgra.push(premultiply(g));
+                bgra.push(premultiply(r));
+                bgra.push(a);
+            }
+        }
+
+        decoded.push(UpdaterAnimationFrame {
+            width: frame_width as i32,
+            height: frame_height as i32,
+            bgra,
+        });
+    }
+
+    Some(decoded)
+}
+
+#[cfg(target_os = "windows")]
+fn updater_construction_frames_bytes() -> &'static [u8] {
+    include_bytes!("../assets/updater-construction-frames.png")
 }
 
 #[cfg(target_os = "windows")]

@@ -521,6 +521,52 @@ mod tray_protocol_tests {
             "https://127.0.0.1:48001"
         );
     }
+
+    #[test]
+    fn restart_surfaces_definite_request_failures() {
+        let error = handle_restart_action_error(TrayActionRequestError::Definite(
+            "connection refused".to_string(),
+        ))
+        .unwrap_err();
+
+        assert_eq!(error, "connection refused");
+    }
+
+    #[test]
+    fn restart_tolerates_an_interrupted_response() {
+        let response = handle_restart_action_error(TrayActionRequestError::DeliveryUnknown(
+            "connection closed".to_string(),
+        ))
+        .unwrap();
+
+        assert!(response.is_none());
+    }
+}
+
+#[derive(Debug)]
+enum TrayActionRequestError {
+    Definite(String),
+    DeliveryUnknown(String),
+}
+
+impl TrayActionRequestError {
+    fn into_message(self) -> String {
+        match self {
+            Self::Definite(message) | Self::DeliveryUnknown(message) => message,
+        }
+    }
+}
+
+fn handle_restart_action_error(
+    error: TrayActionRequestError,
+) -> Result<Option<TrayActionResponse>, String> {
+    match error {
+        TrayActionRequestError::Definite(message) => Err(message),
+        TrayActionRequestError::DeliveryUnknown(message) => {
+            debug!("Sunshine restart response was interrupted: {}", message);
+            Ok(None)
+        }
+    }
 }
 
 async fn post_tray_action_request(
@@ -528,10 +574,12 @@ async fn post_tray_action_request(
     enabled: Option<bool>,
     notification_id: Option<u64>,
     operation_id: Option<u64>,
-) -> Result<TrayActionResponse, String> {
-    let action_url = local_tray_endpoint("action").await?;
+) -> Result<TrayActionResponse, TrayActionRequestError> {
+    let action_url = local_tray_endpoint("action")
+        .await
+        .map_err(TrayActionRequestError::Definite)?;
 
-    let client = create_https_client()?;
+    let client = create_https_client().map_err(TrayActionRequestError::Definite)?;
     let mut body = serde_json::json!({ "action": action });
     if let Some(enabled) = enabled {
         body["enabled"] = serde_json::json!(enabled);
@@ -548,28 +596,37 @@ async fn post_tray_action_request(
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("Post tray action failed: {}", e))?;
+        .map_err(|e| {
+            let message = format!("Post tray action failed: {}", e);
+            if e.is_connect() {
+                TrayActionRequestError::Definite(message)
+            } else {
+                TrayActionRequestError::DeliveryUnknown(message)
+            }
+        })?;
 
     let status = response.status();
-    let response_text = response
-        .text()
-        .await
-        .map_err(|e| format!("Read tray action response failed: {}", e))?;
+    let response_text = response.text().await.map_err(|e| {
+        TrayActionRequestError::DeliveryUnknown(format!("Read tray action response failed: {}", e))
+    })?;
 
     if !status.is_success() {
-        return Err(format!(
+        return Err(TrayActionRequestError::Definite(format!(
             "Tray action failed (status {}): {}",
             status, response_text
-        ));
+        )));
     }
 
-    let result: TrayActionResponse = serde_json::from_str(&response_text)
-        .map_err(|e| format!("Parse tray action failed: {}; body: {}", e, response_text))?;
-    let state = result
-        .tray_state
-        .as_ref()
-        .ok_or_else(|| "Tray action response is missing tray_state".to_string())?;
-    validate_tray_state(state)?;
+    let result: TrayActionResponse = serde_json::from_str(&response_text).map_err(|e| {
+        TrayActionRequestError::Definite(format!(
+            "Parse tray action failed: {}; body: {}",
+            e, response_text
+        ))
+    })?;
+    let state = result.tray_state.as_ref().ok_or_else(|| {
+        TrayActionRequestError::Definite("Tray action response is missing tray_state".to_string())
+    })?;
+    validate_tray_state(state).map_err(TrayActionRequestError::Definite)?;
     Ok(result)
 }
 
@@ -577,17 +634,30 @@ pub async fn post_tray_action(
     action: &str,
     enabled: Option<bool>,
 ) -> Result<TrayActionResponse, String> {
-    post_tray_action_request(action, enabled, None, None).await
+    post_tray_action_request(action, enabled, None, None)
+        .await
+        .map_err(TrayActionRequestError::into_message)
+}
+
+pub async fn post_tray_restart_action() -> Result<Option<TrayActionResponse>, String> {
+    match post_tray_action_request("restart", None, None, None).await {
+        Ok(response) => Ok(Some(response)),
+        Err(error) => handle_restart_action_error(error),
+    }
 }
 
 pub async fn acknowledge_tray_notification(
     notification_id: u64,
 ) -> Result<TrayActionResponse, String> {
-    post_tray_action_request("notification_ack", None, Some(notification_id), None).await
+    post_tray_action_request("notification_ack", None, Some(notification_id), None)
+        .await
+        .map_err(TrayActionRequestError::into_message)
 }
 
 pub async fn confirm_vdd_keep(operation_id: u64, keep: bool) -> Result<TrayActionResponse, String> {
-    post_tray_action_request("vdd_confirm_keep", Some(keep), None, Some(operation_id)).await
+    post_tray_action_request("vdd_confirm_keep", Some(keep), None, Some(operation_id))
+        .await
+        .map_err(TrayActionRequestError::into_message)
 }
 
 impl SessionInfo {

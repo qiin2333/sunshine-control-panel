@@ -98,6 +98,7 @@ pub(super) fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<M
         .map(|state| state.notification.clone());
     let (
         core_tray_state_available,
+        shutdown_available,
         vdd_active,
         vdd_keep_enabled,
         vdd_headless_create_enabled,
@@ -107,13 +108,17 @@ pub(super) fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<M
         .map(|state| {
             (
                 true,
+                state
+                    .capabilities
+                    .iter()
+                    .any(|capability| capability == "shutdown"),
                 state.vdd.active,
                 state.vdd.keep_enabled,
                 state.vdd.headless_create_enabled,
                 state.vdd.cooldown,
             )
         })
-        .unwrap_or((false, false, false, false, false));
+        .unwrap_or((false, false, false, false, false, false));
 
     let status = MenuItem::with_id(
         app,
@@ -369,7 +374,13 @@ pub(super) fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<M
         core_tray_state_available,
         None::<&str>,
     )?;
-    let quit = MenuItem::with_id(app, "quit", s.quit, true, None::<&str>)?;
+    let shutdown = MenuItem::with_id(
+        app,
+        "shutdown",
+        s.shutdown,
+        shutdown_available,
+        None::<&str>,
+    )?;
 
     let mut items: Vec<&dyn tauri::menu::IsMenuItem<R>> = vec![&status];
     if active_notification.is_some() {
@@ -387,7 +398,7 @@ pub(super) fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<M
     items.push(&help_submenu);
     items.push(&final_separator);
     items.push(&restart);
-    items.push(&quit);
+    items.push(&shutdown);
 
     Menu::with_items(app, &items)
 }

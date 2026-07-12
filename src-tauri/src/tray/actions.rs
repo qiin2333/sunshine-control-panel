@@ -1,6 +1,7 @@
 use super::*;
 
 pub fn handle_tray_menu_event<R: Runtime + 'static>(app: &AppHandle<R>, menu_id: &str) {
+    let s = get_tray_strings();
     match menu_id {
         "open_main_panel" => open_main_panel_from_tray(app, "menu"),
         "open_sunshine" => open_sunshine_web_ui(app),
@@ -12,40 +13,32 @@ pub fn handle_tray_menu_event<R: Runtime + 'static>(app: &AppHandle<R>, menu_id:
         #[cfg(target_os = "windows")]
         "auto_start" => toggle_auto_start(app),
         "vdd_settings" => open_vdd_settings(app),
-        "vdd_create" => confirm_tray_action(
-            app,
-            "Create Virtual Display",
-            "This creates a virtual display and may change the Windows display layout. Continue?",
-            "vdd_create",
-        ),
+        "vdd_create" => confirm_tray_action(app, s.vdd_create, s.vdd_create_confirm, "vdd_create"),
         "vdd_close" => run_tray_action(app, "vdd_destroy", None),
         "vdd_toggle_keep_enabled" => run_vdd_toggle_action(
             app,
             "vdd_toggle_keep_enabled",
             |state| state.vdd.keep_enabled,
-            "Enable VDD Keep Mode",
-            "Keep mode leaves the virtual display enabled after streaming ends. This can change the Windows display layout. Continue?",
+            s.vdd_keep,
+            s.vdd_keep_confirm,
         ),
         "vdd_toggle_headless_create" => run_vdd_toggle_action(
             app,
             "vdd_toggle_headless_create",
             |state| state.vdd.headless_create_enabled,
-            "Enable Headless VDD Creation",
-            "Headless auto-create is an experimental recovery feature and may change the active display layout. Continue?",
+            s.vdd_headless,
+            s.vdd_headless_confirm,
         ),
         "import_config" => tray_config::import_config(app),
         "export_config" => tray_config::export_config(app),
-        "reset_config" => tray_config::reset_config(app),
-        "clear_cache" => confirm_tray_action(
-            app,
-            "Clear Cache",
-            "This terminates Sunshine so cached app state can be rebuilt. Continue?",
-            "clear_app",
-        ),
+        "reset_config" => tray_config::reset_config(app, s.reset_config, s.reset_config_confirm),
+        "clear_cache" => {
+            confirm_tray_action(app, s.clear_cache, s.clear_cache_confirm, "clear_app")
+        }
         "reset_display" => confirm_tray_action(
             app,
-            "Reset Display",
-            "This resets persisted display-device state. Continue?",
+            s.reset_display,
+            s.reset_display_confirm,
             "reset_display_device_config",
         ),
         #[cfg(target_os = "windows")]
@@ -73,10 +66,7 @@ pub fn handle_tray_menu_event<R: Runtime + 'static>(app: &AppHandle<R>, menu_id:
             info!("ℹ️ 托盘菜单：显示关于对话框");
             let _ = windows::open_about_window(app);
         }
-        "quit" => {
-            info!("🚪 托盘菜单：退出应用");
-            app.exit(0);
-        }
+        "shutdown" => shutdown_sunshine(app),
         "lang_zh" => switch_tray_locale(app, "zh"),
         "lang_en" => switch_tray_locale(app, "en"),
         "lang_ja" => switch_tray_locale(app, "ja"),
@@ -87,7 +77,7 @@ pub fn handle_tray_menu_event<R: Runtime + 'static>(app: &AppHandle<R>, menu_id:
         "visit_project_moonlight" => {
             utils::open_url_in_browser("https://github.com/qiin2333/moonlight-vplus")
         }
-        "restart" => run_tray_action(app, "restart", None),
+        "restart" => restart_sunshine(app),
         _ => warn!("⚠️ 未知的托盘菜单事件: {}", menu_id),
     }
 }
@@ -187,6 +177,10 @@ fn run_vdd_toggle_action<R: Runtime>(
         .as_ref()
         .map(|state| !current_value(state));
 
+    // Windows toggles native check items before dispatching the click event.
+    // Restore the authoritative Core state while confirmation is pending.
+    refresh_menu(app);
+
     if enabled == Some(true) {
         use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
@@ -236,6 +230,66 @@ fn run_tray_action<R: Runtime>(app: &AppHandle<R>, action: &'static str, enabled
             }
         }
     });
+}
+
+fn restart_sunshine<R: Runtime>(app: &AppHandle<R>) {
+    let app_handle = app.clone();
+
+    tauri::async_runtime::spawn(async move {
+        match sunshine::post_tray_restart_action().await {
+            Ok(Some(response)) if !response.status => {
+                let message = if response.error.is_empty() {
+                    "Sunshine restart was rejected".to_string()
+                } else {
+                    response.error
+                };
+                error!("Sunshine restart failed: {}", message);
+                emit_message(&app_handle, "error", &message);
+            }
+            Ok(_) => debug!("Sunshine restart requested"),
+            Err(error) => {
+                error!("Sunshine restart request failed: {}", error);
+                emit_message(&app_handle, "error", &error);
+            }
+        }
+    });
+}
+
+fn shutdown_sunshine<R: Runtime>(app: &AppHandle<R>) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+
+    let strings = get_tray_strings();
+    let app_handle = app.clone();
+    app.dialog()
+        .message(strings.shutdown_message)
+        .title(strings.shutdown)
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::YesNo)
+        .show(move |confirmed| {
+            if !confirmed {
+                return;
+            }
+
+            let shutdown_handle = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                match sunshine::post_tray_action("shutdown", None).await {
+                    Ok(response) if response.status => shutdown_handle.exit(0),
+                    Ok(response) => {
+                        let message = if response.error.is_empty() {
+                            "Sunshine shutdown was rejected".to_string()
+                        } else {
+                            response.error
+                        };
+                        error!("Sunshine shutdown failed: {}", message);
+                        emit_message(&shutdown_handle, "error", &message);
+                    }
+                    Err(error) => {
+                        error!("Sunshine shutdown request failed: {}", error);
+                        emit_message(&shutdown_handle, "error", &error);
+                    }
+                }
+            });
+        });
 }
 
 fn open_sunshine_web_ui<R: Runtime>(app: &AppHandle<R>) {
@@ -324,6 +378,7 @@ async fn update_sunshine_mode_state<R: Runtime + 'static>(app: &AppHandle<R>, ch
 #[cfg(target_os = "windows")]
 fn toggle_sunshine_mode<R: Runtime>(app: &AppHandle<R>) {
     info!("🔄 托盘菜单：切换 Sunshine 模式");
+    refresh_menu(app);
     let app_handle = app.clone();
 
     tauri::async_runtime::spawn(async move {
@@ -412,6 +467,7 @@ fn check_for_updates<R: Runtime>(app: &AppHandle<R>) {
 #[cfg(target_os = "windows")]
 fn toggle_auto_start<R: Runtime + 'static>(app: &AppHandle<R>) {
     let enabled = !desktop_settings::is_combined_auto_start_enabled();
+    refresh_menu(app);
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
         let result = tauri::async_runtime::spawn_blocking(move || {

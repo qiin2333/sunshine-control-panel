@@ -242,7 +242,7 @@ fn shutdown_sunshine<R: Runtime>(app: &AppHandle<R>) {
     let app_handle = app.clone();
     app.dialog()
         .message(strings.shutdown_message)
-        .title(strings.shutdown_title)
+        .title(strings.shutdown)
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::YesNo)
         .show(move |confirmed| {

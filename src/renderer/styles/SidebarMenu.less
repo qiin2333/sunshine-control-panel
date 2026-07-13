@@ -686,17 +686,13 @@
 // ========== 响应式设计 ==========
 @media (max-width: 768px) {
   .sidebar {
-    position: absolute;
-    left: 0;
-    top: 0;
+    position: relative;
+    left: auto;
+    top: auto;
     z-index: 1000;
-
-    &.collapsed {
-      transform: translateX(-100%);
-    }
   }
 
   .main-content {
-    width: 100% !important;
+    width: auto !important;
   }
 }

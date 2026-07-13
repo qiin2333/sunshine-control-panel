@@ -265,6 +265,15 @@
   }
 }
 
+.vdd-page-header,
+.hero-panel,
+.vdd-form {
+  width: 100%;
+  max-width: 1280px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
 .hero-panel {
   margin-bottom: 24px;
   padding: 20px 24px;
@@ -679,15 +688,15 @@
 
 .two-column-layout {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px 20px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
 
   :deep(.el-form-item) {
     margin-bottom: 0;
   }
 
   .span-two {
-    grid-column: 1 / -1;
+    grid-column: ~"1 / -1";
   }
 }
 
@@ -802,12 +811,37 @@
     grid-template-columns: 1fr;
   }
 
-  .utility-card {
-    position: static;
+  .vdd-page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    padding-top: 18px;
+  }
+
+  .vdd-header {
+    flex-direction: column;
+  }
+
+  .header-copy {
+    width: 100%;
+    max-width: none;
+  }
+
+  .hero-callout-affix {
+    width: 100%;
+    flex: 1 1 auto;
+  }
+
+  .cert-badges {
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .overview-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .utility-card {
+    position: static;
   }
 }
 
@@ -833,6 +867,10 @@
 
   .cert-badges {
     width: 100%;
+  }
+
+  .overview-grid {
+    grid-template-columns: 1fr;
   }
 
   .two-column-layout {

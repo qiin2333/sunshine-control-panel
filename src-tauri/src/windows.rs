@@ -3,7 +3,10 @@ use log::{debug, error, info, warn};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::Mutex;
-use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewWindow};
+use tauri::{
+    AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewWindow,
+    webview::PageLoadEvent,
+};
 
 struct HeartbeatState {
     created_at: std::time::Instant,
@@ -735,7 +738,7 @@ fn create_main_window_internal<R: Runtime>(
     let window = tauri::WebviewWindowBuilder::new(
         app,
         MAIN_WINDOW_ID,
-        tauri::WebviewUrl::App("placeholder.html".into()),
+        tauri::WebviewUrl::App("sunshine-frame.html".into()),
     )
     .title("Sunshine Control Panel")
     .inner_size(1280.0, 800.0)
@@ -744,9 +747,20 @@ fn create_main_window_internal<R: Runtime>(
     .decorations(false)
     .transparent(true)
     .shadow(false)
-    .visible(visible)
+    .visible(false)
     .disable_drag_drop_handler()
     .initialization_script(WEBVIEW_VISIBILITY_INIT_SCRIPT)
+    .on_page_load(move |window, payload| {
+        if visible && payload.event() == PageLoadEvent::Finished {
+            tauri::async_runtime::spawn(async move {
+                // WebView2 can report a completed DOM before its compositor
+                // has submitted the first frame. Avoid exposing that black
+                // frame, then present the built-in loading shell or panel.
+                tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+                show_and_activate_window(&window);
+            });
+        }
+    })
     .build()
     .map_err(|e| {
         end_webview_heartbeat(MAIN_WINDOW_ID);
@@ -841,12 +855,21 @@ pub fn activate_main_window(app: &tauri::AppHandle, target_url: Option<String>) 
         target_url
     );
 
-    if app.get_webview_window(MAIN_WINDOW_ID).is_none() {
+    let created = if app.get_webview_window(MAIN_WINDOW_ID).is_none() {
         info!("主窗口尚未创建，正在从用户会话 agent 按需创建");
         if let Err(e) = create_main_window(app) {
             error!("❌ 按需创建主窗口失败: {}", e);
             return;
         }
+        true
+    } else {
+        false
+    };
+
+    // Cold windows are revealed by the page-load hook after WebView2 has a
+    // composited first frame. The startup page reads any runtime URL itself.
+    if created {
+        return;
     }
 
     let Some(window) = app.get_webview_window(MAIN_WINDOW_ID) else {

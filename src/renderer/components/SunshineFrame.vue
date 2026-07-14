@@ -295,6 +295,7 @@ onMounted(async () => {
   window.addEventListener('locale-changed', handleLocaleChanged)
 
   try {
+    await invoke('wait_for_proxy_ready')
     await refreshProxyTarget()
     const proxyBaseUrl = await sunshine.getProxyUrl()
     proxyBase = proxyBaseUrl
@@ -487,19 +488,17 @@ const onLoad = () => {
   opacity: 0;
 }
 
-body[data-bs-theme='light'] {
-  .loading-overlay {
-    background: linear-gradient(135deg, @gura-bg-light 0%, @gura-bg-mid 100%);
-  }
+:global(html[data-bs-theme='light'] .loading-overlay) {
+  background: linear-gradient(135deg, @gura-bg-light 0%, @gura-bg-mid 100%);
+}
 
-  .loading-image {
-    filter: drop-shadow(0 4px 12px rgba(74, 158, 255, 0.3));
-  }
+:global(html[data-bs-theme='light'] .loading-image) {
+  filter: drop-shadow(0 4px 12px rgba(74, 158, 255, 0.3));
+}
 
-  .loading-text {
-    color: @gura-blue;
-    text-shadow: 1px 1px 3px rgba(74, 158, 255, 0.2);
-  }
+:global(html[data-bs-theme='light'] .loading-text) {
+  color: @gura-blue;
+  text-shadow: 1px 1px 3px rgba(74, 158, 255, 0.2);
 }
 </style>
 

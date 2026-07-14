@@ -4,6 +4,20 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Sunshine Control Panel</title>
+    <script>
+      ;(() => {
+        const savedTheme = localStorage.getItem('sunshine-theme')
+        const theme =
+          savedTheme === 'light' || savedTheme === 'dark'
+            ? savedTheme
+            : window.matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'dark'
+              : 'light'
+
+        document.documentElement.setAttribute('data-bs-theme', theme)
+        document.documentElement.style.colorScheme = theme
+      })()
+    </script>
     <style>
       * {
         margin: 0;
@@ -11,13 +25,64 @@
         box-sizing: border-box;
       }
 
+      :root {
+        --boot-background: linear-gradient(135deg, #2d2628 0%, #3d3235 100%);
+        --boot-foreground: #e6d5b8;
+        --boot-shadow: rgba(212, 165, 165, 0.3);
+      }
+
+      :root[data-bs-theme='light'] {
+        --boot-background: linear-gradient(135deg, #f0f8ff 0%, #e6f2ff 100%);
+        --boot-foreground: #4a9eff;
+        --boot-shadow: rgba(74, 158, 255, 0.3);
+      }
+
       body {
         overflow: hidden;
+        background: var(--boot-background);
       }
 
       #app {
         width: 100%;
         height: 100vh;
+      }
+
+      .boot-loading {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: var(--boot-foreground);
+        font-family: 'PixelMplus12', 'Segoe UI', sans-serif;
+      }
+
+      .boot-loading img {
+        width: min(180px, 36vw);
+        opacity: 0.85;
+        filter: drop-shadow(0 4px 12px var(--boot-shadow));
+        animation: boot-gura 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+      }
+
+      .boot-loading p {
+        margin-top: 20px;
+        font-size: 18px;
+      }
+
+      @keyframes boot-gura {
+        0% {
+          transform: translateX(-80%) rotate(-5deg) translateY(-5px) scale(0.9);
+        }
+        45% {
+          transform: translateX(0) rotate(0deg) translateY(2px) scale(1.08);
+        }
+        55% {
+          transform: translateX(10%) rotate(3deg) translateY(-8px) scale(0.96);
+        }
+        100% {
+          transform: translateX(80%) rotate(5deg) translateY(-5px) scale(0.9);
+        }
       }
       
       @font-face {
@@ -28,7 +93,12 @@
     </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <div class="boot-loading" role="status" aria-live="polite">
+        <img src="./public/gura-pix.png" alt="" />
+        <p>正在准备 Sunshine...</p>
+      </div>
+    </div>
     <script type="module" src="./sunshine-frame.js"></script>
   </body>
 </html>

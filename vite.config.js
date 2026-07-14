@@ -39,7 +39,6 @@ export default defineConfig(() => ({
     rollupOptions: {
       input: {
         index: resolve(rendererSrcPath, 'index.html'),
-        placeholder: resolve(rendererSrcPath, 'placeholder.html'),
         sunshineFrame: resolve(rendererSrcPath, 'sunshine-frame.html'),
         vdd: resolve(rendererSrcPath, 'vdd/index.html'),
         console: resolve(rendererSrcPath, 'console/index.html'),

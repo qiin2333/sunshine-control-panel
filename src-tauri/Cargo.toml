@@ -16,6 +16,7 @@ tauri-build = { version = "2.6.2", features = [] }
 tauri = { version = "2.11.2", features = [ "tray-icon", "native-tls-vendored"] }
 tauri-plugin-shell = "2.3.5"
 tauri-plugin-dialog = "2.7.1"
+tauri-plugin-notification = "2.3.3"
 tauri-plugin-fs = "2.5.1"
 tauri-plugin-single-instance = "2.4.2"
 tauri-plugin-global-shortcut = "2.3.1"
@@ -56,6 +57,7 @@ custom-protocol = ["tauri/custom-protocol"]
 beta = []
 
 [target.'cfg(windows)'.dependencies]
+tauri-winrt-notification = "0.7.3"
 windows = { version = "0.62.2", features = [
     "Win32",
     "Win32_Foundation",

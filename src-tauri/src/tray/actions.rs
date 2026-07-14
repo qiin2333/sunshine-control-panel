@@ -104,7 +104,7 @@ fn handle_tray_notification_action<R: Runtime>(app: &AppHandle<R>) {
         .map(|notification| notification.action.as_str())
     {
         Some("open_pin") => {
-            open_local_pin_window(app);
+            open_pairing_window(app);
         }
         _ => {
             open_main_panel_from_tray(app, "notification");
@@ -120,7 +120,7 @@ fn handle_tray_notification_action<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
-fn open_local_pin_window<R: Runtime>(app: &AppHandle<R>) {
+pub(super) fn open_pairing_window<R: Runtime>(app: &AppHandle<R>) {
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
         match sunshine::get_local_sunshine_url().await {

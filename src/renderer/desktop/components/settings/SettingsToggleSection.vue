@@ -5,9 +5,12 @@
       :key="item.key"
       :name="item.name"
       :description="item.description"
+      :disabled="Boolean(item.disabled)"
     >
       <SettingsSwitch
         :model-value="Boolean(values[item.key])"
+        :disabled="Boolean(item.disabled)"
+        :label="item.name"
         @update:model-value="emit('update-value', item.key, $event)"
       />
     </SettingsRow>

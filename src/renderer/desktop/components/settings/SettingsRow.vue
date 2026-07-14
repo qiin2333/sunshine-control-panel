@@ -1,5 +1,5 @@
 <template>
-  <div class="setting-item">
+  <div class="setting-item" :class="{ disabled }">
     <div class="setting-info">
       <div class="setting-name" :class="nameClass">
         <slot name="name">{{ name }}</slot>
@@ -32,6 +32,10 @@ defineProps({
     type: [String, Array, Object],
     default: null,
   },
+  disabled: {
+    type: Boolean,
+    default: false,
+  },
 })
 </script>
 
@@ -50,6 +54,10 @@ defineProps({
 
   &:first-child {
     padding-top: 0;
+  }
+
+  &.disabled {
+    opacity: 0.5;
   }
 }
 

@@ -102,6 +102,7 @@ fn main() {
     let application = builder
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             // 初始化日志系统（需要在 setup 中获取 app handle）

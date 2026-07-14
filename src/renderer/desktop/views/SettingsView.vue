@@ -106,11 +106,13 @@ const notificationSettings = computed(() => [
     key: 'connectionNotify',
     name: t.value.settings.connectionNotify,
     description: t.value.settings.connectionNotifyDesc,
+    disabled: !settings.value.notifications,
   },
   {
     key: 'updateNotify',
     name: t.value.settings.updateNotify,
     description: t.value.settings.updateNotifyDesc,
+    disabled: !settings.value.notifications,
   },
 ])
 

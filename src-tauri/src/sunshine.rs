@@ -1,7 +1,7 @@
 use log::{debug, error, info, warn};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, RwLock};
 use url::Url;
@@ -71,11 +71,42 @@ fn get_sunshine_path() -> PathBuf {
     path
 }
 
+#[cfg(target_os = "windows")]
+fn bundled_sunshine_root(gui_executable: &Path) -> Option<PathBuf> {
+    let gui_dir = gui_executable.parent()?;
+    if !gui_dir
+        .file_name()?
+        .to_string_lossy()
+        .eq_ignore_ascii_case("gui")
+    {
+        return None;
+    }
+
+    let assets_dir = gui_dir.parent()?;
+    if !assets_dir
+        .file_name()?
+        .to_string_lossy()
+        .eq_ignore_ascii_case("assets")
+    {
+        return None;
+    }
+
+    Some(assets_dir.parent()?.to_path_buf())
+}
+
 fn get_sunshine_path_internal() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
         use winreg::RegKey;
         use winreg::enums::*;
+
+        if let Ok(gui_executable) = std::env::current_exe()
+            && let Some(root) = bundled_sunshine_root(&gui_executable)
+            && root.join("sunshine.exe").is_file()
+        {
+            info!("Using bundled Sunshine path: {:?}", root);
+            return root;
+        }
 
         let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
 
@@ -122,6 +153,28 @@ fn get_sunshine_path_internal() -> PathBuf {
     #[cfg(not(target_os = "windows"))]
     {
         PathBuf::from("/usr/local/sunshine")
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod bundled_path_tests {
+    use super::*;
+
+    #[test]
+    fn derives_root_from_packaged_gui_layout() {
+        let executable = Path::new(r"C:\Sunshine\assets\gui\sunshine-gui.exe");
+
+        assert_eq!(
+            bundled_sunshine_root(executable),
+            Some(PathBuf::from(r"C:\Sunshine"))
+        );
+    }
+
+    #[test]
+    fn rejects_unrelated_gui_locations() {
+        let executable = Path::new(r"C:\Tools\sunshine-gui.exe");
+
+        assert_eq!(bundled_sunshine_root(executable), None);
     }
 }
 
@@ -353,6 +406,14 @@ pub struct SessionInfo {
     pub app_id: i32,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
+pub struct TrayClientSession {
+    #[serde(default)]
+    pub id: u32,
+    #[serde(default)]
+    pub client_name: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
 pub struct TrayVddState {
     #[serde(default)]
@@ -419,6 +480,8 @@ pub struct TrayState {
     pub app_name: String,
     #[serde(default)]
     pub pairing_client_name: String,
+    #[serde(default)]
+    pub sessions: Vec<TrayClientSession>,
     #[serde(default)]
     pub revision: u64,
     #[serde(default)]

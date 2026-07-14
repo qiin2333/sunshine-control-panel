@@ -14,6 +14,7 @@ mod events;
 mod icons;
 mod main_panel;
 mod menu;
+mod notifications;
 #[cfg(target_os = "windows")]
 mod vdd_confirmation;
 
@@ -87,6 +88,15 @@ struct TrayStrings {
     status_connecting: &'static str,
     status_disconnected: &'static str,
     notification: &'static str,
+    client_connected: &'static str,
+    client_connected_detail: &'static str,
+    client_connected_named: &'static str,
+    client_disconnected: &'static str,
+    client_disconnected_detail: &'static str,
+    client_disconnected_named: &'static str,
+    incoming_pairing: &'static str,
+    pairing_instruction: &'static str,
+    pairing_menu_instruction: &'static str,
     complete_pairing: &'static str,
     open_main_panel: &'static str,
     interfaces_menu: &'static str,
@@ -147,6 +157,15 @@ const ZH_STRINGS: TrayStrings = TrayStrings {
     status_connecting: "正在连接",
     status_disconnected: "未连接",
     notification: "通知",
+    client_connected: "客户端已连接",
+    client_connected_detail: "已建立新的串流连接。",
+    client_connected_named: "「{name}」已连接到这台电脑。",
+    client_disconnected: "客户端已断开",
+    client_disconnected_detail: "串流连接已结束。",
+    client_disconnected_named: "「{name}」已从这台电脑断开。",
+    incoming_pairing: "Moonlight 配对请求",
+    pairing_instruction: "点击此通知，输入 Moonlight 上显示的 4 位 PIN。",
+    pairing_menu_instruction: "打开 Sunshine 托盘菜单中的“完成配对”，输入 Moonlight 上显示的 4 位 PIN。",
     complete_pairing: "完成配对",
     open_main_panel: "打开主面板",
     interfaces_menu: "其他界面",
@@ -207,6 +226,15 @@ const EN_STRINGS: TrayStrings = TrayStrings {
     status_connecting: "Connecting",
     status_disconnected: "Disconnected",
     notification: "Notification",
+    client_connected: "Client connected",
+    client_connected_detail: "A new streaming connection is ready.",
+    client_connected_named: "“{name}” connected to this computer.",
+    client_disconnected: "Client disconnected",
+    client_disconnected_detail: "The streaming connection has ended.",
+    client_disconnected_named: "“{name}” disconnected from this computer.",
+    incoming_pairing: "Moonlight pairing request",
+    pairing_instruction: "Click this notification to enter the 4-digit PIN shown in Moonlight.",
+    pairing_menu_instruction: "Open Complete Pairing from the Sunshine tray menu and enter the 4-digit PIN shown in Moonlight.",
     complete_pairing: "Complete pairing",
     open_main_panel: "Open Main Panel",
     interfaces_menu: "Other Interfaces",
@@ -267,6 +295,15 @@ const JA_STRINGS: TrayStrings = TrayStrings {
     status_connecting: "接続中",
     status_disconnected: "未接続",
     notification: "通知",
+    client_connected: "クライアントが接続しました",
+    client_connected_detail: "新しいストリーミング接続が確立されました。",
+    client_connected_named: "「{name}」がこのコンピューターに接続しました。",
+    client_disconnected: "クライアントが切断されました",
+    client_disconnected_detail: "ストリーミング接続が終了しました。",
+    client_disconnected_named: "「{name}」がこのコンピューターから切断されました。",
+    incoming_pairing: "Moonlight ペアリング要求",
+    pairing_instruction: "この通知をクリックし、Moonlight に表示された 4 桁の PIN を入力してください。",
+    pairing_menu_instruction: "Sunshine のトレイメニューから「ペアリングを完了」を開き、Moonlight に表示された 4 桁の PIN を入力してください。",
     complete_pairing: "ペアリングを完了",
     open_main_panel: "メインパネルを開く",
     interfaces_menu: "その他のインターフェース",
@@ -370,6 +407,10 @@ mod power {
 pub fn create_system_tray<R: Runtime + 'static>(app: &AppHandle<R>) -> tauri::Result<()> {
     #[cfg(target_os = "windows")]
     init_sunshine_user_mode_state(app);
+
+    if let Err(error) = notifications::initialize(app) {
+        warn!("{}", error);
+    }
 
     sync_tray_locale(app);
     build_owned_system_tray(app)?;
@@ -692,19 +733,22 @@ fn apply_tray_state<R: Runtime + 'static>(app: &AppHandle<R>, state: &sunshine::
     };
     let state_changed = {
         let mut current_state = CURRENT_TRAY_STATE.lock().unwrap();
+        let previous_state = current_state.clone();
         let changed = current_state
             .as_ref()
             .map(|current_state| {
                 current_state.status != state.status
                     || current_state.app_name != state.app_name
                     || current_state.pairing_client_name != state.pairing_client_name
+                    || current_state.sessions != state.sessions
                     || current_state.vdd != state.vdd
                     || current_state.notification != state.notification
             })
             .unwrap_or(true);
         *current_state = Some(state.clone());
-        changed
+        (changed, previous_state)
     };
+    let (state_changed, previous_state) = state_changed;
     let should_rebuild_menu = connection_changed || state_changed;
 
     if state.owner != "gui" {
@@ -718,10 +762,14 @@ fn apply_tray_state<R: Runtime + 'static>(app: &AppHandle<R>, state: &sunshine::
         return;
     }
 
+    notifications::show_connection_change_if_any(app, previous_state.as_ref(), state);
+
     if let Err(e) = build_owned_system_tray(app) {
         error!("Failed to create GUI tray for core owner: {}", e);
         return;
     }
+
+    notifications::show_core_notification_if_new(app, state);
 
     if should_rebuild_menu {
         rebuild_tray_menu(app);

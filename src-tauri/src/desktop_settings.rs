@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 #[cfg(debug_assertions)]
 use tauri::Manager;
@@ -91,11 +91,6 @@ fn normalize(settings: &mut DesktopSettings) {
         "error" | "warn" | "info" | "debug" | "trace" => level,
         _ => "info".to_string(),
     };
-}
-
-#[cfg(target_os = "windows")]
-fn powershell_single_quote(value: &str) -> String {
-    value.replace('\'', "''")
 }
 
 pub fn load_desktop_settings_from_disk() -> DesktopSettings {
@@ -208,6 +203,32 @@ fn sunshine_service_start_mode() -> Result<Option<ServiceStartMode>, String> {
         4 => Ok(Some(ServiceStartMode::Disabled)),
         value => Err(format!("Unsupported Sunshine service start type: {value}")),
     }
+}
+
+#[cfg(target_os = "windows")]
+fn service_image_path_matches_install(image_path: &str, install_dir: &Path) -> bool {
+    let image_path = image_path.trim().trim_matches('"');
+    let expected = install_dir.join("tools").join("sunshinesvc.exe");
+
+    image_path.eq_ignore_ascii_case(&expected.to_string_lossy())
+}
+
+#[cfg(target_os = "windows")]
+fn sunshine_service_matches_install(install_dir: &Path) -> Result<bool, String> {
+    use winreg::RegKey;
+    use winreg::enums::*;
+
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let service = match hklm.open_subkey(r"SYSTEM\CurrentControlSet\Services\SunshineService") {
+        Ok(service) => service,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.to_string()),
+    };
+    let image_path = service
+        .get_value::<String, _>("ImagePath")
+        .map_err(|error| error.to_string())?;
+
+    Ok(service_image_path_matches_install(&image_path, install_dir))
 }
 
 #[cfg(target_os = "windows")]
@@ -403,19 +424,23 @@ async fn ensure_sunshine_started() -> Result<(), String> {
             ));
         }
 
-        let command = format!(
-            "$svc = Get-Service -Name 'SunshineService' -ErrorAction SilentlyContinue; \
-             if ($svc) {{ Start-Service -Name 'SunshineService' }} \
-             else {{ Start-Process -FilePath '{}' -WorkingDirectory '{}' -WindowStyle Hidden }}",
-            powershell_single_quote(&sunshine_exe.to_string_lossy()),
-            powershell_single_quote(&install_dir.to_string_lossy())
-        );
-
-        std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command", &command])
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn()
-            .map_err(|e| e.to_string())?;
+        if sunshine_service_matches_install(&install_dir)? {
+            std::process::Command::new("powershell")
+                .args([
+                    "-NoProfile",
+                    "-Command",
+                    "Start-Service -Name 'SunshineService'",
+                ])
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        } else {
+            std::process::Command::new(&sunshine_exe)
+                .current_dir(&install_dir)
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        }
         Ok(())
     }
 
@@ -430,11 +455,44 @@ mod tests {
     use super::*;
 
     #[test]
+    fn notification_preferences_are_enabled_by_default() {
+        let settings = DesktopSettings::default();
+
+        assert!(settings.notifications);
+        assert!(settings.connection_notify);
+        assert!(settings.update_notify);
+    }
+
+    #[test]
+    fn missing_notification_preferences_migrate_to_enabled() {
+        let settings: DesktopSettings = serde_json::from_str(r#"{"autoStart":false}"#)
+            .expect("legacy desktop settings should deserialize");
+
+        assert!(settings.notifications);
+        assert!(settings.connection_notify);
+        assert!(settings.update_notify);
+    }
+
+    #[test]
     fn combined_startup_accepts_automatic_or_service_free_core() {
         assert!(core_auto_start_ready(None));
         assert!(core_auto_start_ready(Some(ServiceStartMode::Auto)));
         assert!(core_auto_start_ready(Some(ServiceStartMode::DelayedAuto)));
         assert!(!core_auto_start_ready(Some(ServiceStartMode::Demand)));
         assert!(!core_auto_start_ready(Some(ServiceStartMode::Disabled)));
+    }
+
+    #[test]
+    fn service_must_belong_to_the_same_install() {
+        let install_dir = Path::new(r"C:\Portable Sunshine");
+
+        assert!(service_image_path_matches_install(
+            r#""C:\Portable Sunshine\tools\sunshinesvc.exe""#,
+            install_dir
+        ));
+        assert!(!service_image_path_matches_install(
+            r#""C:\Program Files\Sunshine\tools\sunshinesvc.exe""#,
+            install_dir
+        ));
     }
 }

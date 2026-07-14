@@ -137,8 +137,6 @@ const currentView = computed(() => viewMap[activeNav.value] || DashboardView)
 
 // Tauri invoke
 const invoke = ref(null)
-let sessionNotifyTimer = null
-let lastSessionIds = new Set()
 let settingsListener = null
 let updateUnlisten = null
 let desktopNavigateUnlisten = null
@@ -150,48 +148,12 @@ function applyRuntimeSettings() {
   }
 }
 
-function sessionKey(session) {
-  return String(session.session_id ?? session.id ?? `${session.client_name || 'client'}:${session.client_address || ''}`)
-}
-
 function settingsText(key, fallback, replacements = {}) {
   let text = t.value.settings?.[key] || fallback
   for (const [name, value] of Object.entries(replacements)) {
     text = text.replace(`{${name}}`, value)
   }
   return text
-}
-
-async function pollSessionsForNotifications(initial = false) {
-  if (!invoke.value) return
-  try {
-    const sessions = await invoke.value('get_active_sessions')
-    const nextIds = new Set((sessions || []).map(sessionKey))
-    if (!initial && desktopSettings.value.notifications && desktopSettings.value.connectionNotify) {
-      for (const session of sessions || []) {
-        const id = sessionKey(session)
-        if (!lastSessionIds.has(id)) {
-          showDesktopNotification(
-            settingsText('notificationTitle', 'Sunshine'),
-            settingsText('clientConnected', '{name} connected', { name: session.client_name || 'Client' }),
-            desktopSettings.value
-          )
-        }
-      }
-      for (const id of lastSessionIds) {
-        if (!nextIds.has(id)) {
-          showDesktopNotification(
-            settingsText('notificationTitle', 'Sunshine'),
-            settingsText('clientDisconnected', 'Client disconnected'),
-            desktopSettings.value
-          )
-        }
-      }
-    }
-    lastSessionIds = nextIds
-  } catch {
-    // Sunshine may be offline; keep the last known state.
-  }
 }
 
 async function setupUpdateNotifications() {
@@ -240,12 +202,9 @@ onMounted(async () => {
   window.addEventListener(DESKTOP_SETTINGS_UPDATED, settingsListener)
   await setupDesktopNavigationEvents()
   await setupUpdateNotifications()
-  await pollSessionsForNotifications(true)
-  sessionNotifyTimer = setInterval(() => pollSessionsForNotifications(false), 15000)
 })
 
 onUnmounted(() => {
-  if (sessionNotifyTimer) clearInterval(sessionNotifyTimer)
   if (settingsListener) window.removeEventListener(DESKTOP_SETTINGS_UPDATED, settingsListener)
   if (updateUnlisten) updateUnlisten()
   if (desktopNavigateUnlisten) desktopNavigateUnlisten()

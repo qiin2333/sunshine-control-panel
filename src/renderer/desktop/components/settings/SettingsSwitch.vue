@@ -1,8 +1,10 @@
 <template>
-  <label class="settings-switch">
+  <label class="settings-switch" :class="{ disabled }">
     <input
       type="checkbox"
       :checked="modelValue"
+      :disabled="disabled"
+      :aria-label="label || undefined"
       @change="handleChange"
     />
     <span class="slider"></span>
@@ -14,6 +16,14 @@ defineProps({
   modelValue: {
     type: Boolean,
     required: true,
+  },
+  disabled: {
+    type: Boolean,
+    default: false,
+  },
+  label: {
+    type: String,
+    default: '',
   },
 })
 
@@ -45,6 +55,15 @@ function handleChange(event) {
         transform: translateX(22px);
       }
     }
+
+    &:focus-visible + .slider {
+      outline: 2px solid var(--fd-accent, #00fff5);
+      outline-offset: 3px;
+    }
+  }
+
+  &.disabled .slider {
+    cursor: not-allowed;
   }
 }
 

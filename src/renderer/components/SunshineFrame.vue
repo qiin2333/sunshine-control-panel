@@ -267,6 +267,7 @@ const createMessageHandler = () => {
 
 // Window state monitoring
 let checkWindowStateFn = null
+let visibilityGeneration = 0
 
 const setupWindowStateMonitor = async (currentWindow) => {
   let lastMinimized = false
@@ -290,6 +291,7 @@ const setupWindowStateMonitor = async (currentWindow) => {
   await checkWindowStateFn()
 
   const visibilityHandler = async () => {
+    const generation = ++visibilityGeneration
     const hidden = document.hidden
     setAnimationsPaused(hidden)
 
@@ -298,6 +300,9 @@ const setupWindowStateMonitor = async (currentWindow) => {
       if (sunshineUrl.value && sunshineUrl.value !== 'about:blank') {
         // 保存当前实际页面路径（而非初始 URL），恢复时能回到用户所在的页面
         windowSuspendedUrl = proxyBase ? proxyBase + currentPath.value : sunshineUrl.value
+        // Prepare the shell while the native window is still hidden so the
+        // about:blank iframe is never exposed during the next activation.
+        loading.value = true
         sunshineUrl.value = 'about:blank'
         console.log('[SunshineFrame] 窗口隐藏 → iframe 休眠, saved:', windowSuspendedUrl)
       }
@@ -307,10 +312,21 @@ const setupWindowStateMonitor = async (currentWindow) => {
       }
     } else {
       // 窗口恢复 → 唤醒 iframe（仅当是窗口隐藏导致的休眠时恢复）
-      await refreshProxyTarget()
       if (windowSuspendedUrl) {
-        sunshineUrl.value = windowSuspendedUrl
+        loading.value = true
+        try {
+          await refreshProxyTarget()
+        } catch (error) {
+          console.warn('[SunshineFrame] refresh proxy target on resume failed:', error)
+        }
+
+        // A second visibility transition may have happened while the proxy
+        // refresh was in flight. Keep the iframe asleep if we are hidden again.
+        if (generation !== visibilityGeneration || document.hidden) return
+
+        const resumeUrl = windowSuspendedUrl
         windowSuspendedUrl = ''
+        sunshineUrl.value = resumeUrl
         console.log('[SunshineFrame] 窗口恢复 → iframe 唤醒')
       }
       if (!pollTimer && checkWindowStateFn) {

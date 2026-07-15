@@ -472,6 +472,9 @@ pub fn show_and_activate_window<R: Runtime>(window: &WebviewWindow<R>) {
 
     #[cfg(target_os = "windows")]
     force_activate_window_win32(window);
+
+    #[cfg(target_os = "windows")]
+    refresh_webview_surface(window);
 }
 
 /// 使用 Windows API 强制激活窗口
@@ -745,7 +748,9 @@ fn create_main_window_internal<R: Runtime>(
     .min_inner_size(1024.0, 600.0)
     .center()
     .decorations(false)
-    .transparent(true)
+    // DWM clips the native window to rounded corners. Keeping WebView2
+    // opaque avoids stale transparent composition surfaces after restore.
+    .transparent(false)
     .shadow(false)
     .visible(false)
     .disable_drag_drop_handler()
@@ -899,6 +904,9 @@ pub fn activate_main_window(app: &tauri::AppHandle, target_url: Option<String>) 
     #[cfg(target_os = "windows")]
     force_activate_window_win32(&window);
 
+    #[cfg(target_os = "windows")]
+    refresh_webview_surface(&window);
+
     if let Some(url) = target_url {
         navigate_to_url(&window, &url);
     }
@@ -947,41 +955,6 @@ fn navigate_to_url(window: &WebviewWindow, url: &str) {
     debug!("✅ 已发送导航命令");
 }
 
-/// 通过 WebView2 原生 API 设置 IsVisible 状态（引擎级定时器节流 + 渲染暂停）
-/// hidden 状态下 WebView2 会暂停渲染管线和 GPU 合成，大幅降低 GPU 占用
-#[cfg(target_os = "windows")]
-fn set_webview_native_visibility<R: Runtime>(window: &WebviewWindow<R>, visible: bool) {
-    let label = window.label().to_string();
-    let _ = window.with_webview(move |webview| {
-        let controller = webview.controller();
-        unsafe {
-            // 核心：暂停/恢复 WebView 渲染管线
-            // SetIsVisible(false) 会：
-            //   - 停止 GPU 合成器帧生成（GPU 占用降至 ~0%）
-            //   - 冻结 requestAnimationFrame 回调
-            //   - 降低 setTimeout/setInterval 分辨率到 ~1000ms
-            //   - 暂停 CSS 动画和过渡
-            match controller.SetIsVisible(visible) {
-                Ok(_) => log::debug!(
-                    "{} WebView native IsVisible={} [{}]",
-                    if visible { "👁️" } else { "💤" },
-                    visible,
-                    label
-                ),
-                Err(e) => log::debug!("⚠️ SetIsVisible({}) 失败 [{}]: {:?}", visible, label, e),
-            }
-
-            // 尝试设置默认背景色为不透明黑色（隐藏时减少 alpha 合成开销）
-            // ICoreWebView2Controller2::put_DefaultBackgroundColor
-            // 注：仅在窗口隐藏时设为不透明以降低 GPU，恢复时还原透明以保留圆角效果
-            if !visible {
-                // 不改变背景色，保持一致的视觉效果
-                // 未来可以考虑：隐藏时 SetDefaultBackgroundColor 为不透明色进一步降低 GPU
-            }
-        }
-    });
-}
-
 /// 配置 WebView2 安全设置（禁用浏览器自动填充和密码自动保存）
 ///
 /// WebView2 默认会弹出自动填充/密码保存提示，在嵌入式管理面板中会干扰用户操作。
@@ -1027,7 +1000,7 @@ pub(crate) fn configure_webview_security<R: Runtime>(window: &WebviewWindow<R>) 
     });
 }
 
-/// 设置 WebView 的可见性状态（引擎级 + JS 级双重控制）
+/// 设置 WebView 前端的可见性状态。
 fn set_webview_visibility(window: &tauri::Window, visible: bool) {
     let label = window.label().to_string();
     if let Some(webview_window) = window.app_handle().get_webview_window(&label) {
@@ -1035,13 +1008,31 @@ fn set_webview_visibility(window: &tauri::Window, visible: bool) {
     }
 }
 
-/// 设置 WebviewWindow 的可见性状态（引擎级 + JS 级双重控制）
-fn set_webview_window_visibility<R: Runtime>(ww: &WebviewWindow<R>, visible: bool) {
-    // 1. 原生 WebView2 API：引擎级节流（暂停渲染、降低定时器频率）
-    #[cfg(target_os = "windows")]
-    set_webview_native_visibility(ww, visible);
+/// Re-submit the existing WebView2 bounds after a native window restore.
+/// This invalidates stale composition tiles without navigating or changing
+/// any page state.
+#[cfg(target_os = "windows")]
+fn refresh_webview_surface<R: Runtime>(window: &WebviewWindow<R>) {
+    let label = window.label().to_string();
+    let _ = window.with_webview(move |webview| {
+        let controller = webview.controller();
+        unsafe {
+            let mut bounds = Default::default();
+            if controller.Bounds(&mut bounds).is_ok()
+                && let Err(error) = controller.SetBounds(bounds)
+            {
+                log::debug!("Failed to refresh WebView bounds [{}]: {:?}", label, error);
+            }
+            let _ = controller.NotifyParentWindowPositionChanged();
+        }
+    });
+}
 
-    // 2. JS 层：通知前端代码（触发 visibilitychange 事件）
+/// Notify the page so it can pause animations and suspend expensive content.
+/// The native window already controls WebView2 composition. Toggling the
+/// controller's IsVisible property separately can leave transparent WebViews
+/// with a stale surface after restore.
+fn set_webview_window_visibility<R: Runtime>(ww: &WebviewWindow<R>, visible: bool) {
     let label = ww.label();
     let js = format!(
         "if(window.__setWebviewVisibility)window.__setWebviewVisibility({})",

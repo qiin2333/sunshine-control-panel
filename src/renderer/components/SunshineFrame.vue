@@ -163,9 +163,24 @@ const handleTauriFileDrop = async (paths) => {
 
 // Message handling
 const createMessageHandler = () => {
+  const getSunshineOrigin = () => {
+    try {
+      const url = new URL(sunshineUrl.value || sunshineIframe.value?.src || '', window.location.href)
+      return url.origin === 'null' ? `${url.protocol}//${url.host}` : url.origin
+    } catch {
+      return ''
+    }
+  }
+
+  const isTrustedSunshineEvent = (event) => (
+    event.source === sunshineIframe.value?.contentWindow
+    && event.origin === getSunshineOrigin()
+  )
+
   const replyToSunshine = (event, message) => {
-    if (event.source !== sunshineIframe.value?.contentWindow) return
-    event.source?.postMessage(message, event.origin || '*')
+    const origin = getSunshineOrigin()
+    if (!origin || !isTrustedSunshineEvent(event)) return
+    event.source.postMessage(message, origin)
   }
 
   const handlers = {
@@ -239,7 +254,7 @@ const createMessageHandler = () => {
       || data?.type === 'native-update-request'
     if (
       isUpdaterMessage
-      && (event.source !== sunshineIframe.value?.contentWindow || data.source !== 'sunshine-webui')
+      && (!isTrustedSunshineEvent(event) || data.source !== 'sunshine-webui')
     ) {
       return
     }

@@ -163,6 +163,26 @@ const handleTauriFileDrop = async (paths) => {
 
 // Message handling
 const createMessageHandler = () => {
+  const getSunshineOrigin = () => {
+    try {
+      const url = new URL(sunshineUrl.value || sunshineIframe.value?.src || '', window.location.href)
+      return url.origin === 'null' ? `${url.protocol}//${url.host}` : url.origin
+    } catch {
+      return ''
+    }
+  }
+
+  const isTrustedSunshineEvent = (event) => (
+    event.source === sunshineIframe.value?.contentWindow
+    && event.origin === getSunshineOrigin()
+  )
+
+  const replyToSunshine = (event, message) => {
+    const origin = getSunshineOrigin()
+    if (!origin || !isTrustedSunshineEvent(event)) return
+    event.source.postMessage(message, origin)
+  }
+
   const handlers = {
     'path-update': (data) => {
       currentPath.value = data.path
@@ -198,12 +218,48 @@ const createMessageHandler = () => {
         }
       }
     },
+    'native-updater-context-request': (_data, event) => {
+      replyToSunshine(event, {
+        type: 'native-updater-context',
+        source: 'sunshine-control-panel',
+        available: true,
+      })
+    },
+    'native-update-request': async (data, event) => {
+      const requestId = typeof data.requestId === 'string' ? data.requestId : ''
+      if (data.channel !== 'stable' && data.channel !== 'prerelease') {
+        replyToSunshine(event, {
+          type: 'native-update-result',
+          source: 'sunshine-control-panel',
+          requestId,
+          ok: false,
+          error: 'Unsupported update channel',
+        })
+        return
+      }
+
+      const opened = await sidebarMenuRef.value?.checkForUpdates?.(data.channel)
+      replyToSunshine(event, {
+        type: 'native-update-result',
+        source: 'sunshine-control-panel',
+        requestId,
+        ok: opened === true,
+      })
+    },
   }
 
   return async (event) => {
     const { data } = event
+    const isUpdaterMessage = data?.type === 'native-updater-context-request'
+      || data?.type === 'native-update-request'
+    if (
+      isUpdaterMessage
+      && (!isTrustedSunshineEvent(event) || data.source !== 'sunshine-webui')
+    ) {
+      return
+    }
     if (data?.type && handlers[data.type]) {
-      await handlers[data.type](data)
+      await handlers[data.type](data, event)
     }
   }
 }

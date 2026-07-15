@@ -6,6 +6,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
+mod channel;
+mod preferences;
+
+use channel::ReleaseChannel;
+
 const UPDATER_HELPER_ARG: &str = "--updater-helper";
 const UPDATE_RESULT_ARG: &str = "--update-result";
 
@@ -65,13 +70,6 @@ struct GitHubAsset {
     browser_download_url: String,
 }
 
-/// 更新检查偏好设置
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
-pub struct UpdatePreferences {
-    pub last_check_time: u64,
-    pub include_prerelease: bool,
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 struct UpdaterHelperState {
     installer_path: String,
@@ -110,6 +108,7 @@ struct UpdaterAnimationFrame {
 
 #[cfg(target_os = "windows")]
 static UPDATER_PANEL_STATE: OnceLock<Arc<Mutex<UpdaterPanelState>>> = OnceLock::new();
+static UPDATE_CHECKER_STARTED: OnceLock<()> = OnceLock::new();
 
 #[cfg(target_os = "windows")]
 static UPDATER_CONSTRUCTION_FRAMES: OnceLock<Option<Vec<UpdaterAnimationFrame>>> = OnceLock::new();
@@ -286,31 +285,6 @@ async fn fetch_latest_stable_release() -> Result<GitHubRelease, String> {
     Ok(release)
 }
 
-/// 查找最新的可用发布版本（包括预发布）
-fn find_latest_release(
-    releases: &[GitHubRelease],
-    include_prerelease: bool,
-) -> Option<&GitHubRelease> {
-    for release in releases.iter().take(MAX_RELEASES_TO_CHECK) {
-        // 跳过草稿版本
-        if release.draft {
-            continue;
-        }
-
-        // 如果包含预发布版本，返回第一个（已按时间排序）
-        if include_prerelease {
-            return Some(release);
-        }
-
-        // 如果不包含预发布版本，只返回稳定版本
-        if !release.prerelease {
-            return Some(release);
-        }
-    }
-
-    None
-}
-
 /// 获取发布版本列表（包含回退逻辑）
 async fn get_releases() -> Result<Vec<GitHubRelease>, String> {
     match fetch_all_releases().await {
@@ -345,10 +319,19 @@ pub async fn check_for_updates_internal(
     manual: bool,
     include_prerelease: bool,
 ) -> Result<Option<UpdateInfo>, String> {
-    info!(
-        "🔍 开始检查更新... (包含预发布版本: {})",
-        include_prerelease
-    );
+    let channel = if include_prerelease {
+        ReleaseChannel::IncludePrerelease
+    } else {
+        ReleaseChannel::Stable
+    };
+    check_for_updates_in_channel(manual, channel).await
+}
+
+async fn check_for_updates_in_channel(
+    manual: bool,
+    channel: ReleaseChannel,
+) -> Result<Option<UpdateInfo>, String> {
+    info!("🔍 开始检查更新... (通道: {})", channel.description());
 
     // 获取当前 Sunshine 版本
     let current_version = match get_current_sunshine_version().await {
@@ -367,7 +350,11 @@ pub async fn check_for_updates_internal(
     }
 
     // 查找最新的可用发布版本
-    let release = find_latest_release(&releases, include_prerelease)
+    let release = releases
+        .iter()
+        .take(MAX_RELEASES_TO_CHECK)
+        .filter(|release| !release.draft)
+        .find(|release| channel.matches(release.prerelease))
         .ok_or_else(|| "未找到可用的发布版本".to_string())?;
 
     let latest_version = normalize_version(&release.tag_name);
@@ -395,83 +382,6 @@ pub async fn check_for_updates_internal(
     // 存在可用的新版本
     let update_info = create_update_info(release);
     Ok(Some(update_info))
-}
-
-// ========== 偏好设置管理 ==========
-
-/// 获取更新偏好设置文件路径
-fn get_update_preferences_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("获取应用数据目录失败: {}", e))?;
-
-    // 确保目录存在
-    if !app_data_dir.exists() {
-        fs::create_dir_all(&app_data_dir).map_err(|e| format!("创建应用数据目录失败: {}", e))?;
-    }
-
-    Ok(app_data_dir.join("update_preferences.json"))
-}
-
-/// 从磁盘加载更新偏好设置（失败则回退默认值）
-fn load_update_preferences<R: Runtime>(app: &AppHandle<R>) -> UpdatePreferences {
-    let path = match get_update_preferences_path(app) {
-        Ok(p) => p,
-        Err(e) => {
-            warn!("⚠️ 获取更新偏好设置路径失败: {}，使用默认偏好", e);
-            return UpdatePreferences::default();
-        }
-    };
-
-    if !path.exists() {
-        return UpdatePreferences::default();
-    }
-
-    match fs::read_to_string(&path) {
-        Ok(content) => match serde_json::from_str::<UpdatePreferences>(&content) {
-            Ok(prefs) => {
-                debug!(
-                    "📂 已加载更新偏好: include_prerelease={}, last_check_time={}",
-                    prefs.include_prerelease, prefs.last_check_time
-                );
-                prefs
-            }
-            Err(e) => {
-                warn!("⚠️ 解析更新偏好设置失败: {}，使用默认偏好", e);
-                UpdatePreferences::default()
-            }
-        },
-        Err(e) => {
-            warn!("⚠️ 读取更新偏好设置失败: {}，使用默认偏好", e);
-            UpdatePreferences::default()
-        }
-    }
-}
-
-/// 将更新偏好设置持久化到磁盘（失败只记录日志，不影响运行）
-fn persist_update_preferences<R: Runtime>(app: &AppHandle<R>, prefs: &UpdatePreferences) {
-    let path = match get_update_preferences_path(app) {
-        Ok(p) => p,
-        Err(e) => {
-            warn!("⚠️ 获取更新偏好设置路径失败，无法保存: {}", e);
-            return;
-        }
-    };
-
-    match serde_json::to_string_pretty(prefs) {
-        Ok(json) => {
-            if let Err(e) = fs::write(&path, json) {
-                warn!("⚠️ 保存更新偏好设置失败: {}", e);
-            } else {
-                debug!(
-                    "💾 已保存更新偏好: include_prerelease={}, last_check_time={}",
-                    prefs.include_prerelease, prefs.last_check_time
-                );
-            }
-        }
-        Err(e) => warn!("⚠️ 序列化更新偏好设置失败: {}", e),
-    }
 }
 
 /// 获取当前时间戳（秒）
@@ -1327,42 +1237,23 @@ fn restart_gui_with_update_result(gui_exe_path: &str, result_path: &str) -> Resu
 }
 
 /// 获取上次检查时间
-fn get_last_check_time(app: &AppHandle) -> u64 {
-    app.try_state::<Arc<Mutex<UpdatePreferences>>>()
-        .map(|prefs| prefs.lock().unwrap().last_check_time)
-        .unwrap_or(0)
+fn get_last_check_time<R: Runtime>(app: &AppHandle<R>) -> u64 {
+    preferences::last_check_time(app)
 }
 
 /// 保存上次检查时间
 pub(crate) fn save_last_check_time<R: Runtime>(app: &AppHandle<R>) {
-    if let Some(prefs) = app.try_state::<Arc<Mutex<UpdatePreferences>>>() {
-        let prefs_snapshot = {
-            let mut prefs = prefs.lock().unwrap();
-            prefs.last_check_time = get_current_timestamp();
-            prefs.clone()
-        };
-        persist_update_preferences(app, &prefs_snapshot);
-    }
+    preferences::save_last_check_time(app);
 }
 
 /// 获取是否包含预发布版本的偏好
 pub(crate) fn get_include_prerelease<R: Runtime>(app: &AppHandle<R>) -> bool {
-    app.try_state::<Arc<Mutex<UpdatePreferences>>>()
-        .map(|prefs| prefs.lock().unwrap().include_prerelease)
-        .unwrap_or(false)
+    preferences::include_prerelease(app)
 }
 
 /// 设置是否包含预发布版本的偏好
 fn set_include_prerelease<R: Runtime>(app: &AppHandle<R>, include: bool) {
-    if let Some(prefs) = app.try_state::<Arc<Mutex<UpdatePreferences>>>() {
-        let prefs_snapshot = {
-            let mut prefs = prefs.lock().unwrap();
-            prefs.include_prerelease = include;
-            prefs.clone()
-        };
-        info!("📝 更新偏好设置: 包含预发布版本 = {}", include);
-        persist_update_preferences(app, &prefs_snapshot);
-    }
+    preferences::set_include_prerelease(app, include);
 }
 
 /// Tauri命令：获取是否包含预发布版本的偏好
@@ -1386,6 +1277,26 @@ pub async fn check_for_updates(app: AppHandle) -> Result<Option<UpdateInfo>, Str
     result
 }
 
+/// Tauri 命令：按首页中用户明确选择的发布通道检查更新。
+///
+/// 该命令不修改侧栏 Beta 偏好；它只保证原生更新器展示的版本与用户点击的
+/// 稳定版/预发布版卡片一致。
+#[tauri::command]
+pub async fn check_for_updates_for_channel(
+    app: AppHandle,
+    channel: String,
+) -> Result<Option<UpdateInfo>, String> {
+    let channel = match channel.as_str() {
+        "stable" => ReleaseChannel::Stable,
+        "prerelease" => ReleaseChannel::Prerelease,
+        _ => return Err(format!("不支持的更新通道: {channel}")),
+    };
+
+    let result = check_for_updates_in_channel(true, channel).await;
+    save_last_check_time(&app);
+    result
+}
+
 /// 检查是否需要自动更新
 fn should_auto_check(last_check_time: u64) -> bool {
     let current_time = get_current_timestamp();
@@ -1393,7 +1304,10 @@ fn should_auto_check(last_check_time: u64) -> bool {
 }
 
 /// 处理自动检查结果（`manual=false`，`Some` 必定是新版本）
-fn handle_auto_check_result(app: &AppHandle, result: Result<Option<UpdateInfo>, String>) {
+fn handle_auto_check_result<R: Runtime>(
+    app: &AppHandle<R>,
+    result: Result<Option<UpdateInfo>, String>,
+) {
     match result {
         Ok(Some(update_info)) => {
             if !crate::desktop_settings::load_desktop_settings_from_disk().update_notify {
@@ -1422,7 +1336,7 @@ fn handle_auto_check_result(app: &AppHandle, result: Result<Option<UpdateInfo>, 
 }
 
 /// 启动时自动检查更新（如果距离上次检查超过4小时）
-pub fn check_for_updates_on_startup(app: AppHandle) {
+pub fn check_for_updates_on_startup<R: Runtime + 'static>(app: AppHandle<R>) {
     let last_check_time = get_last_check_time(&app);
 
     if !should_auto_check(last_check_time) {
@@ -1992,12 +1906,21 @@ fn cleanup_old_installers() {
     }
 }
 
-/// 初始化更新检查模块
-pub fn init_update_checker(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    // 启动时先从磁盘加载偏好，避免依赖前端 onMounted 同步时机
-    let loaded_prefs = load_update_preferences(app);
-    let prefs = Arc::new(Mutex::new(loaded_prefs));
-    app.manage(prefs);
+/// 初始化更新偏好状态。
+///
+/// 必须在任何窗口或异步更新任务启动前调用，不能依赖主 WebView 是否在启动时创建。
+pub fn init_update_preferences(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    preferences::init(app)
+}
+
+/// 启动清理和自动更新检查；偏好状态由 `init_update_preferences` 独立初始化。
+pub fn start_update_checker<R: Runtime + 'static>(
+    app: &tauri::AppHandle<R>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if UPDATE_CHECKER_STARTED.set(()).is_err() {
+        debug!("更新检查器已启动，跳过重复初始化");
+        return Ok(());
+    }
 
     // 在启动时清理旧的安装包（在检查更新之前）
     cleanup_old_installers();
@@ -2010,4 +1933,10 @@ pub fn init_update_checker(app: &tauri::AppHandle) -> Result<(), Box<dyn std::er
     });
 
     Ok(())
+}
+
+/// 主窗口按需创建并完成事件监听后启动自动检查。
+#[tauri::command]
+pub fn start_update_checker_when_ui_ready(app: tauri::AppHandle) -> Result<(), String> {
+    start_update_checker(&app).map_err(|error| error.to_string())
 }

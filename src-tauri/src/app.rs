@@ -33,13 +33,15 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
     let app_handle = app.handle().clone();
     windows::register_agent_restart();
     crate::desktop_settings::apply_startup_settings(&app_handle, &desktop_settings);
+    // 更新偏好属于应用级状态，必须在 `--hidden` 的纯托盘代理模式下也立即注册。
+    // 自动联网检查仍在后面按窗口启动模式决定，避免把状态初始化和网络行为耦合。
+    update::init_update_preferences(&app_handle)?;
     let start_minimized = explicit_minimized || desktop_settings.start_minimized;
 
     // Agent-only startup keeps tray and session services alive without
     // allocating a hidden WebView. UI windows are created on demand.
-    let main_window_created = if agent_only {
+    if agent_only {
         info!("Starting Sunshine user agent without WebView windows");
-        false
     } else if show_desktop {
         info!("🖥️ 检测到 --desktop 参数，启动桌面 UI 模式");
         if start_minimized {
@@ -48,17 +50,13 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
             windows::create_desktop_window(&app_handle)?;
         }
         windows::create_main_window_hidden(&app_handle)?;
-        false
     } else if !show_toolbar && !url_contains_pin && !is_send_to_client && !is_quick_share_folder {
         if start_minimized {
             windows::create_main_window_hidden(&app_handle)?;
         } else {
             windows::create_main_window(&app_handle)?;
         }
-        true
-    } else {
-        false
-    };
+    }
 
     tray::create_system_tray(&app_handle)?;
     #[cfg(target_os = "windows")]
@@ -107,14 +105,6 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
             tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
             if let Err(e) = toolbar::create_toolbar_window_internal(&app_handle) {
                 error!("❌ 创建工具栏失败: {}", e);
-            }
-        }
-
-        // 更新检查（仅在主窗口启动时检查）
-        if main_window_created || show_desktop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-            if let Err(e) = update::init_update_checker(&app_handle) {
-                error!("❌ 初始化更新检查器失败: {}", e);
             }
         }
     });

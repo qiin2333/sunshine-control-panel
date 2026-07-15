@@ -230,12 +230,14 @@ onMounted(() => {
   initClipboardSyncStatus()
 })
 
-const handleCheckForUpdates = async () => {
-  const result = await checkForUpdates()
+const handleCheckForUpdates = async (channel = null) => {
+  const result = await checkForUpdates(channel)
   if (result) {
     updateInfo.value = result
     showUpdateDialog.value = true
+    return true
   }
+  return false
 }
 
 const handleSkipVersion = (version) => skipVersion(version)
@@ -283,6 +285,7 @@ defineExpose({
   openWebStream,
   openAiAssistant,
   goHome,
+  checkForUpdates: handleCheckForUpdates,
   router,
 })
 </script>

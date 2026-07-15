@@ -209,13 +209,16 @@ export function useTools() {
   /**
    * 检查更新，返回 UpdateInfo（包含 is_latest 标记）由调用方处理展示
    */
-  const checkForUpdates = async () => {
+  const checkForUpdates = async (channel = null) => {
     try {
       const { invoke } = await import('@tauri-apps/api/core')
 
       ElMessage.info('正在检查更新...')
 
-      const result = await invoke('check_for_updates')
+      const hasExplicitChannel = channel === 'stable' || channel === 'prerelease'
+      const result = hasExplicitChannel
+        ? await invoke('check_for_updates_for_channel', { channel })
+        : await invoke('check_for_updates')
 
       if (result) {
         return result // 返回更新信息（包含 is_latest 标记），让调用者处理

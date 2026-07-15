@@ -134,17 +134,22 @@ fn apply_auto_start(settings: &DesktopSettings) -> Result<(), String> {
     use winreg::RegKey;
     use winreg::enums::*;
 
+    let managed_service_mode = managed_service_start_mode()?;
+    let register_gui = should_register_gui_auto_start(settings.auto_start, managed_service_mode);
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let (run_key, _) = hkcu
         .create_subkey(r"Software\Microsoft\Windows\CurrentVersion\Run")
         .map_err(|e| e.to_string())?;
-    if settings.auto_start {
+    if register_gui {
         let command = startup_command(settings.start_minimized)?;
         run_key
             .set_value(RUN_VALUE_NAME, &command)
             .map_err(|e| e.to_string())?;
     } else {
         let _ = run_key.delete_value(RUN_VALUE_NAME);
+        if settings.auto_start && managed_service_mode.is_some() {
+            log::debug!("Sunshine service owns GUI agent startup; removed legacy Run entry");
+        }
     }
     Ok(())
 }
@@ -232,27 +237,45 @@ fn sunshine_service_matches_install(install_dir: &Path) -> Result<bool, String> 
 }
 
 #[cfg(target_os = "windows")]
-fn core_auto_start_ready(mode: Option<ServiceStartMode>) -> bool {
-    matches!(
-        mode,
-        None | Some(ServiceStartMode::Auto | ServiceStartMode::DelayedAuto)
-    )
+fn managed_service_start_mode() -> Result<Option<ServiceStartMode>, String> {
+    let install_dir = crate::sunshine::install_dir();
+    if sunshine_service_matches_install(&install_dir)? {
+        sunshine_service_start_mode()
+    } else {
+        Ok(None)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn should_register_gui_auto_start(
+    requested: bool,
+    managed_service_mode: Option<ServiceStartMode>,
+) -> bool {
+    requested && managed_service_mode.is_none()
+}
+
+#[cfg(target_os = "windows")]
+fn combined_auto_start_ready(
+    managed_service_mode: Option<ServiceStartMode>,
+    gui_registered: bool,
+) -> bool {
+    match managed_service_mode {
+        Some(ServiceStartMode::Auto | ServiceStartMode::DelayedAuto) => true,
+        Some(ServiceStartMode::Demand | ServiceStartMode::Disabled) => false,
+        None => gui_registered,
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub fn is_combined_auto_start_enabled() -> bool {
+    managed_service_start_mode()
+        .map(|mode| combined_auto_start_ready(mode, is_auto_start_registered()))
+        .unwrap_or(false)
 }
 
 #[cfg(not(target_os = "windows"))]
-fn core_auto_start_ready(_mode: Option<()>) -> bool {
-    true
-}
-
 pub fn is_combined_auto_start_enabled() -> bool {
-    #[cfg(target_os = "windows")]
-    let core_ready = sunshine_service_start_mode()
-        .map(core_auto_start_ready)
-        .unwrap_or(false);
-    #[cfg(not(target_os = "windows"))]
-    let core_ready = core_auto_start_ready(None);
-
-    is_auto_start_registered() && core_ready
+    false
 }
 
 #[cfg(target_os = "windows")]
@@ -280,7 +303,7 @@ pub fn set_combined_auto_start_enabled(enabled: bool) -> Result<(), String> {
     settings.auto_start_sunshine = enabled;
 
     #[cfg(target_os = "windows")]
-    let previous_service_mode = sunshine_service_start_mode()?;
+    let previous_service_mode = managed_service_start_mode()?;
     #[cfg(target_os = "windows")]
     let mut service_changed = false;
     #[cfg(target_os = "windows")]
@@ -474,12 +497,39 @@ mod tests {
     }
 
     #[test]
-    fn combined_startup_accepts_automatic_or_service_free_core() {
-        assert!(core_auto_start_ready(None));
-        assert!(core_auto_start_ready(Some(ServiceStartMode::Auto)));
-        assert!(core_auto_start_ready(Some(ServiceStartMode::DelayedAuto)));
-        assert!(!core_auto_start_ready(Some(ServiceStartMode::Demand)));
-        assert!(!core_auto_start_ready(Some(ServiceStartMode::Disabled)));
+    fn service_managed_startup_uses_service_mode_only() {
+        assert!(combined_auto_start_ready(
+            Some(ServiceStartMode::Auto),
+            false
+        ));
+        assert!(combined_auto_start_ready(
+            Some(ServiceStartMode::DelayedAuto),
+            false
+        ));
+        assert!(!combined_auto_start_ready(
+            Some(ServiceStartMode::Demand),
+            true
+        ));
+        assert!(!combined_auto_start_ready(
+            Some(ServiceStartMode::Disabled),
+            true
+        ));
+    }
+
+    #[test]
+    fn service_free_startup_uses_gui_registration() {
+        assert!(combined_auto_start_ready(None, true));
+        assert!(!combined_auto_start_ready(None, false));
+        assert!(should_register_gui_auto_start(true, None));
+        assert!(!should_register_gui_auto_start(false, None));
+    }
+
+    #[test]
+    fn service_managed_startup_does_not_duplicate_gui_registration() {
+        assert!(!should_register_gui_auto_start(
+            true,
+            Some(ServiceStartMode::Auto)
+        ));
     }
 
     #[test]

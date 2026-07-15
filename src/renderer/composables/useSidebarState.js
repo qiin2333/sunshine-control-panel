@@ -271,6 +271,15 @@ export function useSidebarState() {
       initVersion(),
       initEventListeners(),
     ])
+
+    // `--hidden` 启动时主窗口是按需创建的；等监听器就绪后再启动一次幂等的自动检查，
+    // 确保发现更新时原生对话框能够接收到事件。
+    try {
+      const invoke = await getInvoke()
+      await invoke('start_update_checker_when_ui_ready')
+    } catch (error) {
+      console.error('启动自动更新检查失败:', error)
+    }
   }
 
   onMounted(initState)

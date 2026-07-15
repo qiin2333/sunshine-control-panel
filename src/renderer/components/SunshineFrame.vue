@@ -163,6 +163,11 @@ const handleTauriFileDrop = async (paths) => {
 
 // Message handling
 const createMessageHandler = () => {
+  const replyToSunshine = (event, message) => {
+    if (event.source !== sunshineIframe.value?.contentWindow) return
+    event.source?.postMessage(message, event.origin || '*')
+  }
+
   const handlers = {
     'path-update': (data) => {
       currentPath.value = data.path
@@ -198,12 +203,48 @@ const createMessageHandler = () => {
         }
       }
     },
+    'native-updater-context-request': (_data, event) => {
+      replyToSunshine(event, {
+        type: 'native-updater-context',
+        source: 'sunshine-control-panel',
+        available: true,
+      })
+    },
+    'native-update-request': async (data, event) => {
+      const requestId = typeof data.requestId === 'string' ? data.requestId : ''
+      if (data.channel !== 'stable' && data.channel !== 'prerelease') {
+        replyToSunshine(event, {
+          type: 'native-update-result',
+          source: 'sunshine-control-panel',
+          requestId,
+          ok: false,
+          error: 'Unsupported update channel',
+        })
+        return
+      }
+
+      const opened = await sidebarMenuRef.value?.checkForUpdates?.(data.channel)
+      replyToSunshine(event, {
+        type: 'native-update-result',
+        source: 'sunshine-control-panel',
+        requestId,
+        ok: opened === true,
+      })
+    },
   }
 
   return async (event) => {
     const { data } = event
+    const isUpdaterMessage = data?.type === 'native-updater-context-request'
+      || data?.type === 'native-update-request'
+    if (
+      isUpdaterMessage
+      && (event.source !== sunshineIframe.value?.contentWindow || data.source !== 'sunshine-webui')
+    ) {
+      return
+    }
     if (data?.type && handlers[data.type]) {
-      await handlers[data.type](data)
+      await handlers[data.type](data, event)
     }
   }
 }

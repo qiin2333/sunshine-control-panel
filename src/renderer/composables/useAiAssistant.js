@@ -204,6 +204,9 @@ export function useAiAssistant() {
   const config = reactive(loadConfig())
   const isConnected = ref(false)
   const isLoading = ref(false)
+  const needsConfiguration = computed(
+    () => !config.enabled || !config.model || (isApiKeyRequired(config) && !config.apiKey),
+  )
 
   // 聊天记录（从 sessionStorage 恢复，切换页面不丢失）
   const CHAT_STORAGE_KEY = 'sunshine-ai-chat-history'
@@ -296,11 +299,11 @@ export function useAiAssistant() {
     }, 300)
   }
 
-  function saveConfig() {
+  function saveConfig(notify = true) {
     clearTimeout(saveTimer)
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...config }))
     syncToServer()
-    ElMessage.success(ui().configSaved)
+    if (notify) ElMessage.success(ui().configSaved)
   }
 
   // 初始化时从服务端同步（不阻塞 UI）
@@ -376,7 +379,7 @@ export function useAiAssistant() {
   // ===== 对话 =====
 
   async function sendMessage(userMessage) {
-    if (!userMessage.trim()) return
+    if (!userMessage.trim()) return false
 
     // Chat should consume the shared Sunshine AI config, not overwrite it with
     // stale localStorage from an already-open window.
@@ -384,12 +387,12 @@ export function useAiAssistant() {
 
     if (!config.enabled) {
       ElMessage.warning(ui().enableFirst)
-      return
+      return false
     }
 
     if (!config.apiKey && isApiKeyRequired(config)) {
       ElMessage.warning(ui().apiKeyRequired)
-      return
+      return false
     }
 
     chatHistory.value.push({ role: 'user', content: userMessage, timestamp: Date.now() })
@@ -423,6 +426,8 @@ export function useAiAssistant() {
     } finally {
       isLoading.value = false
     }
+
+    return true
   }
 
   /**
@@ -472,6 +477,7 @@ export function useAiAssistant() {
 
   return {
     config,
+    needsConfiguration,
     isConnected,
     isLoading,
     isFetchingModels,

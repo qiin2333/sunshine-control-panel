@@ -894,6 +894,7 @@ fn draw_updater_panel_cutout(hwnd: windows::Win32::Foundation::HWND) {
             500,
             windows::Win32::Foundation::COLORREF(0x00705F5A),
         );
+        restore_gdi_text_alpha(buffer, width, height, 82, 186, 486, 210);
 
         let mut window_rect = RECT::default();
         let _ = GetWindowRect(hwnd, &mut window_rect);
@@ -1025,6 +1026,39 @@ fn fill_bgra_rect(
         for x in left..right {
             let index = row + x * 4;
             buffer[index..index + 4].copy_from_slice(&pixel);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn restore_gdi_text_alpha(
+    buffer: &mut [u8],
+    width: i32,
+    height: i32,
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+) {
+    let left = left.clamp(0, width) as usize;
+    let top = top.clamp(0, height) as usize;
+    let right = right.clamp(0, width) as usize;
+    let bottom = bottom.clamp(0, height) as usize;
+    if left >= right || top >= bottom {
+        return;
+    }
+
+    let stride = width as usize * 4;
+    for y in top..bottom {
+        let row = y * stride;
+        for x in left..right {
+            let pixel = row + x * 4;
+            // GDI writes the glyph RGB into a 32-bit DIB but clears its alpha byte.
+            if buffer[pixel + 3] == 0
+                && (buffer[pixel] != 0 || buffer[pixel + 1] != 0 || buffer[pixel + 2] != 0)
+            {
+                buffer[pixel + 3] = 255;
+            }
         }
     }
 }

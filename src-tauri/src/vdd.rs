@@ -1,4 +1,6 @@
 use crate::sunshine;
+#[cfg(target_os = "windows")]
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use log::{debug, error, info, warn};
 use quick_xml::de::from_str;
 use serde::{Deserialize, Serialize};
@@ -774,17 +776,62 @@ pub async fn save_vdd_settings(settings: VddSettings) -> Result<String, String> 
     Ok("保存成功".to_string())
 }
 
+#[cfg(target_os = "windows")]
+const ELEVATED_VDD_IOCTL_ARG: &str = "--elevated-vdd-ioctl";
+
+#[cfg(target_os = "windows")]
+fn is_allowed_elevated_vdd_command(command: &str) -> bool {
+    matches!(command, "RELOAD_DRIVER" | "HARDWARECURSOR true" | "HARDWARECURSOR false")
+}
+
+/// Handle the narrow, elevated helper mode before Tauri/WebView startup.
+/// The command is allowlisted and encoded so it never becomes PowerShell syntax.
+#[cfg(target_os = "windows")]
+pub(crate) fn try_handle_elevated_ioctl_command() -> Option<i32> {
+    let mut args = std::env::args_os().skip(1);
+    let mode = args.next()?;
+    if mode != ELEVATED_VDD_IOCTL_ARG {
+        return None;
+    }
+
+    let encoded = match args.next().and_then(|arg| arg.into_string().ok()) {
+        Some(encoded) if args.next().is_none() => encoded,
+        _ => return Some(2),
+    };
+    let command = URL_SAFE_NO_PAD
+        .decode(encoded)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok());
+    let Some(command) = command else {
+        return Some(2);
+    };
+    if !is_allowed_elevated_vdd_command(&command) {
+        return Some(2);
+    }
+
+    match crate::vdd_ioctl::send_command(&command) {
+        crate::vdd_ioctl::IoctlResult::Success => Some(0),
+        crate::vdd_ioctl::IoctlResult::InterfaceMissing
+        | crate::vdd_ioctl::IoctlResult::Failed(_) => Some(1),
+    }
+}
+
 #[tauri::command]
 pub async fn exec_pipe_cmd(command: String) -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {
+        if !is_allowed_elevated_vdd_command(&command) {
+            warn!("拒绝非白名单 VDD 控制命令");
+            return Err("不允许的 VDD 控制命令".to_string());
+        }
+
         use crate::vdd_ioctl;
         use windows::Win32::Foundation::*;
         use windows::Win32::Storage::FileSystem::*;
         use windows::core::PCWSTR;
 
         let cmd_for_blocking = command.clone();
-        let in_process = tokio::task::spawn_blocking(move || -> Result<bool, (bool, String)> {
+        let in_process = tokio::task::spawn_blocking(move || -> Result<bool, (bool, bool, String)> {
             // Preferred path: IOCTL transport. Mirrors the C++ dispatch in
             // `Sunshine/src/display_device/vdd_utils.cpp`: only fall through
             // to the legacy pipe when the device interface is absent.
@@ -793,7 +840,7 @@ pub async fn exec_pipe_cmd(command: String) -> Result<bool, String> {
                 vdd_ioctl::IoctlResult::Failed(msg) => {
                     // err=5 表示设备存在但当前权限打不开，可通过提权重试。
                     let access_denied = msg.contains("err=5");
-                    return Err((access_denied, format!("vdd_ioctl: {msg}")));
+                    return Err((access_denied, false, format!("vdd_ioctl: {msg}")));
                 }
                 vdd_ioctl::IoctlResult::InterfaceMissing => {
                     // Driver too old / not installed; fall back to pipe.
@@ -811,14 +858,14 @@ pub async fn exec_pipe_cmd(command: String) -> Result<bool, String> {
                     FILE_SHARE_NONE,
                     None,
                     OPEN_EXISTING,
-                    FILE_ATTRIBUTE_NORMAL,
+                    FILE_ATTRIBUTE_NORMAL | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
                     Some(HANDLE::default()),
                 );
 
                 if handle.is_err() || handle.as_ref().unwrap().is_invalid() {
                     let err = GetLastError().0;
                     let access_denied = err == 5;
-                    return Err((access_denied, format!("无法连接到管道 (err={err})")));
+                    return Err((access_denied, true, format!("无法连接到管道 (err={err})")));
                 }
 
                 let handle = handle.unwrap();
@@ -844,7 +891,7 @@ pub async fn exec_pipe_cmd(command: String) -> Result<bool, String> {
                 if result.is_ok() {
                     Ok(true)
                 } else {
-                    Err((false, "写入管道失败".to_string()))
+                    Err((false, true, "写入管道失败".to_string()))
                 }
             }
         })
@@ -853,13 +900,19 @@ pub async fn exec_pipe_cmd(command: String) -> Result<bool, String> {
 
         match in_process {
             Ok(v) => Ok(v),
-            Err((true, msg)) => {
-                // 权限不足：回退到提权 PowerShell，向 VDD 控制管道写命令。
+            Err((true, false, msg)) => {
+                // 新驱动存在但普通用户不能打开：提权后仍走 IOCTL，不回退到管道。
                 warn!("  ⚠️ VDD 命令在普通权限下被拒 ({msg})，回退到提权执行");
+                run_elevated_ioctl_command(&command).await?;
+                Ok(true)
+            }
+            Err((true, true, msg)) => {
+                // 旧驱动没有 IOCTL，只能以管理员身份使用兼容管道。
+                warn!("  ⚠️ 旧版 VDD 管道拒绝普通用户 ({msg})，回退到提权兼容路径");
                 run_elevated_pipe_command(&command).await?;
                 Ok(true)
             }
-            Err((false, msg)) => Err(msg),
+            Err((false, _, msg)) => Err(msg),
         }
     }
 
@@ -869,13 +922,35 @@ pub async fn exec_pipe_cmd(command: String) -> Result<bool, String> {
     }
 }
 
+/// Re-run this executable in a minimal elevated mode that only sends an
+/// allowlisted IOCTL command, without starting Tauri or a WebView.
+#[cfg(target_os = "windows")]
+async fn run_elevated_ioctl_command(command: &str) -> Result<(), String> {
+    if !is_allowed_elevated_vdd_command(command) {
+        return Err("不允许的 VDD 提权命令".to_string());
+    }
+
+    let executable = std::env::current_exe()
+        .map_err(|e| format!("无法定位控制面板程序: {e}"))?;
+    let executable = executable.to_string_lossy().replace('\'', "''");
+    let encoded = URL_SAFE_NO_PAD.encode(command.as_bytes());
+    let inner = format!(
+        "$p = Start-Process -FilePath '{}' -ArgumentList '{}','{}' -Verb RunAs -WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode",
+        executable, ELEVATED_VDD_IOCTL_ARG, encoded
+    );
+    run_elevated_powershell(&inner, "提权执行 VDD IOCTL").await
+}
+
 /// 通过提权 PowerShell 向 ZakoVDD 控制管道写入命令。
 #[cfg(target_os = "windows")]
 async fn run_elevated_pipe_command(command: &str) -> Result<(), String> {
-    // command 为内部常量（如 RELOAD_DRIVER / "HARDWARECURSOR true"），不含单引号；
-    // 即便含单引号，run_elevated_powershell 也会统一对内层命令做 '' 转义。
+    if !is_allowed_elevated_vdd_command(command) {
+        return Err("不允许的 VDD 提权命令".to_string());
+    }
+
+    // The allowlist above also ensures command cannot become PowerShell syntax.
     let inner = format!(
-        "$p = New-Object System.IO.Pipes.NamedPipeClientStream('.', 'ZakoVDDPipe', [System.IO.Pipes.PipeDirection]::Out); $p.Connect(3000); $b = [System.Text.Encoding]::Unicode.GetBytes('{}' + [char]0); $p.Write($b, 0, $b.Length); $p.Flush(); $p.Dispose()",
+        "$p = New-Object System.IO.Pipes.NamedPipeClientStream('.', 'ZakoVDDPipe', [System.IO.Pipes.PipeDirection]::Out, [System.IO.Pipes.PipeOptions]::None, [System.Security.Principal.TokenImpersonationLevel]::Identification); $p.Connect(3000); $b = [System.Text.Encoding]::Unicode.GetBytes('{}' + [char]0); $p.Write($b, 0, $b.Length); $p.Flush(); $p.Dispose()",
         command
     );
     run_elevated_powershell(&inner, "提权执行 VDD 命令").await

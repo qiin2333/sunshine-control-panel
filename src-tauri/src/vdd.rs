@@ -839,7 +839,7 @@ pub async fn exec_pipe_cmd(command: String) -> Result<bool, String> {
                 vdd_ioctl::IoctlResult::Success => return Ok(true),
                 vdd_ioctl::IoctlResult::Failed(msg) => {
                     // err=5 表示设备存在但当前权限打不开，可通过提权重试。
-                    let access_denied = msg.contains("err=5");
+                    let access_denied = msg.contains("(err=5)");
                     return Err((access_denied, false, format!("vdd_ioctl: {msg}")));
                 }
                 vdd_ioctl::IoctlResult::InterfaceMissing => {

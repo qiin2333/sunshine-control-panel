@@ -229,6 +229,7 @@ const createMessageHandler = () => {
         currentPath.value = data.path
       }
       beginLoading()
+      scheduleAppReadyFallback()
     },
     'webui-ready': finishLoading,
     'restore-background': (data) => loadAndSetBackground(data.path),
@@ -474,8 +475,9 @@ const onLoad = () => {
     if (isWelcomePath(newUrl) || path.toLowerCase().includes('welcome')) {
       console.log('🔄 检测到 welcome 页面加载，拦截并打开 Vue welcome 组件')
       openWelcome()
-      if (iframe) iframe.src = 'about:blank'
-      beginLoading()
+      sunshineUrl.value = 'about:blank'
+      currentPath.value = '/'
+      finishLoading()
       return
     }
 

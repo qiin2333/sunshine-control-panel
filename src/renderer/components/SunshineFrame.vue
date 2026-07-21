@@ -48,42 +48,40 @@ let unlistenDragDrop = null
 let messageHandler = null
 let visibilityHandlerRef = null
 let proxyBase = '' // 代理服务器基础 URL，用于恢复 iframe 到正确页面
-let appReadyFallbackTimer = null
+let loadedFrameRevealTimer = null
 let awaitingAppReady = true
 
 // Constants
 const ALLOWED_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']
 const POLL_INTERVAL = 3000
-const APP_READY_FALLBACK_DELAY = 5000
+const LOADED_FRAME_REVEAL_DELAY = 300
 
-const clearAppReadyFallback = () => {
-  if (!appReadyFallbackTimer) return
-  clearTimeout(appReadyFallbackTimer)
-  appReadyFallbackTimer = null
+const clearLoadedFrameReveal = () => {
+  if (!loadedFrameRevealTimer) return
+  clearTimeout(loadedFrameRevealTimer)
+  loadedFrameRevealTimer = null
 }
 
 const beginLoading = () => {
-  clearAppReadyFallback()
+  clearLoadedFrameReveal()
   awaitingAppReady = true
   loading.value = true
 }
 
 const finishLoading = () => {
-  clearAppReadyFallback()
+  clearLoadedFrameReveal()
   awaitingAppReady = false
   loading.value = false
 }
 
-const scheduleAppReadyFallback = () => {
-  clearAppReadyFallback()
+const scheduleLoadedFrameReveal = () => {
+  clearLoadedFrameReveal()
   if (!awaitingAppReady) return
 
-  appReadyFallbackTimer = setTimeout(() => {
-    appReadyFallbackTimer = null
-    awaitingAppReady = false
-    loading.value = false
-    console.warn('[SunshineFrame] WebUI ready signal timed out; revealing loaded iframe')
-  }, APP_READY_FALLBACK_DELAY)
+  loadedFrameRevealTimer = setTimeout(() => {
+    console.debug('[SunshineFrame] revealing loaded iframe without WebUI ready signal')
+    finishLoading()
+  }, LOADED_FRAME_REVEAL_DELAY)
 }
 
 // Utility functions
@@ -229,7 +227,6 @@ const createMessageHandler = () => {
         currentPath.value = data.path
       }
       beginLoading()
-      scheduleAppReadyFallback()
     },
     'webui-ready': finishLoading,
     'restore-background': (data) => loadAndSetBackground(data.path),
@@ -392,7 +389,7 @@ onUnmounted(() => {
   if (messageHandler) window.removeEventListener('message', messageHandler)
   if (visibilityHandlerRef) document.removeEventListener('visibilitychange', visibilityHandlerRef)
   if (pollTimer) clearInterval(pollTimer)
-  clearAppReadyFallback()
+  clearLoadedFrameReveal()
   unlistenVddSettings?.()
   unlistenDragDrop?.()
 })
@@ -492,9 +489,9 @@ const onLoad = () => {
     // 跨域时无法读取，保持当前路径
   }
 
-  // The iframe load event can fire before the WebUI finishes async locale setup.
-  // Keep the overlay until initApp sends webui-ready, with a legacy/error fallback.
-  scheduleAppReadyFallback()
+  // Prefer the WebUI ready signal, but never hold a loaded iframe behind the
+  // overlay for long when the signal is unavailable.
+  scheduleLoadedFrameReveal()
 }
 </script>
 

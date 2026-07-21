@@ -1,4 +1,9 @@
 /* 完全隐藏滚动条 */
+/* The GUI owns the iframe loading transition. */
+@view-transition {
+  navigation: none;
+}
+
 ::-webkit-scrollbar {
   width: 0;
   height: 0;

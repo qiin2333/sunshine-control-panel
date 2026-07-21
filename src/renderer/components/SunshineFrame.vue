@@ -48,11 +48,43 @@ let unlistenDragDrop = null
 let messageHandler = null
 let visibilityHandlerRef = null
 let proxyBase = '' // 代理服务器基础 URL，用于恢复 iframe 到正确页面
+let appReadyFallbackTimer = null
+let awaitingAppReady = true
 
 // Constants
 const ALLOWED_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']
 const POLL_INTERVAL = 3000
-const LOAD_DELAY = 100
+const APP_READY_FALLBACK_DELAY = 5000
+
+const clearAppReadyFallback = () => {
+  if (!appReadyFallbackTimer) return
+  clearTimeout(appReadyFallbackTimer)
+  appReadyFallbackTimer = null
+}
+
+const beginLoading = () => {
+  clearAppReadyFallback()
+  awaitingAppReady = true
+  loading.value = true
+}
+
+const finishLoading = () => {
+  clearAppReadyFallback()
+  awaitingAppReady = false
+  loading.value = false
+}
+
+const scheduleAppReadyFallback = () => {
+  clearAppReadyFallback()
+  if (!awaitingAppReady) return
+
+  appReadyFallbackTimer = setTimeout(() => {
+    appReadyFallbackTimer = null
+    awaitingAppReady = false
+    loading.value = false
+    console.warn('[SunshineFrame] WebUI ready signal timed out; revealing loaded iframe')
+  }, APP_READY_FALLBACK_DELAY)
+}
 
 // Utility functions
 const extractPathFromUrl = (url) => {
@@ -103,8 +135,8 @@ const handleNavigateFrame = (event) => {
     return
   }
 
+  beginLoading()
   sunshineUrl.value = url
-  loading.value = true
 }
 
 // 路由切换：离开 HOME 时休眠 iframe，返回时恢复
@@ -117,7 +149,7 @@ const handleRouteChange = ({ from, to }) => {
     // 离开高级设置页 → 强制卸载 iframe 内容以终止所有定时器
     savedIframeUrl = proxyBase ? proxyBase + currentPath.value : sunshineUrl.value
     sunshineUrl.value = 'about:blank'
-    loading.value = true
+    beginLoading()
     if (pollTimer) {
       clearInterval(pollTimer)
       pollTimer = null
@@ -196,8 +228,10 @@ const createMessageHandler = () => {
         }
         currentPath.value = data.path
       }
-      loading.value = true
+      beginLoading()
+      scheduleAppReadyFallback()
     },
+    'webui-ready': finishLoading,
     'restore-background': (data) => loadAndSetBackground(data.path),
     'show-message': (data) => {
       // 处理来自 Web UI 的消息显示请求
@@ -302,7 +336,7 @@ const setupWindowStateMonitor = async (currentWindow) => {
         windowSuspendedUrl = proxyBase ? proxyBase + currentPath.value : sunshineUrl.value
         // Prepare the shell while the native window is still hidden so the
         // about:blank iframe is never exposed during the next activation.
-        loading.value = true
+        beginLoading()
         sunshineUrl.value = 'about:blank'
         console.log('[SunshineFrame] 窗口隐藏 → iframe 休眠, saved:', windowSuspendedUrl)
       }
@@ -313,7 +347,7 @@ const setupWindowStateMonitor = async (currentWindow) => {
     } else {
       // 窗口恢复 → 唤醒 iframe（仅当是窗口隐藏导致的休眠时恢复）
       if (windowSuspendedUrl) {
-        loading.value = true
+        beginLoading()
         try {
           await refreshProxyTarget()
         } catch (error) {
@@ -343,7 +377,7 @@ const setupWindowStateMonitor = async (currentWindow) => {
 // 语言切换时刷新 iframe 以应用新 locale
 const handleLocaleChanged = () => {
   if (sunshineUrl.value && sunshineUrl.value !== 'about:blank') {
-    loading.value = true
+    beginLoading()
     // 记住当前页面路径，通过 about:blank 中转刷新（避免跨域限制）
     const targetUrl = proxyBase ? proxyBase + currentPath.value : sunshineUrl.value
     sunshineUrl.value = 'about:blank'
@@ -358,6 +392,7 @@ onUnmounted(() => {
   if (messageHandler) window.removeEventListener('message', messageHandler)
   if (visibilityHandlerRef) document.removeEventListener('visibilitychange', visibilityHandlerRef)
   if (pollTimer) clearInterval(pollTimer)
+  clearAppReadyFallback()
   unlistenVddSettings?.()
   unlistenDragDrop?.()
 })
@@ -373,6 +408,9 @@ onMounted(async () => {
     proxyBase = proxyBaseUrl
     const cmdLineUrl = await sunshine.getCommandLineUrl()
 
+    messageHandler = createMessageHandler()
+    window.addEventListener('message', messageHandler)
+
     if (cmdLineUrl) {
       const targetPath = extractPathFromUrl(cmdLineUrl)
       const fullUrl = proxyBaseUrl + targetPath
@@ -382,7 +420,7 @@ onMounted(async () => {
         openWelcome()
         sunshineUrl.value = 'about:blank'
         currentPath.value = '/'
-        loading.value = false
+        finishLoading()
         return
       }
 
@@ -392,9 +430,6 @@ onMounted(async () => {
       sunshineUrl.value = proxyBaseUrl + '/'
       currentPath.value = '/'
     }
-
-    messageHandler = createMessageHandler()
-    window.addEventListener('message', messageHandler)
 
     const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow')
     const currentWindow = getCurrentWebviewWindow()
@@ -428,33 +463,38 @@ onMounted(async () => {
 })
 
 const onLoad = () => {
-  setTimeout(() => {
-    try {
-      const iframe = sunshineIframe.value
-      const newUrl = iframe?.contentWindow?.location?.href
+  try {
+    const iframe = sunshineIframe.value
+    const newUrl = iframe?.contentWindow?.location?.href
 
-      // 休眠导航到 about:blank 时不处理
-      if (!newUrl || newUrl === 'about:blank') {
-        return
-      }
+    // 休眠导航到 about:blank 时不处理
+    if (!newUrl || newUrl === 'about:blank') return
 
-      const path = extractPathFromUrl(newUrl)
+    const path = extractPathFromUrl(newUrl)
 
-      if (isWelcomePath(newUrl) || path.toLowerCase().includes('welcome')) {
-        console.log('🔄 检测到 welcome 页面加载，拦截并打开 Vue welcome 组件')
-        openWelcome()
-        if (iframe) iframe.src = 'about:blank'
-        loading.value = true
-        return
-      }
-
-      currentPath.value = path
-    } catch {
-      // 跨域时无法读取，保持当前路径
+    if (isWelcomePath(newUrl) || path.toLowerCase().includes('welcome')) {
+      console.log('🔄 检测到 welcome 页面加载，拦截并打开 Vue welcome 组件')
+      openWelcome()
+      sunshineUrl.value = 'about:blank'
+      currentPath.value = '/'
+      finishLoading()
+      return
     }
 
-    loading.value = false
-  }, LOAD_DELAY)
+    currentPath.value = path
+
+    // Proxy and error documents do not mount the WebUI application.
+    if (!iframe.contentDocument?.getElementById('app')) {
+      finishLoading()
+      return
+    }
+  } catch {
+    // 跨域时无法读取，保持当前路径
+  }
+
+  // The iframe load event can fire before the WebUI finishes async locale setup.
+  // Keep the overlay until initApp sends webui-ready, with a legacy/error fallback.
+  scheduleAppReadyFallback()
 }
 </script>
 

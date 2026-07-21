@@ -1,0 +1,75 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: zh-CN
+early_access: true
+
+reviews:
+  profile: chill
+  high_level_summary: true
+  high_level_summary_in_walkthrough: true
+  collapse_walkthrough: false
+  sequence_diagrams: true
+  estimate_code_review_effort: true
+  assess_linked_issues: true
+  related_prs: true
+  poem: false
+  review_status: true
+  review_details: true
+
+  path_filters:
+    - "!node_modules/**"
+    - "!dist/**"
+    - "!build/**"
+    - "!src-tauri/target/**"
+    - "!src-tauri/gen/**"
+    - "!src-tauri/installer/staging/**"
+    - "!src-tauri/installer/dist/**"
+    - "!package-lock.json"
+    - "!src-tauri/Cargo.lock"
+    - "!**/*.log"
+
+  path_instructions:
+    - path: "src/renderer/**/*.vue"
+      instructions: |
+        这是 Vue 3 前端组件。重点检查响应式状态、组件生命周期、异步操作、XSS、
+        用户输入校验、可访问性以及多窗口/多语言场景下的行为一致性。
+    - path: "src/renderer/**/*.js"
+      instructions: |
+        这是 Vue 3、Vite 和 Tauri API 的前端代码。重点检查异步错误处理、IPC 调用边界、
+        外部数据校验、资源清理、状态竞态、XSS/CSRF 风险以及跨 WebView 窗口行为。
+    - path: "src-tauri/**/*.rs"
+      instructions: |
+        这是 Tauri 2 Rust 后端。重点检查 IPC 命令的输入校验与权限边界、错误处理、
+        进程和文件系统操作、异步任务生命周期、资源释放、命令注入风险，以及 Windows API
+        调用的安全性和失败路径。
+    - path: "scripts/**/*.ps1"
+      instructions: |
+        这是 Windows 构建或部署脚本。重点检查路径和参数校验、命令注入、错误处理、
+        权限边界、临时文件清理，以及脚本在 CI 和本地环境中的可重复性。
+    - path: "scripts/**/*.js"
+      instructions: |
+        这是构建或部署脚本。重点检查命令执行、路径处理、错误处理、依赖环境假设，
+        以及对 CI 构建产物和版本信息的影响。
+    - path: ".github/workflows/**"
+      instructions: |
+        这是 GitHub Actions 工作流。重点检查最小权限、未固定的第三方 Action、
+        secrets 泄露、来自 Pull Request 的不可信输入、缓存边界和构建产物处理。
+
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - main
+
+  tools:
+    yamllint:
+      enabled: true
+    markdownlint:
+      enabled: true
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  opt_out: false
+  learnings:
+    scope: auto

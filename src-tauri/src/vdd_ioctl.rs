@@ -170,6 +170,12 @@ unsafe fn resolve_interface_path() -> Option<Vec<u16>> {
     }
 }
 
+/// Return whether the modern VDD control interface is currently registered.
+/// This is a non-mutating probe used by the driver-management UI.
+pub fn interface_available() -> bool {
+    unsafe { resolve_interface_path().is_some() }
+}
+
 /// Send a UTF-16 command buffer to the VDD driver via IOCTL.
 pub fn send_command(command: &str) -> IoctlResult {
     if command.is_empty() {

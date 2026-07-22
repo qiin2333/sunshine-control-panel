@@ -124,6 +124,33 @@
     },
   }
 
+  // ZakoVDD virtual-display driver management API
+  window.vddDriver = {
+    async getStatus() {
+      try {
+        return await invoke('get_vdd_status')
+      } catch (e) {
+        return {
+          state: 'unknown',
+          installed: false,
+          running: false,
+          control_available: false,
+          installed_version: '',
+          bundled_version: '',
+          version_match: false,
+          monitor_active: false,
+          status_text: String(e || 'VDD status check failed'),
+        }
+      }
+    },
+    async install() {
+      return await invoke('install_vdd_driver')
+    },
+    async uninstall() {
+      return await invoke('uninstall_vdd_driver')
+    },
+  }
+
   // 环境检测
   const isProduction = () => window.TAURI_PRODUCTION === true && window.isTauri === true
 

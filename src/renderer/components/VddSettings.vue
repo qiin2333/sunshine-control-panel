@@ -2,18 +2,112 @@
   <div class="vdd-settings-wrapper">
     <div class="vdd-content">
       <div class="vdd-page-header">
-        <h2>
-          <el-icon class="header-icon"><Monitor /></el-icon>
-          {{ t.vddSettings.title }}
-        </h2>
-        <div class="page-header-meta">
-          <el-tag size="small" round effect="plain">{{ currentEdidModeLabel }}</el-tag>
-          <el-tag v-if="hasUnsavedChanges" size="small" round type="warning" effect="light">
-            {{ t.vddSettings.unsavedBadge }}
-          </el-tag>
+        <div class="page-title-group">
+          <span class="page-title-icon" aria-hidden="true">
+            <el-icon><Monitor /></el-icon>
+          </span>
+          <div class="page-title-copy">
+            <h2>{{ t.vddSettings.title }}</h2>
+            <div v-if="!isDriverCheckPending && (vddReady || hasUnsavedChanges)" class="page-header-meta">
+              <el-tag v-if="vddReady" size="small" round effect="plain">{{ currentEdidModeLabel }}</el-tag>
+              <el-tag v-if="hasUnsavedChanges" size="small" round type="warning" effect="light">
+                {{ t.vddSettings.unsavedBadge }}
+              </el-tag>
+            </div>
+          </div>
+        </div>
+
+        <div
+          v-if="!isDriverCheckPending && vddReady && vddStatus.state === 'degraded'"
+          class="degraded-driver-notice"
+          role="status"
+          aria-live="polite"
+        >
+          <span class="degraded-driver-icon" aria-hidden="true">!</span>
+          <div class="degraded-driver-copy">
+            <strong>{{ vddStatusLabel }}</strong>
+            <span>{{ vddStatus.status_text }}</span>
+          </div>
+          <el-button type="warning" plain :loading="isInstallingDriver" @click="installOrRepairDriver">
+            <el-icon><Download /></el-icon>
+            {{ t.vddSettings.installRepairDriver }}
+          </el-button>
         </div>
       </div>
 
+      <section
+        v-if="isDriverCheckPending"
+        class="section-card driver-detection-card"
+        role="status"
+        aria-live="polite"
+        aria-busy="true"
+        aria-labelledby="driver-detection-title"
+      >
+        <div class="detection-core" aria-hidden="true">
+          <span class="detection-orbit"></span>
+          <span class="detection-core-icon"><el-icon><Monitor /></el-icon></span>
+        </div>
+
+        <div class="detection-copy">
+          <span class="detection-kicker">{{ t.vddSettings.driverDetectionKicker }}</span>
+          <h3 id="driver-detection-title">{{ driverDetectionTitle }}</h3>
+          <p>{{ driverDetectionDescription }}</p>
+        </div>
+
+        <div class="detection-checks">
+          <span :class="{ 'is-complete': driverCheckPhase === 'syncing' }">
+            <i aria-hidden="true"></i>{{ t.vddSettings.driverDetectionPresence }}
+          </span>
+          <span :class="{ 'is-complete': driverCheckPhase === 'syncing' }">
+            <i aria-hidden="true"></i>{{ t.vddSettings.driverDetectionHealth }}
+          </span>
+          <span :class="{ 'is-complete': driverCheckPhase === 'syncing' }">
+            <i aria-hidden="true"></i>{{ t.vddSettings.driverDetectionVersion }}
+          </span>
+        </div>
+
+        <div class="detection-lock">
+          <span aria-hidden="true">◇</span>
+          {{ t.vddSettings.driverDetectionLocked }}
+        </div>
+      </section>
+
+      <section v-else-if="!vddReady" class="section-card vdd-prerequisite-card" aria-labelledby="vdd-prerequisite-title">
+        <div class="prerequisite-intro">
+          <div class="prerequisite-icon" aria-hidden="true">
+            <el-icon><Monitor /></el-icon>
+          </div>
+          <div class="prerequisite-copy">
+            <h3 id="vdd-prerequisite-title">{{ t.vddSettings.driverPrerequisiteTitle }}</h3>
+            <p>{{ t.vddSettings.driverPrerequisiteDesc }}</p>
+          </div>
+        </div>
+
+        <div class="prerequisite-status" role="status" aria-live="polite">
+          <span class="status-dot" aria-hidden="true"></span>
+          <div class="status-copy">
+            <strong>{{ vddStatusLabel }}</strong>
+            <span>{{ vddStatus.status_text || t.vddSettings.driverStatusUnknown }}</span>
+            <div v-if="vddStatus.installed_version || vddStatus.bundled_version" class="driver-version-meta">
+              <span>{{ t.vddSettings.driverVersionInstalled }}: {{ vddStatus.installed_version || '—' }}</span>
+              <span>{{ t.vddSettings.driverVersionBundled }}: {{ vddStatus.bundled_version || '—' }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="prerequisite-actions">
+          <el-button v-if="vddCanInstall" type="primary" :loading="isInstallingDriver" @click="installOrRepairDriver">
+            <el-icon><Download /></el-icon>
+            {{ t.vddSettings.installRepairDriver }}
+          </el-button>
+          <el-button :loading="isCheckingDriver" @click="recheckDriver">
+            <el-icon><Refresh /></el-icon>
+            {{ t.vddSettings.recheckDriver }}
+          </el-button>
+        </div>
+      </section>
+
+      <template v-if="!isDriverCheckPending && vddReady">
       <section class="hero-panel">
         <div class="vdd-header">
           <div class="header-copy">
@@ -419,13 +513,14 @@
           </div>
         </div>
       </el-form>
+      </template>
     </div>
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Monitor,
   Plus,
@@ -440,6 +535,11 @@ import {
 } from '@element-plus/icons-vue'
 import { useEditableOptionField } from '../composables/useEditableOptionField.js'
 import { useVddEdid } from '../composables/useVddEdid.js'
+import { useVddStatusLabel } from '../composables/useVddStatusLabel.js'
+import {
+  installVddWithRecovery,
+  isVddConfirmationRequired,
+} from '../composables/vddInstallRecovery.js'
 import { vdd } from '../tauri-adapter.js'
 import { useI18n } from '../desktop/i18n/index.js'
 
@@ -527,8 +627,23 @@ const traceStatus = ref({
   directory: '',
   latest_file: '',
 })
+const vddStatus = reactive({
+  state: 'unknown',
+  installed: false,
+  running: false,
+  control_available: false,
+  installed_version: '',
+  bundled_version: '',
+  version_match: false,
+  monitor_active: false,
+  status_text: '',
+})
 
 const isLoading = ref(false)
+const isCheckingDriver = ref(false)
+const hasCompletedDriverCheck = ref(false)
+const driverCheckPhase = ref('detecting')
+const isInstallingDriver = ref(false)
 const isSaving = ref(false)
 const isReloadingDriver = ref(false)
 const isDeletingEdid = ref(false)
@@ -723,6 +838,16 @@ const buildSettingsPayload = () => ({
 const takeSnapshot = () => JSON.stringify(buildSettingsPayload())
 
 const hasUnsavedChanges = computed(() => hasLoadedSnapshot.value && takeSnapshot() !== lastSavedSnapshot.value)
+const vddReady = computed(() => vddStatus.running && ['ready', 'degraded'].includes(vddStatus.state))
+const isDriverCheckPending = computed(() => !hasCompletedDriverCheck.value)
+const driverDetectionTitle = computed(() => driverCheckPhase.value === 'syncing'
+  ? t.value.vddSettings.driverSyncTitle
+  : t.value.vddSettings.driverDetectionTitle)
+const driverDetectionDescription = computed(() => driverCheckPhase.value === 'syncing'
+  ? t.value.vddSettings.driverSyncDesc
+  : t.value.vddSettings.driverDetectionDesc)
+const vddCanInstall = computed(() => !['unsupported', 'payload_missing'].includes(vddStatus.state))
+const vddStatusLabel = useVddStatusLabel(t, vddStatus)
 
 const markSettingsClean = () => {
   lastSavedSnapshot.value = takeSnapshot()
@@ -831,6 +956,91 @@ const loadSettings = async ({ silent = false } = {}) => {
 
 const reloadSettings = async () => {
   await syncVddState()
+}
+
+const refreshVddStatus = async () => {
+  isCheckingDriver.value = true
+  try {
+    const result = await vdd.getStatus()
+    if (!result?.success) {
+      throw new Error(result?.message || t.value.vddSettings.driverStatusCheckFailed)
+    }
+    Object.assign(vddStatus, result.data)
+    return vddReady.value
+  } catch (error) {
+    vddStatus.state = 'unknown'
+    vddStatus.status_text = getErrorMessage(error, t.value.vddSettings.driverStatusCheckFailed)
+    return false
+  } finally {
+    isCheckingDriver.value = false
+  }
+}
+
+const recheckDriver = async () => {
+  hasCompletedDriverCheck.value = false
+  driverCheckPhase.value = 'detecting'
+  try {
+    if (await refreshVddStatus()) {
+      driverCheckPhase.value = 'syncing'
+      await syncVddState({ silentLoad: true })
+    }
+  } finally {
+    hasCompletedDriverCheck.value = true
+  }
+}
+
+const installOrRepairDriver = async () => {
+  if (hasUnsavedChanges.value) {
+    ElMessage.warning(t.value.vddSettings.unsavedDesc)
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      t.value.vddSettings.installRepairConfirm,
+      t.value.vddSettings.installRepairTitle,
+      {
+        confirmButtonText: t.value.vddSettings.installRepairDriver,
+        cancelButtonText: t.value.vddSettings.cancel,
+        type: 'warning',
+      }
+    )
+    isInstallingDriver.value = true
+    const install = (force = false) => installVddWithRecovery({
+      install: () => vdd.install(force),
+      getStatus: () => vdd.getStatus(),
+      onStatus: (status) => Object.assign(vddStatus, status),
+      verificationError: t.value.vddSettings.installVerificationFailed,
+    })
+
+    try {
+      await install()
+    } catch (error) {
+      if (!isVddConfirmationRequired(error)) {
+        throw error
+      }
+
+      await ElMessageBox.confirm(
+        t.value.vddSettings.installRepairActiveStreamConfirm,
+        t.value.vddSettings.installRepairTitle,
+        {
+          confirmButtonText: t.value.vddSettings.installRepairContinue,
+          cancelButtonText: t.value.vddSettings.cancel,
+          type: 'warning',
+        }
+      )
+      await install(true)
+    }
+
+    await syncVddState({ silentLoad: true })
+    ElMessage.success(t.value.vddSettings.installRepairSuccess)
+  } catch (error) {
+    if (error !== 'cancel') {
+      ElMessage.error(getErrorMessage(error, t.value.vddSettings.installRepairFailed))
+    }
+  } finally {
+    isInstallingDriver.value = false
+  }
 }
 
 const loadGPUs = async () => {
@@ -968,7 +1178,7 @@ const removeEdidFile = async () => {
 }
 
 onMounted(async () => {
-  await syncVddState({ silentLoad: true })
+  await recheckDriver()
 })
 </script>
 

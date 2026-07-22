@@ -21,11 +21,17 @@ export function useTools() {
    * @param {function} action - 执行的操作
    * @param {string} successMsg - 成功消息
    */
-  const confirmAction = async (message, title, action, successMsg) => {
+  const confirmAction = async (
+    message,
+    title,
+    action,
+    successMsg,
+    { confirmButtonText = '确定', cancelButtonText = '取消' } = {}
+  ) => {
     try {
       await ElMessageBox.confirm(message, title, {
-        confirmButtonText: '确定',
-        cancelButtonText: '取消',
+        confirmButtonText,
+        cancelButtonText,
         type: 'warning',
       })
       await action()
@@ -42,10 +48,14 @@ export function useTools() {
    */
   const uninstallVdd = async () => {
     await confirmAction(
-      '确定要卸载虚拟显示器驱动吗？此操作需要管理员权限。',
-      '确认卸载',
+      t.value.systemTools.vddUninstallConfirm,
+      t.value.systemTools.vddUninstallTitle,
       tools.uninstallVddDriver,
-      '卸载请求已发送'
+      t.value.systemTools.vddUninstallSuccess,
+      {
+        confirmButtonText: t.value.systemTools.confirm,
+        cancelButtonText: t.value.systemTools.cancel,
+      }
     )
   }
 

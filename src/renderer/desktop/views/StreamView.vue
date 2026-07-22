@@ -196,8 +196,30 @@
             <span class="title-icon"><Monitor /></span>
             {{ t.stream.virtualDisplay }}
           </div>
+          <div class="card-actions">
+            <span class="status-badge" :class="vddStatusClass">{{ vddStatusLabel }}</span>
+          </div>
         </div>
         <div class="card-content settings-list">
+          <div v-if="vddStatus.state !== 'ready'" class="driver-notice" :class="{ unavailable: !vddReady }">
+            <div class="driver-notice-copy">
+              <strong>{{ t.vddSettings.driverPrerequisiteTitle }}</strong>
+              <span>{{ vddStatus.status_text || t.vddSettings.driverPrerequisiteDesc }}</span>
+            </div>
+            <div class="driver-notice-actions">
+              <button
+                v-if="vddCanInstall"
+                class="desktop-btn primary"
+                :disabled="vddInstalling"
+                @click="installOrRepairVdd"
+              >
+                {{ t.vddSettings.installRepairDriver }}
+              </button>
+              <button class="desktop-btn" :disabled="vddChecking" @click="loadVddStatus">
+                {{ t.vddSettings.recheckDriver }}
+              </button>
+            </div>
+          </div>
           <div class="setting-row">
             <div class="setting-info">
               <div class="setting-label">{{ t.stream.vddPhysicalHandling }}</div>
@@ -216,7 +238,8 @@
             <button 
               class="toggle-btn" 
               :class="{ on: configData.vdd_keep_enabled === 'enabled' }"
-              @click="configData.vdd_keep_enabled = configData.vdd_keep_enabled === 'enabled' ? 'disabled' : 'enabled'"
+              :disabled="vddConfigSaving || (configData.vdd_keep_enabled !== 'enabled' && !vddReady)"
+              @click="toggleVddOption('keep')"
             >
               {{ configData.vdd_keep_enabled === 'enabled' ? t.stream.yes : t.stream.no }}
             </button>
@@ -229,7 +252,8 @@
             <button 
               class="toggle-btn" 
               :class="{ on: configData.vdd_headless_create_enabled === 'enabled' }"
-              @click="configData.vdd_headless_create_enabled = configData.vdd_headless_create_enabled === 'enabled' ? 'disabled' : 'enabled'"
+              :disabled="vddConfigSaving || (configData.vdd_headless_create_enabled !== 'enabled' && !vddReady)"
+              @click="toggleVddOption('headless')"
             >
               {{ configData.vdd_headless_create_enabled === 'enabled' ? t.stream.yes : t.stream.no }}
             </button>
@@ -305,7 +329,12 @@ import { ref, computed, onMounted } from 'vue'
 import { DataAnalysis, Film, Monitor, Mouse, Promotion, Sunny } from '@element-plus/icons-vue'
 import PillGroup from '../components/PillGroup.vue'
 import FdDropdown from '../components/FdDropdown.vue'
-import { vmouse as vmouseApi } from '../../tauri-adapter.js'
+import { vdd as vddApi, vmouse as vmouseApi } from '../../tauri-adapter.js'
+import {
+  installVddWithRecovery,
+  isVddConfirmationRequired,
+} from '../../composables/vddInstallRecovery.js'
+import { useVddStatusLabel } from '../../composables/useVddStatusLabel.js'
 import { useI18n } from '../i18n/index.js'
 
 const { t } = useI18n()
@@ -333,6 +362,7 @@ const configData = ref({
   vdd_keep_enabled: 'disabled',
   vdd_headless_create_enabled: 'disabled',
 })
+const trayManagedVddKeys = new Set(['vdd_keep_enabled', 'vdd_headless_create_enabled'])
 
 const bitrateKbps = computed({
   get: () => parseInt(configData.value.max_bitrate) || 0,
@@ -427,6 +457,10 @@ async function loadSettings() {
           // 整数类型字段
           if (['hevc_mode', 'av1_mode', 'resolution_change', 'refresh_rate_change', 'vdd_prep'].includes(key)) {
             configData.value[key] = parseInt(data[key]) || 0
+          } else if (trayManagedVddKeys.has(key)) {
+            configData.value[key] = ['enabled', 'true', '1', 'yes'].includes(String(data[key]).toLowerCase())
+              ? 'enabled'
+              : 'disabled'
           } else {
             configData.value[key] = data[key]
           }
@@ -486,6 +520,7 @@ async function saveSettings() {
     }
     // 覆盖 StreamView 管理的字段
     for (const [key, value] of Object.entries(configData.value)) {
+      if (trayManagedVddKeys.has(key)) continue
       payload[key] = String(value)
     }
 
@@ -555,9 +590,92 @@ async function saveDesktopLaunchMode() {
 
 onMounted(async () => {
   await initTauri()
-  await loadSettings()
-  await loadVmouseStatus()
+  await Promise.all([loadSettings(), loadVddStatus(), loadVmouseStatus()])
 })
+
+const vddStatus = ref({
+  state: 'unknown',
+  installed: false,
+  running: false,
+  control_available: false,
+  status_text: '',
+})
+const vddChecking = ref(false)
+const vddInstalling = ref(false)
+const vddConfigSaving = ref(false)
+
+const vddReady = computed(() => vddStatus.value.running && ['ready', 'degraded'].includes(vddStatus.value.state))
+const vddCanInstall = computed(() => !['unsupported', 'payload_missing'].includes(vddStatus.value.state))
+const vddStatusClass = computed(() => {
+  if (vddStatus.value.state === 'ready') return 'good'
+  if (vddReady.value) return 'warn'
+  return 'off'
+})
+const vddStatusLabel = useVddStatusLabel(t, vddStatus)
+
+async function loadVddStatus() {
+  vddChecking.value = true
+  try {
+    const result = await vddApi.getStatus()
+    if (!result?.success) throw new Error(result?.message || t.value.vddSettings.driverStatusCheckFailed)
+    vddStatus.value = { ...vddStatus.value, ...result.data }
+  } catch (error) {
+    vddStatus.value = {
+      ...vddStatus.value,
+      state: 'unknown',
+      running: false,
+      status_text: error?.message || String(error),
+    }
+  } finally {
+    vddChecking.value = false
+  }
+}
+
+async function installOrRepairVdd() {
+  if (!confirm(t.value.vddSettings.installRepairConfirm)) return
+  vddInstalling.value = true
+  try {
+    const install = (force = false) => installVddWithRecovery({
+      install: () => vddApi.install(force),
+      getStatus: () => vddApi.getStatus(),
+      onStatus: (status) => {
+        vddStatus.value = { ...vddStatus.value, ...status }
+      },
+      verificationError: t.value.vddSettings.installVerificationFailed,
+    })
+
+    try {
+      await install()
+    } catch (error) {
+      if (!isVddConfirmationRequired(error)) throw error
+      if (!confirm(t.value.vddSettings.installRepairActiveStreamConfirm)) return
+      await install(true)
+    }
+
+    alert(t.value.vddSettings.installRepairSuccess)
+  } catch (error) {
+    alert(`${t.value.vddSettings.installRepairFailed}: ${error?.message || error}`)
+  } finally {
+    vddInstalling.value = false
+  }
+}
+
+async function toggleVddOption(option) {
+  const key = option === 'keep' ? 'vdd_keep_enabled' : 'vdd_headless_create_enabled'
+  const enabled = configData.value[key] !== 'enabled'
+  vddConfigSaving.value = true
+  try {
+    const result = option === 'keep'
+      ? await vddApi.setKeepEnabled(enabled)
+      : await vddApi.setHeadlessCreateEnabled(enabled)
+    if (!result?.success) throw new Error(result?.message || t.value.stream.msg.saveFailed)
+    configData.value[key] = enabled ? 'enabled' : 'disabled'
+  } catch (error) {
+    alert(error?.message || error)
+  } finally {
+    vddConfigSaving.value = false
+  }
+}
 
 // ========== 虚拟鼠标驱动管理 ==========
 const vmouseStatus = ref({ installed: false, running: false, status_text: t.value.stream.vmouseDetecting, driver_path: '', config_enabled: true })
@@ -865,10 +983,53 @@ async function uninstallVmouse() {
 }
 
 // Settings list
+.driver-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  border-radius: 10px;
+  background: rgba(251, 191, 36, 0.08);
+
+  &.unavailable {
+    border-color: rgba(248, 113, 113, 0.35);
+    background: rgba(248, 113, 113, 0.08);
+  }
+}
+
+.driver-notice-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--fd-text-primary, #fff);
+
+  span {
+    color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.6);
+    font-size: 13px;
+  }
+}
+
+.driver-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .settings-list {
   display: flex;
   flex-direction: column;
   gap: 0;
+}
+
+@media (max-width: 700px) {
+  .driver-notice {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }
 
 .setting-row {

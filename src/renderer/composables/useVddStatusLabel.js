@@ -14,7 +14,8 @@ const VDD_STATUS_LABEL_KEYS = Object.freeze({
 export function useVddStatusLabel(t, status) {
   return computed(() => {
     const state = unref(status)?.state
-    const key = VDD_STATUS_LABEL_KEYS[state] || VDD_STATUS_LABEL_KEYS.unknown
+    const hasState = Object.prototype.hasOwnProperty.call(VDD_STATUS_LABEL_KEYS, state)
+    const key = hasState ? VDD_STATUS_LABEL_KEYS[state] : VDD_STATUS_LABEL_KEYS.unknown
     return unref(t).vddSettings[key]
   })
 }

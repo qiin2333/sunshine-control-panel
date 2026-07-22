@@ -243,13 +243,25 @@ pub async fn set_vdd_headless_create_enabled(enabled: bool) -> Result<String, St
     set_vdd_tray_option("vdd_toggle_headless_create", enabled).await
 }
 
-async fn ensure_vdd_driver_change_is_safe() -> Result<(), String> {
+const VDD_CONFIRM_REQUIRED: &str = "VDD_CONFIRM_REQUIRED";
+
+async fn ensure_vdd_driver_change_is_safe(
+    allow_active: bool,
+    request_confirmation: bool,
+) -> Result<(), String> {
     let sessions = sunshine::get_active_sessions().await.map_err(|error| {
         warn!("检查 Sunshine 串流状态失败: {error}");
         "无法确认 Sunshine 串流状态，请重试后再安装或卸载虚拟显示器驱动".to_string()
     })?;
     if !sessions.is_empty() {
-        return Err("串流进行中，停止所有串流后才能安装或卸载虚拟显示器驱动".to_string());
+        if !allow_active {
+            return Err(if request_confirmation {
+                VDD_CONFIRM_REQUIRED.to_string()
+            } else {
+                "串流进行中，停止所有串流后才能安装或卸载虚拟显示器驱动".to_string()
+            });
+        }
+        warn!("检测到活动串流，用户已确认继续修改 VDD 驱动");
     }
 
     let tray_state = sunshine::get_tray_state().await.map_err(|error| {
@@ -257,16 +269,23 @@ async fn ensure_vdd_driver_change_is_safe() -> Result<(), String> {
         "无法确认 Sunshine 虚拟显示器状态，请重试后再安装或卸载驱动".to_string()
     })?;
     if tray_state.vdd.active {
-        return Err("虚拟显示器当前仍处于活动状态，请先从托盘关闭它".to_string());
+        if !allow_active {
+            return Err(if request_confirmation {
+                VDD_CONFIRM_REQUIRED.to_string()
+            } else {
+                "虚拟显示器当前仍处于活动状态，请先从托盘关闭它".to_string()
+            });
+        }
+        warn!("检测到 VDD 正在使用，用户已确认继续修改驱动");
     }
     Ok(())
 }
 
 #[tauri::command]
-pub async fn install_vdd_driver() -> Result<String, String> {
+pub async fn install_vdd_driver(force: Option<bool>) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
-        ensure_vdd_driver_change_is_safe().await?;
+        ensure_vdd_driver_change_is_safe(force.unwrap_or(false), true).await?;
         let install_script = get_sunshine_path().join("scripts").join("install-vdd.bat");
         if !install_script.exists() {
             return Err(format!(
@@ -1483,7 +1502,7 @@ pub fn open_vdd_trace_folder() -> Result<String, String> {
 pub async fn uninstall_vdd_driver() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
-        ensure_vdd_driver_change_is_safe().await?;
+        ensure_vdd_driver_change_is_safe(false, false).await?;
         let uninstall_script = get_sunshine_path()
             .join("scripts")
             .join("uninstall-vdd.bat");

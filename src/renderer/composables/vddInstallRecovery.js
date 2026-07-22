@@ -1,5 +1,12 @@
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 
+export const VDD_CONFIRM_REQUIRED = 'VDD_CONFIRM_REQUIRED'
+
+export const isVddConfirmationRequired = (error) => {
+  const message = error instanceof Error ? error.message : error
+  return message === VDD_CONFIRM_REQUIRED
+}
+
 export const isVddRepairVerified = (status) => Boolean(
   status?.running
   && status?.version_match

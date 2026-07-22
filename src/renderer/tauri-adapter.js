@@ -51,7 +51,7 @@ export async function openExternalUrl(url) {
 
 export const vdd = {
   getStatus: () => wrapResult('get_vdd_status'),
-  install: () => wrapResult('install_vdd_driver'),
+  install: (force = false) => wrapResult('install_vdd_driver', { force: !!force }),
   uninstall: () => wrapResult('uninstall_vdd_driver'),
   setKeepEnabled: (enabled) => wrapResult('set_vdd_keep_enabled', { enabled }),
   setHeadlessCreateEnabled: (enabled) => wrapResult('set_vdd_headless_create_enabled', { enabled }),

@@ -27,4 +27,9 @@ test('maps every VDD state and unknown values through the shared labels', () => 
 
   status.state = 'future_state'
   assert.equal(statusLabel.value, labels.unknown)
+
+  for (const inheritedState of ['toString', 'constructor', 'valueOf']) {
+    status.state = inheritedState
+    assert.equal(statusLabel.value, labels.unknown)
+  }
 })

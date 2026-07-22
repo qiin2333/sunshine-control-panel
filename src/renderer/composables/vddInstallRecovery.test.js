@@ -1,6 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { installVddWithRecovery, isVddRepairVerified } from './vddInstallRecovery.js'
+import {
+  installVddWithRecovery,
+  isVddConfirmationRequired,
+  isVddRepairVerified,
+  VDD_CONFIRM_REQUIRED,
+} from './vddInstallRecovery.js'
 
 const readyStatus = {
   state: 'ready',
@@ -13,6 +18,12 @@ test('requires ready, running, matching driver state', () => {
   assert.equal(isVddRepairVerified({ ...readyStatus, state: 'degraded' }), false)
   assert.equal(isVddRepairVerified({ ...readyStatus, running: false }), false)
   assert.equal(isVddRepairVerified({ ...readyStatus, version_match: false }), false)
+})
+
+test('recognizes the active-stream confirmation request', () => {
+  assert.equal(isVddConfirmationRequired(new Error(VDD_CONFIRM_REQUIRED)), true)
+  assert.equal(isVddConfirmationRequired(VDD_CONFIRM_REQUIRED), true)
+  assert.equal(isVddConfirmationRequired('stream is active'), false)
 })
 
 test('verifies the driver after a normal install response', async () => {

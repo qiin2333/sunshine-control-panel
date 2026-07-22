@@ -30,8 +30,8 @@ export const translations = {
         },
         {
           icon: '🖥️',
-          title: '虚拟显示器',
-          description: '内置虚拟显示器管理，无需额外软件即可创建和管理虚拟显示器'
+          title: '基地显示器（ZakoVDD）',
+          description: '内置基地显示器管理，无需额外软件即可创建和管理虚拟显示器'
         },
         {
           icon: '🎤',

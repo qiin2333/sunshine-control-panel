@@ -23,7 +23,7 @@ const routeConfig = {
   [ROUTES.VDD_SETTINGS]: {
     name: ROUTES.VDD_SETTINGS,
     component: 'VddSettings',
-    title: '虚拟显示器',
+    title: '基地显示器（ZakoVDD）',
   },
   [ROUTES.WELCOME]: {
     name: ROUTES.WELCOME,

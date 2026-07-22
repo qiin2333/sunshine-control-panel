@@ -101,7 +101,7 @@ export const zh = {
     autoLaunchDesktopUIDesc: 'Moonlight 连接「Desktop」后自动全屏启动本面板，提供游戏库、快捷工具等沉浸式桌面体验',
     launchOn: '已开启',
     launchOff: '未开启',
-    virtualDisplay: '虚拟显示器 (VDD)',
+    virtualDisplay: '基地显示器（ZakoVDD）',
     vddPhysicalHandling: '物理显示器处理',
     vddPhysicalHandlingDesc: '使用 VDD 时如何处理物理显示器',
     vddPhysicalMode: {
@@ -109,7 +109,7 @@ export const zh = {
       disable: '禁用物理显示器',
     },
     vddKeepEnabled: '保持 VDD 启用',
-    vddKeepEnabledDesc: '串流结束后不销毁虚拟显示器',
+    vddKeepEnabledDesc: '串流结束后不销毁基地显示器（ZakoVDD）',
     vddHeadlessCreate: '无头模式自动创建',
     vddHeadlessCreateDesc: '无物理显示器时自动创建 VDD',
     vmouse: '虚拟鼠标 (VMouse)',
@@ -537,7 +537,7 @@ export const zh = {
         '码率不够高哦，杂鱼看得清吗♡',
         '延迟这么高，杂鱼在干什么呢～',
         '帧率掉了吧？杂鱼的网络不太行呢',
-        '虚拟显示器开着呢，杂鱼想看什么？',
+        '基地显示器开着呢，杂鱼想看什么？',
         '嘶嘶，杂鱼又在偷偷串流了～',
         'DPI调那么高，杂鱼眼睛受得了吗♡',
         '连接不稳定哦，杂鱼要检查网络啦～',
@@ -659,7 +659,7 @@ export const zh = {
   // === 工具栏 ===
   toolbar: {
     controlPanel: '控制面板',
-    virtualDisplay: '虚拟显示器',
+    virtualDisplay: '基地显示器（ZakoVDD）',
     adjustDpi: '调整 DPI',
     bitrateAdjust: '码率调整',
     hostPerformance: '主机性能',
@@ -708,10 +708,10 @@ export const zh = {
 
   // === VDD 设置 ===
   vddSettings: {
-    title: '虚拟显示器设置',
-    driverPrerequisiteTitle: '虚拟显示器驱动',
-    driverPrerequisiteDesc: '使用虚拟显示器前，需要先安装并验证 Sunshine 随附的 ZakoVDD 驱动。',
-    driverDetectionKicker: 'ZAKOVDD // 核心握手',
+    title: '基地显示器设置（ZakoVDD）',
+    driverPrerequisiteTitle: '基地显示器驱动（ZakoVDD）',
+    driverPrerequisiteDesc: '基地显示器（ZakoVDD）是 Sunshine 的虚拟屏幕功能，使用前需要先安装并验证随附的基地显示器驱动。',
+    driverDetectionKicker: '基地显示器 // 核心握手',
     driverDetectionTitle: '正在唤醒虚拟显示核心…',
     driverDetectionDesc: '正在确认驱动实体、设备运行状态与随包版本；仪式完成前，设置区域将保持封印。',
     driverSyncTitle: '核心回应已确认，正在同步显示法阵…',
@@ -733,13 +733,13 @@ export const zh = {
     driverStateUnknown: '驱动状态未知',
     installRepairDriver: '安装 / 修复驱动',
     recheckDriver: '重新检测',
-    driverStatusCheckFailed: '检测虚拟显示器驱动失败',
-    installRepairTitle: '安装或修复虚拟显示器驱动',
+    driverStatusCheckFailed: '检测基地显示器（ZakoVDD）驱动失败',
+    installRepairTitle: '安装或修复基地显示器驱动（ZakoVDD）',
     installRepairConfirm: 'Windows 将请求管理员权限，安装期间可能会改变显示器布局。确定继续吗？',
-    installRepairActiveStreamConfirm: '检测到当前正在串流或虚拟显示器仍在使用。继续安装可能导致串流中断或显示器布局暂时变化，确定要继续吗？',
+    installRepairActiveStreamConfirm: '检测到当前正在串流或基地显示器（ZakoVDD）仍在使用。继续安装可能导致串流中断或显示器布局暂时变化，确定要继续吗？',
     installRepairContinue: '仍要继续',
-    installRepairSuccess: '虚拟显示器驱动已安装并通过验证',
-    installRepairFailed: '安装或修复虚拟显示器驱动失败',
+    installRepairSuccess: '基地显示器驱动已安装并通过验证',
+    installRepairFailed: '安装或修复基地显示器驱动失败',
     installVerificationFailed: '安装完成，但驱动尚未就绪。请查看安装日志或重启 Windows 后重新检测。',
     cancel: '取消',
     subtitle: '推荐优先使用内置 EDID；只有在确实需要特殊兼容性或显示能力时，再启用自定义 EDID。',
@@ -889,7 +889,7 @@ export const zh = {
     restore: '还原',
     close: '关闭',
     advancedSettings: '高级设置',
-    virtualDisplay: '虚拟显示器',
+    virtualDisplay: '基地显示器',
     webStream: 'Web 串流',
     aiAssistant: '米塔',
     uninstallVdd: '卸载 VDD',
@@ -919,7 +919,7 @@ export const zh = {
 
   // === 系统工具 ===
   systemTools: {
-    vddUninstallConfirm: '确定要卸载虚拟显示器驱动吗？此操作需要管理员权限。',
+    vddUninstallConfirm: '确定要卸载基地显示器驱动（ZakoVDD）吗？此操作需要管理员权限。',
     vddUninstallTitle: '确认卸载',
     confirm: '确定',
     cancel: '取消',

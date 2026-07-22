@@ -42,7 +42,7 @@ export function useTools() {
    */
   const uninstallVdd = async () => {
     await confirmAction(
-      '确定要卸载虚拟显示器驱动吗？此操作需要管理员权限。',
+      '确定要卸载基地显示器驱动吗？此操作需要管理员权限。',
       '确认卸载',
       tools.uninstallVddDriver,
       '卸载请求已发送'

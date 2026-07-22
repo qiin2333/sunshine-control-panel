@@ -175,14 +175,14 @@ const ZH_STRINGS: TrayStrings = TrayStrings {
     advanced_menu: "高级",
     help_menu: "帮助",
     open_sunshine: "Web 管理界面",
-    vdd_settings: "虚拟显示器设置",
-    vdd_create: "创建虚拟显示器",
-    vdd_create_confirm: "创建虚拟显示器可能会更改 Windows 显示布局。是否继续？",
-    vdd_close: "关闭虚拟显示器",
+    vdd_settings: "基地显示器设置（ZakoVDD）",
+    vdd_create: "创建基地显示器",
+    vdd_create_confirm: "创建基地显示器可能会更改 Windows 显示布局。是否继续？",
+    vdd_close: "关闭基地显示器",
     vdd_keep: "串流结束后保留",
-    vdd_keep_confirm: "启用后，串流结束时将保留虚拟显示器，并可能更改 Windows 显示布局。是否继续？",
+    vdd_keep_confirm: "启用后，串流结束时将保留基地显示器，并可能更改 Windows 显示布局。是否继续？",
     vdd_headless: "无头模式自动创建",
-    vdd_headless_confirm: "这是实验性恢复功能：未检测到显示器时会自动创建虚拟显示器，并可能更改当前显示布局。是否继续？",
+    vdd_headless_confirm: "这是实验性恢复功能：未检测到显示器时会自动创建基地显示器，并可能更改当前显示布局。是否继续？",
     import_config: "导入配置",
     export_config: "导出配置",
     reset_config: "重置配置",
@@ -709,7 +709,7 @@ mod tests {
 
     #[test]
     fn native_confirmations_use_localized_tray_text() {
-        assert!(ZH_STRINGS.vdd_create_confirm.contains("虚拟显示器"));
+        assert!(ZH_STRINGS.vdd_create_confirm.contains("基地显示器"));
         assert!(ZH_STRINGS.vdd_keep_confirm.contains("串流结束"));
         assert!(ZH_STRINGS.vdd_headless_confirm.contains("实验性"));
         assert!(ZH_STRINGS.reset_config_confirm.contains("默认配置"));

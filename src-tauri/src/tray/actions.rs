@@ -13,7 +13,7 @@ pub fn handle_tray_menu_event<R: Runtime + 'static>(app: &AppHandle<R>, menu_id:
         #[cfg(target_os = "windows")]
         "auto_start" => toggle_auto_start(app),
         "vdd_settings" => open_vdd_settings(app),
-        "vdd_create" => confirm_tray_action(app, s.vdd_create, s.vdd_create_confirm, "vdd_create"),
+        "vdd_create" => run_vdd_create_action(app, s.vdd_create, s.vdd_create_confirm),
         "vdd_close" => run_tray_action(app, "vdd_destroy", None),
         "vdd_toggle_keep_enabled" => run_vdd_toggle_action(
             app,
@@ -106,6 +106,17 @@ fn handle_tray_notification_action<R: Runtime>(app: &AppHandle<R>) {
         Some("open_pin") => {
             open_pairing_window(app);
         }
+        Some("open_vdd_settings") => {
+            open_vdd_settings(app);
+            if supports_ack
+                && let Some(notification_id) = notification
+                    .as_ref()
+                    .map(|notification| notification.id)
+                    .filter(|notification_id| *notification_id != 0)
+            {
+                acknowledge_notification(app, notification_id);
+            }
+        }
         _ => {
             open_main_panel_from_tray(app, "notification");
             if supports_ack
@@ -164,7 +175,7 @@ fn acknowledge_notification<R: Runtime>(app: &AppHandle<R>, notification_id: u64
     });
 }
 
-fn run_vdd_toggle_action<R: Runtime>(
+fn run_vdd_toggle_action<R: Runtime + 'static>(
     app: &AppHandle<R>,
     action: &'static str,
     current_value: fn(&sunshine::TrayState) -> bool,
@@ -182,22 +193,61 @@ fn run_vdd_toggle_action<R: Runtime>(
     refresh_menu(app);
 
     if enabled == Some(true) {
-        use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+        with_vdd_prerequisite(app, move |app_handle| {
+            use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
-        let app_handle = app.clone();
-        app.dialog()
-            .message(enable_message)
-            .title(enable_title)
-            .kind(MessageDialogKind::Warning)
-            .buttons(MessageDialogButtons::YesNo)
-            .show(move |confirmed| {
-                if confirmed {
-                    run_tray_action(&app_handle, action, Some(true));
-                }
-            });
+            let dialog_handle = app_handle.clone();
+            app_handle
+                .dialog()
+                .message(enable_message)
+                .title(enable_title)
+                .kind(MessageDialogKind::Warning)
+                .buttons(MessageDialogButtons::YesNo)
+                .show(move |confirmed| {
+                    if confirmed {
+                        run_tray_action(&dialog_handle, action, Some(true));
+                    }
+                });
+        });
     } else {
         run_tray_action(app, action, enabled);
     }
+}
+
+fn run_vdd_create_action<R: Runtime + 'static>(
+    app: &AppHandle<R>,
+    title: &'static str,
+    message: &'static str,
+) {
+    with_vdd_prerequisite(app, move |app_handle| {
+        confirm_tray_action(&app_handle, title, message, "vdd_create");
+    });
+}
+
+fn with_vdd_prerequisite<R, F>(app: &AppHandle<R>, on_ready: F)
+where
+    R: Runtime + 'static,
+    F: FnOnce(AppHandle<R>) + Send + 'static,
+{
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let status = crate::vdd::get_vdd_status().await;
+        let ready = status.as_ref().is_ok_and(crate::vdd::VddStatus::is_usable);
+
+        let main_handle = app_handle.clone();
+        let _ = app_handle.run_on_main_thread(move || {
+            if ready {
+                on_ready(main_handle);
+                return;
+            }
+
+            let message = status
+                .map(|status| status.status_text)
+                .unwrap_or_else(|error| error);
+            emit_message(&main_handle, "warning", &message);
+            open_vdd_settings(&main_handle);
+        });
+    });
 }
 
 fn run_tray_action<R: Runtime>(app: &AppHandle<R>, action: &'static str, enabled: Option<bool>) {

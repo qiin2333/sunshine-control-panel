@@ -50,6 +50,11 @@ export async function openExternalUrl(url) {
 // ─── VDD 设置 ────────────────────────────────────────────
 
 export const vdd = {
+  getStatus: () => wrapResult('get_vdd_status'),
+  install: () => wrapResult('install_vdd_driver'),
+  uninstall: () => wrapResult('uninstall_vdd_driver'),
+  setKeepEnabled: (enabled) => wrapResult('set_vdd_keep_enabled', { enabled }),
+  setHeadlessCreateEnabled: (enabled) => wrapResult('set_vdd_headless_create_enabled', { enabled }),
   getGPUs: () => wrapResult('get_gpus'),
   getSettingsFilePath: () => wrapResult('get_vdd_settings_file_path'),
   loadSettings: () => wrapResult('load_vdd_settings'),

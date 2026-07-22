@@ -1,6 +1,8 @@
+#[cfg(target_os = "windows")]
+use crate::bat_runner;
 use crate::sunshine;
 #[cfg(target_os = "windows")]
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use log::{debug, error, info, warn};
 use quick_xml::de::from_str;
 use serde::{Deserialize, Serialize};
@@ -16,6 +18,272 @@ pub struct VddTraceStatus {
     pub running: bool,
     pub directory: String,
     pub latest_file: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct VddStatus {
+    pub state: String,
+    pub installed: bool,
+    pub running: bool,
+    pub control_available: bool,
+    pub installed_version: String,
+    pub bundled_version: String,
+    pub version_match: bool,
+    pub monitor_active: bool,
+    pub status_text: String,
+}
+
+impl VddStatus {
+    pub fn is_usable(&self) -> bool {
+        self.running && matches!(self.state.as_str(), "ready" | "degraded")
+    }
+}
+
+fn probe_value(output: &str, key: &str) -> String {
+    output
+        .lines()
+        .rev()
+        .find_map(|line| line.trim().strip_prefix(&format!("{}=", key)))
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
+fn vdd_probe_command_line(install_script: &Path) -> String {
+    // Starting the `/C` command with `call` avoids cmd.exe's special handling
+    // for a command line whose first character is a quote.
+    format!(r#"call "{}" --probe-only"#, install_script.display())
+}
+
+#[cfg(target_os = "windows")]
+fn run_vdd_probe(install_script: &Path) -> std::io::Result<std::process::Output> {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    Command::new("cmd")
+        .args(["/d", "/s", "/c"])
+        .raw_arg(vdd_probe_command_line(install_script))
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+}
+
+fn classify_vdd_state(
+    installed: bool,
+    running: bool,
+    version_match: bool,
+    control_available: bool,
+    problem_code: u32,
+) -> &'static str {
+    if !installed {
+        "not_installed"
+    } else if problem_code == 14 {
+        "reboot_required"
+    } else if !running {
+        "unhealthy"
+    } else if !version_match || !control_available {
+        "degraded"
+    } else {
+        "ready"
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn probe_vdd_status() -> VddStatus {
+    let install_script = get_sunshine_path().join("scripts").join("install-vdd.bat");
+    if !install_script.exists() {
+        return VddStatus {
+            state: "payload_missing".to_string(),
+            status_text: format!("VDD 安装脚本不存在: {}", install_script.display()),
+            ..Default::default()
+        };
+    }
+
+    let output = match run_vdd_probe(&install_script) {
+        Ok(output) => output,
+        Err(error) => {
+            return VddStatus {
+                state: "unknown".to_string(),
+                status_text: format!("无法启动 VDD 状态检测: {}", error),
+                ..Default::default()
+            };
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{}\n{}", stdout, stderr);
+    if !output.status.success() || probe_value(&combined, "VDD_PROBE_OK") != "1" {
+        let payload_missing = combined.contains("driver payload not found")
+            || combined.contains("configuration template not found");
+        return VddStatus {
+            state: if payload_missing {
+                "payload_missing"
+            } else {
+                "unknown"
+            }
+            .to_string(),
+            status_text: if payload_missing {
+                "Sunshine 安装目录中缺少 VDD 驱动文件，请修复或重新安装 Sunshine".to_string()
+            } else {
+                "无法读取 VDD 驱动状态".to_string()
+            },
+            ..Default::default()
+        };
+    }
+
+    let installed = probe_value(&combined, "VDD_DEVICE_PRESENT") == "1";
+    let pnp_status = probe_value(&combined, "CURRENT_VDD_STATUS");
+    let problem_code = probe_value(&combined, "CURRENT_VDD_PROBLEM")
+        .parse::<u32>()
+        .unwrap_or(0);
+    let installed_version = probe_value(&combined, "CURRENT_VDD_VERSION");
+    let bundled_version = probe_value(&combined, "BUNDLED_VDD_VERSION");
+    let running = installed && pnp_status.eq_ignore_ascii_case("OK") && problem_code == 0;
+    let version_match = running
+        && !installed_version.is_empty()
+        && !bundled_version.is_empty()
+        && installed_version.eq_ignore_ascii_case(&bundled_version);
+    let control_available = crate::vdd_ioctl::interface_available();
+
+    let classified_state = classify_vdd_state(
+        installed,
+        running,
+        version_match,
+        control_available,
+        problem_code,
+    );
+    let (state, status_text) = if classified_state == "not_installed" {
+        ("not_installed", "尚未安装虚拟显示器驱动".to_string())
+    } else if classified_state == "reboot_required" {
+        (
+            "reboot_required",
+            "虚拟显示器驱动需要重启 Windows 后才能使用".to_string(),
+        )
+    } else if classified_state == "unhealthy" {
+        (
+            "unhealthy",
+            format!(
+                "虚拟显示器驱动状态异常（状态: {}, 问题码: {}）",
+                pnp_status, problem_code
+            ),
+        )
+    } else if classified_state == "degraded" {
+        (
+            "degraded",
+            if !version_match {
+                format!(
+                    "已安装版本 {} 与 Sunshine 随包版本 {} 不一致",
+                    installed_version, bundled_version
+                )
+            } else {
+                "驱动已安装，但现代控制接口不可用".to_string()
+            },
+        )
+    } else {
+        ("ready", "虚拟显示器驱动已就绪".to_string())
+    };
+
+    VddStatus {
+        state: state.to_string(),
+        installed,
+        running,
+        control_available,
+        installed_version,
+        bundled_version,
+        version_match,
+        monitor_active: false,
+        status_text,
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn probe_vdd_status() -> VddStatus {
+    VddStatus {
+        state: "unsupported".to_string(),
+        status_text: "虚拟显示器驱动仅支持 Windows".to_string(),
+        ..Default::default()
+    }
+}
+
+#[tauri::command]
+pub async fn get_vdd_status() -> Result<VddStatus, String> {
+    let mut status = probe_vdd_status();
+    if let Ok(tray_state) = sunshine::get_tray_state().await {
+        status.monitor_active = tray_state.vdd.active;
+    }
+    Ok(status)
+}
+
+async fn set_vdd_tray_option(action: &str, enabled: bool) -> Result<String, String> {
+    if enabled && !get_vdd_status().await?.is_usable() {
+        return Err("虚拟显示器驱动尚未就绪，请先安装或修复驱动".to_string());
+    }
+
+    let response = sunshine::post_tray_action(action, Some(enabled)).await?;
+    if !response.status {
+        return Err(if response.error.is_empty() {
+            "Sunshine 拒绝了 VDD 设置变更".to_string()
+        } else {
+            response.error
+        });
+    }
+    Ok(response.message)
+}
+
+#[tauri::command]
+pub async fn set_vdd_keep_enabled(enabled: bool) -> Result<String, String> {
+    set_vdd_tray_option("vdd_toggle_keep_enabled", enabled).await
+}
+
+#[tauri::command]
+pub async fn set_vdd_headless_create_enabled(enabled: bool) -> Result<String, String> {
+    set_vdd_tray_option("vdd_toggle_headless_create", enabled).await
+}
+
+async fn ensure_vdd_driver_change_is_safe() -> Result<(), String> {
+    if let Ok(sessions) = sunshine::get_active_sessions().await {
+        if !sessions.is_empty() {
+            return Err("串流进行中，停止所有串流后才能安装或卸载虚拟显示器驱动".to_string());
+        }
+    }
+
+    if let Ok(tray_state) = sunshine::get_tray_state().await {
+        if tray_state.vdd.active {
+            return Err("虚拟显示器当前仍处于活动状态，请先从托盘关闭它".to_string());
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn install_vdd_driver() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        ensure_vdd_driver_change_is_safe().await?;
+        let install_script = get_sunshine_path().join("scripts").join("install-vdd.bat");
+        if !install_script.exists() {
+            return Err(format!(
+                "VDD 安装脚本不存在: {}。请修复或重新安装 Sunshine。",
+                install_script.display()
+            ));
+        }
+
+        info!("调用 install-vdd.bat 安装或修复虚拟显示器驱动...");
+        bat_runner::run_elevated(&install_script, "vdd", &[])?;
+        tokio::time::sleep(tokio::time::Duration::from_millis(750)).await;
+
+        let status = get_vdd_status().await?;
+        if !status.installed || !status.running {
+            return Err(format!("VDD 安装后验证失败: {}", status.status_text));
+        }
+        Ok("虚拟显示器驱动已安装并通过验证".to_string())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("此功能仅支持 Windows".to_string())
+    }
 }
 
 /// 更新 VDD XML 文件中的 colour、cursor 和 edid 节点
@@ -781,7 +1049,10 @@ const ELEVATED_VDD_IOCTL_ARG: &str = "--elevated-vdd-ioctl";
 
 #[cfg(target_os = "windows")]
 fn is_allowed_elevated_vdd_command(command: &str) -> bool {
-    matches!(command, "RELOAD_DRIVER" | "HARDWARECURSOR true" | "HARDWARECURSOR false")
+    matches!(
+        command,
+        "RELOAD_DRIVER" | "HARDWARECURSOR true" | "HARDWARECURSOR false"
+    )
 }
 
 /// Handle the narrow, elevated helper mode before Tauri/WebView startup.
@@ -831,72 +1102,74 @@ pub async fn exec_pipe_cmd(command: String) -> Result<bool, String> {
         use windows::core::PCWSTR;
 
         let cmd_for_blocking = command.clone();
-        let in_process = tokio::task::spawn_blocking(move || -> Result<bool, (bool, bool, String)> {
-            // Preferred path: IOCTL transport. Mirrors the C++ dispatch in
-            // `Sunshine/src/display_device/vdd_utils.cpp`: only fall through
-            // to the legacy pipe when the device interface is absent.
-            match vdd_ioctl::send_command(&cmd_for_blocking) {
-                vdd_ioctl::IoctlResult::Success => return Ok(true),
-                vdd_ioctl::IoctlResult::Failed(msg) => {
-                    // err=5 表示设备存在但当前权限打不开，可通过提权重试。
-                    let access_denied = msg.contains("(err=5)");
-                    return Err((access_denied, false, format!("vdd_ioctl: {msg}")));
-                }
-                vdd_ioctl::IoctlResult::InterfaceMissing => {
-                    // Driver too old / not installed; fall back to pipe.
-                }
-            }
-
-            // [LEGACY-PIPE] Fallback for older driver builds.
-            unsafe {
-                let pipe_name = r"\\.\pipe\ZakoVDDPipe";
-                let wide: Vec<u16> = pipe_name.encode_utf16().chain(std::iter::once(0)).collect();
-
-                let handle = CreateFileW(
-                    PCWSTR(wide.as_ptr()),
-                    FILE_GENERIC_WRITE.0,
-                    FILE_SHARE_NONE,
-                    None,
-                    OPEN_EXISTING,
-                    FILE_ATTRIBUTE_NORMAL | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
-                    Some(HANDLE::default()),
-                );
-
-                if handle.is_err() || handle.as_ref().unwrap().is_invalid() {
-                    let err = GetLastError().0;
-                    let access_denied = err == 5;
-                    return Err((access_denied, true, format!("无法连接到管道 (err={err})")));
+        let in_process =
+            tokio::task::spawn_blocking(move || -> Result<bool, (bool, bool, String)> {
+                // Preferred path: IOCTL transport. Mirrors the C++ dispatch in
+                // `Sunshine/src/display_device/vdd_utils.cpp`: only fall through
+                // to the legacy pipe when the device interface is absent.
+                match vdd_ioctl::send_command(&cmd_for_blocking) {
+                    vdd_ioctl::IoctlResult::Success => return Ok(true),
+                    vdd_ioctl::IoctlResult::Failed(msg) => {
+                        // err=5 表示设备存在但当前权限打不开，可通过提权重试。
+                        let access_denied = msg.contains("(err=5)");
+                        return Err((access_denied, false, format!("vdd_ioctl: {msg}")));
+                    }
+                    vdd_ioctl::IoctlResult::InterfaceMissing => {
+                        // Driver too old / not installed; fall back to pipe.
+                    }
                 }
 
-                let handle = handle.unwrap();
+                // [LEGACY-PIPE] Fallback for older driver builds.
+                unsafe {
+                    let pipe_name = r"\\.\pipe\ZakoVDDPipe";
+                    let wide: Vec<u16> =
+                        pipe_name.encode_utf16().chain(std::iter::once(0)).collect();
 
-                // 转换为 UTF-16LE
-                let cmd_wide: Vec<u16> = cmd_for_blocking
-                    .encode_utf16()
-                    .chain(std::iter::once(0))
-                    .collect();
-                let buffer = cmd_wide.as_ptr() as *const u8;
-                let buffer_len = (cmd_wide.len() * 2) as u32;
+                    let handle = CreateFileW(
+                        PCWSTR(wide.as_ptr()),
+                        FILE_GENERIC_WRITE.0,
+                        FILE_SHARE_NONE,
+                        None,
+                        OPEN_EXISTING,
+                        FILE_ATTRIBUTE_NORMAL | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
+                        Some(HANDLE::default()),
+                    );
 
-                let mut bytes_written = 0u32;
-                let result = WriteFile(
-                    handle,
-                    Some(std::slice::from_raw_parts(buffer, buffer_len as usize)),
-                    Some(&mut bytes_written),
-                    None,
-                );
+                    if handle.is_err() || handle.as_ref().unwrap().is_invalid() {
+                        let err = GetLastError().0;
+                        let access_denied = err == 5;
+                        return Err((access_denied, true, format!("无法连接到管道 (err={err})")));
+                    }
 
-                let _ = CloseHandle(handle);
+                    let handle = handle.unwrap();
 
-                if result.is_ok() {
-                    Ok(true)
-                } else {
-                    Err((false, true, "写入管道失败".to_string()))
+                    // 转换为 UTF-16LE
+                    let cmd_wide: Vec<u16> = cmd_for_blocking
+                        .encode_utf16()
+                        .chain(std::iter::once(0))
+                        .collect();
+                    let buffer = cmd_wide.as_ptr() as *const u8;
+                    let buffer_len = (cmd_wide.len() * 2) as u32;
+
+                    let mut bytes_written = 0u32;
+                    let result = WriteFile(
+                        handle,
+                        Some(std::slice::from_raw_parts(buffer, buffer_len as usize)),
+                        Some(&mut bytes_written),
+                        None,
+                    );
+
+                    let _ = CloseHandle(handle);
+
+                    if result.is_ok() {
+                        Ok(true)
+                    } else {
+                        Err((false, true, "写入管道失败".to_string()))
+                    }
                 }
-            }
-        })
-        .await
-        .map_err(|e| e.to_string())?;
+            })
+            .await
+            .map_err(|e| e.to_string())?;
 
         match in_process {
             Ok(v) => Ok(v),
@@ -930,8 +1203,7 @@ async fn run_elevated_ioctl_command(command: &str) -> Result<(), String> {
         return Err("不允许的 VDD 提权命令".to_string());
     }
 
-    let executable = std::env::current_exe()
-        .map_err(|e| format!("无法定位控制面板程序: {e}"))?;
+    let executable = std::env::current_exe().map_err(|e| format!("无法定位控制面板程序: {e}"))?;
     let executable = executable.to_string_lossy().replace('\'', "''");
     let encoded = URL_SAFE_NO_PAD.encode(command.as_bytes());
     let inner = format!(
@@ -1203,41 +1475,25 @@ pub fn open_vdd_trace_folder() -> Result<String, String> {
 pub async fn uninstall_vdd_driver() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::process::CommandExt;
-        use std::process::Command;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        // 查找 nefconw.exe：先 tools/ 再 tools/vdd/
-        let tools_dir = get_sunshine_path().join("tools");
-        let nefconw_exe = {
-            let direct = tools_dir.join("nefconw.exe");
-            if direct.exists() {
-                direct
-            } else {
-                tools_dir.join("vdd").join("nefconw.exe")
-            }
-        };
-
-        if !nefconw_exe.exists() {
-            return Err("找不到 nefconw.exe".to_string());
+        ensure_vdd_driver_change_is_safe().await?;
+        let uninstall_script = get_sunshine_path()
+            .join("scripts")
+            .join("uninstall-vdd.bat");
+        if !uninstall_script.exists() {
+            return Err(format!(
+                "VDD 卸载脚本不存在: {}。请修复或重新安装 Sunshine。",
+                uninstall_script.display()
+            ));
         }
 
-        let command = format!(
-            r#"'{}' --remove-device-node --hardware-id ROOT\iddsampledriver --class-guid 4d36e968-e325-11ce-bfc1-08002be10318"#,
-            nefconw_exe.display()
-        );
-
-        let ps_command = format!(
-            r#"Start-Process powershell -ArgumentList '-Command', '{}' -Verb RunAs -WindowStyle Hidden -Wait"#,
-            command
-        );
-
-        Command::new("powershell")
-            .args(&["-Command", &ps_command])
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-
-        Ok("已请求卸载虚拟显示器驱动".to_string())
+        info!("调用 uninstall-vdd.bat 卸载虚拟显示器驱动...");
+        bat_runner::run_elevated(&uninstall_script, "vdd", &[])?;
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        let status = get_vdd_status().await?;
+        if status.installed {
+            return Err(format!("VDD 卸载后验证失败: {}", status.status_text));
+        }
+        Ok("虚拟显示器驱动已卸载".to_string())
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -1249,6 +1505,83 @@ pub async fn uninstall_vdd_driver() -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn status(state: &str, running: bool) -> VddStatus {
+        VddStatus {
+            state: state.to_string(),
+            running,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn only_running_ready_or_degraded_status_is_usable() {
+        assert!(status("ready", true).is_usable());
+        assert!(status("degraded", true).is_usable());
+        assert!(!status("ready", false).is_usable());
+        assert!(!status("not_installed", false).is_usable());
+        assert!(!status("unhealthy", true).is_usable());
+        assert!(!status("reboot_required", true).is_usable());
+    }
+
+    #[test]
+    fn probe_value_prefers_the_last_machine_readable_result() {
+        let output = "CURRENT_VDD_STATUS=Unknown\nnoise\nCURRENT_VDD_STATUS=OK\n";
+        assert_eq!(probe_value(output, "CURRENT_VDD_STATUS"), "OK");
+        assert_eq!(probe_value(output, "MISSING"), "");
+    }
+
+    #[test]
+    fn probe_command_quotes_the_script_without_literal_backslashes() {
+        let script = Path::new(r"C:\Program Files\Sunshine\scripts\install-vdd.bat");
+
+        assert_eq!(
+            vdd_probe_command_line(script),
+            r#"call "C:\Program Files\Sunshine\scripts\install-vdd.bat" --probe-only"#
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn probe_command_executes_a_quoted_batch_path() {
+        let directory =
+            std::env::temp_dir().join(format!("sunshine vdd probe test {}", std::process::id()));
+        let script = directory.join("probe script.bat");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(&script, "@echo off\r\necho VDD_PROBE_OK=1\r\n").unwrap();
+
+        let output = run_vdd_probe(&script).unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let _ = fs::remove_dir_all(&directory);
+
+        assert!(
+            output.status.success(),
+            "status={:?}, stdout={}, stderr={}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(probe_value(&stdout, "VDD_PROBE_OK"), "1");
+    }
+
+    #[test]
+    fn classifies_every_vdd_prerequisite_state() {
+        assert_eq!(
+            classify_vdd_state(false, false, false, false, 0),
+            "not_installed"
+        );
+        assert_eq!(
+            classify_vdd_state(true, false, false, false, 14),
+            "reboot_required"
+        );
+        assert_eq!(
+            classify_vdd_state(true, false, false, false, 10),
+            "unhealthy"
+        );
+        assert_eq!(classify_vdd_state(true, true, false, true, 0), "degraded");
+        assert_eq!(classify_vdd_state(true, true, true, false, 0), "degraded");
+        assert_eq!(classify_vdd_state(true, true, true, true, 0), "ready");
+    }
 
     const MINIMAL_VDD_XML_WITHOUT_CURSOR: &str = r#"
 <vdd_settings>

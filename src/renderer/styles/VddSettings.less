@@ -700,6 +700,20 @@
   }
 }
 
+.degraded-driver-notice {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: stretch;
+
+  > :deep(.el-button) {
+    min-width: 180px;
+    height: auto;
+    margin: 0;
+    border-radius: 12px;
+  }
+}
+
 .setting-content {
   display: flex;
   flex-wrap: wrap;
@@ -879,6 +893,14 @@
 }
 
 @media (max-width: 640px) {
+  .degraded-driver-notice {
+    grid-template-columns: 1fr;
+
+    > :deep(.el-button) {
+      min-height: 40px;
+    }
+  }
+
   .vdd-content {
     padding: 18px;
   }

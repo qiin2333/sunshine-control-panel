@@ -923,6 +923,7 @@ export const zh = {
     vddUninstallTitle: '确认卸载',
     confirm: '确定',
     cancel: '取消',
+    vddUninstallSuccess: '卸载请求已发送',
     vddUninstallFailed: '卸载失败: {error}',
     restartGpuConfirm: '确定要重启显卡驱动吗？这将暂时中断屏幕显示。',
     restartGpuTitle: '确认重启',

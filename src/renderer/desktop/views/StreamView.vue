@@ -331,6 +331,7 @@ import PillGroup from '../components/PillGroup.vue'
 import FdDropdown from '../components/FdDropdown.vue'
 import { vdd as vddApi, vmouse as vmouseApi } from '../../tauri-adapter.js'
 import { installVddWithRecovery } from '../../composables/vddInstallRecovery.js'
+import { useVddStatusLabel } from '../../composables/useVddStatusLabel.js'
 import { useI18n } from '../i18n/index.js'
 
 const { t } = useI18n()
@@ -607,19 +608,7 @@ const vddStatusClass = computed(() => {
   if (vddReady.value) return 'warn'
   return 'off'
 })
-const vddStatusLabel = computed(() => {
-  const labels = {
-    ready: t.value.vddSettings.driverStateReady,
-    degraded: t.value.vddSettings.driverStateDegraded,
-    not_installed: t.value.vddSettings.driverStateNotInstalled,
-    unhealthy: t.value.vddSettings.driverStateUnhealthy,
-    reboot_required: t.value.vddSettings.driverStateRebootRequired,
-    payload_missing: t.value.vddSettings.driverStatePayloadMissing,
-    unsupported: t.value.vddSettings.driverStateUnsupported,
-    unknown: t.value.vddSettings.driverStateUnknown,
-  }
-  return labels[vddStatus.value.state] || labels.unknown
-})
+const vddStatusLabel = useVddStatusLabel(t, vddStatus)
 
 async function loadVddStatus() {
   vddChecking.value = true

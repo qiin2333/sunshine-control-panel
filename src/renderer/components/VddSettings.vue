@@ -2,61 +2,112 @@
   <div class="vdd-settings-wrapper">
     <div class="vdd-content">
       <div class="vdd-page-header">
-        <h2>
-          <el-icon class="header-icon"><Monitor /></el-icon>
-          {{ t.vddSettings.title }}
-        </h2>
-        <div class="page-header-meta">
-          <el-tag v-if="vddReady" size="small" round effect="plain">{{ currentEdidModeLabel }}</el-tag>
-          <el-tag v-else :type="vddStatus.state === 'unknown' ? 'info' : 'warning'" size="small" round effect="light">
-            {{ vddStatusLabel }}
-          </el-tag>
-          <el-tag v-if="hasUnsavedChanges" size="small" round type="warning" effect="light">
-            {{ t.vddSettings.unsavedBadge }}
-          </el-tag>
+        <div class="page-title-group">
+          <span class="page-title-icon" aria-hidden="true">
+            <el-icon><Monitor /></el-icon>
+          </span>
+          <div class="page-title-copy">
+            <h2>{{ t.vddSettings.title }}</h2>
+            <div v-if="!isDriverCheckPending && (vddReady || hasUnsavedChanges)" class="page-header-meta">
+              <el-tag v-if="vddReady" size="small" round effect="plain">{{ currentEdidModeLabel }}</el-tag>
+              <el-tag v-if="hasUnsavedChanges" size="small" round type="warning" effect="light">
+                {{ t.vddSettings.unsavedBadge }}
+              </el-tag>
+            </div>
+          </div>
         </div>
-      </div>
 
-      <section v-if="!vddReady" class="section-card vdd-prerequisite-card">
-        <div class="section-header">
-          <h3>{{ t.vddSettings.driverPrerequisiteTitle }}</h3>
-          <p>{{ t.vddSettings.driverPrerequisiteDesc }}</p>
-        </div>
-        <el-alert :type="vddStatus.state === 'unknown' ? 'info' : 'warning'" :closable="false" show-icon>
-          <template #title>{{ vddStatusLabel }}</template>
-          <p class="mb-0">{{ vddStatus.status_text || t.vddSettings.driverStatusUnknown }}</p>
-          <p v-if="vddStatus.installed_version || vddStatus.bundled_version" class="mb-0 mt-1">
-            {{ t.vddSettings.driverVersionInstalled }}: {{ vddStatus.installed_version || '—' }} ·
-            {{ t.vddSettings.driverVersionBundled }}: {{ vddStatus.bundled_version || '—' }}
-          </p>
-        </el-alert>
-        <div class="action-strip mt-3">
-          <el-button type="primary" :loading="isInstallingDriver" @click="installOrRepairDriver">
+        <div
+          v-if="!isDriverCheckPending && vddReady && vddStatus.state === 'degraded'"
+          class="degraded-driver-notice"
+          role="status"
+          aria-live="polite"
+        >
+          <span class="degraded-driver-icon" aria-hidden="true">!</span>
+          <div class="degraded-driver-copy">
+            <strong>{{ vddStatusLabel }}</strong>
+            <span>{{ vddStatus.status_text }}</span>
+          </div>
+          <el-button type="warning" plain :loading="isInstallingDriver" @click="installOrRepairDriver">
             <el-icon><Download /></el-icon>
             {{ t.vddSettings.installRepairDriver }}
           </el-button>
-          <el-button :loading="isCheckingDriver" @click="refreshVddStatus">
+        </div>
+      </div>
+
+      <section
+        v-if="isDriverCheckPending"
+        class="section-card driver-detection-card"
+        role="status"
+        aria-live="polite"
+        aria-busy="true"
+        aria-labelledby="driver-detection-title"
+      >
+        <div class="detection-core" aria-hidden="true">
+          <span class="detection-orbit"></span>
+          <span class="detection-core-icon"><el-icon><Monitor /></el-icon></span>
+        </div>
+
+        <div class="detection-copy">
+          <span class="detection-kicker">{{ t.vddSettings.driverDetectionKicker }}</span>
+          <h3 id="driver-detection-title">{{ driverDetectionTitle }}</h3>
+          <p>{{ driverDetectionDescription }}</p>
+        </div>
+
+        <div class="detection-checks">
+          <span :class="{ 'is-complete': driverCheckPhase === 'syncing' }">
+            <i aria-hidden="true"></i>{{ t.vddSettings.driverDetectionPresence }}
+          </span>
+          <span :class="{ 'is-complete': driverCheckPhase === 'syncing' }">
+            <i aria-hidden="true"></i>{{ t.vddSettings.driverDetectionHealth }}
+          </span>
+          <span :class="{ 'is-complete': driverCheckPhase === 'syncing' }">
+            <i aria-hidden="true"></i>{{ t.vddSettings.driverDetectionVersion }}
+          </span>
+        </div>
+
+        <div class="detection-lock">
+          <span aria-hidden="true">◇</span>
+          {{ t.vddSettings.driverDetectionLocked }}
+        </div>
+      </section>
+
+      <section v-else-if="!vddReady" class="section-card vdd-prerequisite-card" aria-labelledby="vdd-prerequisite-title">
+        <div class="prerequisite-intro">
+          <div class="prerequisite-icon" aria-hidden="true">
+            <el-icon><Monitor /></el-icon>
+          </div>
+          <div class="prerequisite-copy">
+            <h3 id="vdd-prerequisite-title">{{ t.vddSettings.driverPrerequisiteTitle }}</h3>
+            <p>{{ t.vddSettings.driverPrerequisiteDesc }}</p>
+          </div>
+        </div>
+
+        <div class="prerequisite-status" role="status" aria-live="polite">
+          <span class="status-dot" aria-hidden="true"></span>
+          <div class="status-copy">
+            <strong>{{ vddStatusLabel }}</strong>
+            <span>{{ vddStatus.status_text || t.vddSettings.driverStatusUnknown }}</span>
+            <div v-if="vddStatus.installed_version || vddStatus.bundled_version" class="driver-version-meta">
+              <span>{{ t.vddSettings.driverVersionInstalled }}: {{ vddStatus.installed_version || '—' }}</span>
+              <span>{{ t.vddSettings.driverVersionBundled }}: {{ vddStatus.bundled_version || '—' }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="prerequisite-actions">
+          <el-button v-if="vddCanInstall" type="primary" :loading="isInstallingDriver" @click="installOrRepairDriver">
+            <el-icon><Download /></el-icon>
+            {{ t.vddSettings.installRepairDriver }}
+          </el-button>
+          <el-button :loading="isCheckingDriver" @click="recheckDriver">
             <el-icon><Refresh /></el-icon>
             {{ t.vddSettings.recheckDriver }}
           </el-button>
         </div>
       </section>
 
-      <div v-else-if="vddStatus.state === 'degraded'" class="degraded-driver-notice mb-3">
-        <el-alert
-          type="warning"
-          :closable="false"
-          show-icon
-          :title="vddStatusLabel"
-          :description="vddStatus.status_text"
-        />
-        <el-button type="warning" plain :loading="isInstallingDriver" @click="installOrRepairDriver">
-          <el-icon><Download /></el-icon>
-          {{ t.vddSettings.installRepairDriver }}
-        </el-button>
-      </div>
-
-      <template v-if="vddReady">
+      <template v-if="!isDriverCheckPending && vddReady">
       <section class="hero-panel">
         <div class="vdd-header">
           <div class="header-copy">
@@ -484,6 +535,7 @@ import {
 } from '@element-plus/icons-vue'
 import { useEditableOptionField } from '../composables/useEditableOptionField.js'
 import { useVddEdid } from '../composables/useVddEdid.js'
+import { useVddStatusLabel } from '../composables/useVddStatusLabel.js'
 import { installVddWithRecovery } from '../composables/vddInstallRecovery.js'
 import { vdd } from '../tauri-adapter.js'
 import { useI18n } from '../desktop/i18n/index.js'
@@ -586,6 +638,8 @@ const vddStatus = reactive({
 
 const isLoading = ref(false)
 const isCheckingDriver = ref(false)
+const hasCompletedDriverCheck = ref(false)
+const driverCheckPhase = ref('detecting')
 const isInstallingDriver = ref(false)
 const isSaving = ref(false)
 const isReloadingDriver = ref(false)
@@ -782,19 +836,15 @@ const takeSnapshot = () => JSON.stringify(buildSettingsPayload())
 
 const hasUnsavedChanges = computed(() => hasLoadedSnapshot.value && takeSnapshot() !== lastSavedSnapshot.value)
 const vddReady = computed(() => vddStatus.running && ['ready', 'degraded'].includes(vddStatus.state))
-const vddStatusLabel = computed(() => {
-  const labels = {
-    ready: t.value.vddSettings.driverStateReady,
-    degraded: t.value.vddSettings.driverStateDegraded,
-    not_installed: t.value.vddSettings.driverStateNotInstalled,
-    unhealthy: t.value.vddSettings.driverStateUnhealthy,
-    reboot_required: t.value.vddSettings.driverStateRebootRequired,
-    payload_missing: t.value.vddSettings.driverStatePayloadMissing,
-    unsupported: t.value.vddSettings.driverStateUnsupported,
-    unknown: t.value.vddSettings.driverStateUnknown,
-  }
-  return labels[vddStatus.state] || labels.unknown
-})
+const isDriverCheckPending = computed(() => !hasCompletedDriverCheck.value)
+const driverDetectionTitle = computed(() => driverCheckPhase.value === 'syncing'
+  ? t.value.vddSettings.driverSyncTitle
+  : t.value.vddSettings.driverDetectionTitle)
+const driverDetectionDescription = computed(() => driverCheckPhase.value === 'syncing'
+  ? t.value.vddSettings.driverSyncDesc
+  : t.value.vddSettings.driverDetectionDesc)
+const vddCanInstall = computed(() => !['unsupported', 'payload_missing'].includes(vddStatus.state))
+const vddStatusLabel = useVddStatusLabel(t, vddStatus)
 
 const markSettingsClean = () => {
   lastSavedSnapshot.value = takeSnapshot()
@@ -920,6 +970,19 @@ const refreshVddStatus = async () => {
     return false
   } finally {
     isCheckingDriver.value = false
+  }
+}
+
+const recheckDriver = async () => {
+  hasCompletedDriverCheck.value = false
+  driverCheckPhase.value = 'detecting'
+  try {
+    if (await refreshVddStatus()) {
+      driverCheckPhase.value = 'syncing'
+      await syncVddState({ silentLoad: true })
+    }
+  } finally {
+    hasCompletedDriverCheck.value = true
   }
 }
 
@@ -1092,9 +1155,7 @@ const removeEdidFile = async () => {
 }
 
 onMounted(async () => {
-  if (await refreshVddStatus()) {
-    await syncVddState({ silentLoad: true })
-  }
+  await recheckDriver()
 })
 </script>
 

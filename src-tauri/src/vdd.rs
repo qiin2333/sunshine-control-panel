@@ -208,7 +208,9 @@ fn probe_vdd_status() -> VddStatus {
 
 #[tauri::command]
 pub async fn get_vdd_status() -> Result<VddStatus, String> {
-    let mut status = probe_vdd_status();
+    let mut status = tokio::task::spawn_blocking(probe_vdd_status)
+        .await
+        .map_err(|error| format!("虚拟显示器驱动状态检测失败，请重试: {error}"))?;
     if let Ok(tray_state) = sunshine::get_tray_state().await {
         status.monitor_active = tray_state.vdd.active;
     }
@@ -242,16 +244,20 @@ pub async fn set_vdd_headless_create_enabled(enabled: bool) -> Result<String, St
 }
 
 async fn ensure_vdd_driver_change_is_safe() -> Result<(), String> {
-    if let Ok(sessions) = sunshine::get_active_sessions().await {
-        if !sessions.is_empty() {
-            return Err("串流进行中，停止所有串流后才能安装或卸载虚拟显示器驱动".to_string());
-        }
+    let sessions = sunshine::get_active_sessions().await.map_err(|error| {
+        warn!("检查 Sunshine 串流状态失败: {error}");
+        "无法确认 Sunshine 串流状态，请重试后再安装或卸载虚拟显示器驱动".to_string()
+    })?;
+    if !sessions.is_empty() {
+        return Err("串流进行中，停止所有串流后才能安装或卸载虚拟显示器驱动".to_string());
     }
 
-    if let Ok(tray_state) = sunshine::get_tray_state().await {
-        if tray_state.vdd.active {
-            return Err("虚拟显示器当前仍处于活动状态，请先从托盘关闭它".to_string());
-        }
+    let tray_state = sunshine::get_tray_state().await.map_err(|error| {
+        warn!("检查 Sunshine 托盘状态失败: {error}");
+        "无法确认 Sunshine 虚拟显示器状态，请重试后再安装或卸载驱动".to_string()
+    })?;
+    if tray_state.vdd.active {
+        return Err("虚拟显示器当前仍处于活动状态，请先从托盘关闭它".to_string());
     }
     Ok(())
 }
@@ -270,7 +276,9 @@ pub async fn install_vdd_driver() -> Result<String, String> {
         }
 
         info!("调用 install-vdd.bat 安装或修复虚拟显示器驱动...");
-        bat_runner::run_elevated(&install_script, "vdd", &[])?;
+        tokio::task::spawn_blocking(move || bat_runner::run_elevated(&install_script, "vdd", &[]))
+            .await
+            .map_err(|error| format!("VDD 安装任务执行失败: {error}"))??;
         tokio::time::sleep(tokio::time::Duration::from_millis(750)).await;
 
         let status = get_vdd_status().await?;
@@ -1487,7 +1495,11 @@ pub async fn uninstall_vdd_driver() -> Result<String, String> {
         }
 
         info!("调用 uninstall-vdd.bat 卸载虚拟显示器驱动...");
-        bat_runner::run_elevated(&uninstall_script, "vdd", &[])?;
+        tokio::task::spawn_blocking(move || {
+            bat_runner::run_elevated(&uninstall_script, "vdd", &[])
+        })
+        .await
+        .map_err(|error| format!("VDD 卸载任务执行失败: {error}"))??;
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
         let status = get_vdd_status().await?;
         if status.installed {

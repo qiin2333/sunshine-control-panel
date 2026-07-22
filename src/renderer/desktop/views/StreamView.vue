@@ -330,10 +330,7 @@ import { DataAnalysis, Film, Monitor, Mouse, Promotion, Sunny } from '@element-p
 import PillGroup from '../components/PillGroup.vue'
 import FdDropdown from '../components/FdDropdown.vue'
 import { vdd as vddApi, vmouse as vmouseApi } from '../../tauri-adapter.js'
-import {
-  installVddWithRecovery,
-  isVddConfirmationRequired,
-} from '../../composables/vddInstallRecovery.js'
+import { installVddWithRecovery } from '../../composables/vddInstallRecovery.js'
 import { useVddStatusLabel } from '../../composables/useVddStatusLabel.js'
 import { useI18n } from '../i18n/index.js'
 
@@ -635,8 +632,8 @@ async function installOrRepairVdd() {
   if (!confirm(t.value.vddSettings.installRepairConfirm)) return
   vddInstalling.value = true
   try {
-    const install = (force = false) => installVddWithRecovery({
-      install: () => vddApi.install(force),
+    const install = () => installVddWithRecovery({
+      install: () => vddApi.install(),
       getStatus: () => vddApi.getStatus(),
       onStatus: (status) => {
         vddStatus.value = { ...vddStatus.value, ...status }
@@ -644,13 +641,7 @@ async function installOrRepairVdd() {
       verificationError: t.value.vddSettings.installVerificationFailed,
     })
 
-    try {
-      await install()
-    } catch (error) {
-      if (!isVddConfirmationRequired(error)) throw error
-      if (!confirm(t.value.vddSettings.installRepairActiveStreamConfirm)) return
-      await install(true)
-    }
+    await install()
 
     alert(t.value.vddSettings.installRepairSuccess)
   } catch (error) {

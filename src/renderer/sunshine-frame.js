@@ -2,6 +2,7 @@ import { createApp } from 'vue'
 import SunshineFrame from './components/SunshineFrame.vue'
 import 'element-plus/theme-chalk/el-loading.css'
 import 'element-plus/theme-chalk/el-message.css'
+import 'element-plus/theme-chalk/el-overlay.css'
 import 'element-plus/theme-chalk/el-message-box.css'
 import 'element-plus/theme-chalk/el-notification.css'
 import './styles/dialog.less'  // 导入对话框样式

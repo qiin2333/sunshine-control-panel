@@ -536,10 +536,7 @@ import {
 import { useEditableOptionField } from '../composables/useEditableOptionField.js'
 import { useVddEdid } from '../composables/useVddEdid.js'
 import { useVddStatusLabel } from '../composables/useVddStatusLabel.js'
-import {
-  installVddWithRecovery,
-  isVddConfirmationRequired,
-} from '../composables/vddInstallRecovery.js'
+import { installVddWithRecovery } from '../composables/vddInstallRecovery.js'
 import { vdd } from '../tauri-adapter.js'
 import { useI18n } from '../desktop/i18n/index.js'
 
@@ -1006,31 +1003,14 @@ const installOrRepairDriver = async () => {
       }
     )
     isInstallingDriver.value = true
-    const install = (force = false) => installVddWithRecovery({
-      install: () => vdd.install(force),
+    const install = () => installVddWithRecovery({
+      install: () => vdd.install(),
       getStatus: () => vdd.getStatus(),
       onStatus: (status) => Object.assign(vddStatus, status),
       verificationError: t.value.vddSettings.installVerificationFailed,
     })
 
-    try {
-      await install()
-    } catch (error) {
-      if (!isVddConfirmationRequired(error)) {
-        throw error
-      }
-
-      await ElMessageBox.confirm(
-        t.value.vddSettings.installRepairActiveStreamConfirm,
-        t.value.vddSettings.installRepairTitle,
-        {
-          confirmButtonText: t.value.vddSettings.installRepairContinue,
-          cancelButtonText: t.value.vddSettings.cancel,
-          type: 'warning',
-        }
-      )
-      await install(true)
-    }
+    await install()
 
     await syncVddState({ silentLoad: true })
     ElMessage.success(t.value.vddSettings.installRepairSuccess)

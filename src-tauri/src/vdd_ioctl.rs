@@ -5,10 +5,8 @@
 //! (which is itself byte-identical with the driver-side mirror at
 //! `Virtual-Display-Driver/Common/Include/vdd_control_ioctl.h`).
 //!
-//! The driver-side dispatcher is shared verbatim between the IOCTL path and
-//! the legacy named pipe, so the command grammar is identical: UTF-16 LE,
-//! NUL-terminated (e.g. `"RELOAD_DRIVER"`, `"CREATEMONITOR {GUID}:[..][..]"`,
-//! `"DESTROYMONITOR"`).
+//! Commands use a UTF-16 LE, NUL-terminated buffer (e.g. `"RELOAD_DRIVER"`,
+//! `"CREATEMONITOR {GUID}:[..][..]"`, `"DESTROYMONITOR"`).
 
 #![cfg(target_os = "windows")]
 
@@ -44,11 +42,8 @@ pub enum IoctlResult {
     /// IOCTL completed with `STATUS_SUCCESS`.
     Success,
     /// No registered device interface (driver too old / not installed).
-    /// Safe to fall back to the legacy named pipe.
     InterfaceMissing,
     /// Driver was reached but rejected the IOCTL or returned an error.
-    /// Do **not** fall back: the request may have been partially applied
-    /// (e.g. CREATEMONITOR allocated state before failing).
     Failed(String),
 }
 

@@ -143,7 +143,7 @@ fn main() {
             vdd::get_vdd_edid_file_path,
             vdd::load_vdd_settings,
             vdd::save_vdd_settings,
-            vdd::exec_pipe_cmd,
+            vdd::exec_vdd_cmd,
             vdd::upload_edid_file,
             vdd::read_edid_file,
             vdd::delete_edid_file,

@@ -1085,7 +1085,7 @@ const saveGpuEdit = () => {
 const reloadDriver = async () => {
   isReloadingDriver.value = true
   try {
-    const success = await vdd.execPipeCmd('RELOAD_DRIVER')
+    const success = await vdd.execVddCmd('RELOAD_DRIVER')
     if (!success) {
       throw new Error(t.value.vddSettings.reloadDriverFailed)
     }

@@ -1090,7 +1090,7 @@ pub(crate) fn try_handle_elevated_ioctl_command() -> Option<i32> {
     match crate::vdd_ioctl::send_command(&command) {
         crate::vdd_ioctl::IoctlResult::Success => Some(0),
         crate::vdd_ioctl::IoctlResult::InterfaceMissing
-        | crate::vdd_ioctl::IoctlResult::Failed(_) => Some(1),
+        | crate::vdd_ioctl::IoctlResult::Failed { .. } => Some(1),
     }
 }
 
@@ -1104,14 +1104,18 @@ pub async fn exec_vdd_cmd(command: String) -> Result<bool, String> {
         }
 
         use crate::vdd_ioctl;
+        use windows::Win32::Foundation::ERROR_ACCESS_DENIED;
 
         let cmd_for_blocking = command.clone();
         let in_process = tokio::task::spawn_blocking(move || -> Result<bool, (bool, String)> {
             match vdd_ioctl::send_command(&cmd_for_blocking) {
                 vdd_ioctl::IoctlResult::Success => return Ok(true),
-                vdd_ioctl::IoctlResult::Failed(msg) => {
-                    let access_denied = msg.contains("(err=5)");
-                    Err((access_denied, format!("vdd_ioctl: {msg}")))
+                vdd_ioctl::IoctlResult::Failed {
+                    message,
+                    win32_error,
+                } => {
+                    let access_denied = win32_error == Some(ERROR_ACCESS_DENIED.0);
+                    Err((access_denied, format!("vdd_ioctl: {message}")))
                 }
                 vdd_ioctl::IoctlResult::InterfaceMissing => {
                     Err((false, "VDD IOCTL interface missing".to_string()))

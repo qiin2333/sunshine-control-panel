@@ -67,14 +67,12 @@ pub fn run_elevated(bat_path: &Path, log_prefix: &str, extra_args: &[&str]) -> R
     let args_cmd: String = extra_args.iter().map(|arg| format!(" \"{arg}\"")).collect();
 
     if is_elevated() {
-        let cmd_line = format!(
-            r#""{}"{} >> "{}" 2>&1"#,
-            bat_path.display(),
-            args_cmd,
-            log_str
-        );
-        let output = Command::new("cmd")
-            .args(["/c", &cmd_line])
+        let cmd_line = format!(r#"call "{}"{}"#, bat_path.display(), args_cmd);
+        let mut command = Command::new("cmd");
+        let output = command
+            .args(["/d", "/c"])
+            // cmd.exe does not use the C runtime argument parsing implemented by Command::args().
+            .raw_arg(&cmd_line)
             .creation_flags(CREATE_NO_WINDOW)
             .output()
             .map_err(|e| format!("启动脚本失败: {e}，日志: {log_str}"))?;

@@ -1044,7 +1044,7 @@ pub async fn save_vdd_settings(settings: VddSettings) -> Result<String, String> 
     #[cfg(target_os = "windows")]
     {
         debug!("🔄 通知 VDD 驱动重新加载...");
-        let _ = exec_pipe_cmd("RELOAD_DRIVER".to_string()).await;
+        let _ = exec_vdd_cmd("RELOAD_DRIVER".to_string()).await;
     }
 
     info!("✅ VDD 配置保存完成");
@@ -1090,12 +1090,12 @@ pub(crate) fn try_handle_elevated_ioctl_command() -> Option<i32> {
     match crate::vdd_ioctl::send_command(&command) {
         crate::vdd_ioctl::IoctlResult::Success => Some(0),
         crate::vdd_ioctl::IoctlResult::InterfaceMissing
-        | crate::vdd_ioctl::IoctlResult::Failed(_) => Some(1),
+        | crate::vdd_ioctl::IoctlResult::Failed { .. } => Some(1),
     }
 }
 
 #[tauri::command]
-pub async fn exec_pipe_cmd(command: String) -> Result<bool, String> {
+pub async fn exec_vdd_cmd(command: String) -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {
         if !is_allowed_elevated_vdd_command(&command) {
@@ -1104,95 +1104,35 @@ pub async fn exec_pipe_cmd(command: String) -> Result<bool, String> {
         }
 
         use crate::vdd_ioctl;
-        use windows::Win32::Foundation::*;
-        use windows::Win32::Storage::FileSystem::*;
-        use windows::core::PCWSTR;
+        use windows::Win32::Foundation::ERROR_ACCESS_DENIED;
 
         let cmd_for_blocking = command.clone();
-        let in_process =
-            tokio::task::spawn_blocking(move || -> Result<bool, (bool, bool, String)> {
-                // Preferred path: IOCTL transport. Mirrors the C++ dispatch in
-                // `Sunshine/src/display_device/vdd_utils.cpp`: only fall through
-                // to the legacy pipe when the device interface is absent.
-                match vdd_ioctl::send_command(&cmd_for_blocking) {
-                    vdd_ioctl::IoctlResult::Success => return Ok(true),
-                    vdd_ioctl::IoctlResult::Failed(msg) => {
-                        // err=5 表示设备存在但当前权限打不开，可通过提权重试。
-                        let access_denied = msg.contains("(err=5)");
-                        return Err((access_denied, false, format!("vdd_ioctl: {msg}")));
-                    }
-                    vdd_ioctl::IoctlResult::InterfaceMissing => {
-                        // Driver too old / not installed; fall back to pipe.
-                    }
+        let in_process = tokio::task::spawn_blocking(move || -> Result<bool, (bool, String)> {
+            match vdd_ioctl::send_command(&cmd_for_blocking) {
+                vdd_ioctl::IoctlResult::Success => return Ok(true),
+                vdd_ioctl::IoctlResult::Failed {
+                    message,
+                    win32_error,
+                } => {
+                    let access_denied = win32_error == Some(ERROR_ACCESS_DENIED.0);
+                    Err((access_denied, format!("vdd_ioctl: {message}")))
                 }
-
-                // [LEGACY-PIPE] Fallback for older driver builds.
-                unsafe {
-                    let pipe_name = r"\\.\pipe\ZakoVDDPipe";
-                    let wide: Vec<u16> =
-                        pipe_name.encode_utf16().chain(std::iter::once(0)).collect();
-
-                    let handle = CreateFileW(
-                        PCWSTR(wide.as_ptr()),
-                        FILE_GENERIC_WRITE.0,
-                        FILE_SHARE_NONE,
-                        None,
-                        OPEN_EXISTING,
-                        FILE_ATTRIBUTE_NORMAL | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
-                        Some(HANDLE::default()),
-                    );
-
-                    if handle.is_err() || handle.as_ref().unwrap().is_invalid() {
-                        let err = GetLastError().0;
-                        let access_denied = err == 5;
-                        return Err((access_denied, true, format!("无法连接到管道 (err={err})")));
-                    }
-
-                    let handle = handle.unwrap();
-
-                    // 转换为 UTF-16LE
-                    let cmd_wide: Vec<u16> = cmd_for_blocking
-                        .encode_utf16()
-                        .chain(std::iter::once(0))
-                        .collect();
-                    let buffer = cmd_wide.as_ptr() as *const u8;
-                    let buffer_len = (cmd_wide.len() * 2) as u32;
-
-                    let mut bytes_written = 0u32;
-                    let result = WriteFile(
-                        handle,
-                        Some(std::slice::from_raw_parts(buffer, buffer_len as usize)),
-                        Some(&mut bytes_written),
-                        None,
-                    );
-
-                    let _ = CloseHandle(handle);
-
-                    if result.is_ok() {
-                        Ok(true)
-                    } else {
-                        Err((false, true, "写入管道失败".to_string()))
-                    }
+                vdd_ioctl::IoctlResult::InterfaceMissing => {
+                    Err((false, "VDD IOCTL interface missing".to_string()))
                 }
-            })
-            .await
-            .map_err(|e| e.to_string())?;
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
         match in_process {
             Ok(v) => Ok(v),
-            Err((true, false, msg)) => {
-                // 新驱动存在但普通用户不能打开：提权后仍走 IOCTL，不回退到管道。
+            Err((true, msg)) => {
                 warn!("  ⚠️ VDD 命令在普通权限下被拒 ({msg})，回退到提权执行");
                 run_elevated_ioctl_command(&command).await?;
                 Ok(true)
             }
-            Err((true, true, msg)) => {
-                // 旧驱动没有 IOCTL，只能以管理员身份使用兼容管道。
-                warn!("  ⚠️ 旧版 VDD 管道拒绝普通用户 ({msg})，回退到提权兼容路径");
-                run_elevated_pipe_command(&command).await?;
-                Ok(true)
-            }
-            Err((false, _, msg)) => Err(msg),
+            Err((false, msg)) => Err(msg),
         }
     }
 
@@ -1218,21 +1158,6 @@ async fn run_elevated_ioctl_command(command: &str) -> Result<(), String> {
         executable, ELEVATED_VDD_IOCTL_ARG, encoded
     );
     run_elevated_powershell(&inner, "提权执行 VDD IOCTL").await
-}
-
-/// 通过提权 PowerShell 向 ZakoVDD 控制管道写入命令。
-#[cfg(target_os = "windows")]
-async fn run_elevated_pipe_command(command: &str) -> Result<(), String> {
-    if !is_allowed_elevated_vdd_command(command) {
-        return Err("不允许的 VDD 提权命令".to_string());
-    }
-
-    // The allowlist above also ensures command cannot become PowerShell syntax.
-    let inner = format!(
-        "$p = New-Object System.IO.Pipes.NamedPipeClientStream('.', 'ZakoVDDPipe', [System.IO.Pipes.PipeDirection]::Out, [System.IO.Pipes.PipeOptions]::None, [System.Security.Principal.TokenImpersonationLevel]::Identification); $p.Connect(3000); $b = [System.Text.Encoding]::Unicode.GetBytes('{}' + [char]0); $p.Write($b, 0, $b.Length); $p.Flush(); $p.Dispose()",
-        command
-    );
-    run_elevated_powershell(&inner, "提权执行 VDD 命令").await
 }
 
 /// 验证 EDID 文件格式和 checksum

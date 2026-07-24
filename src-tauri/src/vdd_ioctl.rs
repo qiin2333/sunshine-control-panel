@@ -5,10 +5,8 @@
 //! (which is itself byte-identical with the driver-side mirror at
 //! `Virtual-Display-Driver/Common/Include/vdd_control_ioctl.h`).
 //!
-//! The driver-side dispatcher is shared verbatim between the IOCTL path and
-//! the legacy named pipe, so the command grammar is identical: UTF-16 LE,
-//! NUL-terminated (e.g. `"RELOAD_DRIVER"`, `"CREATEMONITOR {GUID}:[..][..]"`,
-//! `"DESTROYMONITOR"`).
+//! Commands use a UTF-16 LE, NUL-terminated buffer (e.g. `"RELOAD_DRIVER"`,
+//! `"CREATEMONITOR {GUID}:[..][..]"`, `"DESTROYMONITOR"`).
 
 #![cfg(target_os = "windows")]
 
@@ -44,12 +42,12 @@ pub enum IoctlResult {
     /// IOCTL completed with `STATUS_SUCCESS`.
     Success,
     /// No registered device interface (driver too old / not installed).
-    /// Safe to fall back to the legacy named pipe.
     InterfaceMissing,
     /// Driver was reached but rejected the IOCTL or returned an error.
-    /// Do **not** fall back: the request may have been partially applied
-    /// (e.g. CREATEMONITOR allocated state before failing).
-    Failed(String),
+    Failed {
+        message: String,
+        win32_error: Option<u32>,
+    },
 }
 
 /// RAII for `HDEVINFO` returned by `SetupDiGetClassDevs*`.
@@ -179,7 +177,10 @@ pub fn interface_available() -> bool {
 /// Send a UTF-16 command buffer to the VDD driver via IOCTL.
 pub fn send_command(command: &str) -> IoctlResult {
     if command.is_empty() {
-        return IoctlResult::Failed("empty command".to_string());
+        return IoctlResult::Failed {
+            message: "empty command".to_string(),
+            win32_error: None,
+        };
     }
 
     unsafe {
@@ -205,7 +206,10 @@ pub fn send_command(command: &str) -> IoctlResult {
                 // present but unhappy. Surfacing as `Failed` matches the
                 // C++ behaviour and prevents a duplicate retry on pipe.
                 let err = GetLastError().0;
-                return IoctlResult::Failed(format!("CreateFileW failed (err={err})"));
+                return IoctlResult::Failed {
+                    message: format!("CreateFileW failed (err={err})"),
+                    win32_error: Some(err),
+                };
             }
         };
         let _h_guard = DeviceHandle(handle);
@@ -230,9 +234,10 @@ pub fn send_command(command: &str) -> IoctlResult {
             IoctlResult::Success
         } else {
             let err = GetLastError().0;
-            IoctlResult::Failed(format!(
-                "DeviceIoControl(IOCTL_VDD_COMMAND) failed (err={err})"
-            ))
+            IoctlResult::Failed {
+                message: format!("DeviceIoControl(IOCTL_VDD_COMMAND) failed (err={err})"),
+                win32_error: Some(err),
+            }
         }
     }
 }

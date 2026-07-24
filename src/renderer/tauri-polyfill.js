@@ -10,7 +10,7 @@ const IPC_HANDLERS = {
   'vdd:loadSettings': vdd.loadSettings,
   'vdd:saveSettings': vdd.saveSettings,
   'vdd:getGPUs': vdd.getGPUs,
-  'vdd:execPipeCmd': vdd.execPipeCmd,
+  'vdd:execVddCmd': vdd.execVddCmd,
   'dark-mode:toggle': darkMode.toggle,
   'dark-mode:system': darkMode.system,
   openExternalUrl,

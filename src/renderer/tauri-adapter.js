@@ -68,15 +68,15 @@ export const vdd = {
   stopTrace: () => wrapResult('stop_vdd_trace'),
   openTraceFolder: () => wrapResult('open_vdd_trace_folder'),
 
-  async execPipeCmd(command) {
+  async execVddCmd(command) {
     try {
-      await invoke('exec_pipe_cmd', { command })
+      await invoke('exec_vdd_cmd', { command })
       return true
     } catch (error) {
-      console.error('执行管道命令失败:', error)
+      console.error('执行 VDD 命令失败:', error)
       throw error instanceof Error
         ? error
-        : new Error(typeof error === 'string' && error.trim() ? error : '执行管道命令失败')
+        : new Error(typeof error === 'string' && error.trim() ? error : '执行 VDD 命令失败')
     }
   },
 }

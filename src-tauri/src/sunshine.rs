@@ -13,7 +13,6 @@ pub struct SunshineConfig {
     pub resolutions: Option<String>,
     pub fps: Option<String>,
     pub locale: Option<String>,
-    pub tray_locale: Option<String>,
 }
 
 // 缓存 Sunshine 路径，避免重复查找和记录日志
@@ -276,7 +275,6 @@ fn parse_sunshine_config_content(content: &str) -> SunshineConfig {
                 "resolutions" => config.resolutions = Some(value.to_string()),
                 "fps" => config.fps = Some(value.to_string()),
                 "locale" => config.locale = Some(value.to_string()),
-                "tray_locale" => config.tray_locale = Some(value.to_string()),
                 _ => {}
             }
         }
@@ -583,27 +581,14 @@ mod tray_protocol_tests {
     }
 
     #[test]
-    fn parses_ui_and_tray_locales_independently() {
+    fn parses_persisted_ui_locale() {
         let config = parse_sunshine_config_content(
             r#"
                 locale = zh_TW
-                tray_locale = ja
             "#,
         );
 
         assert_eq!(config.locale.as_deref(), Some("zh_TW"));
-        assert_eq!(config.tray_locale.as_deref(), Some("ja"));
-    }
-
-    #[test]
-    fn locale_config_body_updates_ui_and_tray_together() {
-        assert_eq!(
-            locale_config_body("zh"),
-            serde_json::json!({
-                "locale": "zh",
-                "tray_locale": "zh",
-            })
-        );
     }
 
     #[test]
@@ -721,38 +706,6 @@ pub async fn post_tray_action(
     post_tray_action_request(action, enabled, None, None)
         .await
         .map_err(TrayActionRequestError::into_message)
-}
-
-fn locale_config_body(locale: &str) -> serde_json::Value {
-    serde_json::json!({
-        "locale": locale,
-        "tray_locale": locale,
-    })
-}
-
-pub async fn set_sunshine_locale_preferences(locale: &str) -> Result<(), String> {
-    let sunshine_url = get_local_sunshine_url().await?;
-    let locale_url = format!("{}/api/configLocale", sunshine_url.trim_end_matches('/'));
-    let response = create_https_client()?
-        .post(locale_url)
-        .json(&locale_config_body(locale))
-        .send()
-        .await
-        .map_err(|error| format!("Failed to persist locale preferences: {}", error))?;
-
-    let status = response.status();
-    let response_text = response
-        .text()
-        .await
-        .map_err(|error| format!("Failed to read locale preferences response: {}", error))?;
-    if !status.is_success() {
-        return Err(format!(
-            "Sunshine rejected the locale preferences (status {}): {}",
-            status, response_text
-        ));
-    }
-
-    Ok(())
 }
 
 pub async fn post_tray_restart_action() -> Result<Option<TrayActionResponse>, String> {

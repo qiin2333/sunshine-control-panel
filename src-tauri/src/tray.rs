@@ -441,30 +441,30 @@ fn resolve_initial_tray_locale(
     system_locale: Option<&str>,
 ) -> String {
     config
-        .and_then(|config| {
-            config
-                .tray_locale
-                .as_deref()
-                .and_then(try_normalize_tray_locale)
-                .or_else(|| config.locale.as_deref().and_then(try_normalize_tray_locale))
-        })
+        .and_then(|config| config.locale.as_deref())
+        .filter(|locale| !locale.trim().is_empty())
+        .map(normalize_tray_locale)
         .or_else(|| system_locale.and_then(try_normalize_tray_locale))
         .unwrap_or("en")
         .to_string()
 }
 
 #[cfg(target_os = "windows")]
-fn get_system_locale() -> Option<String> {
-    use ::windows::Win32::Globalization::GetUserDefaultLocaleName;
-
-    // LOCALE_NAME_MAX_LENGTH from the Win32 API includes the terminating NUL.
-    let mut locale_name = [0u16; 85];
-    let length = unsafe { GetUserDefaultLocaleName(&mut locale_name) };
-    if length <= 1 {
-        return None;
+fn locale_from_windows_ui_language(language_id: u16) -> Option<&'static str> {
+    // Match the primary language portion of the Windows LANGID.
+    match language_id & 0x03ff {
+        0x0004 => Some("zh"),
+        0x0011 => Some("ja"),
+        0x0009 => Some("en"),
+        _ => None,
     }
+}
 
-    String::from_utf16(&locale_name[..length as usize - 1]).ok()
+#[cfg(target_os = "windows")]
+fn get_system_locale() -> Option<String> {
+    use ::windows::Win32::Globalization::GetUserDefaultUILanguage;
+
+    locale_from_windows_ui_language(unsafe { GetUserDefaultUILanguage() }).map(str::to_string)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -720,10 +720,9 @@ mod tests {
     }
 
     #[test]
-    fn persisted_tray_locale_wins_during_initialization() {
+    fn persisted_ui_locale_wins_during_initialization() {
         let config = sunshine::SunshineConfig {
-            locale: Some("en".to_string()),
-            tray_locale: Some("ja".to_string()),
+            locale: Some("ja".to_string()),
             ..Default::default()
         };
 
@@ -734,7 +733,7 @@ mod tests {
     }
 
     #[test]
-    fn ui_locale_then_system_locale_are_initialization_fallbacks() {
+    fn system_locale_is_used_only_when_ui_locale_is_missing() {
         let config = sunshine::SunshineConfig {
             locale: Some("zh_TW".to_string()),
             ..Default::default()
@@ -748,17 +747,25 @@ mod tests {
         assert_eq!(resolve_initial_tray_locale(None, None), "en");
     }
 
+    #[cfg(target_os = "windows")]
     #[test]
-    fn invalid_persisted_locale_falls_back_instead_of_forcing_english() {
+    fn windows_ui_language_maps_supported_tray_languages() {
+        assert_eq!(locale_from_windows_ui_language(0x0804), Some("zh"));
+        assert_eq!(locale_from_windows_ui_language(0x0411), Some("ja"));
+        assert_eq!(locale_from_windows_ui_language(0x0409), Some("en"));
+        assert_eq!(locale_from_windows_ui_language(0x040c), None);
+    }
+
+    #[test]
+    fn unsupported_persisted_ui_locale_maps_to_english() {
         let config = sunshine::SunshineConfig {
-            locale: Some("zh-CN".to_string()),
-            tray_locale: Some("unsupported".to_string()),
+            locale: Some("fr".to_string()),
             ..Default::default()
         };
 
         assert_eq!(
             resolve_initial_tray_locale(Some(&config), Some("ja-JP")),
-            "zh"
+            "en"
         );
     }
 
@@ -961,9 +968,9 @@ fn switch_tray_locale<R: Runtime>(app: &AppHandle<R>, locale: &str) {
     let locale = apply_tray_locale(app, locale);
     let locale_to_persist = locale.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(error) = sunshine::set_sunshine_locale_preferences(&locale_to_persist).await {
+        if let Err(error) = sunshine::set_sunshine_locale(locale_to_persist.clone()).await {
             warn!(
-                "Failed to persist locale preferences '{}': {}",
+                "Failed to persist Sunshine locale '{}': {}",
                 locale_to_persist, error
             );
         }
@@ -1009,7 +1016,7 @@ pub fn refresh_menu<R: Runtime>(app: &AppHandle<R>) {
 pub async fn set_locale_preferences(app: AppHandle, locale: String) -> Result<(), String> {
     info!("🌍 前端同步 UI 与托盘语言: {}", locale);
     let locale = apply_tray_locale(&app, &locale);
-    sunshine::set_sunshine_locale_preferences(&locale).await
+    sunshine::set_sunshine_locale(locale).await.map(|_| ())
 }
 
 /// Tauri 命令：前端获取当前 tray 语言

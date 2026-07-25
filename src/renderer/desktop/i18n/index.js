@@ -24,16 +24,17 @@ function setDocumentLanguage(locale) {
 
 watch(currentLocale, setDocumentLanguage, { immediate: true })
 
-// 启动时只恢复桌面 UI 的语言；托盘会在创建菜单前同步恢复 tray_locale。
+// 启动时恢复桌面 UI；托盘会在创建菜单前从同一个 locale 同步初始化。
 let syncInitialized = false
 async function syncLocaleFromSunshine() {
   if (syncInitialized) return
   syncInitialized = true
   try {
-    const { sunshine } = await import('../../tauri-adapter.js')
-    const sunshineLocale = await sunshine.getLocale()
+    const { invoke } = await import('@tauri-apps/api/core')
+    const config = await invoke('parse_sunshine_config')
+    if (!config?.locale) return
     // Sunshine 用 'zh'/'zh_TW' 等，桌面 GUI 只有 'zh'/'en'
-    const guiLocale = normalizeDesktopLocale(sunshineLocale)
+    const guiLocale = normalizeDesktopLocale(config.locale)
     if (guiLocale !== currentLocale.value) {
       currentLocale.value = guiLocale
       localStorage.setItem('language', guiLocale)
@@ -62,7 +63,7 @@ async function listenTrayLocaleChanged() {
 }
 listenTrayLocaleChanged()
 
-// 用户明确切换时，原子更新 Sunshine UI 和托盘语言。
+// 用户明确切换时，通过同一条命令更新 Sunshine UI 和托盘语言。
 async function syncLocalePreferences(locale) {
   try {
     const { invoke } = await import('@tauri-apps/api/core')

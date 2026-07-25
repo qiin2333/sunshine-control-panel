@@ -35,7 +35,9 @@ pub struct VddStatus {
 
 impl VddStatus {
     pub fn is_usable(&self) -> bool {
-        self.running && matches!(self.state.as_str(), "ready" | "degraded")
+        self.running
+            && self.control_available
+            && matches!(self.state.as_str(), "ready" | "degraded")
     }
 }
 
@@ -1442,22 +1444,24 @@ pub async fn uninstall_vdd_driver() -> Result<String, String> {
 mod tests {
     use super::*;
 
-    fn status(state: &str, running: bool) -> VddStatus {
+    fn status(state: &str, running: bool, control_available: bool) -> VddStatus {
         VddStatus {
             state: state.to_string(),
             running,
+            control_available,
             ..Default::default()
         }
     }
 
     #[test]
-    fn only_running_ready_or_degraded_status_is_usable() {
-        assert!(status("ready", true).is_usable());
-        assert!(status("degraded", true).is_usable());
-        assert!(!status("ready", false).is_usable());
-        assert!(!status("not_installed", false).is_usable());
-        assert!(!status("unhealthy", true).is_usable());
-        assert!(!status("reboot_required", true).is_usable());
+    fn only_running_ready_or_degraded_status_with_control_is_usable() {
+        assert!(status("ready", true, true).is_usable());
+        assert!(status("degraded", true, true).is_usable());
+        assert!(!status("ready", true, false).is_usable());
+        assert!(!status("ready", false, true).is_usable());
+        assert!(!status("not_installed", false, false).is_usable());
+        assert!(!status("unhealthy", true, true).is_usable());
+        assert!(!status("reboot_required", true, true).is_usable());
     }
 
     #[test]

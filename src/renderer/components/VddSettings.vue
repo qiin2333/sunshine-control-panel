@@ -835,7 +835,11 @@ const buildSettingsPayload = () => ({
 const takeSnapshot = () => JSON.stringify(buildSettingsPayload())
 
 const hasUnsavedChanges = computed(() => hasLoadedSnapshot.value && takeSnapshot() !== lastSavedSnapshot.value)
-const vddReady = computed(() => vddStatus.running && ['ready', 'degraded'].includes(vddStatus.state))
+const vddReady = computed(() =>
+  vddStatus.running &&
+  vddStatus.control_available &&
+  ['ready', 'degraded'].includes(vddStatus.state)
+)
 const isDriverCheckPending = computed(() => !hasCompletedDriverCheck.value)
 const driverDetectionTitle = computed(() => driverCheckPhase.value === 'syncing'
   ? t.value.vddSettings.driverSyncTitle

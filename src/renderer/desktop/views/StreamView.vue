@@ -601,7 +601,11 @@ const vddChecking = ref(false)
 const vddInstalling = ref(false)
 const vddConfigSaving = ref(false)
 
-const vddReady = computed(() => vddStatus.value.running && ['ready', 'degraded'].includes(vddStatus.value.state))
+const vddReady = computed(() =>
+  vddStatus.value.running &&
+  vddStatus.value.control_available &&
+  ['ready', 'degraded'].includes(vddStatus.value.state)
+)
 const vddCanInstall = computed(() => !['unsupported', 'payload_missing'].includes(vddStatus.value.state))
 const vddStatusClass = computed(() => {
   if (vddStatus.value.state === 'ready') return 'good'

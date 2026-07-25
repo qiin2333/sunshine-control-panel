@@ -1,12 +1,13 @@
 use log::{debug, error, info, warn};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, RwLock};
 use url::Url;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct SunshineConfig {
     pub port: Option<String>,
     pub adapter_name: Option<String>,
@@ -18,6 +19,7 @@ pub struct SunshineConfig {
 // 缓存 Sunshine 路径，避免重复查找和记录日志
 static SUNSHINE_PATH_CACHE: Lazy<Mutex<Option<PathBuf>>> = Lazy::new(|| Mutex::new(None));
 static RUNTIME_SUNSHINE_URL: Lazy<RwLock<Option<String>>> = Lazy::new(|| RwLock::new(None));
+static LOCALE_WRITE_LOCK: Lazy<tokio::sync::Mutex<()>> = Lazy::new(|| tokio::sync::Mutex::new(()));
 static HTTPS_CLIENT: Lazy<Result<reqwest::Client, String>> = Lazy::new(|| {
     reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
@@ -256,29 +258,8 @@ pub async fn get_sunshine_version() -> Result<String, String> {
     Ok("Unknown".to_string())
 }
 
-#[tauri::command]
-pub async fn parse_sunshine_config() -> Result<SunshineConfig, String> {
-    let config_path = get_sunshine_path().join("config").join("sunshine.conf");
-
-    if !config_path.exists() {
-        return Ok(SunshineConfig {
-            port: Some("47989".to_string()),
-            adapter_name: None,
-            resolutions: None,
-            fps: None,
-            locale: None,
-        });
-    }
-
-    let content = std::fs::read_to_string(config_path).map_err(|e| e.to_string())?;
-
-    let mut config = SunshineConfig {
-        port: None,
-        adapter_name: None,
-        resolutions: None,
-        fps: None,
-        locale: None,
-    };
+fn parse_sunshine_config_content(content: &str) -> SunshineConfig {
+    let mut config = SunshineConfig::default();
 
     for line in content.lines() {
         let line = line.trim();
@@ -301,7 +282,26 @@ pub async fn parse_sunshine_config() -> Result<SunshineConfig, String> {
         }
     }
 
-    Ok(config)
+    config
+}
+
+pub(crate) fn parse_sunshine_config_sync() -> Result<SunshineConfig, String> {
+    let config_path = get_sunshine_path().join("config").join("sunshine.conf");
+
+    if !config_path.exists() {
+        return Ok(SunshineConfig {
+            port: Some("47989".to_string()),
+            ..Default::default()
+        });
+    }
+
+    let content = std::fs::read_to_string(config_path).map_err(|e| e.to_string())?;
+    Ok(parse_sunshine_config_content(&content))
+}
+
+#[tauri::command]
+pub async fn parse_sunshine_config() -> Result<SunshineConfig, String> {
+    parse_sunshine_config_sync()
 }
 
 const DEFAULT_SUNSHINE_PORT: u16 = 47989;
@@ -574,15 +574,52 @@ mod tray_protocol_tests {
     fn local_tray_url_uses_the_configured_core_port() {
         let config = SunshineConfig {
             port: Some("48000".to_string()),
-            adapter_name: None,
-            resolutions: None,
-            fps: None,
-            locale: None,
+            ..Default::default()
         };
         assert_eq!(
             local_sunshine_url_from_config(&config),
             "https://127.0.0.1:48001"
         );
+    }
+
+    #[test]
+    fn parses_persisted_ui_locale() {
+        let config = parse_sunshine_config_content(
+            r#"
+                locale = zh_TW
+            "#,
+        );
+
+        assert_eq!(config.locale.as_deref(), Some("zh_TW"));
+    }
+
+    #[tokio::test]
+    async fn latest_locale_wins() {
+        let persisted = std::sync::Arc::new(tokio::sync::Mutex::new(None));
+        let completion_order = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
+
+        async fn persist(
+            locale: &'static str,
+            delay_ms: u64,
+            persisted: std::sync::Arc<tokio::sync::Mutex<Option<&'static str>>>,
+            completion_order: std::sync::Arc<tokio::sync::Mutex<Vec<&'static str>>>,
+        ) {
+            serialize_locale_write(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                *persisted.lock().await = Some(locale);
+                completion_order.lock().await.push(locale);
+            })
+            .await;
+        }
+
+        tokio::join!(
+            persist("en", 30, persisted.clone(), completion_order.clone()),
+            persist("ja", 10, persisted.clone(), completion_order.clone()),
+            persist("zh", 0, persisted.clone(), completion_order.clone()),
+        );
+
+        assert_eq!(*completion_order.lock().await, ["en", "ja", "zh"]);
+        assert_eq!(*persisted.lock().await, Some("zh"));
     }
 
     #[test]
@@ -1212,14 +1249,22 @@ pub async fn get_sunshine_locale() -> Result<String, String> {
 
 /// 设置 Sunshine 配置中的 locale
 /// 先读取完整配置，合并 locale 字段后再写回，避免覆盖其他配置项
+async fn serialize_locale_write<T>(operation: impl Future<Output = T>) -> T {
+    let _guard = LOCALE_WRITE_LOCK.lock().await;
+    operation.await
+}
+
 #[tauri::command]
 pub async fn set_sunshine_locale(locale: String) -> Result<String, String> {
-    let mut config_data = crate::vdd::read_full_sunshine_config()
-        .await
-        .unwrap_or_default();
-    config_data.insert("locale".to_string(), serde_json::json!(locale));
+    serialize_locale_write(async move {
+        let mut config_data = crate::vdd::read_full_sunshine_config()
+            .await
+            .unwrap_or_default();
+        config_data.insert("locale".to_string(), serde_json::json!(locale));
 
-    post_sunshine_config(&config_data).await?;
-    info!("✅ Locale updated to '{}' via Sunshine API", locale);
-    Ok("success".to_string())
+        post_sunshine_config(&config_data).await?;
+        info!("✅ Locale updated to '{}' via Sunshine API", locale);
+        Ok("success".to_string())
+    })
+    .await
 }

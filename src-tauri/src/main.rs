@@ -249,7 +249,7 @@ fn main() {
             hwinfo::hwinfo_get_sensors,
             hwinfo::hwinfo_get_readings,
             hwinfo::hwinfo_check_available,
-            tray::set_tray_locale,
+            tray::set_locale_preferences,
             tray::get_tray_locale,
             tray::main_panel_loading,
             tray::main_panel_ready,

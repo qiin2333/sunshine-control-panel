@@ -6,13 +6,14 @@ use std::process::Command;
 use std::sync::{Mutex, RwLock};
 use url::Url;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct SunshineConfig {
     pub port: Option<String>,
     pub adapter_name: Option<String>,
     pub resolutions: Option<String>,
     pub fps: Option<String>,
     pub locale: Option<String>,
+    pub tray_locale: Option<String>,
 }
 
 // 缓存 Sunshine 路径，避免重复查找和记录日志
@@ -256,29 +257,8 @@ pub async fn get_sunshine_version() -> Result<String, String> {
     Ok("Unknown".to_string())
 }
 
-#[tauri::command]
-pub async fn parse_sunshine_config() -> Result<SunshineConfig, String> {
-    let config_path = get_sunshine_path().join("config").join("sunshine.conf");
-
-    if !config_path.exists() {
-        return Ok(SunshineConfig {
-            port: Some("47989".to_string()),
-            adapter_name: None,
-            resolutions: None,
-            fps: None,
-            locale: None,
-        });
-    }
-
-    let content = std::fs::read_to_string(config_path).map_err(|e| e.to_string())?;
-
-    let mut config = SunshineConfig {
-        port: None,
-        adapter_name: None,
-        resolutions: None,
-        fps: None,
-        locale: None,
-    };
+fn parse_sunshine_config_content(content: &str) -> SunshineConfig {
+    let mut config = SunshineConfig::default();
 
     for line in content.lines() {
         let line = line.trim();
@@ -296,12 +276,32 @@ pub async fn parse_sunshine_config() -> Result<SunshineConfig, String> {
                 "resolutions" => config.resolutions = Some(value.to_string()),
                 "fps" => config.fps = Some(value.to_string()),
                 "locale" => config.locale = Some(value.to_string()),
+                "tray_locale" => config.tray_locale = Some(value.to_string()),
                 _ => {}
             }
         }
     }
 
-    Ok(config)
+    config
+}
+
+pub(crate) fn parse_sunshine_config_sync() -> Result<SunshineConfig, String> {
+    let config_path = get_sunshine_path().join("config").join("sunshine.conf");
+
+    if !config_path.exists() {
+        return Ok(SunshineConfig {
+            port: Some("47989".to_string()),
+            ..Default::default()
+        });
+    }
+
+    let content = std::fs::read_to_string(config_path).map_err(|e| e.to_string())?;
+    Ok(parse_sunshine_config_content(&content))
+}
+
+#[tauri::command]
+pub async fn parse_sunshine_config() -> Result<SunshineConfig, String> {
+    parse_sunshine_config_sync()
 }
 
 const DEFAULT_SUNSHINE_PORT: u16 = 47989;
@@ -574,14 +574,35 @@ mod tray_protocol_tests {
     fn local_tray_url_uses_the_configured_core_port() {
         let config = SunshineConfig {
             port: Some("48000".to_string()),
-            adapter_name: None,
-            resolutions: None,
-            fps: None,
-            locale: None,
+            ..Default::default()
         };
         assert_eq!(
             local_sunshine_url_from_config(&config),
             "https://127.0.0.1:48001"
+        );
+    }
+
+    #[test]
+    fn parses_ui_and_tray_locales_independently() {
+        let config = parse_sunshine_config_content(
+            r#"
+                locale = zh_TW
+                tray_locale = ja
+            "#,
+        );
+
+        assert_eq!(config.locale.as_deref(), Some("zh_TW"));
+        assert_eq!(config.tray_locale.as_deref(), Some("ja"));
+    }
+
+    #[test]
+    fn locale_config_body_updates_ui_and_tray_together() {
+        assert_eq!(
+            locale_config_body("zh"),
+            serde_json::json!({
+                "locale": "zh",
+                "tray_locale": "zh",
+            })
         );
     }
 
@@ -700,6 +721,38 @@ pub async fn post_tray_action(
     post_tray_action_request(action, enabled, None, None)
         .await
         .map_err(TrayActionRequestError::into_message)
+}
+
+fn locale_config_body(locale: &str) -> serde_json::Value {
+    serde_json::json!({
+        "locale": locale,
+        "tray_locale": locale,
+    })
+}
+
+pub async fn set_sunshine_locale_preferences(locale: &str) -> Result<(), String> {
+    let sunshine_url = get_local_sunshine_url().await?;
+    let locale_url = format!("{}/api/configLocale", sunshine_url.trim_end_matches('/'));
+    let response = create_https_client()?
+        .post(locale_url)
+        .json(&locale_config_body(locale))
+        .send()
+        .await
+        .map_err(|error| format!("Failed to persist locale preferences: {}", error))?;
+
+    let status = response.status();
+    let response_text = response
+        .text()
+        .await
+        .map_err(|error| format!("Failed to read locale preferences response: {}", error))?;
+    if !status.is_success() {
+        return Err(format!(
+            "Sunshine rejected the locale preferences (status {}): {}",
+            status, response_text
+        ));
+    }
+
+    Ok(())
 }
 
 pub async fn post_tray_restart_action() -> Result<Option<TrayActionResponse>, String> {

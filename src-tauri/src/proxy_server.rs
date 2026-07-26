@@ -165,6 +165,35 @@ const INJECT_SCRIPT: &str = include_str!("../inject-script.js");
 /// 调皮的404页面（当Sunshine未启动时显示，编译时从文件读取）
 const ERROR_404_PAGE: &str = include_str!("../error-404.html");
 
+/// 门禁拒绝页：本机浏览器等外部进程不允许借道代理绕过 Sunshine 密码认证
+const GATE_DENIED_PAGE: &str = r#"<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>Sunshine</title></head>
+<body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+<div style="text-align:center"><h2>此端口仅供 Sunshine 控制面板内部使用</h2>
+<p>请通过 <a href="https://localhost:47990">https://localhost:47990</a> 访问 WebUI（需要用户名密码）。</p></div>
+</body></html>"#;
+
+/// 本地代理门禁中间件：反查对端连接的进程，只放行本进程及其
+/// WebView2 子进程。否则任何本机浏览器都能借代理注入的 token 绕过
+/// Sunshine 的密码认证。
+async fn gui_gate_middleware(
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<SocketAddr>,
+    req: Request,
+    next: Next,
+) -> Response {
+    // 查表有缓存（5s TTL），keep-alive 下绝大多数请求直接命中
+    if !crate::proxy_gate::peer_allowed(peer.port(), get_proxy_port()) {
+        warn!("🚫 拒绝非 GUI 进程访问本地代理: {}", peer);
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            GATE_DENIED_PAGE,
+        )
+            .into_response();
+    }
+    next.run(req).await
+}
+
 /// Private Network Access (PNA) Middleware
 /// 根据 Microsoft Edge 143+ 的要求添加 PNA 支持头部
 async fn pna_middleware(req: Request, next: Next) -> Response {
@@ -202,7 +231,9 @@ pub async fn start_proxy_server() -> Result<(), Box<dyn std::error::Error + Send
     let app = Router::new()
         .fallback(proxy_handler)
         .layer(CorsLayer::permissive())
-        .layer(axum::middleware::from_fn(pna_middleware));
+        .layer(axum::middleware::from_fn(pna_middleware))
+        // 最外层：先过门禁再进任何业务逻辑（包括 OPTIONS 预检）
+        .layer(axum::middleware::from_fn(gui_gate_middleware));
 
     // 尝试在端口范围内找到可用端口
     let mut listener = None;
@@ -247,7 +278,13 @@ pub async fn start_proxy_server() -> Result<(), Box<dyn std::error::Error + Send
     );
     info!("   开始监听请求...");
 
-    let result = axum::serve(listener, app).await.map_err(|e| {
+    let result = axum::serve(
+        listener,
+        // 门禁需要对端地址（ConnectInfo）来反查连接进程
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .map_err(|e| {
         error!("❌ 代理服务器运行失败: {}", e);
         e.into()
     });
@@ -960,6 +997,36 @@ async fn send_request(
     req_builder.send().await
 }
 
+/// 注入 GUI 内存鉴权 token（仅用于 Sunshine 目标；Steam/外部代理不走此路径，
+/// 避免 token 泄漏给第三方域名）。覆盖客户端可能自带的 authorization 头。
+async fn apply_gui_token(headers: &mut axum::http::HeaderMap) {
+    if let Some(token) = crate::gui_auth::current_async().await {
+        if let Ok(mut value) = axum::http::HeaderValue::from_str(&format!("Bearer {}", token)) {
+            value.set_sensitive(true);
+            headers.insert(axum::http::header::AUTHORIZATION, value);
+        }
+    }
+}
+
+/// 发送请求，HTTPS 失败时降级到 HTTP（仅限非连接错误）
+async fn send_with_scheme_fallback(
+    client: &reqwest::Client,
+    url: &str,
+    method: &axum::http::Method,
+    headers: &axum::http::HeaderMap,
+    body: &Bytes,
+) -> Result<reqwest::Response, Box<dyn std::error::Error + Send + Sync>> {
+    match send_request(client, url, method, headers, body).await {
+        Ok(resp) => Ok(resp),
+        Err(e) if url.starts_with("https://") && !is_connection_error(&e.to_string()) => {
+            let http_url = url.replace("https://", "http://");
+            warn!("⚠️  HTTPS 连接失败，尝试 HTTP: {}", http_url);
+            Ok(send_request(client, &http_url, method, headers, body).await?)
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
 /// 获取并代理内容
 async fn fetch_and_proxy(
     url: &str,
@@ -974,16 +1041,18 @@ async fn fetch_and_proxy(
         get_http_client()
     };
 
-    // 尝试请求，HTTPS 失败时降级到 HTTP（仅限非连接错误）
-    let response = match send_request(client, url, method, headers, body).await {
-        Ok(resp) => resp,
-        Err(e) if url.starts_with("https://") && !is_connection_error(&e.to_string()) => {
-            let http_url = url.replace("https://", "http://");
-            warn!("⚠️  HTTPS 连接失败，尝试 HTTP: {}", http_url);
-            send_request(client, &http_url, method, headers, body).await?
-        }
-        Err(e) => return Err(e.into()),
-    };
+    let mut auth_headers = headers.clone();
+    apply_gui_token(&mut auth_headers).await;
+
+    let mut response = send_with_scheme_fallback(client, url, method, &auth_headers, body).await?;
+
+    // 401 说明 token 可能已轮换（Sunshine 重启），刷新后重试一次
+    if response.status() == reqwest::StatusCode::UNAUTHORIZED
+        && crate::gui_auth::refresh_async().await.is_some()
+    {
+        apply_gui_token(&mut auth_headers).await;
+        response = send_with_scheme_fallback(client, url, method, &auth_headers, body).await?;
+    }
 
     let status = response.status();
     let resp_headers = response.headers().clone();

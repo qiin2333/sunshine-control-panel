@@ -20,20 +20,69 @@ pub struct SunshineConfig {
 static SUNSHINE_PATH_CACHE: Lazy<Mutex<Option<PathBuf>>> = Lazy::new(|| Mutex::new(None));
 static RUNTIME_SUNSHINE_URL: Lazy<RwLock<Option<String>>> = Lazy::new(|| RwLock::new(None));
 static LOCALE_WRITE_LOCK: Lazy<tokio::sync::Mutex<()>> = Lazy::new(|| tokio::sync::Mutex::new(()));
-static HTTPS_CLIENT: Lazy<Result<reqwest::Client, String>> = Lazy::new(|| {
-    reqwest::Client::builder()
+
+/// 直连 Sunshine 的客户端携带 GUI 内存鉴权 token（default header）。
+/// token 轮换（Sunshine 重启）后按需重建。
+struct AuthedClients {
+    token: Option<String>,
+    https: reqwest::Client,
+    sse: reqwest::Client,
+}
+static AUTHED_CLIENTS: Lazy<RwLock<Option<AuthedClients>>> = Lazy::new(|| RwLock::new(None));
+
+fn gui_auth_headers(token: &Option<String>) -> reqwest::header::HeaderMap {
+    let mut headers = reqwest::header::HeaderMap::new();
+    if let Some(token) = token {
+        if let Ok(mut value) =
+            reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token))
+        {
+            value.set_sensitive(true);
+            headers.insert(reqwest::header::AUTHORIZATION, value);
+        }
+    }
+    headers
+}
+
+fn build_authed_clients(
+    token: &Option<String>,
+) -> Result<(reqwest::Client, reqwest::Client), String> {
+    let https = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .timeout(std::time::Duration::from_secs(10))
+        .default_headers(gui_auth_headers(token))
         .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))
-});
-static SSE_HTTPS_CLIENT: Lazy<Result<reqwest::Client, String>> = Lazy::new(|| {
-    reqwest::Client::builder()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+    let sse = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .connect_timeout(std::time::Duration::from_secs(10))
+        .default_headers(gui_auth_headers(token))
         .build()
-        .map_err(|e| format!("Create Sunshine event client failed: {}", e))
-});
+        .map_err(|e| format!("Create Sunshine event client failed: {}", e))?;
+    Ok((https, sse))
+}
+
+fn authed_clients() -> Result<(reqwest::Client, reqwest::Client), String> {
+    let token = crate::gui_auth::current();
+    {
+        let guard = AUTHED_CLIENTS
+            .read()
+            .map_err(|_| "GUI auth client lock poisoned".to_string())?;
+        if let Some(cached) = guard.as_ref() {
+            if cached.token == token {
+                return Ok((cached.https.clone(), cached.sse.clone()));
+            }
+        }
+    }
+    let (https, sse) = build_authed_clients(&token)?;
+    if let Ok(mut guard) = AUTHED_CLIENTS.write() {
+        *guard = Some(AuthedClients {
+            token,
+            https: https.clone(),
+            sse: sse.clone(),
+        });
+    }
+    Ok((https, sse))
+}
 
 pub const TRAY_PROTOCOL_VERSION: u32 = 1;
 const CORE_COMPATIBILITY_CHECK_ARG: &str = "--check-core-compatibility";
@@ -847,11 +896,11 @@ pub async fn get_tray_state() -> Result<TrayState, String> {
 }
 
 pub fn create_https_client() -> Result<reqwest::Client, String> {
-    HTTPS_CLIENT.as_ref().cloned().map_err(Clone::clone)
+    authed_clients().map(|(https, _)| https)
 }
 
 pub fn create_sse_https_client() -> Result<reqwest::Client, String> {
-    SSE_HTTPS_CLIENT.as_ref().cloned().map_err(Clone::clone)
+    authed_clients().map(|(_, sse)| sse)
 }
 
 /// POST 配置数据到 Sunshine Config API

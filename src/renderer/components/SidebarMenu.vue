@@ -215,7 +215,7 @@ const {
 } = useSidebarState()
 
 const { minimizeWindow, toggleMaximize, closeWindow } = useWindowControls(isMaximized)
-const { onTouchWindowDragStart } = useTouchWindowDrag()
+const { onTouchWindowDragStart } = useTouchWindowDrag(isMaximized)
 
 const {
   uninstallVdd,

@@ -11,9 +11,16 @@ const RESTORE_RESIZE_TIMEOUT_MS = 500
  * Mouse dragging remains handled by `data-tauri-drag-region`. WebView2 touch
  * coordinates are viewport-relative while the window is moving, so touch
  * dragging uses the current window position and applies incremental updates.
+ *
+ * @param {{ value: boolean } | null} isMaximized reactive window state used by
+ * the custom maximize button
  */
-export function useTouchWindowDrag() {
+export function useTouchWindowDrag(isMaximized = null) {
   let appWindow = null
+  let unlistenScaleChanged = null
+  let scaleListenerPromise = null
+  let disposed = false
+  let dragGeneration = 0
   let pointerId = null
   let pointerTarget = null
   let hasMoved = false
@@ -24,10 +31,14 @@ export function useTouchWindowDrag() {
   let latestClientX = 0
   let latestClientY = 0
 
-  let baseLogicalX = Number.NaN
-  let baseLogicalY = Number.NaN
-  let pendingLogicalX = Number.NaN
-  let pendingLogicalY = Number.NaN
+  let basePhysicalX = Number.NaN
+  let basePhysicalY = Number.NaN
+  let pendingPhysicalX = Number.NaN
+  let pendingPhysicalY = Number.NaN
+  let activeScaleFactor = 1
+  let scaleFactorVersion = 0
+  let scaleRebasing = false
+  let scaleRebasePromise = null
 
   let initialPosition = null
   let initialMaximized = false
@@ -37,7 +48,15 @@ export function useTouchWindowDrag() {
   let settingPosition = false
   let positionRaf = null
 
-  const devicePixelRatio = () => window.devicePixelRatio || 1
+  const normalizeScaleFactor = (value) => (
+    Number.isFinite(value) && value > 0 ? value : 1
+  )
+
+  const isCurrentDrag = (generation, activePointerId) => (
+    !disposed &&
+    generation === dragGeneration &&
+    pointerId === activePointerId
+  )
 
   const getAppWindow = () => {
     if (appWindow) return appWindow
@@ -50,11 +69,10 @@ export function useTouchWindowDrag() {
     }
   }
 
-  const commitPosition = (logicalX, logicalY) => {
-    const dpr = devicePixelRatio()
+  const commitPosition = (physicalX, physicalY) => {
     return appWindow.setPosition(new PhysicalPosition(
-      Math.round(logicalX * dpr),
-      Math.round(logicalY * dpr),
+      Math.round(physicalX),
+      Math.round(physicalY),
     ))
   }
 
@@ -74,6 +92,9 @@ export function useTouchWindowDrag() {
       }
 
       await appWindow.unmaximize()
+      if (!disposed && isMaximized && typeof isMaximized === 'object' && 'value' in isMaximized) {
+        isMaximized.value = false
+      }
       await Promise.race([
         resizePromise,
         new Promise((resolve) => {
@@ -110,6 +131,7 @@ export function useTouchWindowDrag() {
   }
 
   const clearDragState = () => {
+    dragGeneration += 1
     if (positionRaf !== null) {
       cancelAnimationFrame(positionRaf)
       positionRaf = null
@@ -126,10 +148,89 @@ export function useTouchWindowDrag() {
     preparing = false
     preparationPromise = null
     settingPosition = false
-    baseLogicalX = Number.NaN
-    baseLogicalY = Number.NaN
-    pendingLogicalX = Number.NaN
-    pendingLogicalY = Number.NaN
+    scaleRebasing = false
+    scaleRebasePromise = null
+    basePhysicalX = Number.NaN
+    basePhysicalY = Number.NaN
+    pendingPhysicalX = Number.NaN
+    pendingPhysicalY = Number.NaN
+  }
+
+  const rebaseForScaleChange = (scaleFactor) => {
+    scaleFactorVersion += 1
+    activeScaleFactor = normalizeScaleFactor(scaleFactor)
+    if (
+      pointerId === null ||
+      dragEnding ||
+      !initialized ||
+      scaleRebasePromise
+    ) {
+      return
+    }
+
+    const activePointerId = pointerId
+    const generation = dragGeneration
+    scaleRebasing = true
+    if (positionRaf !== null) {
+      cancelAnimationFrame(positionRaf)
+      positionRaf = null
+    }
+
+    let rebasePromise
+    rebasePromise = (async () => {
+      while (settingPosition) {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        if (!isCurrentDrag(generation, activePointerId)) return
+      }
+
+      // Let WebView2 update viewport-relative pointer coordinates for the new DPI.
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+      if (!isCurrentDrag(generation, activePointerId) || dragEnding) return
+
+      const position = await appWindow.outerPosition()
+      if (!isCurrentDrag(generation, activePointerId) || dragEnding) return
+
+      basePhysicalX = position.x
+      basePhysicalY = position.y
+      pendingPhysicalX = position.x
+      pendingPhysicalY = position.y
+      startClientX = latestClientX
+      startClientY = latestClientY
+    })()
+      .catch(() => {
+        if (isCurrentDrag(generation, activePointerId)) {
+          clearDragState()
+        }
+      })
+      .finally(() => {
+        if (isCurrentDrag(generation, activePointerId)) {
+          scaleRebasing = false
+        }
+        if (scaleRebasePromise === rebasePromise) {
+          scaleRebasePromise = null
+        }
+      })
+    scaleRebasePromise = rebasePromise
+  }
+
+  const ensureScaleChangeListener = () => {
+    if (disposed || unlistenScaleChanged || scaleListenerPromise) return
+
+    scaleListenerPromise = appWindow
+      .onScaleChanged(({ payload }) => {
+        rebaseForScaleChange(payload.scaleFactor)
+      })
+      .then((unlisten) => {
+        scaleListenerPromise = null
+        if (disposed) {
+          unlisten()
+          return
+        }
+        unlistenScaleChanged = unlisten
+      })
+      .catch(() => {
+        scaleListenerPromise = null
+      })
   }
 
   const applyPendingPosition = async () => {
@@ -138,25 +239,34 @@ export function useTouchWindowDrag() {
       pointerId === null ||
       dragEnding ||
       preparing ||
+      scaleRebasing ||
       settingPosition ||
-      !Number.isFinite(pendingLogicalX) ||
-      !Number.isFinite(pendingLogicalY)
+      !Number.isFinite(pendingPhysicalX) ||
+      !Number.isFinite(pendingPhysicalY)
     ) {
       return
     }
 
     settingPosition = true
-    const nextLogicalX = pendingLogicalX
-    const nextLogicalY = pendingLogicalY
+    const generation = dragGeneration
+    const activePointerId = pointerId
+    const nextPhysicalX = pendingPhysicalX
+    const nextPhysicalY = pendingPhysicalY
 
     try {
-      await commitPosition(nextLogicalX, nextLogicalY)
-      baseLogicalX = nextLogicalX
-      baseLogicalY = nextLogicalY
+      await commitPosition(nextPhysicalX, nextPhysicalY)
+      if (!isCurrentDrag(generation, activePointerId)) return
+
+      basePhysicalX = nextPhysicalX
+      basePhysicalY = nextPhysicalY
     } catch {
-      clearDragState()
+      if (isCurrentDrag(generation, activePointerId)) {
+        clearDragState()
+      }
     } finally {
-      settingPosition = false
+      if (isCurrentDrag(generation, activePointerId)) {
+        settingPosition = false
+      }
     }
   }
 
@@ -165,16 +275,17 @@ export function useTouchWindowDrag() {
       pointerId === null ||
       dragEnding ||
       preparing ||
+      scaleRebasing ||
       settingPosition ||
       !initialized ||
-      !Number.isFinite(baseLogicalX) ||
-      !Number.isFinite(baseLogicalY)
+      !Number.isFinite(basePhysicalX) ||
+      !Number.isFinite(basePhysicalY)
     ) {
       return
     }
 
-    pendingLogicalX = baseLogicalX + (latestClientX - startClientX)
-    pendingLogicalY = baseLogicalY + (latestClientY - startClientY)
+    pendingPhysicalX = basePhysicalX + (latestClientX - startClientX) * activeScaleFactor
+    pendingPhysicalY = basePhysicalY + (latestClientY - startClientY) * activeScaleFactor
 
     if (positionRaf === null) {
       positionRaf = requestAnimationFrame(applyPendingPosition)
@@ -185,58 +296,73 @@ export function useTouchWindowDrag() {
     if (preparationPromise) return preparationPromise
 
     preparing = true
+    const generation = dragGeneration
+    const activePointerId = pointerId
     preparationPromise = (async () => {
-      const dpr = devicePixelRatio()
-      const pointerPhysicalX = initialPosition.x + latestClientX * dpr
-      const pointerPhysicalY = initialPosition.y + latestClientY * dpr
+      const scaleFactor = activeScaleFactor
+      const pointerPhysicalX = initialPosition.x + latestClientX * scaleFactor
+      const pointerPhysicalY = initialPosition.y + latestClientY * scaleFactor
       const horizontalAnchorRatio = Math.min(
         1,
         Math.max(0, startClientX / Math.max(window.innerWidth, 1)),
       )
 
       await waitForRestoreResize()
+      if (!isCurrentDrag(generation, activePointerId)) return
 
       const restoredSize = await appWindow.outerSize()
+      if (!isCurrentDrag(generation, activePointerId)) return
+
       const anchorPhysicalX = restoredSize.width * horizontalAnchorRatio
       const anchorPhysicalY = Math.min(
         restoredSize.height,
-        Math.max(0, startClientY * dpr),
+        Math.max(0, startClientY * scaleFactor),
       )
       const restoredPhysicalX = Math.round(pointerPhysicalX - anchorPhysicalX)
       const restoredPhysicalY = Math.round(pointerPhysicalY - anchorPhysicalY)
 
-      await commitPosition(restoredPhysicalX / dpr, restoredPhysicalY / dpr)
+      await commitPosition(restoredPhysicalX, restoredPhysicalY)
+      if (!isCurrentDrag(generation, activePointerId)) return
 
-      baseLogicalX = restoredPhysicalX / dpr
-      baseLogicalY = restoredPhysicalY / dpr
-      pendingLogicalX = baseLogicalX
-      pendingLogicalY = baseLogicalY
-      startClientX = anchorPhysicalX / dpr
-      startClientY = anchorPhysicalY / dpr
+      basePhysicalX = restoredPhysicalX
+      basePhysicalY = restoredPhysicalY
+      pendingPhysicalX = basePhysicalX
+      pendingPhysicalY = basePhysicalY
+      startClientX = anchorPhysicalX / scaleFactor
+      startClientY = anchorPhysicalY / scaleFactor
       initialized = true
       initialMaximized = false
     })()
       .catch(() => {
-        clearDragState()
+        if (isCurrentDrag(generation, activePointerId)) {
+          clearDragState()
+        }
       })
       .finally(() => {
-        preparing = false
+        if (isCurrentDrag(generation, activePointerId)) {
+          preparing = false
+        }
       })
 
     return preparationPromise
   }
 
-  const prepareWindowPosition = async (activePointerId) => {
+  const prepareWindowPosition = async (activePointerId, generation) => {
     try {
-      const [position, maximized] = await Promise.all([
+      const initialScaleFactorVersion = scaleFactorVersion
+      const [position, maximized, scaleFactor] = await Promise.all([
         appWindow.outerPosition(),
         appWindow.isMaximized(),
+        appWindow.scaleFactor(),
       ])
 
-      if (pointerId !== activePointerId || dragEnding) return
+      if (!isCurrentDrag(generation, activePointerId) || dragEnding) return
 
       initialPosition = position
       initialMaximized = maximized
+      if (scaleFactorVersion === initialScaleFactorVersion) {
+        activeScaleFactor = normalizeScaleFactor(scaleFactor)
+      }
 
       if (maximized) {
         if (hasMoved) {
@@ -245,18 +371,19 @@ export function useTouchWindowDrag() {
         return
       }
 
-      const dpr = devicePixelRatio()
-      baseLogicalX = position.x / dpr
-      baseLogicalY = position.y / dpr
-      pendingLogicalX = baseLogicalX
-      pendingLogicalY = baseLogicalY
+      basePhysicalX = position.x
+      basePhysicalY = position.y
+      pendingPhysicalX = basePhysicalX
+      pendingPhysicalY = basePhysicalY
       initialized = true
 
       if (hasMoved) {
         queueLatestPosition()
       }
     } catch {
-      clearDragState()
+      if (isCurrentDrag(generation, activePointerId)) {
+        clearDragState()
+      }
     }
   }
 
@@ -298,6 +425,8 @@ export function useTouchWindowDrag() {
   async function onPointerEnd(event) {
     if (pointerId === null || event.pointerId !== pointerId) return
 
+    const generation = dragGeneration
+    const activePointerId = pointerId
     dragEnding = true
     removeListeners()
     releasePointerCapture()
@@ -309,26 +438,36 @@ export function useTouchWindowDrag() {
 
     if (preparationPromise) {
       await preparationPromise
+      if (!isCurrentDrag(generation, activePointerId)) return
+    }
+
+    if (scaleRebasePromise) {
+      await scaleRebasePromise
+      if (!isCurrentDrag(generation, activePointerId)) return
     }
 
     while (settingPosition) {
       await new Promise((resolve) => setTimeout(resolve, 0))
+      if (!isCurrentDrag(generation, activePointerId)) return
     }
 
     if (
       hasMoved &&
       initialized &&
-      Number.isFinite(pendingLogicalX) &&
-      Number.isFinite(pendingLogicalY)
+      Number.isFinite(pendingPhysicalX) &&
+      Number.isFinite(pendingPhysicalY)
     ) {
       try {
-        await commitPosition(pendingLogicalX, pendingLogicalY)
+        await commitPosition(pendingPhysicalX, pendingPhysicalY)
+        if (!isCurrentDrag(generation, activePointerId)) return
       } catch {
         // Keep the last position accepted by the operating system.
       }
     }
 
-    clearDragState()
+    if (isCurrentDrag(generation, activePointerId)) {
+      clearDragState()
+    }
   }
 
   const onTouchWindowDragStart = (event) => {
@@ -343,6 +482,8 @@ export function useTouchWindowDrag() {
 
     if (!getAppWindow()) return
 
+    ensureScaleChangeListener()
+    const generation = ++dragGeneration
     event.preventDefault()
     event.stopPropagation()
 
@@ -365,10 +506,17 @@ export function useTouchWindowDrag() {
     document.addEventListener('pointerup', onPointerEnd)
     document.addEventListener('pointercancel', onPointerEnd)
 
-    void prepareWindowPosition(pointerId)
+    void prepareWindowPosition(pointerId, generation)
   }
 
-  onUnmounted(clearDragState)
+  onUnmounted(() => {
+    disposed = true
+    clearDragState()
+    if (unlistenScaleChanged) {
+      unlistenScaleChanged()
+      unlistenScaleChanged = null
+    }
+  })
 
   return {
     onTouchWindowDragStart,

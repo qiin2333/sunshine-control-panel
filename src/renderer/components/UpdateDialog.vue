@@ -2,10 +2,10 @@
   <el-dialog
     v-model="visible"
     :title="dialogTitle"
-    width="720px"
+    width="min(720px, 92vw)"
     :close-on-click-modal="isLatest"
-    :close-on-press-escape="isLatest || !isInstalling"
-    :show-close="!isInstalling"
+    :close-on-press-escape="isLatest || (!isInstalling && !isDownloading)"
+    :show-close="!isInstalling && !isDownloading"
   >
     <div class="update-dialog-content">
 
@@ -15,9 +15,25 @@
       </div>
 
       <!-- 下载进度 (仅新版本) -->
-      <div v-if="!isLatest && isDownloadInProgress" class="download-progress">
-        <el-progress :percentage="downloadProgress" :stroke-width="8" />
-        <p class="progress-text">{{ t.updateDialog.downloading.replace('{progress}', downloadProgress) }}</p>
+      <div v-if="!isLatest && isDownloading" class="download-progress">
+        <div class="download-status">
+          <span v-if="downloadPhase !== 'complete'" class="download-spinner"></span>
+          <span v-else class="download-complete-mark">✓</span>
+          <p class="progress-text">{{ downloadStatusText }}</p>
+          <span
+            v-if="downloadPhase === 'downloading' && downloadSource"
+            class="download-source-chip"
+          >
+            {{ downloadSource }}
+          </span>
+        </div>
+        <el-progress
+          v-if="downloadProgress > 0"
+          :percentage="downloadProgress"
+          :stroke-width="8"
+          :show-text="false"
+          :status="downloadPhase === 'complete' ? 'success' : undefined"
+        />
       </div>
 
       <!-- 安装提示 (仅新版本) -->
@@ -62,6 +78,18 @@
               {{ t.updateDialog.downloadAndInstall }}
             </el-button>
           </template>
+          <el-button
+            v-if="isDownloading"
+            type="primary"
+            :loading="downloadPhase !== 'complete'"
+            disabled
+          >
+            {{
+              downloadPhase === 'complete'
+                ? t.updateDialog.downloadComplete
+                : t.updateDialog.downloading
+            }}
+          </el-button>
           <el-button v-if="isInstalling" type="primary" disabled>{{ t.updateDialog.installing }}</el-button>
         </template>
       </div>
@@ -78,6 +106,20 @@ import { useI18n } from '../desktop/i18n/index.js'
 
 const { t } = useI18n()
 
+const DOWNLOAD_PHASE_MESSAGE_KEYS = Object.freeze({
+  connecting: 'downloadConnecting',
+  retrying: 'downloadRetrying',
+  verifying: 'downloadVerifying',
+  complete: 'downloadComplete',
+})
+
+const DOWNLOAD_ERROR_MESSAGE_KEYS = Object.freeze({
+  setup_failed: 'downloadSetupFailed',
+  file_preparation_failed: 'downloadFilePreparationFailed',
+  file_finalization_failed: 'downloadFileFinalizationFailed',
+  sources_exhausted: 'downloadSourcesFailed',
+})
+
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
   updateInfo: { type: Object, default: null },
@@ -93,6 +135,8 @@ const visible = computed({
 
 const isDownloading = ref(false)
 const downloadProgress = ref(0)
+const downloadPhase = ref('idle')
+const downloadSource = ref('')
 const isInstalling = ref(false)
 const installStage = ref('idle')
 const installDetail = ref('')
@@ -126,9 +170,39 @@ const parsedReleaseNotes = computed(() =>
   props.updateInfo?.release_notes ? md.render(props.updateInfo.release_notes) : ''
 )
 
-const isDownloadInProgress = computed(() => downloadProgress.value > 0 && downloadProgress.value < 100)
+const showDownloadButtons = computed(
+  () => !isDownloading.value && !isInstalling.value && downloadProgress.value === 0
+)
 
-const showDownloadButtons = computed(() => !isInstalling.value && downloadProgress.value === 0)
+const downloadStatusText = computed(() => {
+  if (downloadPhase.value === 'downloading') {
+    return t.value.updateDialog.downloadProgress.replace('{progress}', downloadProgress.value)
+  }
+  const messageKey = DOWNLOAD_PHASE_MESSAGE_KEYS[downloadPhase.value]
+  if (messageKey) return t.value.updateDialog[messageKey]
+  return t.value.updateDialog.downloading
+})
+
+const getDownloadErrorMessage = (error) => {
+  const code = error && typeof error === 'object' ? error.code : ''
+  const messageKey = DOWNLOAD_ERROR_MESSAGE_KEYS[code] || 'downloadFailed'
+
+  console.error('Download update failed', error)
+  return t.value.updateDialog[messageKey]
+}
+
+const applyDownloadProgress = (payload = {}) => {
+  if (payload.progress !== undefined) downloadProgress.value = payload.progress
+  if (payload.phase) downloadPhase.value = payload.phase
+  downloadSource.value = payload.source || ''
+}
+
+const resetDownloadState = () => {
+  isDownloading.value = false
+  downloadProgress.value = 0
+  downloadPhase.value = 'idle'
+  downloadSource.value = ''
+}
 
 const installSteps = computed(() => [
   { key: 'downloaded', label: t.value.updateDialog.installStepDownloaded },
@@ -233,34 +307,45 @@ const handleDownload = async () => {
     return
   }
 
+  resetDownloadState()
   isDownloading.value = true
-  downloadProgress.value = 0
+  let progressUnlisten = null
 
   try {
     const { invoke, listen } = await getTauriApis()
 
-    const progressUnlisten = await listen('download-progress', (event) => {
-      if (event.payload.progress !== undefined) {
-        downloadProgress.value = event.payload.progress
-      }
+    progressUnlisten = await listen('download-progress', (event) => {
+      applyDownloadProgress(event.payload)
     })
 
     const filename = props.updateInfo.download_name || `sunshine-update-${props.updateInfo.version}.msi`
-    const result = await invoke('download_update', { url: downloadUrl, filename })
-
+    const result = await invoke('download_update', {
+      url: downloadUrl,
+      filename,
+      expectedSize: props.updateInfo.download_size || null,
+    })
     await progressUnlisten()
+    progressUnlisten = null
 
     if (result.success) {
       downloadProgress.value = 100
+      downloadPhase.value = 'complete'
       ElMessage.success(t.value.updateDialog.downloadComplete)
       await new Promise((resolve) => setTimeout(resolve, 1000))
+      isDownloading.value = false
       await handleInstall(result.file_path)
     } else {
-      ElMessage.error(result.message || t.value.updateDialog.downloadFailed)
+      console.error('Download update returned an unsuccessful result', result)
+      resetDownloadState()
+      ElMessage.error(t.value.updateDialog.downloadFailed)
     }
   } catch (error) {
-    ElMessage.error(t.value.updateDialog.downloadError.replace('{error}', error))
+    resetDownloadState()
+    ElMessage.error(getDownloadErrorMessage(error))
   } finally {
+    if (progressUnlisten) {
+      await progressUnlisten()
+    }
     isDownloading.value = false
   }
 }
@@ -343,9 +428,8 @@ const handleSkipVersion = () => {
 }
 
 const resetState = () => {
-  downloadProgress.value = 0
+  resetDownloadState()
   isInstalling.value = false
-  isDownloading.value = false
   resetInstallProgress()
   clearInstallProgressListener()
 }
@@ -441,13 +525,57 @@ watch(
 }
 
 .download-progress {
-  margin-bottom: 20px;
+  margin-top: 14px;
+  margin-bottom: 4px;
+
+  .download-status {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    min-height: 28px;
+    margin-bottom: 10px;
+  }
+
+  .download-spinner {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 14px;
+    border: 2px solid #c6e2ff;
+    border-top-color: #409eff;
+    border-radius: 50%;
+    animation: spin 0.9s linear infinite;
+  }
+
+  .download-complete-mark {
+    width: 18px;
+    height: 18px;
+    color: #67c23a;
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 18px;
+  }
+
+  .download-source-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 20px;
+    padding: 1px 9px;
+    border: 1px solid #b3d8ff;
+    border-radius: 999px;
+    background: #ecf5ff;
+    color: #409eff;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 18px;
+    white-space: nowrap;
+  }
 
   .progress-text {
     text-align: center;
     color: #909399;
     font-size: 14px;
-    margin-top: 8px;
+    margin: 0;
   }
 }
 

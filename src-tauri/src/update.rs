@@ -95,6 +95,30 @@ struct DownloadSelection {
     errors: Vec<String>,
 }
 
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum DownloadErrorCode {
+    SetupFailed,
+    FilePreparationFailed,
+    FileFinalizationFailed,
+    SourcesExhausted,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct DownloadCommandError {
+    code: DownloadErrorCode,
+    detail: String,
+}
+
+impl DownloadCommandError {
+    fn new(code: DownloadErrorCode, detail: impl Into<String>) -> Self {
+        Self {
+            code,
+            detail: detail.into(),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct UpdaterHelperState {
     installer_path: String,
@@ -1894,7 +1918,7 @@ pub async fn download_update(
     filename: String,
     expected_size: Option<u64>,
     app_handle: AppHandle,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, DownloadCommandError> {
     info!("📥 开始下载更新: {}", filename);
 
     cleanup_old_installers();
@@ -1903,7 +1927,8 @@ pub async fn download_update(
     let file_path = download_dir.join(&filename);
     let partial_path = download_dir.join(format!("{}.part", filename));
     let window = app_handle.get_webview_window("main");
-    let client = create_download_http_client()?;
+    let client = create_download_http_client()
+        .map_err(|detail| DownloadCommandError::new(DownloadErrorCode::SetupFailed, detail))?;
     let mut remaining_sources = build_download_sources(&url);
     let mut errors = Vec::new();
 
@@ -1912,7 +1937,12 @@ pub async fn download_update(
     }
 
     if partial_path.exists() {
-        fs::remove_file(&partial_path).map_err(|e| format!("清理旧的临时下载文件失败: {}", e))?;
+        fs::remove_file(&partial_path).map_err(|error| {
+            DownloadCommandError::new(
+                DownloadErrorCode::FilePreparationFailed,
+                format!("清理旧的临时下载文件失败: {}", error),
+            )
+        })?;
     }
 
     while !remaining_sources.is_empty() {
@@ -1953,11 +1983,21 @@ pub async fn download_update(
                     );
                 }
                 if file_path.exists() {
-                    fs::remove_file(&file_path).map_err(|e| format!("替换旧安装包失败: {}", e))?;
+                    fs::remove_file(&file_path).map_err(|error| {
+                        DownloadCommandError::new(
+                            DownloadErrorCode::FileFinalizationFailed,
+                            format!("替换旧安装包失败: {}", error),
+                        )
+                    })?;
                 }
                 tokio::fs::rename(&partial_path, &file_path)
                     .await
-                    .map_err(|e| format!("完成下载文件失败: {}", e))?;
+                    .map_err(|error| {
+                        DownloadCommandError::new(
+                            DownloadErrorCode::FileFinalizationFailed,
+                            format!("完成下载文件失败: {}", error),
+                        )
+                    })?;
 
                 info!("✅ 下载完成: {} bytes，来源: {}", downloaded, source_name);
                 if let Some(win) = window {
@@ -1974,7 +2014,6 @@ pub async fn download_update(
                 return Ok(serde_json::json!({
                     "success": true,
                     "file_path": file_path.to_string_lossy().to_string(),
-                    "message": "下载完成",
                     "source": source_name
                 }));
             }
@@ -1993,11 +2032,15 @@ pub async fn download_update(
     }
 
     let _ = tokio::fs::remove_file(&partial_path).await;
-    if errors.is_empty() {
-        Err("所有下载源都失败了".to_string())
+    let detail = if errors.is_empty() {
+        "所有下载源都失败了".to_string()
     } else {
-        Err(format!("所有下载源都失败了：{}", errors.join("；")))
-    }
+        format!("所有下载源都失败了：{}", errors.join("；"))
+    };
+    Err(DownloadCommandError::new(
+        DownloadErrorCode::SourcesExhausted,
+        detail,
+    ))
 }
 
 #[cfg(test)]
@@ -2022,6 +2065,21 @@ mod download_source_tests {
             );
             assert!(!source.url.contains("cdn.jsdelivr.net"));
         }
+    }
+
+    #[test]
+    fn download_errors_expose_stable_language_neutral_codes() {
+        let error = DownloadCommandError::new(
+            DownloadErrorCode::SourcesExhausted,
+            "diagnostic details stay out of the localized UI",
+        );
+        let serialized = serde_json::to_value(error).unwrap();
+
+        assert_eq!(serialized["code"], "sources_exhausted");
+        assert_eq!(
+            serialized["detail"],
+            "diagnostic details stay out of the localized UI"
+        );
     }
 
     #[tokio::test]

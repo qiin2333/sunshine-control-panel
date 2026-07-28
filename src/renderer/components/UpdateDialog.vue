@@ -19,10 +19,7 @@
         <div class="download-status">
           <span v-if="downloadPhase !== 'complete'" class="download-spinner"></span>
           <span v-else class="download-complete-mark">✓</span>
-          <p class="progress-text">
-            {{ downloadStatusText }}
-            <span v-if="downloadPhase === 'downloading'"> {{ downloadProgress }}%</span>
-          </p>
+          <p class="progress-text">{{ downloadStatusText }}</p>
           <span
             v-if="downloadPhase === 'downloading' && downloadSource"
             class="download-source-chip"
@@ -168,11 +165,25 @@ const downloadStatusText = computed(() => {
   if (downloadPhase.value === 'retrying') return t.value.updateDialog.downloadRetrying
   if (downloadPhase.value === 'verifying') return t.value.updateDialog.downloadVerifying
   if (downloadPhase.value === 'complete') return t.value.updateDialog.downloadComplete
-  if (downloadPhase.value === 'downloading' && downloadSource.value) {
-    return t.value.updateDialog.downloadActive
+  if (downloadPhase.value === 'downloading') {
+    return t.value.updateDialog.downloadProgress.replace('{progress}', downloadProgress.value)
   }
   return t.value.updateDialog.downloading
 })
+
+const getDownloadErrorMessage = (error) => {
+  const code = error && typeof error === 'object' ? error.code : ''
+  const messageKeyByCode = {
+    setup_failed: 'downloadSetupFailed',
+    file_preparation_failed: 'downloadFilePreparationFailed',
+    file_finalization_failed: 'downloadFileFinalizationFailed',
+    sources_exhausted: 'downloadSourcesFailed',
+  }
+  const messageKey = messageKeyByCode[code] || 'downloadFailed'
+
+  console.error('Download update failed', error)
+  return t.value.updateDialog[messageKey]
+}
 
 const installSteps = computed(() => [
   { key: 'downloaded', label: t.value.updateDialog.installStepDownloaded },
@@ -310,13 +321,14 @@ const handleDownload = async () => {
       isDownloading.value = false
       await handleInstall(result.file_path)
     } else {
-      ElMessage.error(result.message || t.value.updateDialog.downloadFailed)
+      console.error('Download update returned an unsuccessful result', result)
+      ElMessage.error(t.value.updateDialog.downloadFailed)
     }
   } catch (error) {
     downloadProgress.value = 0
     downloadPhase.value = 'idle'
     downloadSource.value = ''
-    ElMessage.error(t.value.updateDialog.downloadError.replace('{error}', error))
+    ElMessage.error(getDownloadErrorMessage(error))
   } finally {
     if (progressUnlisten) {
       await progressUnlisten()

@@ -1046,7 +1046,7 @@ export const zh = {
   // === 更新对话框 ===
   updateDialog: {
     downloading: '正在下载更新...',
-    downloadActive: '正在下载',
+    downloadProgress: '正在下载 {progress}%',
     downloadConnecting: '正在连接可用下载源...',
     downloadRetrying: '当前下载源已中断，正在切换...',
     downloadVerifying: '下载完成，正在校验文件...',
@@ -1063,7 +1063,10 @@ export const zh = {
     noDownloadUrl: '未找到下载链接',
     downloadComplete: '下载完成，准备安装...',
     downloadFailed: '下载失败',
-    downloadError: '下载失败: {error}',
+    downloadSetupFailed: '下载器初始化失败，请稍后重试。',
+    downloadFilePreparationFailed: '无法准备更新临时文件。',
+    downloadFileFinalizationFailed: '无法保存已下载的更新文件。',
+    downloadSourcesFailed: '所有下载源均不可用，请检查网络后重试。',
     installConfirm: '安装更新将关闭 Sunshine 服务和 GUI 窗口，然后启动安装程序。\n安装完成后请重新启动应用。是否继续？',
     installTitle: '准备安装更新',
     installConfirmBtn: '确定安装',

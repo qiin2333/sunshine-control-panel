@@ -3,6 +3,7 @@ import { PhysicalPosition } from '@tauri-apps/api/dpi'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 
 const DRAG_THRESHOLD = 4
+const RESTORE_RESIZE_TIMEOUT_MS = 500
 
 /**
  * Adds touch dragging to a custom Tauri title bar.
@@ -12,8 +13,7 @@ const DRAG_THRESHOLD = 4
  * dragging uses the current window position and applies incremental updates.
  */
 export function useTouchWindowDrag() {
-  const appWindow = getCurrentWindow()
-
+  let appWindow = null
   let pointerId = null
   let pointerTarget = null
   let hasMoved = false
@@ -38,6 +38,57 @@ export function useTouchWindowDrag() {
   let positionRaf = null
 
   const devicePixelRatio = () => window.devicePixelRatio || 1
+
+  const getAppWindow = () => {
+    if (appWindow) return appWindow
+
+    try {
+      appWindow = getCurrentWindow()
+      return appWindow
+    } catch {
+      return null
+    }
+  }
+
+  const commitPosition = (logicalX, logicalY) => {
+    const dpr = devicePixelRatio()
+    return appWindow.setPosition(new PhysicalPosition(
+      Math.round(logicalX * dpr),
+      Math.round(logicalY * dpr),
+    ))
+  }
+
+  const waitForRestoreResize = async () => {
+    let resolveResize
+    let unlistenResize = null
+    let timeoutId = null
+    const resizePromise = new Promise((resolve) => {
+      resolveResize = resolve
+    })
+
+    try {
+      try {
+        unlistenResize = await appWindow.onResized(() => resolveResize())
+      } catch {
+        // Fall back to the bounded delay if resize events are unavailable.
+      }
+
+      await appWindow.unmaximize()
+      await Promise.race([
+        resizePromise,
+        new Promise((resolve) => {
+          timeoutId = setTimeout(resolve, RESTORE_RESIZE_TIMEOUT_MS)
+        }),
+      ])
+    } finally {
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId)
+      }
+      if (unlistenResize) {
+        unlistenResize()
+      }
+    }
+  }
 
   const releasePointerCapture = () => {
     if (pointerTarget && pointerId !== null) {
@@ -97,13 +148,9 @@ export function useTouchWindowDrag() {
     settingPosition = true
     const nextLogicalX = pendingLogicalX
     const nextLogicalY = pendingLogicalY
-    const dpr = devicePixelRatio()
 
     try {
-      await appWindow.setPosition(new PhysicalPosition(
-        Math.round(nextLogicalX * dpr),
-        Math.round(nextLogicalY * dpr),
-      ))
+      await commitPosition(nextLogicalX, nextLogicalY)
       baseLogicalX = nextLogicalX
       baseLogicalY = nextLogicalY
     } catch {
@@ -147,8 +194,7 @@ export function useTouchWindowDrag() {
         Math.max(0, startClientX / Math.max(window.innerWidth, 1)),
       )
 
-      await appWindow.unmaximize()
-      await new Promise((resolve) => requestAnimationFrame(resolve))
+      await waitForRestoreResize()
 
       const restoredSize = await appWindow.outerSize()
       const anchorPhysicalX = restoredSize.width * horizontalAnchorRatio
@@ -159,10 +205,7 @@ export function useTouchWindowDrag() {
       const restoredPhysicalX = Math.round(pointerPhysicalX - anchorPhysicalX)
       const restoredPhysicalY = Math.round(pointerPhysicalY - anchorPhysicalY)
 
-      await appWindow.setPosition(new PhysicalPosition(
-        restoredPhysicalX,
-        restoredPhysicalY,
-      ))
+      await commitPosition(restoredPhysicalX / dpr, restoredPhysicalY / dpr)
 
       baseLogicalX = restoredPhysicalX / dpr
       baseLogicalY = restoredPhysicalY / dpr
@@ -278,12 +321,8 @@ export function useTouchWindowDrag() {
       Number.isFinite(pendingLogicalX) &&
       Number.isFinite(pendingLogicalY)
     ) {
-      const dpr = devicePixelRatio()
       try {
-        await appWindow.setPosition(new PhysicalPosition(
-          Math.round(pendingLogicalX * dpr),
-          Math.round(pendingLogicalY * dpr),
-        ))
+        await commitPosition(pendingLogicalX, pendingLogicalY)
       } catch {
         // Keep the last position accepted by the operating system.
       }
@@ -301,6 +340,8 @@ export function useTouchWindowDrag() {
     ) {
       return
     }
+
+    if (!getAppWindow()) return
 
     event.preventDefault()
     event.stopPropagation()

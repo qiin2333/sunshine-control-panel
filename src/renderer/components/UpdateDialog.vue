@@ -106,6 +106,20 @@ import { useI18n } from '../desktop/i18n/index.js'
 
 const { t } = useI18n()
 
+const DOWNLOAD_PHASE_MESSAGE_KEYS = Object.freeze({
+  connecting: 'downloadConnecting',
+  retrying: 'downloadRetrying',
+  verifying: 'downloadVerifying',
+  complete: 'downloadComplete',
+})
+
+const DOWNLOAD_ERROR_MESSAGE_KEYS = Object.freeze({
+  setup_failed: 'downloadSetupFailed',
+  file_preparation_failed: 'downloadFilePreparationFailed',
+  file_finalization_failed: 'downloadFileFinalizationFailed',
+  sources_exhausted: 'downloadSourcesFailed',
+})
+
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
   updateInfo: { type: Object, default: null },
@@ -161,28 +175,33 @@ const showDownloadButtons = computed(
 )
 
 const downloadStatusText = computed(() => {
-  if (downloadPhase.value === 'connecting') return t.value.updateDialog.downloadConnecting
-  if (downloadPhase.value === 'retrying') return t.value.updateDialog.downloadRetrying
-  if (downloadPhase.value === 'verifying') return t.value.updateDialog.downloadVerifying
-  if (downloadPhase.value === 'complete') return t.value.updateDialog.downloadComplete
   if (downloadPhase.value === 'downloading') {
     return t.value.updateDialog.downloadProgress.replace('{progress}', downloadProgress.value)
   }
+  const messageKey = DOWNLOAD_PHASE_MESSAGE_KEYS[downloadPhase.value]
+  if (messageKey) return t.value.updateDialog[messageKey]
   return t.value.updateDialog.downloading
 })
 
 const getDownloadErrorMessage = (error) => {
   const code = error && typeof error === 'object' ? error.code : ''
-  const messageKeyByCode = {
-    setup_failed: 'downloadSetupFailed',
-    file_preparation_failed: 'downloadFilePreparationFailed',
-    file_finalization_failed: 'downloadFileFinalizationFailed',
-    sources_exhausted: 'downloadSourcesFailed',
-  }
-  const messageKey = messageKeyByCode[code] || 'downloadFailed'
+  const messageKey = DOWNLOAD_ERROR_MESSAGE_KEYS[code] || 'downloadFailed'
 
   console.error('Download update failed', error)
   return t.value.updateDialog[messageKey]
+}
+
+const applyDownloadProgress = (payload = {}) => {
+  if (payload.progress !== undefined) downloadProgress.value = payload.progress
+  if (payload.phase) downloadPhase.value = payload.phase
+  downloadSource.value = payload.source || ''
+}
+
+const resetDownloadState = () => {
+  isDownloading.value = false
+  downloadProgress.value = 0
+  downloadPhase.value = 'idle'
+  downloadSource.value = ''
 }
 
 const installSteps = computed(() => [
@@ -288,20 +307,15 @@ const handleDownload = async () => {
     return
   }
 
+  resetDownloadState()
   isDownloading.value = true
-  downloadProgress.value = 0
   let progressUnlisten = null
 
   try {
     const { invoke, listen } = await getTauriApis()
 
     progressUnlisten = await listen('download-progress', (event) => {
-      const payload = event.payload || {}
-      if (payload.progress !== undefined) {
-        downloadProgress.value = payload.progress
-      }
-      if (payload.phase) downloadPhase.value = payload.phase
-      downloadSource.value = payload.source || ''
+      applyDownloadProgress(event.payload)
     })
 
     const filename = props.updateInfo.download_name || `sunshine-update-${props.updateInfo.version}.msi`
@@ -325,9 +339,7 @@ const handleDownload = async () => {
       ElMessage.error(t.value.updateDialog.downloadFailed)
     }
   } catch (error) {
-    downloadProgress.value = 0
-    downloadPhase.value = 'idle'
-    downloadSource.value = ''
+    resetDownloadState()
     ElMessage.error(getDownloadErrorMessage(error))
   } finally {
     if (progressUnlisten) {
@@ -415,11 +427,8 @@ const handleSkipVersion = () => {
 }
 
 const resetState = () => {
-  downloadProgress.value = 0
-  downloadPhase.value = 'idle'
-  downloadSource.value = ''
+  resetDownloadState()
   isInstalling.value = false
-  isDownloading.value = false
   resetInstallProgress()
   clearInstallProgressListener()
 }

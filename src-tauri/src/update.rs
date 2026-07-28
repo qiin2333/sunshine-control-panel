@@ -24,8 +24,6 @@ const DOWNLOAD_TIMEOUT_SECS: u64 = 300;
 const DOWNLOAD_CONNECT_TIMEOUT_SECS: u64 = 5;
 const DOWNLOAD_RESPONSE_TIMEOUT_SECS: u64 = 10;
 const DOWNLOAD_IDLE_TIMEOUT_SECS: u64 = 20;
-const DOWNLOAD_HEDGE_DELAY_MS: u64 = 1_500;
-const MAX_CONCURRENT_DOWNLOAD_REQUESTS: usize = 2;
 const MAX_RELEASES_TO_CHECK: usize = 10; // 最多检查的发布数量
 
 // GitHub API 加速代理列表（按优先级排序）
@@ -81,18 +79,16 @@ struct GitHubAsset {
 struct DownloadSource {
     name: &'static str,
     url: String,
-    start_delay: Duration,
 }
 
-struct DownloadCandidate {
-    source: DownloadSource,
-    response: reqwest::Response,
-}
-
-struct DownloadSelection {
-    candidate: DownloadCandidate,
-    failed_urls: Vec<String>,
-    errors: Vec<String>,
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum DownloadPhase {
+    Connecting,
+    Downloading,
+    Retrying,
+    Verifying,
+    Complete,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -1608,21 +1604,17 @@ fn create_download_http_client() -> Result<reqwest::Client, String> {
         .map_err(|e| format!("创建下载客户端失败: {}", e))
 }
 
-/// 构建安装包候选源：GitHub 直连立即开始，代理按优先级延迟启动。
+/// 构建安装包候选源：GitHub 直连优先，其后按配置顺序尝试代理。
 fn build_download_sources(original_url: &str) -> Vec<DownloadSource> {
     let mut sources = vec![DownloadSource {
         name: "GitHub",
         url: original_url.to_string(),
-        start_delay: Duration::ZERO,
     }];
 
-    for (index, (name, prefix)) in DOWNLOAD_PROXY_PREFIXES.iter().enumerate() {
+    for (name, prefix) in DOWNLOAD_PROXY_PREFIXES {
         sources.push(DownloadSource {
             name,
             url: format!("{}{}", prefix, original_url),
-            start_delay: Duration::from_millis(
-                DOWNLOAD_HEDGE_DELAY_MS.saturating_mul(index as u64 + 1),
-            ),
         });
     }
 
@@ -1670,20 +1662,10 @@ fn validate_download_response(
 }
 
 async fn request_download_source(
-    client: reqwest::Client,
-    source: DownloadSource,
-    semaphore: Arc<tokio::sync::Semaphore>,
+    client: &reqwest::Client,
+    source: &DownloadSource,
     expected_size: Option<u64>,
-) -> Result<DownloadCandidate, (String, String)> {
-    tokio::time::sleep(source.start_delay).await;
-
-    let _permit = semaphore.acquire_owned().await.map_err(|_| {
-        (
-            source.url.clone(),
-            format!("{} 下载任务已取消", source.name),
-        )
-    })?;
-
+) -> Result<reqwest::Response, String> {
     let request = client
         .get(&source.url)
         .header(
@@ -1701,74 +1683,21 @@ async fn request_download_source(
     {
         Ok(Ok(response)) => response,
         Ok(Err(error)) => {
-            return Err((
-                source.url.clone(),
-                format!("{} 请求失败: {}", source.name, error),
-            ));
+            return Err(format!("{} 请求失败: {}", source.name, error));
         }
         Err(_) => {
-            return Err((
-                source.url.clone(),
-                format!(
-                    "{} 在 {} 秒内未返回响应",
-                    source.name, DOWNLOAD_RESPONSE_TIMEOUT_SECS
-                ),
+            return Err(format!(
+                "{} 在 {} 秒内未返回响应",
+                source.name, DOWNLOAD_RESPONSE_TIMEOUT_SECS
             ));
         }
     };
 
-    validate_download_response(&response, expected_size).map_err(|error| {
-        (
-            source.url.clone(),
-            format!("{} 响应无效: {}", source.name, error),
-        )
-    })?;
+    validate_download_response(&response, expected_size)
+        .map_err(|error| format!("{} 响应无效: {}", source.name, error))?;
 
     debug!("✅ 下载源已就绪: {} ({})", source.name, response.url());
-    Ok(DownloadCandidate { source, response })
-}
-
-/// 延迟竞速候选源，首个返回有效安装包响应的源胜出。
-async fn select_download_source(
-    client: &reqwest::Client,
-    sources: &[DownloadSource],
-    expected_size: Option<u64>,
-) -> Result<DownloadSelection, Vec<String>> {
-    use futures_util::stream::{FuturesUnordered, StreamExt};
-
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(
-        MAX_CONCURRENT_DOWNLOAD_REQUESTS,
-    ));
-    let mut attempts = FuturesUnordered::new();
-
-    for source in sources.iter().cloned() {
-        let client = client.clone();
-        let semaphore = semaphore.clone();
-        attempts.push(async move {
-            request_download_source(client, source, semaphore, expected_size).await
-        });
-    }
-
-    let mut failed_urls = Vec::new();
-    let mut errors = Vec::new();
-    while let Some(result) = attempts.next().await {
-        match result {
-            Ok(candidate) => {
-                return Ok(DownloadSelection {
-                    candidate,
-                    failed_urls,
-                    errors,
-                });
-            }
-            Err((url, error)) => {
-                warn!("⚠️ {}", error);
-                failed_urls.push(url);
-                errors.push(error);
-            }
-        }
-    }
-
-    Err(errors)
+    Ok(response)
 }
 
 /// 发送下载进度事件到前端
@@ -1777,7 +1706,7 @@ fn emit_download_progress(
     progress: u32,
     total: u64,
     downloaded: u64,
-    phase: &str,
+    phase: DownloadPhase,
     source: Option<&str>,
 ) {
     let _ = window.emit(
@@ -1843,7 +1772,7 @@ async fn download_stream(
                         progress_percent,
                         total_size,
                         downloaded,
-                        "downloading",
+                        DownloadPhase::Downloading,
                         Some(source_name),
                     );
                 }
@@ -1854,7 +1783,14 @@ async fn download_stream(
                 );
             }
         } else if let Some(win) = window {
-            emit_download_progress(win, 0, 0, downloaded, "downloading", Some(source_name));
+            emit_download_progress(
+                win,
+                0,
+                0,
+                downloaded,
+                DownloadPhase::Downloading,
+                Some(source_name),
+            );
         }
     }
 
@@ -1865,31 +1801,39 @@ async fn download_stream(
     Ok(downloaded)
 }
 
-async fn download_candidate_to_file(
-    candidate: DownloadCandidate,
+async fn download_source_to_file(
+    client: &reqwest::Client,
+    source: &DownloadSource,
     partial_path: &Path,
     expected_size: Option<u64>,
     window: Option<&tauri::WebviewWindow>,
 ) -> Result<(u64, u64), String> {
-    let source_name = candidate.source.name;
-    let response_size = candidate.response.content_length();
+    let response = request_download_source(client, source, expected_size).await?;
+    let response_size = response.content_length();
     let total_size = expected_size
         .filter(|size| *size > 0)
         .or(response_size)
         .unwrap_or(0);
 
     if let Some(win) = window {
-        emit_download_progress(win, 0, total_size, 0, "downloading", Some(source_name));
+        emit_download_progress(
+            win,
+            0,
+            total_size,
+            0,
+            DownloadPhase::Downloading,
+            Some(source.name),
+        );
     }
 
     let mut file = tokio::fs::File::create(partial_path)
         .await
         .map_err(|e| format!("创建临时下载文件失败: {}", e))?;
     let downloaded = download_stream(
-        candidate.response.bytes_stream(),
+        response.bytes_stream(),
         &mut file,
         total_size,
-        source_name,
+        source.name,
         window,
     )
     .await?;
@@ -1911,6 +1855,49 @@ async fn download_candidate_to_file(
     Ok((downloaded, total_size))
 }
 
+fn remove_file_if_exists(
+    path: &Path,
+    error_code: DownloadErrorCode,
+    action: &str,
+) -> Result<(), DownloadCommandError> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(DownloadCommandError::new(
+            error_code,
+            format!("{}失败: {}", action, error),
+        )),
+    }
+}
+
+async fn finalize_download_file(
+    partial_path: &Path,
+    file_path: &Path,
+) -> Result<(), DownloadCommandError> {
+    remove_file_if_exists(
+        file_path,
+        DownloadErrorCode::FileFinalizationFailed,
+        "替换旧安装包",
+    )?;
+    tokio::fs::rename(partial_path, file_path)
+        .await
+        .map_err(|error| {
+            DownloadCommandError::new(
+                DownloadErrorCode::FileFinalizationFailed,
+                format!("完成下载文件失败: {}", error),
+            )
+        })
+}
+
+fn sources_exhausted_error(errors: &[String]) -> DownloadCommandError {
+    let detail = if errors.is_empty() {
+        "所有下载源都失败了".to_string()
+    } else {
+        format!("所有下载源都失败了：{}", errors.join("；"))
+    };
+    DownloadCommandError::new(DownloadErrorCode::SourcesExhausted, detail)
+}
+
 /// 下载更新文件（带真实进度报告）
 #[tauri::command]
 pub async fn download_update(
@@ -1929,47 +1916,34 @@ pub async fn download_update(
     let window = app_handle.get_webview_window("main");
     let client = create_download_http_client()
         .map_err(|detail| DownloadCommandError::new(DownloadErrorCode::SetupFailed, detail))?;
-    let mut remaining_sources = build_download_sources(&url);
+    let sources = build_download_sources(&url);
     let mut errors = Vec::new();
 
-    if let Some(ref win) = window {
-        emit_download_progress(win, 0, 0, 0, "connecting", None);
-    }
+    remove_file_if_exists(
+        &partial_path,
+        DownloadErrorCode::FilePreparationFailed,
+        "清理旧的临时下载文件",
+    )?;
 
-    if partial_path.exists() {
-        fs::remove_file(&partial_path).map_err(|error| {
-            DownloadCommandError::new(
-                DownloadErrorCode::FilePreparationFailed,
-                format!("清理旧的临时下载文件失败: {}", error),
-            )
-        })?;
-    }
-
-    while !remaining_sources.is_empty() {
-        let selection =
-            match select_download_source(&client, &remaining_sources, expected_size).await {
-                Ok(selection) => selection,
-                Err(selection_errors) => {
-                    errors.extend(selection_errors);
-                    break;
-                }
+    for (index, source) in sources.iter().enumerate() {
+        if let Some(ref win) = window {
+            let phase = if index == 0 {
+                DownloadPhase::Connecting
+            } else {
+                DownloadPhase::Retrying
             };
+            emit_download_progress(win, 0, 0, 0, phase, None);
+        }
 
-        let DownloadSelection {
-            candidate,
-            failed_urls,
-            errors: selection_errors,
-        } = selection;
-        errors.extend(selection_errors);
-
-        let source_name = candidate.source.name;
-        let selected_url = candidate.source.url.clone();
-        remaining_sources
-            .retain(|source| source.url != selected_url && !failed_urls.contains(&source.url));
-
-        info!("📡 使用下载源: {}", source_name);
-        match download_candidate_to_file(candidate, &partial_path, expected_size, window.as_ref())
-            .await
+        info!("📡 尝试下载源: {}", source.name);
+        match download_source_to_file(
+            &client,
+            source,
+            &partial_path,
+            expected_size,
+            window.as_ref(),
+        )
+        .await
         {
             Ok((downloaded, total_size)) => {
                 if let Some(ref win) = window {
@@ -1978,91 +1952,61 @@ pub async fn download_update(
                         99,
                         total_size,
                         downloaded,
-                        "verifying",
-                        Some(source_name),
+                        DownloadPhase::Verifying,
+                        Some(source.name),
                     );
                 }
-                if file_path.exists() {
-                    fs::remove_file(&file_path).map_err(|error| {
-                        DownloadCommandError::new(
-                            DownloadErrorCode::FileFinalizationFailed,
-                            format!("替换旧安装包失败: {}", error),
-                        )
-                    })?;
-                }
-                tokio::fs::rename(&partial_path, &file_path)
-                    .await
-                    .map_err(|error| {
-                        DownloadCommandError::new(
-                            DownloadErrorCode::FileFinalizationFailed,
-                            format!("完成下载文件失败: {}", error),
-                        )
-                    })?;
+                finalize_download_file(&partial_path, &file_path).await?;
 
-                info!("✅ 下载完成: {} bytes，来源: {}", downloaded, source_name);
+                info!("✅ 下载完成: {} bytes，来源: {}", downloaded, source.name);
                 if let Some(win) = window {
                     emit_download_progress(
                         &win,
                         100,
                         total_size,
                         downloaded,
-                        "complete",
-                        Some(source_name),
+                        DownloadPhase::Complete,
+                        Some(source.name),
                     );
                 }
 
                 return Ok(serde_json::json!({
                     "success": true,
                     "file_path": file_path.to_string_lossy().to_string(),
-                    "source": source_name
+                    "source": source.name
                 }));
             }
             Err(error) => {
-                let message = format!("{} 下载中断: {}", source_name, error);
-                warn!("⚠️ {}", message);
-                errors.push(message);
+                warn!("⚠️ {}", error);
+                errors.push(error);
                 let _ = tokio::fs::remove_file(&partial_path).await;
-                if !remaining_sources.is_empty()
-                    && let Some(ref win) = window
-                {
-                    emit_download_progress(win, 0, 0, 0, "retrying", None);
-                }
             }
         }
     }
 
     let _ = tokio::fs::remove_file(&partial_path).await;
-    let detail = if errors.is_empty() {
-        "所有下载源都失败了".to_string()
-    } else {
-        format!("所有下载源都失败了：{}", errors.join("；"))
-    };
-    Err(DownloadCommandError::new(
-        DownloadErrorCode::SourcesExhausted,
-        detail,
-    ))
+    Err(sources_exhausted_error(&errors))
 }
 
 #[cfg(test)]
 mod download_source_tests {
     use super::*;
-    use axum::{Router, http::header, response::Html, routing::get};
+    use axum::{Router, response::Html, routing::get};
 
     #[test]
-    fn download_sources_are_direct_first_with_staggered_proxies() {
+    fn download_sources_are_direct_first_then_follow_proxy_order() {
         let original_url = "https://github.com/qiin2333/sunshine/releases/download/v1/setup.exe";
         let sources = build_download_sources(original_url);
 
         assert_eq!(sources.len(), 1 + DOWNLOAD_PROXY_PREFIXES.len());
         assert_eq!(sources[0].name, "GitHub");
         assert_eq!(sources[0].url, original_url);
-        assert_eq!(sources[0].start_delay, Duration::ZERO);
 
-        for (index, source) in sources.iter().skip(1).enumerate() {
-            assert_eq!(
-                source.start_delay,
-                Duration::from_millis(DOWNLOAD_HEDGE_DELAY_MS * (index as u64 + 1))
-            );
+        for (source, (expected_name, expected_prefix)) in
+            sources.iter().skip(1).zip(DOWNLOAD_PROXY_PREFIXES)
+        {
+            assert_eq!(source.name, *expected_name);
+            assert_eq!(source.url, format!("{}{}", expected_prefix, original_url));
             assert!(!source.url.contains("cdn.jsdelivr.net"));
         }
     }
@@ -2083,83 +2027,24 @@ mod download_source_tests {
     }
 
     #[tokio::test]
-    async fn stalled_direct_source_is_hedged_by_a_ready_fallback() {
-        let app = Router::new()
-            .route(
-                "/slow",
-                get(|| async {
-                    tokio::time::sleep(Duration::from_millis(200)).await;
-                    ([(header::CONTENT_TYPE, "application/octet-stream")], "slow")
-                }),
-            )
-            .route(
-                "/fast",
-                get(|| async { ([(header::CONTENT_TYPE, "application/octet-stream")], "fast") }),
-            );
+    async fn html_response_is_rejected_before_writing_a_download_file() {
+        let app = Router::new().route("/html", get(|| async { Html("proxy error") }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
 
-        let sources = vec![
-            DownloadSource {
-                name: "slow",
-                url: format!("http://{}/slow", address),
-                start_delay: Duration::ZERO,
-            },
-            DownloadSource {
-                name: "fast",
-                url: format!("http://{}/fast", address),
-                start_delay: Duration::from_millis(20),
-            },
-        ];
+        let source = DownloadSource {
+            name: "html",
+            url: format!("http://{}/html", address),
+        };
         let client = create_download_http_client().unwrap();
-        let selection = select_download_source(&client, &sources, Some(4))
+        let error = request_download_source(&client, &source, None)
             .await
-            .unwrap();
+            .unwrap_err();
 
-        assert_eq!(selection.candidate.source.name, "fast");
-        server.abort();
-    }
-
-    #[tokio::test]
-    async fn html_response_is_rejected_before_selecting_a_download_source() {
-        let app = Router::new()
-            .route("/html", get(|| async { Html("proxy error") }))
-            .route(
-                "/binary",
-                get(|| async {
-                    tokio::time::sleep(Duration::from_millis(20)).await;
-                    ([(header::CONTENT_TYPE, "application/octet-stream")], "data")
-                }),
-            );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-
-        let html_url = format!("http://{}/html", address);
-        let sources = vec![
-            DownloadSource {
-                name: "html",
-                url: html_url.clone(),
-                start_delay: Duration::ZERO,
-            },
-            DownloadSource {
-                name: "binary",
-                url: format!("http://{}/binary", address),
-                start_delay: Duration::ZERO,
-            },
-        ];
-        let client = create_download_http_client().unwrap();
-        let selection = select_download_source(&client, &sources, Some(4))
-            .await
-            .unwrap();
-
-        assert_eq!(selection.candidate.source.name, "binary");
-        assert!(selection.failed_urls.contains(&html_url));
+        assert!(error.contains("返回了非安装包内容"));
         server.abort();
     }
 }

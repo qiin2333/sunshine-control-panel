@@ -73,6 +73,29 @@ pub async fn save_toolbar_position(app: AppHandle, x: f64, y: f64) -> Result<(),
     Ok(())
 }
 
+#[tauri::command]
+pub fn is_primary_mouse_button_pressed() -> Option<bool> {
+    #[cfg(target_os = "windows")]
+    {
+        use ::windows::Win32::UI::Input::KeyboardAndMouse::{
+            GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON,
+        };
+        use ::windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_SWAPBUTTON};
+
+        let primary_button = if unsafe { GetSystemMetrics(SM_SWAPBUTTON) } != 0 {
+            VK_RBUTTON
+        } else {
+            VK_LBUTTON
+        };
+        Some(unsafe { GetAsyncKeyState(primary_button.0 as i32) < 0 })
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
+    }
+}
+
 // 加载工具栏位置
 fn load_toolbar_position<R: Runtime>(app: &AppHandle<R>) -> Option<(f64, f64)> {
     let config_path = match get_toolbar_config_path(app) {

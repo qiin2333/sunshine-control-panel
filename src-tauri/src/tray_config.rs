@@ -234,10 +234,7 @@ fn parse_config_content(
 async fn fetch_config_for_export() -> Result<String, String> {
     let sunshine_url = sunshine::get_sunshine_url().await?;
     let config_url = format!("{}/api/config", sunshine_url.trim_end_matches('/'));
-    let client = sunshine::create_https_client().await?;
-    let response = client
-        .get(&config_url)
-        .send()
+    let response = sunshine::send_https_request(|client| client.get(&config_url))
         .await
         .map_err(|e| format!("fetch config failed: {}", e))?;
 

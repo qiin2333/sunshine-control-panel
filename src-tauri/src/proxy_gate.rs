@@ -9,17 +9,51 @@
 mod imp {
     use log::debug;
     use std::collections::HashMap;
+    use windows::Win32::NetworkManagement::IpHelper::MIB_TCPROW_OWNER_PID;
 
     const AF_INET: u32 = 2;
     const NO_ERROR: u32 = 0;
     const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
     const LOOPBACK_BE: u32 = u32::from_le_bytes([127, 0, 0, 1]);
 
+    fn owner_pid_from_table(
+        buf: &[usize],
+        byte_len: usize,
+        peer_port: u16,
+        proxy_port: u16,
+    ) -> Option<u32> {
+        let storage_len = buf.len().checked_mul(std::mem::size_of::<usize>())?;
+        if byte_len < std::mem::size_of::<u32>() || byte_len > storage_len {
+            return None;
+        }
+
+        let base = buf.as_ptr().cast::<u8>();
+        let row_count = unsafe { std::ptr::read_unaligned(base.cast::<u32>()) } as usize;
+        let rows_offset = std::mem::size_of::<u32>();
+        let rows_len = row_count.checked_mul(std::mem::size_of::<MIB_TCPROW_OWNER_PID>())?;
+        let rows_end = rows_offset.checked_add(rows_len)?;
+        if rows_end > byte_len {
+            return None;
+        }
+
+        let rows_ptr = unsafe { base.add(rows_offset) }.cast::<MIB_TCPROW_OWNER_PID>();
+        if (rows_ptr as usize) % std::mem::align_of::<MIB_TCPROW_OWNER_PID>() != 0 {
+            return None;
+        }
+        let rows = unsafe { std::slice::from_raw_parts(rows_ptr, row_count) };
+        rows.iter().find_map(|row| {
+            let local_port = u16::from_be(row.dwLocalPort as u16);
+            let remote_port = u16::from_be(row.dwRemotePort as u16);
+            (local_port == peer_port && remote_port == proxy_port && row.dwLocalAddr == LOOPBACK_BE)
+                .then_some(row.dwOwningPid)
+        })
+    }
+
     /// 在 TCP 连接表中找到「本地端口 == 对端临时端口、远端端口 == 代理端口」
     /// 的回环连接，返回持有该 socket 的进程 PID。
     fn find_owner_pid(peer_port: u16, proxy_port: u16) -> Option<u32> {
         use windows::Win32::NetworkManagement::IpHelper::{
-            GetExtendedTcpTable, MIB_TCPTABLE_OWNER_PID, TCP_TABLE_OWNER_PID_CONNECTIONS,
+            GetExtendedTcpTable, TCP_TABLE_OWNER_PID_CONNECTIONS,
         };
 
         unsafe {
@@ -34,9 +68,10 @@ mod imp {
             );
 
             for _ in 0..3 {
-                let mut buf = vec![0_u8; size.max(16) as usize];
+                let word_count = (size.max(16) as usize).div_ceil(std::mem::size_of::<usize>());
+                let mut buf = vec![0_usize; word_count];
                 let ret = GetExtendedTcpTable(
-                    Some(buf.as_mut_ptr() as *mut _),
+                    Some(buf.as_mut_ptr().cast()),
                     &mut size,
                     false,
                     AF_INET,
@@ -51,20 +86,7 @@ mod imp {
                     return None;
                 }
 
-                let table = &*(buf.as_ptr() as *const MIB_TCPTABLE_OWNER_PID);
-                let rows =
-                    std::slice::from_raw_parts(table.table.as_ptr(), table.dwNumEntries as usize);
-                for row in rows {
-                    let local_port = u16::from_be(row.dwLocalPort as u16);
-                    let remote_port = u16::from_be(row.dwRemotePort as u16);
-                    if local_port == peer_port
-                        && remote_port == proxy_port
-                        && row.dwLocalAddr == LOOPBACK_BE
-                    {
-                        return Some(row.dwOwningPid);
-                    }
-                }
-                return None;
+                return owner_pid_from_table(&buf, size as usize, peer_port, proxy_port);
             }
             None
         }
@@ -129,6 +151,57 @@ mod imp {
         find_owner_pid(peer_port, proxy_port)
             .map(is_self_or_descendant)
             .unwrap_or(false)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn synthetic_table(rows: &[MIB_TCPROW_OWNER_PID]) -> (Vec<usize>, usize) {
+            let byte_len = std::mem::size_of::<u32>()
+                + rows.len() * std::mem::size_of::<MIB_TCPROW_OWNER_PID>();
+            let word_count = byte_len.div_ceil(std::mem::size_of::<usize>());
+            let mut buf = vec![0_usize; word_count];
+            unsafe {
+                std::ptr::write(buf.as_mut_ptr().cast::<u32>(), rows.len() as u32);
+                let rows_ptr = buf
+                    .as_mut_ptr()
+                    .cast::<u8>()
+                    .add(std::mem::size_of::<u32>())
+                    .cast::<MIB_TCPROW_OWNER_PID>();
+                for (index, row) in rows.iter().enumerate() {
+                    std::ptr::copy_nonoverlapping(row, rows_ptr.add(index), 1);
+                }
+            }
+            (buf, byte_len)
+        }
+
+        fn row(local: u16, remote: u16, address: u32, pid: u32) -> MIB_TCPROW_OWNER_PID {
+            let mut row: MIB_TCPROW_OWNER_PID = unsafe { std::mem::zeroed() };
+            row.dwLocalPort = local.to_be() as u32;
+            row.dwRemotePort = remote.to_be() as u32;
+            row.dwLocalAddr = address;
+            row.dwOwningPid = pid;
+            row
+        }
+
+        #[test]
+        fn parses_matching_loopback_row() {
+            let (buf, byte_len) = synthetic_table(&[
+                row(1111, 48000, LOOPBACK_BE, 10),
+                row(2222, 48000, LOOPBACK_BE, 20),
+            ]);
+
+            assert_eq!(owner_pid_from_table(&buf, byte_len, 2222, 48000), Some(20));
+            assert_eq!(owner_pid_from_table(&buf, byte_len, 3333, 48000), None);
+        }
+
+        #[test]
+        fn rejects_non_loopback_and_truncated_tables() {
+            let (buf, byte_len) = synthetic_table(&[row(2222, 48000, 0, 20)]);
+            assert_eq!(owner_pid_from_table(&buf, byte_len, 2222, 48000), None);
+            assert_eq!(owner_pid_from_table(&buf, byte_len - 1, 2222, 48000), None);
+        }
     }
 }
 

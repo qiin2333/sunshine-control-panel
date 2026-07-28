@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::clipboard;
-use crate::sunshine::{create_https_client, get_active_sessions, get_sunshine_url};
+use crate::sunshine::{get_active_sessions, get_sunshine_url, send_https_request};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 struct FileOffer {
@@ -107,19 +107,11 @@ fn canonicalize_file(path: &str) -> Result<PathBuf, String> {
 
 async fn register_offer(path: &PathBuf) -> Result<FileOffer, String> {
     let url = get_sunshine_url().await?;
-    let client = create_https_client().await?;
     let endpoint = format!("{}/api/v1/file-transfer/offers", url.trim_end_matches('/'));
-
     let body = serde_json::json!({
         "path": path.to_string_lossy(),
     });
-
-    let resp = client
-        .post(endpoint)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let resp = send_https_request(|client| client.post(&endpoint).json(&body)).await?;
 
     let status = resp.status();
     let text = resp.text().await.map_err(|e| e.to_string())?;

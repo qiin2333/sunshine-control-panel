@@ -43,7 +43,7 @@ use serde::Serialize;
 use tauri::async_runtime::JoinHandle;
 use tokio::sync::Notify;
 
-use crate::sunshine::{create_https_client, create_sse_https_client, get_sunshine_url};
+use crate::sunshine::{get_sunshine_url, send_https_request, send_sse_https_request};
 
 const WIRE_VERSION: u8 = 1;
 const KIND_TEXT: u8 = 1;
@@ -75,12 +75,6 @@ const TRANSPORT_DISCONNECTED: u8 = 3;
 static TRANSPORT_STATE: AtomicU8 = AtomicU8::new(TRANSPORT_STOPPED);
 static LAST_CONNECTED_AT_MS: AtomicI64 = AtomicI64::new(0);
 static LAST_TRANSPORT_ERROR: Mutex<Option<String>> = Mutex::new(None);
-
-async fn create_sse_client() -> Result<reqwest::Client, String> {
-    create_sse_https_client()
-        .await
-        .map_err(|e| format!("创建 SSE HTTP 客户端失败: {}", e))
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
@@ -385,17 +379,16 @@ fn next_token() -> u32 {
 
 async fn post_item(body: Vec<u8>) -> Result<(), String> {
     let url = get_sunshine_url().await?;
-    let client = create_https_client().await?;
-    let resp = client
-        .post(format!(
-            "{}/api/v1/clipboard/item",
-            url.trim_end_matches('/')
-        ))
-        .header("Content-Type", "application/octet-stream")
-        .body(body)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let resp = send_https_request(|client| {
+        client
+            .post(format!(
+                "{}/api/v1/clipboard/item",
+                url.trim_end_matches('/')
+            ))
+            .header("Content-Type", "application/octet-stream")
+            .body(body.clone())
+    })
+    .await?;
     if !resp.status().is_success() {
         return Err(format!("status {}", resp.status()));
     }
@@ -414,15 +407,8 @@ pub async fn post_file_offer_payload(payload: Vec<u8>) -> Result<(), String> {
 
 async fn post_capability_once() -> Result<(), String> {
     let url = get_sunshine_url().await?;
-    let client = create_https_client().await?;
-    let resp = client
-        .post(format!(
-            "{}/api/v1/clipboard/capability",
-            url.trim_end_matches('/')
-        ))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let endpoint = format!("{}/api/v1/clipboard/capability", url.trim_end_matches('/'));
+    let resp = send_https_request(|client| client.post(&endpoint)).await?;
     if !resp.status().is_success() {
         return Err(format!("status {}", resp.status()));
     }
@@ -433,18 +419,16 @@ async fn post_capability_once() -> Result<(), String> {
 /// Returns the assigned blob id on success.
 async fn upload_blob(bytes: Vec<u8>, mime: &str) -> Result<String, String> {
     let url = get_sunshine_url().await?;
-    let client = create_https_client().await?;
-    let resp = client
-        .post(format!(
-            "{}/api/v1/clipboard/blob",
-            url.trim_end_matches('/')
-        ))
-        .header("Content-Type", "application/octet-stream")
-        .header("X-Clipboard-Mime", mime)
-        .body(bytes)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let endpoint = format!("{}/api/v1/clipboard/blob", url.trim_end_matches('/'));
+    let mime = mime.to_string();
+    let resp = send_https_request(|client| {
+        client
+            .post(&endpoint)
+            .header("Content-Type", "application/octet-stream")
+            .header("X-Clipboard-Mime", &mime)
+            .body(bytes.clone())
+    })
+    .await?;
     let status = resp.status();
     if !status.is_success() {
         return Err(format!("upload status {}", status));
@@ -459,16 +443,8 @@ async fn upload_blob(bytes: Vec<u8>, mime: &str) -> Result<String, String> {
 /// GET /api/v1/clipboard/blob/<id>. Returns (bytes, mime).
 async fn fetch_blob(id: &str) -> Result<(Vec<u8>, String), String> {
     let url = get_sunshine_url().await?;
-    let client = create_https_client().await?;
-    let resp = client
-        .get(format!(
-            "{}/api/v1/clipboard/blob/{}",
-            url.trim_end_matches('/'),
-            id
-        ))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let endpoint = format!("{}/api/v1/clipboard/blob/{}", url.trim_end_matches('/'), id);
+    let resp = send_https_request(|client| client.get(&endpoint)).await?;
     if !resp.status().is_success() {
         return Err(format!("fetch status {}", resp.status()));
     }
@@ -617,23 +593,10 @@ async fn sse_pump(stop: Arc<Notify>, echo: Arc<Mutex<EchoState>>) {
         };
         let endpoint = format!("{}/api/v1/clipboard/events", url.trim_end_matches('/'));
 
-        let client = match create_sse_client().await {
-            Ok(c) => c,
-            Err(e) => {
-                warn!("clipboard SSE: client: {e}");
-                set_transport_state(TRANSPORT_DISCONNECTED, Some(e));
-                if wait_or_stop(&stop, SSE_RECONNECT_BACKOFF).await {
-                    return;
-                }
-                continue;
-            }
-        };
-
-        let resp = match client
-            .get(&endpoint)
-            .header("Accept", "text/event-stream")
-            .send()
-            .await
+        let resp = match send_sse_https_request(|client| {
+            client.get(&endpoint).header("Accept", "text/event-stream")
+        })
+        .await
         {
             Ok(r) => r,
             Err(e) => {
@@ -841,12 +804,8 @@ async fn query_service_allowed() -> Option<bool> {
         Ok(u) => u,
         Err(_) => return None,
     };
-    let client = match create_https_client().await {
-        Ok(c) => c,
-        Err(_) => return None,
-    };
     let endpoint = format!("{}/api/v1/clipboard/capability", url.trim_end_matches('/'));
-    let resp = match client.post(&endpoint).send().await {
+    let resp = match send_https_request(|client| client.post(&endpoint)).await {
         Ok(r) => r,
         Err(_) => return None,
     };

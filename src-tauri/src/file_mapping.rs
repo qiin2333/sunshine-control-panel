@@ -1,4 +1,4 @@
-use crate::sunshine::{create_https_client, get_sunshine_url};
+use crate::sunshine::{get_sunshine_url, send_https_request};
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -170,17 +170,10 @@ fn canonicalize_directory(path: &str) -> Result<PathBuf, String> {
 async fn create_quick_share(path: &PathBuf) -> Result<FileMappingInfo, String> {
     let url = get_sunshine_url().await?;
     let endpoint = format!("{}/api/v1/file-mapping/mappings", url.trim_end_matches('/'));
-    let client = create_https_client().await?;
     let body = serde_json::json!({
         "path": path_for_sunshine_api(path),
     });
-
-    let resp = client
-        .post(endpoint)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let resp = send_https_request(|client| client.post(&endpoint).json(&body)).await?;
 
     let status = resp.status();
     let text = resp.text().await.map_err(|e| e.to_string())?;
@@ -272,13 +265,7 @@ mod tests {
 async fn list_mappings() -> Result<Vec<FileMappingInfo>, String> {
     let url = get_sunshine_url().await?;
     let endpoint = format!("{}/api/v1/file-mapping/mappings", url.trim_end_matches('/'));
-    let client = create_https_client().await?;
-
-    let resp = client
-        .get(endpoint)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let resp = send_https_request(|client| client.get(&endpoint)).await?;
 
     let status = resp.status();
     let text = resp.text().await.map_err(|e| e.to_string())?;
@@ -304,13 +291,7 @@ async fn delete_mapping(id: &str) -> Result<(), String> {
         url.trim_end_matches('/'),
         id
     );
-    let client = create_https_client().await?;
-
-    let resp = client
-        .delete(endpoint)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let resp = send_https_request(|client| client.delete(&endpoint)).await?;
 
     let status = resp.status();
     let text = resp.text().await.map_err(|e| e.to_string())?;
@@ -336,14 +317,7 @@ async fn update_mapping(id: &str, patch: serde_json::Value) -> Result<FileMappin
         url.trim_end_matches('/'),
         id
     );
-    let client = create_https_client().await?;
-
-    let resp = client
-        .patch(endpoint)
-        .json(&patch)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let resp = send_https_request(|client| client.patch(&endpoint).json(&patch)).await?;
 
     let status = resp.status();
     let text = resp.text().await.map_err(|e| e.to_string())?;

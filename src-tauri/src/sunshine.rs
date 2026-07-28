@@ -24,27 +24,38 @@ static LOCALE_WRITE_LOCK: Lazy<tokio::sync::Mutex<()>> = Lazy::new(|| tokio::syn
 /// 直连 Sunshine 的客户端携带 GUI 内存鉴权 token（default header）。
 /// token 轮换（Sunshine 重启）后按需重建。
 struct AuthedClients {
-    token: Option<String>,
+    token: String,
     https: reqwest::Client,
     sse: reqwest::Client,
 }
 static AUTHED_CLIENTS: Lazy<RwLock<Option<AuthedClients>>> = Lazy::new(|| RwLock::new(None));
 
-fn gui_auth_headers(token: &Option<String>) -> reqwest::header::HeaderMap {
-    let mut headers = reqwest::header::HeaderMap::new();
-    if let Some(token) = token {
-        if let Ok(mut value) = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token))
-        {
-            value.set_sensitive(true);
-            headers.insert(reqwest::header::AUTHORIZATION, value);
+const GUI_AUTH_UNAVAILABLE: &str = "Sunshine GUI authentication token is unavailable";
+
+#[derive(Debug)]
+enum AuthedRequestError {
+    Definite(String),
+    DeliveryUnknown(String),
+}
+
+impl AuthedRequestError {
+    fn into_message(self) -> String {
+        match self {
+            Self::Definite(message) | Self::DeliveryUnknown(message) => message,
         }
+    }
+}
+
+fn gui_auth_headers(token: &str) -> reqwest::header::HeaderMap {
+    let mut headers = reqwest::header::HeaderMap::new();
+    if let Ok(mut value) = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token)) {
+        value.set_sensitive(true);
+        headers.insert(reqwest::header::AUTHORIZATION, value);
     }
     headers
 }
 
-fn build_authed_clients(
-    token: &Option<String>,
-) -> Result<(reqwest::Client, reqwest::Client), String> {
+fn build_authed_clients(token: &str) -> Result<(reqwest::Client, reqwest::Client), String> {
     let https = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .timeout(std::time::Duration::from_secs(10))
@@ -61,7 +72,9 @@ fn build_authed_clients(
 }
 
 async fn authed_clients() -> Result<(reqwest::Client, reqwest::Client), String> {
-    let token = crate::gui_auth::current_async().await;
+    let token = crate::gui_auth::current_async()
+        .await
+        .ok_or_else(|| GUI_AUTH_UNAVAILABLE.to_string())?;
     {
         let guard = AUTHED_CLIENTS
             .read()
@@ -717,6 +730,17 @@ fn handle_restart_action_error(
     }
 }
 
+fn tray_action_send_error(error: AuthedRequestError) -> TrayActionRequestError {
+    match error {
+        AuthedRequestError::Definite(message) => {
+            TrayActionRequestError::Definite(format!("Post tray action failed: {}", message))
+        }
+        AuthedRequestError::DeliveryUnknown(message) => {
+            TrayActionRequestError::DeliveryUnknown(format!("Post tray action failed: {}", message))
+        }
+    }
+}
+
 async fn post_tray_action_request(
     action: &str,
     enabled: Option<bool>,
@@ -727,9 +751,6 @@ async fn post_tray_action_request(
         .await
         .map_err(TrayActionRequestError::Definite)?;
 
-    let client = create_https_client()
-        .await
-        .map_err(TrayActionRequestError::Definite)?;
     let mut body = serde_json::json!({ "action": action });
     if let Some(enabled) = enabled {
         body["enabled"] = serde_json::json!(enabled);
@@ -741,19 +762,9 @@ async fn post_tray_action_request(
         body["operation_id"] = serde_json::json!(operation_id);
     }
 
-    let response = client
-        .post(&action_url)
-        .json(&body)
-        .send()
+    let response = send_https_request_classified(|client| client.post(&action_url).json(&body))
         .await
-        .map_err(|e| {
-            let message = format!("Post tray action failed: {}", e);
-            if e.is_connect() {
-                TrayActionRequestError::Definite(message)
-            } else {
-                TrayActionRequestError::DeliveryUnknown(message)
-            }
-        })?;
+        .map_err(tray_action_send_error)?;
 
     let status = response.status();
     let response_text = response.text().await.map_err(|e| {
@@ -873,10 +884,7 @@ impl SessionInfo {
 pub async fn get_tray_state() -> Result<TrayState, String> {
     let tray_state_url = local_tray_endpoint("state").await?;
 
-    let client = create_https_client().await?;
-    let response = client
-        .get(&tray_state_url)
-        .send()
+    let response = send_https_request(|client| client.get(&tray_state_url))
         .await
         .map_err(|e| format!("Request tray state failed: {}", e))?;
 
@@ -896,12 +904,172 @@ pub async fn get_tray_state() -> Result<TrayState, String> {
     parse_tray_state_json(&response_text)
 }
 
-pub async fn create_https_client() -> Result<reqwest::Client, String> {
-    authed_clients().await.map(|(https, _)| https)
+async fn send_with_authed_client<F>(
+    sse: bool,
+    build: F,
+) -> Result<reqwest::Response, AuthedRequestError>
+where
+    F: Fn(&reqwest::Client) -> reqwest::RequestBuilder,
+{
+    let (https, event_client) = authed_clients()
+        .await
+        .map_err(AuthedRequestError::Definite)?;
+    let client = if sse { &event_client } else { &https };
+    let response = build(client).send().await.map_err(|error| {
+        let message = error.to_string();
+        if error.is_connect() {
+            AuthedRequestError::Definite(message)
+        } else {
+            AuthedRequestError::DeliveryUnknown(message)
+        }
+    })?;
+    if response.status() != reqwest::StatusCode::UNAUTHORIZED {
+        return Ok(response);
+    }
+
+    if crate::gui_auth::refresh_async().await.is_none() {
+        return Ok(response);
+    }
+
+    let (https, event_client) = match authed_clients().await {
+        Ok(clients) => clients,
+        Err(_) => return Ok(response),
+    };
+    let client = if sse { &event_client } else { &https };
+    match build(client).send().await {
+        Ok(retry_response) => Ok(retry_response),
+        Err(_) => Ok(response),
+    }
 }
 
-pub async fn create_sse_https_client() -> Result<reqwest::Client, String> {
-    authed_clients().await.map(|(_, sse)| sse)
+async fn send_https_request_classified<F>(build: F) -> Result<reqwest::Response, AuthedRequestError>
+where
+    F: Fn(&reqwest::Client) -> reqwest::RequestBuilder,
+{
+    send_with_authed_client(false, build).await
+}
+
+pub async fn send_https_request<F>(build: F) -> Result<reqwest::Response, String>
+where
+    F: Fn(&reqwest::Client) -> reqwest::RequestBuilder,
+{
+    send_https_request_classified(build)
+        .await
+        .map_err(AuthedRequestError::into_message)
+}
+
+pub async fn send_sse_https_request<F>(build: F) -> Result<reqwest::Response, String>
+where
+    F: Fn(&reqwest::Client) -> reqwest::RequestBuilder,
+{
+    send_with_authed_client(true, build)
+        .await
+        .map_err(AuthedRequestError::into_message)
+}
+
+#[cfg(test)]
+mod auth_request_tests {
+    use super::*;
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn spawn_http_sequence(
+        responses: Vec<(u16, &'static str)>,
+    ) -> (String, Arc<tokio::sync::Mutex<Vec<String>>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let requests = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let server_requests = requests.clone();
+
+        tokio::spawn(async move {
+            for (status, body) in responses {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request_buf = [0_u8; 4096];
+                let read = stream.read(&mut request_buf).await.unwrap();
+                server_requests
+                    .lock()
+                    .await
+                    .push(String::from_utf8_lossy(&request_buf[..read]).into_owned());
+                let reason = match status {
+                    200 => "OK",
+                    401 => "Unauthorized",
+                    _ => "Test",
+                };
+                let response = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+
+        (format!("http://{}", addr), requests)
+    }
+
+    #[tokio::test]
+    async fn missing_token_is_a_definite_send_failure() {
+        let _lock = crate::gui_auth::TEST_AUTH_LOCK.lock().await;
+        let _state = crate::gui_auth::test_set_state(None, None);
+
+        let error = send_https_request_classified(|client| client.get("http://127.0.0.1:1"))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, AuthedRequestError::Definite(_)));
+    }
+
+    #[tokio::test]
+    async fn connection_failure_is_a_definite_send_failure() {
+        let _lock = crate::gui_auth::TEST_AUTH_LOCK.lock().await;
+        let _state = crate::gui_auth::test_set_state(Some("5555555555555555"), None);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+
+        let error = send_https_request_classified(|client| client.get(&url))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, AuthedRequestError::Definite(_)));
+    }
+
+    #[tokio::test]
+    async fn unauthorized_request_refreshes_and_retries_once() {
+        let _lock = crate::gui_auth::TEST_AUTH_LOCK.lock().await;
+        let _state =
+            crate::gui_auth::test_set_state(Some("1111111111111111"), Some("2222222222222222"));
+        let (url, requests) =
+            spawn_http_sequence(vec![(401, "old-token"), (200, "new-token")]).await;
+
+        let response = send_https_request(|client| client.get(&url)).await.unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        assert_eq!(response.text().await.unwrap(), "new-token");
+
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert!(
+            requests[0]
+                .to_ascii_lowercase()
+                .contains("authorization: bearer 1111111111111111")
+        );
+        assert!(
+            requests[1]
+                .to_ascii_lowercase()
+                .contains("authorization: bearer 2222222222222222")
+        );
+    }
+
+    #[tokio::test]
+    async fn retry_send_failure_returns_original_401() {
+        let _lock = crate::gui_auth::TEST_AUTH_LOCK.lock().await;
+        let _state =
+            crate::gui_auth::test_set_state(Some("3333333333333333"), Some("4444444444444444"));
+        let (url, requests) = spawn_http_sequence(vec![(401, "original-401")]).await;
+
+        let response = send_https_request(|client| client.get(&url)).await.unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+        assert_eq!(response.text().await.unwrap(), "original-401");
+        assert_eq!(requests.lock().await.len(), 1);
+    }
 }
 
 /// POST 配置数据到 Sunshine Config API
@@ -914,11 +1082,7 @@ pub async fn post_sunshine_config(
         .map_err(|e| format!("Cannot get Sunshine URL: {}", e))?;
     let config_url = format!("{}/api/config", sunshine_url.trim_end_matches('/'));
 
-    let client = create_https_client().await?;
-    let response = client
-        .post(&config_url)
-        .json(config_data)
-        .send()
+    let response = send_https_request(|client| client.post(&config_url).json(config_data))
         .await
         .map_err(|e| format!("调用 Sunshine Config API 失败: {}", e))?;
 
@@ -944,11 +1108,7 @@ pub async fn get_active_sessions() -> Result<Vec<SessionInfo>, String> {
 
     debug!("📡 获取活动会话: {}", sessions_url);
 
-    let client = create_https_client().await?;
-
-    let response = client
-        .get(&sessions_url)
-        .send()
+    let response = send_https_request(|client| client.get(&sessions_url))
         .await
         .map_err(|e| format!("请求会话信息失败: {}", e))?;
 
@@ -1050,10 +1210,7 @@ pub async fn change_bitrate(client_name: String, bitrate: u32) -> Result<String,
     debug!("📡 请求 URL: {}", change_bitrate_url);
 
     // 发送请求
-    let client = create_https_client().await?;
-    let response = client
-        .get(change_bitrate_url.as_str())
-        .send()
+    let response = send_https_request(|client| client.get(change_bitrate_url.as_str()))
         .await
         .map_err(|e| format!("请求调整码率失败: {}", e))?;
 
@@ -1276,11 +1433,7 @@ pub async fn get_sunshine_locale() -> Result<String, String> {
         .map_err(|e| format!("Cannot get Sunshine URL: {}", e))?;
 
     let locale_url = format!("{}/api/configLocale", sunshine_url.trim_end_matches('/'));
-    let client = create_https_client().await?;
-
-    let response = client
-        .get(&locale_url)
-        .send()
+    let response = send_https_request(|client| client.get(&locale_url))
         .await
         .map_err(|e| format!("Failed to get locale from Sunshine API: {}", e))?;
 

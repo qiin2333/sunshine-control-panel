@@ -8,7 +8,11 @@
       </div>
 
       <!-- Logo 区域 (可拖动) -->
-      <div class="sidebar-header" data-tauri-drag-region>
+      <div
+        class="sidebar-header"
+        data-tauri-drag-region
+        @pointerdown="onTouchWindowDragStart"
+      >
         <div class="logo">
           <img src="../public/gura-pix.png" alt="Sunshine Logo" class="logo-img" />
         </div>
@@ -98,7 +102,11 @@
     <!-- 主内容区域 -->
     <div class="main-content" :class="{ expanded: isCollapsed }">
       <!-- 顶部拖动区域 -->
-      <div class="drag-region" data-tauri-drag-region></div>
+      <div
+        class="drag-region"
+        data-tauri-drag-region
+        @pointerdown="onTouchWindowDragStart"
+      ></div>
 
       <!-- Windows 经典窗口控制按钮 -->
       <div class="window-controls">
@@ -171,6 +179,7 @@ const UpdateDialog = defineAsyncComponent(() => import('./UpdateDialog.vue'))
 import { useSidebarState } from '../composables/useSidebarState.js'
 import { useWindowControls } from '../composables/useWindowControls.js'
 import { useTools } from '../composables/useTools.js'
+import { useTouchWindowDrag } from '../composables/useTouchWindowDrag.js'
 import {
   createManagementTools,
   createUtilityTools,
@@ -206,6 +215,7 @@ const {
 } = useSidebarState()
 
 const { minimizeWindow, toggleMaximize, closeWindow } = useWindowControls(isMaximized)
+const { onTouchWindowDragStart } = useTouchWindowDrag()
 
 const {
   uninstallVdd,

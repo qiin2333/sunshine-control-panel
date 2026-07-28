@@ -890,12 +890,16 @@ let touchPreparationPromise = null
 let touchScaleRebasing = false
 let touchScaleRebasePromise = null
 let touchIsSettingPos = false
+let touchFailed = false
 let touchRafId = null
 let unlistenDragScaleChanged = null
 let dragScaleListenerPromise = null
+let nativeDragPollTimer = null
+let nativeDragPollResolve = null
 let toolbarPositionSaveGeneration = 0
 let toolbarPositionSavePromise = Promise.resolve()
 const DRAG_THRESHOLD = 3
+const NATIVE_DRAG_POLL_INTERVAL_MS = 32
 
 const normalizeDragScaleFactor = (value) => (
   Number.isFinite(value) && value > 0 ? value : 1
@@ -924,12 +928,25 @@ const releaseDragPointerCapture = () => {
   dragPointerTarget = null
 }
 
+const cancelNativeDragPoll = () => {
+  if (nativeDragPollTimer !== null) {
+    clearTimeout(nativeDragPollTimer)
+    nativeDragPollTimer = null
+  }
+  if (nativeDragPollResolve) {
+    const resolve = nativeDragPollResolve
+    nativeDragPollResolve = null
+    resolve()
+  }
+}
+
 const clearDragState = ({ preserveMoved = false } = {}) => {
   dragGeneration += 1
   if (touchRafId !== null) {
     cancelAnimationFrame(touchRafId)
     touchRafId = null
   }
+  cancelNativeDragPoll()
   removeDragListeners()
   releaseDragPointerCapture()
 
@@ -943,6 +960,7 @@ const clearDragState = ({ preserveMoved = false } = {}) => {
   touchScaleRebasing = false
   touchScaleRebasePromise = null
   touchIsSettingPos = false
+  touchFailed = false
   touchBasePhysicalX = Number.NaN
   touchBasePhysicalY = Number.NaN
   touchPendingPhysicalX = Number.NaN
@@ -982,11 +1000,49 @@ const queueToolbarPositionSave = (position) => {
   toolbarPositionSavePromise = toolbarPositionSavePromise
     .catch(() => {})
     .then(async () => {
-      if (dragDisposed || generation !== toolbarPositionSaveGeneration) return
+      if (generation !== toolbarPositionSaveGeneration) return
 
       await invoke('save_toolbar_position', { x: position.x, y: position.y })
     })
     .catch(() => {})
+}
+
+const markTouchDragFailed = (generation, pointerId) => {
+  if (!isCurrentDrag(generation, pointerId)) return
+
+  touchFailed = true
+  if (touchRafId !== null) {
+    cancelAnimationFrame(touchRafId)
+    touchRafId = null
+  }
+}
+
+const waitForNativeDragPoll = () => new Promise((resolve) => {
+  nativeDragPollResolve = resolve
+  nativeDragPollTimer = setTimeout(() => {
+    nativeDragPollTimer = null
+    nativeDragPollResolve = null
+    resolve()
+  }, NATIVE_DRAG_POLL_INTERVAL_MS)
+})
+
+const finishNativeDrag = async (generation, pointerId) => {
+  // startDragging() resolves after dispatching the native command, not when
+  // the Windows move loop ends. Keep the session active until the button lifts.
+  while (isCurrentDrag(generation, pointerId)) {
+    const pressed = await invoke('is_primary_mouse_button_pressed')
+    if (!isCurrentDrag(generation, pointerId)) return
+    if (pressed !== true) break
+
+    await waitForNativeDragPoll()
+  }
+  if (!isCurrentDrag(generation, pointerId)) return
+
+  const finalPos = await appWindow.outerPosition()
+  if (!isCurrentDrag(generation, pointerId)) return
+
+  queueToolbarPositionSave(finalPos)
+  finishDrag(generation, pointerId, true)
 }
 
 const rebaseTouchDragForScaleChange = (scaleFactor) => {
@@ -996,6 +1052,7 @@ const rebaseTouchDragForScaleChange = (scaleFactor) => {
     dragPointerType !== 'touch' ||
     dragPointerId === null ||
     dragEnding ||
+    touchFailed ||
     !touchInitialized ||
     touchScaleRebasePromise
   ) {
@@ -1031,9 +1088,7 @@ const rebaseTouchDragForScaleChange = (scaleFactor) => {
     touchStartClientY = touchLatestClientY
   })()
     .catch(() => {
-      if (isCurrentDrag(generation, pointerId)) {
-        clearDragState()
-      }
+      markTouchDragFailed(generation, pointerId)
     })
     .finally(() => {
       if (isCurrentDrag(generation, pointerId)) {
@@ -1073,6 +1128,7 @@ const queueTouchPosition = () => {
   if (
     dragPointerId === null ||
     dragEnding ||
+    touchFailed ||
     touchPreparing ||
     touchScaleRebasing ||
     touchIsSettingPos ||
@@ -1083,14 +1139,28 @@ const queueTouchPosition = () => {
     return
   }
 
-  touchPendingPhysicalX = touchBasePhysicalX +
-    (touchLatestClientX - touchStartClientX) * touchScaleFactor
-  touchPendingPhysicalY = touchBasePhysicalY +
-    (touchLatestClientY - touchStartClientY) * touchScaleFactor
+  updatePendingTouchPosition()
 
   if (touchRafId === null) {
     touchRafId = requestAnimationFrame(touchApplyPosition)
   }
+}
+
+const updatePendingTouchPosition = () => {
+  if (
+    !touchInitialized ||
+    !Number.isFinite(touchBasePhysicalX) ||
+    !Number.isFinite(touchBasePhysicalY)
+  ) {
+    return false
+  }
+
+  touchPendingPhysicalX = touchBasePhysicalX +
+    (touchLatestClientX - touchStartClientX) * touchScaleFactor
+  touchPendingPhysicalY = touchBasePhysicalY +
+    (touchLatestClientY - touchStartClientY) * touchScaleFactor
+  return Number.isFinite(touchPendingPhysicalX) &&
+    Number.isFinite(touchPendingPhysicalY)
 }
 
 const prepareTouchDrag = async (generation, pointerId) => {
@@ -1099,7 +1169,7 @@ const prepareTouchDrag = async (generation, pointerId) => {
     appWindow.outerPosition(),
     appWindow.scaleFactor(),
   ])
-  if (!isCurrentDrag(generation, pointerId) || dragEnding) return
+  if (!isCurrentDrag(generation, pointerId)) return
 
   if (touchScaleFactorVersion === initialScaleFactorVersion) {
     touchScaleFactor = normalizeDragScaleFactor(scaleFactor)
@@ -1110,7 +1180,7 @@ const prepareTouchDrag = async (generation, pointerId) => {
   touchPendingPhysicalY = position.y
   touchInitialized = true
 
-  if (hasMoved) {
+  if (hasMoved && !dragEnding) {
     queueTouchPosition()
   }
 }
@@ -1164,14 +1234,13 @@ const onDragStart = (e) => {
     touchInitialized = false
     touchPreparing = true
     touchIsSettingPos = false
+    touchFailed = false
     touchScaleRebasing = false
 
     let preparationPromise
     preparationPromise = prepareTouchDrag(generation, pointerId)
       .catch(() => {
-        if (isCurrentDrag(generation, pointerId)) {
-          clearDragState()
-        }
+        markTouchDragFailed(generation, pointerId)
       })
       .finally(() => {
         if (isCurrentDrag(generation, pointerId)) {
@@ -1190,6 +1259,7 @@ const touchApplyPosition = async () => {
   if (
     !isDragging ||
     dragEnding ||
+    touchFailed ||
     touchPreparing ||
     touchScaleRebasing ||
     touchIsSettingPos ||
@@ -1213,9 +1283,7 @@ const touchApplyPosition = async () => {
     touchBasePhysicalX = nextPhysicalX
     touchBasePhysicalY = nextPhysicalY
   } catch {
-    if (isCurrentDrag(generation, pointerId)) {
-      clearDragState()
-    }
+    markTouchDragFailed(generation, pointerId)
   } finally {
     if (isCurrentDrag(generation, pointerId)) {
       touchIsSettingPos = false
@@ -1245,17 +1313,11 @@ const onDragMove = (e) => {
     dragEnding = true
     removeDragListeners()
     releaseDragPointerCapture()
-    appWindow.startDragging().then(async () => {
-      try {
-        const finalPos = await appWindow.outerPosition()
-        if (!isCurrentDrag(generation, pointerId)) return
-
-        queueToolbarPositionSave(finalPos)
-      } catch {}
-      finishDrag(generation, pointerId, true)
-    }).catch(() => {
-      finishDrag(generation, pointerId, true)
-    })
+    appWindow.startDragging()
+      .then(() => finishNativeDrag(generation, pointerId))
+      .catch(() => {
+        finishDrag(generation, pointerId, true)
+      })
     return
   }
 
@@ -1288,6 +1350,16 @@ const onDragEnd = async (e) => {
   const generation = dragGeneration
   const pointerId = dragPointerId
   const wasDragged = isDragging && hasMoved
+  // A sample received during setPosition belongs to the previous viewport
+  // coordinate frame and cannot be safely reapplied after that call completes.
+  const canRefreshFinalTouchPosition =
+    dragPointerType === 'touch' &&
+    !touchIsSettingPos
+  if (dragPointerType === 'touch') {
+    touchLatestClientX = e.clientX
+    touchLatestClientY = e.clientY
+  }
+
   isDragging = false
   dragEnding = true
   removeDragListeners()
@@ -1312,6 +1384,15 @@ const onDragEnd = async (e) => {
     }
 
     if (
+      !touchFailed &&
+      canRefreshFinalTouchPosition &&
+      isCurrentDrag(generation, pointerId)
+    ) {
+      updatePendingTouchPosition()
+    }
+
+    if (
+      !touchFailed &&
       touchInitialized &&
       Number.isFinite(touchPendingPhysicalX) &&
       Number.isFinite(touchPendingPhysicalY)
@@ -1431,7 +1512,6 @@ onMounted(async () => {
 
 onUnmounted(() => {
   dragDisposed = true
-  toolbarPositionSaveGeneration += 1
   clearDragState()
   if (unlistenDragScaleChanged) {
     unlistenDragScaleChanged()

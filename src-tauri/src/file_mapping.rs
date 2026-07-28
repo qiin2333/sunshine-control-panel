@@ -170,7 +170,7 @@ fn canonicalize_directory(path: &str) -> Result<PathBuf, String> {
 async fn create_quick_share(path: &PathBuf) -> Result<FileMappingInfo, String> {
     let url = get_sunshine_url().await?;
     let endpoint = format!("{}/api/v1/file-mapping/mappings", url.trim_end_matches('/'));
-    let client = create_https_client()?;
+    let client = create_https_client().await?;
     let body = serde_json::json!({
         "path": path_for_sunshine_api(path),
     });
@@ -272,7 +272,7 @@ mod tests {
 async fn list_mappings() -> Result<Vec<FileMappingInfo>, String> {
     let url = get_sunshine_url().await?;
     let endpoint = format!("{}/api/v1/file-mapping/mappings", url.trim_end_matches('/'));
-    let client = create_https_client()?;
+    let client = create_https_client().await?;
 
     let resp = client
         .get(endpoint)
@@ -304,7 +304,7 @@ async fn delete_mapping(id: &str) -> Result<(), String> {
         url.trim_end_matches('/'),
         id
     );
-    let client = create_https_client()?;
+    let client = create_https_client().await?;
 
     let resp = client
         .delete(endpoint)
@@ -336,7 +336,7 @@ async fn update_mapping(id: &str, patch: serde_json::Value) -> Result<FileMappin
         url.trim_end_matches('/'),
         id
     );
-    let client = create_https_client()?;
+    let client = create_https_client().await?;
 
     let resp = client
         .patch(endpoint)

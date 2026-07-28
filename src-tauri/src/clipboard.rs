@@ -76,8 +76,10 @@ static TRANSPORT_STATE: AtomicU8 = AtomicU8::new(TRANSPORT_STOPPED);
 static LAST_CONNECTED_AT_MS: AtomicI64 = AtomicI64::new(0);
 static LAST_TRANSPORT_ERROR: Mutex<Option<String>> = Mutex::new(None);
 
-fn create_sse_client() -> Result<reqwest::Client, String> {
-    create_sse_https_client().map_err(|e| format!("创建 SSE HTTP 客户端失败: {}", e))
+async fn create_sse_client() -> Result<reqwest::Client, String> {
+    create_sse_https_client()
+        .await
+        .map_err(|e| format!("创建 SSE HTTP 客户端失败: {}", e))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -383,7 +385,7 @@ fn next_token() -> u32 {
 
 async fn post_item(body: Vec<u8>) -> Result<(), String> {
     let url = get_sunshine_url().await?;
-    let client = create_https_client()?;
+    let client = create_https_client().await?;
     let resp = client
         .post(format!(
             "{}/api/v1/clipboard/item",
@@ -412,7 +414,7 @@ pub async fn post_file_offer_payload(payload: Vec<u8>) -> Result<(), String> {
 
 async fn post_capability_once() -> Result<(), String> {
     let url = get_sunshine_url().await?;
-    let client = create_https_client()?;
+    let client = create_https_client().await?;
     let resp = client
         .post(format!(
             "{}/api/v1/clipboard/capability",
@@ -431,7 +433,7 @@ async fn post_capability_once() -> Result<(), String> {
 /// Returns the assigned blob id on success.
 async fn upload_blob(bytes: Vec<u8>, mime: &str) -> Result<String, String> {
     let url = get_sunshine_url().await?;
-    let client = create_https_client()?;
+    let client = create_https_client().await?;
     let resp = client
         .post(format!(
             "{}/api/v1/clipboard/blob",
@@ -457,7 +459,7 @@ async fn upload_blob(bytes: Vec<u8>, mime: &str) -> Result<String, String> {
 /// GET /api/v1/clipboard/blob/<id>. Returns (bytes, mime).
 async fn fetch_blob(id: &str) -> Result<(Vec<u8>, String), String> {
     let url = get_sunshine_url().await?;
-    let client = create_https_client()?;
+    let client = create_https_client().await?;
     let resp = client
         .get(format!(
             "{}/api/v1/clipboard/blob/{}",
@@ -615,7 +617,7 @@ async fn sse_pump(stop: Arc<Notify>, echo: Arc<Mutex<EchoState>>) {
         };
         let endpoint = format!("{}/api/v1/clipboard/events", url.trim_end_matches('/'));
 
-        let client = match create_sse_client() {
+        let client = match create_sse_client().await {
             Ok(c) => c,
             Err(e) => {
                 warn!("clipboard SSE: client: {e}");
@@ -839,7 +841,7 @@ async fn query_service_allowed() -> Option<bool> {
         Ok(u) => u,
         Err(_) => return None,
     };
-    let client = match create_https_client() {
+    let client = match create_https_client().await {
         Ok(c) => c,
         Err(_) => return None,
     };

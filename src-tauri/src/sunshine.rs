@@ -33,8 +33,7 @@ static AUTHED_CLIENTS: Lazy<RwLock<Option<AuthedClients>>> = Lazy::new(|| RwLock
 fn gui_auth_headers(token: &Option<String>) -> reqwest::header::HeaderMap {
     let mut headers = reqwest::header::HeaderMap::new();
     if let Some(token) = token {
-        if let Ok(mut value) =
-            reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token))
+        if let Ok(mut value) = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token))
         {
             value.set_sensitive(true);
             headers.insert(reqwest::header::AUTHORIZATION, value);
@@ -61,8 +60,8 @@ fn build_authed_clients(
     Ok((https, sse))
 }
 
-fn authed_clients() -> Result<(reqwest::Client, reqwest::Client), String> {
-    let token = crate::gui_auth::current();
+async fn authed_clients() -> Result<(reqwest::Client, reqwest::Client), String> {
+    let token = crate::gui_auth::current_async().await;
     {
         let guard = AUTHED_CLIENTS
             .read()
@@ -728,7 +727,9 @@ async fn post_tray_action_request(
         .await
         .map_err(TrayActionRequestError::Definite)?;
 
-    let client = create_https_client().map_err(TrayActionRequestError::Definite)?;
+    let client = create_https_client()
+        .await
+        .map_err(TrayActionRequestError::Definite)?;
     let mut body = serde_json::json!({ "action": action });
     if let Some(enabled) = enabled {
         body["enabled"] = serde_json::json!(enabled);
@@ -872,7 +873,7 @@ impl SessionInfo {
 pub async fn get_tray_state() -> Result<TrayState, String> {
     let tray_state_url = local_tray_endpoint("state").await?;
 
-    let client = create_https_client()?;
+    let client = create_https_client().await?;
     let response = client
         .get(&tray_state_url)
         .send()
@@ -895,12 +896,12 @@ pub async fn get_tray_state() -> Result<TrayState, String> {
     parse_tray_state_json(&response_text)
 }
 
-pub fn create_https_client() -> Result<reqwest::Client, String> {
-    authed_clients().map(|(https, _)| https)
+pub async fn create_https_client() -> Result<reqwest::Client, String> {
+    authed_clients().await.map(|(https, _)| https)
 }
 
-pub fn create_sse_https_client() -> Result<reqwest::Client, String> {
-    authed_clients().map(|(_, sse)| sse)
+pub async fn create_sse_https_client() -> Result<reqwest::Client, String> {
+    authed_clients().await.map(|(_, sse)| sse)
 }
 
 /// POST 配置数据到 Sunshine Config API
@@ -913,7 +914,7 @@ pub async fn post_sunshine_config(
         .map_err(|e| format!("Cannot get Sunshine URL: {}", e))?;
     let config_url = format!("{}/api/config", sunshine_url.trim_end_matches('/'));
 
-    let client = create_https_client()?;
+    let client = create_https_client().await?;
     let response = client
         .post(&config_url)
         .json(config_data)
@@ -943,7 +944,7 @@ pub async fn get_active_sessions() -> Result<Vec<SessionInfo>, String> {
 
     debug!("📡 获取活动会话: {}", sessions_url);
 
-    let client = create_https_client()?;
+    let client = create_https_client().await?;
 
     let response = client
         .get(&sessions_url)
@@ -1049,7 +1050,7 @@ pub async fn change_bitrate(client_name: String, bitrate: u32) -> Result<String,
     debug!("📡 请求 URL: {}", change_bitrate_url);
 
     // 发送请求
-    let client = create_https_client()?;
+    let client = create_https_client().await?;
     let response = client
         .get(change_bitrate_url.as_str())
         .send()
@@ -1275,7 +1276,7 @@ pub async fn get_sunshine_locale() -> Result<String, String> {
         .map_err(|e| format!("Cannot get Sunshine URL: {}", e))?;
 
     let locale_url = format!("{}/api/configLocale", sunshine_url.trim_end_matches('/'));
-    let client = create_https_client()?;
+    let client = create_https_client().await?;
 
     let response = client
         .get(&locale_url)

@@ -54,7 +54,8 @@ async fn consume_event_stream<R: Runtime + 'static>(
     last_state_key: &mut Option<(String, u64)>,
 ) -> Result<(), String> {
     let endpoint = sunshine::get_tray_events_url().await?;
-    let response = sunshine::create_sse_https_client()?
+    let response = sunshine::create_sse_https_client()
+        .await?
         .get(endpoint)
         .header("Accept", "text/event-stream")
         .send()

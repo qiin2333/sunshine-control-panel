@@ -8,16 +8,7 @@
 #[cfg(windows)]
 mod imp {
     use log::debug;
-    use once_cell::sync::Lazy;
     use std::collections::HashMap;
-    use std::sync::Mutex;
-    use std::time::{Duration, Instant};
-
-    /// 校验结果缓存（按对端临时端口）。TTL 取短值以降低临时端口复用导致
-    /// 判定错位的窗口；keep-alive 连接下命中率足够高。
-    static VERDICT_CACHE: Lazy<Mutex<HashMap<u16, (bool, Instant)>>> =
-        Lazy::new(|| Mutex::new(HashMap::new()));
-    const CACHE_TTL: Duration = Duration::from_secs(5);
 
     const AF_INET: u32 = 2;
     const NO_ERROR: u32 = 0;
@@ -82,7 +73,7 @@ mod imp {
     /// pid -> ppid 快照。
     fn parent_map() -> HashMap<u32, u32> {
         use windows::Win32::System::Diagnostics::ToolHelp::{
-            CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+            CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
             TH32CS_SNAPPROCESS,
         };
 
@@ -135,26 +126,9 @@ mod imp {
             return true;
         }
 
-        let now = Instant::now();
-        if let Ok(cache) = VERDICT_CACHE.lock() {
-            if let Some((verdict, at)) = cache.get(&peer_port) {
-                if now.duration_since(*at) < CACHE_TTL {
-                    return *verdict;
-                }
-            }
-        }
-
-        let allowed = find_owner_pid(peer_port, proxy_port)
+        find_owner_pid(peer_port, proxy_port)
             .map(is_self_or_descendant)
-            .unwrap_or(false);
-
-        if let Ok(mut cache) = VERDICT_CACHE.lock() {
-            if cache.len() > 256 {
-                cache.retain(|_, (_, at)| now.duration_since(*at) < CACHE_TTL);
-            }
-            cache.insert(peer_port, (allowed, now));
-        }
-        allowed
+            .unwrap_or(false)
     }
 }
 

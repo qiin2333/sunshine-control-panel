@@ -1,8 +1,12 @@
 use axum::{
     Router,
-    extract::Request,
+    extract::{
+        Request,
+        connect_info::{ConnectInfo, Connected},
+    },
     middleware::Next,
     response::{IntoResponse, Response},
+    serve::IncomingStream,
 };
 use bytes::Bytes;
 use log::{debug, error, info, warn};
@@ -10,7 +14,7 @@ use once_cell::sync::Lazy;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
-use tokio::sync::Notify;
+use tokio::sync::{Notify, OnceCell};
 use tower_http::cors::CorsLayer;
 
 /// 全局 Sunshine 目标 URL（动态配置）
@@ -173,16 +177,45 @@ const GATE_DENIED_PAGE: &str = r#"<!DOCTYPE html>
 <p>请通过 <a href="https://localhost:47990">https://localhost:47990</a> 访问 WebUI（需要用户名密码）。</p></div>
 </body></html>"#;
 
+/// 每条 TCP 连接独立保存一次门禁判定，避免临时端口复用时跨连接继承结果。
+#[derive(Clone, Debug)]
+struct GuiConnectionInfo {
+    peer: SocketAddr,
+    allowed: Arc<OnceCell<bool>>,
+}
+
+impl Connected<IncomingStream<'_, tokio::net::TcpListener>> for GuiConnectionInfo {
+    fn connect_info(stream: IncomingStream<'_, tokio::net::TcpListener>) -> Self {
+        Self {
+            peer: *stream.remote_addr(),
+            allowed: Arc::new(OnceCell::new()),
+        }
+    }
+}
+
 /// 本地代理门禁中间件：反查对端连接的进程，只放行本进程及其
 /// WebView2 子进程。否则任何本机浏览器都能借代理注入的 token 绕过
 /// Sunshine 的密码认证。
 async fn gui_gate_middleware(
-    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<SocketAddr>,
+    ConnectInfo(connection): ConnectInfo<GuiConnectionInfo>,
     req: Request,
     next: Next,
 ) -> Response {
-    // 查表有缓存（5s TTL），keep-alive 下绝大多数请求直接命中
-    if !crate::proxy_gate::peer_allowed(peer.port(), get_proxy_port()) {
+    let peer = connection.peer;
+    let allowed = *connection
+        .allowed
+        .get_or_init(|| async move {
+            let peer_port = peer.port();
+            let proxy_port = get_proxy_port();
+            tokio::task::spawn_blocking(move || {
+                crate::proxy_gate::peer_allowed(peer_port, proxy_port)
+            })
+            .await
+            .unwrap_or(false)
+        })
+        .await;
+
+    if !allowed {
         warn!("🚫 拒绝非 GUI 进程访问本地代理: {}", peer);
         return (
             axum::http::StatusCode::FORBIDDEN,
@@ -280,8 +313,8 @@ pub async fn start_proxy_server() -> Result<(), Box<dyn std::error::Error + Send
 
     let result = axum::serve(
         listener,
-        // 门禁需要对端地址（ConnectInfo）来反查连接进程
-        app.into_make_service_with_connect_info::<SocketAddr>(),
+        // 门禁需要连接级状态来复用一次进程校验结果
+        app.into_make_service_with_connect_info::<GuiConnectionInfo>(),
     )
     .await
     .map_err(|e| {

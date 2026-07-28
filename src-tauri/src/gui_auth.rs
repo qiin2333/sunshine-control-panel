@@ -30,13 +30,21 @@ fn token_from_env() -> Option<String> {
 
 #[cfg(windows)]
 fn token_from_pipe() -> Option<String> {
+    use std::fs::OpenOptions;
     use std::io::Read;
+    use std::os::windows::fs::OpenOptionsExt;
 
     const ERROR_PIPE_BUSY: i32 = 231;
     const ERROR_BROKEN_PIPE: i32 = 109;
+    const SECURITY_IDENTIFICATION: u32 = 0x0001_0000;
+    const SECURITY_SQOS_PRESENT: u32 = 0x0010_0000;
 
     for attempt in 0..3 {
-        match std::fs::File::open(TOKEN_PIPE) {
+        match OpenOptions::new()
+            .read(true)
+            .security_qos_flags(SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION)
+            .open(TOKEN_PIPE)
+        {
             Ok(mut pipe) => {
                 let mut data = Vec::new();
                 let mut buf = [0_u8; 512];

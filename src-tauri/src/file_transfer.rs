@@ -107,7 +107,7 @@ fn canonicalize_file(path: &str) -> Result<PathBuf, String> {
 
 async fn register_offer(path: &PathBuf) -> Result<FileOffer, String> {
     let url = get_sunshine_url().await?;
-    let client = create_https_client()?;
+    let client = create_https_client().await?;
     let endpoint = format!("{}/api/v1/file-transfer/offers", url.trim_end_matches('/'));
 
     let body = serde_json::json!({

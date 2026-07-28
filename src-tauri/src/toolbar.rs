@@ -77,9 +77,17 @@ pub async fn save_toolbar_position(app: AppHandle, x: f64, y: f64) -> Result<(),
 pub fn is_primary_mouse_button_pressed() -> Option<bool> {
     #[cfg(target_os = "windows")]
     {
-        use ::windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+        use ::windows::Win32::UI::Input::KeyboardAndMouse::{
+            GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON,
+        };
+        use ::windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_SWAPBUTTON};
 
-        Some(unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) < 0 })
+        let primary_button = if unsafe { GetSystemMetrics(SM_SWAPBUTTON) } != 0 {
+            VK_RBUTTON
+        } else {
+            VK_LBUTTON
+        };
+        Some(unsafe { GetAsyncKeyState(primary_button.0 as i32) < 0 })
     }
 
     #[cfg(not(target_os = "windows"))]

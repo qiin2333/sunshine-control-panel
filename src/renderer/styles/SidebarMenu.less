@@ -86,6 +86,7 @@
   margin-bottom: 20px;
   position: relative;
   z-index: 10; // 确保在 Gura 背景上方
+  touch-action: none;
 }
 
 .logo {
@@ -376,11 +377,12 @@
   position: absolute;
   top: 0;
   left: 0;
-  right: 80px; // 右侧留空给浮动按钮
-  height: 20px;
+  right: 138px; // 右侧留空给三个窗口控制按钮
+  height: 32px;
   z-index: 100;
   cursor: move;
   pointer-events: auto;
+  touch-action: none;
 
   // 调试模式可视化（可选，生产环境可移除）
   &:hover {

@@ -20,10 +20,10 @@ const GITHUB_API_URL_LATEST: &str =
     "https://api.github.com/repos/qiin2333/sunshine/releases/latest";
 const UPDATE_CHECK_INTERVAL: u64 = 4 * 60 * 60; // 4小时（秒）
 const HTTP_TIMEOUT_SECS: u64 = 3;
-const DOWNLOAD_TIMEOUT_SECS: u64 = 300;
 const DOWNLOAD_CONNECT_TIMEOUT_SECS: u64 = 5;
 const DOWNLOAD_RESPONSE_TIMEOUT_SECS: u64 = 10;
 const DOWNLOAD_IDLE_TIMEOUT_SECS: u64 = 20;
+const GITHUB_RELEASE_HOST: &str = "github.com";
 const MAX_RELEASES_TO_CHECK: usize = 10; // 最多检查的发布数量
 
 // GitHub API 加速代理列表（按优先级排序）
@@ -1591,12 +1591,41 @@ async fn stop_sunshine_and_gui() -> Result<(), String> {
 
 // ========== 下载相关 ==========
 
+fn validate_download_url(url: &str) -> Result<(), String> {
+    let parsed =
+        reqwest::Url::parse(url).map_err(|error| format!("下载地址格式无效: {}", error))?;
+    if parsed.scheme() != "https" {
+        return Err("下载地址必须使用 HTTPS".to_string());
+    }
+    if parsed.host_str() != Some(GITHUB_RELEASE_HOST) {
+        return Err(format!("下载地址必须来自 {}", GITHUB_RELEASE_HOST));
+    }
+    Ok(())
+}
+
+fn validate_download_filename(filename: &str) -> Result<(), String> {
+    if filename.trim().is_empty() {
+        return Err("下载文件名不能为空".to_string());
+    }
+    if filename.contains('/') || filename.contains('\\') {
+        return Err("下载文件名不能包含路径分隔符".to_string());
+    }
+
+    let mut components = Path::new(filename).components();
+    if !matches!(components.next(), Some(std::path::Component::Normal(_)))
+        || components.next().is_some()
+    {
+        return Err("下载文件名必须是单个普通文件名".to_string());
+    }
+
+    Ok(())
+}
+
 /// 创建安装包下载客户端。下载使用独立请求头和更细粒度的超时策略。
 fn create_download_http_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(DOWNLOAD_CONNECT_TIMEOUT_SECS))
         .read_timeout(Duration::from_secs(DOWNLOAD_IDLE_TIMEOUT_SECS))
-        .timeout(Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
         .redirect(reqwest::redirect::Policy::limited(10))
         .no_gzip()
         .no_deflate()
@@ -1906,6 +1935,13 @@ pub async fn download_update(
     expected_size: Option<u64>,
     app_handle: AppHandle,
 ) -> Result<serde_json::Value, DownloadCommandError> {
+    validate_download_url(&url).map_err(|detail| {
+        DownloadCommandError::new(DownloadErrorCode::FilePreparationFailed, detail)
+    })?;
+    validate_download_filename(&filename).map_err(|detail| {
+        DownloadCommandError::new(DownloadErrorCode::FilePreparationFailed, detail)
+    })?;
+
     info!("📥 开始下载更新: {}", filename);
 
     cleanup_old_installers();
@@ -1956,7 +1992,11 @@ pub async fn download_update(
                         Some(source.name),
                     );
                 }
-                finalize_download_file(&partial_path, &file_path).await?;
+                let finalization = finalize_download_file(&partial_path, &file_path).await;
+                if let Err(error) = finalization {
+                    let _ = tokio::fs::remove_file(&partial_path).await;
+                    return Err(error);
+                }
 
                 info!("✅ 下载完成: {} bytes，来源: {}", downloaded, source.name);
                 if let Some(win) = window {
@@ -1992,6 +2032,54 @@ pub async fn download_update(
 mod download_source_tests {
     use super::*;
     use axum::{Router, response::Html, routing::get};
+
+    #[test]
+    fn download_url_requires_https_and_the_github_release_host() {
+        assert!(
+            validate_download_url(
+                "https://github.com/qiin2333/sunshine/releases/download/v1/setup.exe"
+            )
+            .is_ok()
+        );
+
+        for invalid_url in [
+            "http://github.com/qiin2333/sunshine/releases/download/v1/setup.exe",
+            "https://github.com.example.invalid/releases/download/v1/setup.exe",
+            "https://example.invalid/qiin2333/sunshine/releases/download/v1/setup.exe",
+            "not a url",
+        ] {
+            assert!(
+                validate_download_url(invalid_url).is_err(),
+                "unexpectedly accepted {invalid_url}"
+            );
+        }
+    }
+
+    #[test]
+    fn download_filename_must_be_a_single_normal_component() {
+        for valid_filename in ["Sunshine-Windows-1.2.3.exe", "archive..exe"] {
+            assert!(
+                validate_download_filename(valid_filename).is_ok(),
+                "unexpectedly rejected {valid_filename}"
+            );
+        }
+
+        for invalid_filename in [
+            "",
+            "   ",
+            ".",
+            "..",
+            "../setup.exe",
+            "..\\setup.exe",
+            "folder/setup.exe",
+            "folder\\setup.exe",
+        ] {
+            assert!(
+                validate_download_filename(invalid_filename).is_err(),
+                "unexpectedly accepted {invalid_filename}"
+            );
+        }
+    }
 
     #[test]
     fn download_sources_are_direct_first_then_follow_proxy_order() {

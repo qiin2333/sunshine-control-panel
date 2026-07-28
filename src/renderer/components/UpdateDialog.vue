@@ -336,6 +336,7 @@ const handleDownload = async () => {
       await handleInstall(result.file_path)
     } else {
       console.error('Download update returned an unsuccessful result', result)
+      resetDownloadState()
       ElMessage.error(t.value.updateDialog.downloadFailed)
     }
   } catch (error) {

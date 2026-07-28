@@ -864,31 +864,257 @@ const startResourceRefresh = () => {
 // 自定义拖拽（使用 PointerEvent 统一处理鼠标和触摸，替代 data-tauri-drag-region）
 const appWindow = getCurrentWindow()
 let isDragging = false
-let hasMoved = false            // 是否实际产生了移动（区分点击和拖拽）
-let dragPointerType = ''        // 发起拖拽的指针类型（mouse/pen/touch）
-let dragStartScreenX = 0        // 按下时的屏幕坐标（用于鼠标阈值检测）
+let hasMoved = false
+let dragPointerType = ''
+let dragPointerId = null
+let dragPointerTarget = null
+let dragEnding = false
+let dragDisposed = false
+let dragGeneration = 0
+let dragStartScreenX = 0
 let dragStartScreenY = 0
-// 触摸拖拽专用变量
-// 核心思路：WebView2 触摸的 screenX ≈ clientX（视口相对坐标，非屏幕绝对坐标）
-// 移动窗口会导致 screenX 偏移→反馈震荡，因此用 clientX + 已知窗口位置 + 串行 await setPosition
-let touchStartClientX = 0       // 触摸开始时的 clientX（抓取偏移量）
-let touchStartClientY = 0
-let touchBaseLogX = NaN         // 当前已确认的窗口逻辑位置（setPosition 完成后更新）
-let touchBaseLogY = NaN
-let touchPendingLogX = 0        // 待应用的逻辑坐标
-let touchPendingLogY = 0
-let touchIsSettingPos = false   // setPosition 正在执行中，跳过中间事件
-let touchRafId = null           // requestAnimationFrame ID
-const DRAG_THRESHOLD = 3        // 移动超过 3px 才算拖拽
 
-// 移除所有拖拽相关事件监听（复用于多处清理）
+let touchStartClientX = 0
+let touchStartClientY = 0
+let touchLatestClientX = 0
+let touchLatestClientY = 0
+let touchBasePhysicalX = Number.NaN
+let touchBasePhysicalY = Number.NaN
+let touchPendingPhysicalX = Number.NaN
+let touchPendingPhysicalY = Number.NaN
+let touchScaleFactor = 1
+let touchScaleFactorVersion = 0
+let touchInitialized = false
+let touchPreparing = false
+let touchPreparationPromise = null
+let touchScaleRebasing = false
+let touchScaleRebasePromise = null
+let touchIsSettingPos = false
+let touchRafId = null
+let unlistenDragScaleChanged = null
+let dragScaleListenerPromise = null
+let toolbarPositionSaveGeneration = 0
+let toolbarPositionSavePromise = Promise.resolve()
+const DRAG_THRESHOLD = 3
+
+const normalizeDragScaleFactor = (value) => (
+  Number.isFinite(value) && value > 0 ? value : 1
+)
+
+const isCurrentDrag = (generation, pointerId) => (
+  !dragDisposed &&
+  generation === dragGeneration &&
+  dragPointerId === pointerId
+)
+
 const removeDragListeners = () => {
   document.removeEventListener('pointermove', onDragMove)
   document.removeEventListener('pointerup', onDragEnd)
   document.removeEventListener('pointercancel', onDragEnd)
 }
 
-// 容器拖拽：仅在菜单展开时响应（空白区域拖拽）
+const releaseDragPointerCapture = () => {
+  if (dragPointerTarget && dragPointerId !== null) {
+    try {
+      if (dragPointerTarget.hasPointerCapture(dragPointerId)) {
+        dragPointerTarget.releasePointerCapture(dragPointerId)
+      }
+    } catch {}
+  }
+  dragPointerTarget = null
+}
+
+const clearDragState = ({ preserveMoved = false } = {}) => {
+  dragGeneration += 1
+  if (touchRafId !== null) {
+    cancelAnimationFrame(touchRafId)
+    touchRafId = null
+  }
+  removeDragListeners()
+  releaseDragPointerCapture()
+
+  isDragging = false
+  dragEnding = false
+  dragPointerType = ''
+  dragPointerId = null
+  touchInitialized = false
+  touchPreparing = false
+  touchPreparationPromise = null
+  touchScaleRebasing = false
+  touchScaleRebasePromise = null
+  touchIsSettingPos = false
+  touchBasePhysicalX = Number.NaN
+  touchBasePhysicalY = Number.NaN
+  touchPendingPhysicalX = Number.NaN
+  touchPendingPhysicalY = Number.NaN
+  if (!preserveMoved) {
+    hasMoved = false
+  }
+}
+
+const resetMovedAfterClick = () => {
+  const generation = dragGeneration
+  requestAnimationFrame(() => {
+    if (generation === dragGeneration) {
+      hasMoved = false
+    }
+  })
+}
+
+const finishDrag = (generation, pointerId, preserveMoved = false) => {
+  if (!isCurrentDrag(generation, pointerId)) return
+
+  clearDragState({ preserveMoved })
+  if (preserveMoved) {
+    resetMovedAfterClick()
+  }
+}
+
+const commitTouchPosition = (physicalX, physicalY) => (
+  appWindow.setPosition(new PhysicalPosition(
+    Math.round(physicalX),
+    Math.round(physicalY),
+  ))
+)
+
+const queueToolbarPositionSave = (position) => {
+  const generation = ++toolbarPositionSaveGeneration
+  toolbarPositionSavePromise = toolbarPositionSavePromise
+    .catch(() => {})
+    .then(async () => {
+      if (dragDisposed || generation !== toolbarPositionSaveGeneration) return
+
+      await invoke('save_toolbar_position', { x: position.x, y: position.y })
+    })
+    .catch(() => {})
+}
+
+const rebaseTouchDragForScaleChange = (scaleFactor) => {
+  touchScaleFactorVersion += 1
+  touchScaleFactor = normalizeDragScaleFactor(scaleFactor)
+  if (
+    dragPointerType !== 'touch' ||
+    dragPointerId === null ||
+    dragEnding ||
+    !touchInitialized ||
+    touchScaleRebasePromise
+  ) {
+    return
+  }
+
+  const generation = dragGeneration
+  const pointerId = dragPointerId
+  touchScaleRebasing = true
+  if (touchRafId !== null) {
+    cancelAnimationFrame(touchRafId)
+    touchRafId = null
+  }
+
+  let rebasePromise
+  rebasePromise = (async () => {
+    while (touchIsSettingPos) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      if (!isCurrentDrag(generation, pointerId)) return
+    }
+
+    await new Promise((resolve) => requestAnimationFrame(resolve))
+    if (!isCurrentDrag(generation, pointerId) || dragEnding) return
+
+    const position = await appWindow.outerPosition()
+    if (!isCurrentDrag(generation, pointerId) || dragEnding) return
+
+    touchBasePhysicalX = position.x
+    touchBasePhysicalY = position.y
+    touchPendingPhysicalX = position.x
+    touchPendingPhysicalY = position.y
+    touchStartClientX = touchLatestClientX
+    touchStartClientY = touchLatestClientY
+  })()
+    .catch(() => {
+      if (isCurrentDrag(generation, pointerId)) {
+        clearDragState()
+      }
+    })
+    .finally(() => {
+      if (isCurrentDrag(generation, pointerId)) {
+        touchScaleRebasing = false
+      }
+      if (touchScaleRebasePromise === rebasePromise) {
+        touchScaleRebasePromise = null
+      }
+    })
+
+  touchScaleRebasePromise = rebasePromise
+}
+
+const ensureDragScaleListener = () => {
+  if (dragDisposed || unlistenDragScaleChanged || dragScaleListenerPromise) return
+
+  dragScaleListenerPromise = appWindow
+    .onScaleChanged(({ payload }) => {
+      rebaseTouchDragForScaleChange(payload.scaleFactor)
+    })
+    .then((unlisten) => {
+      dragScaleListenerPromise = null
+      if (dragDisposed) {
+        unlisten()
+        return
+      }
+      unlistenDragScaleChanged = unlisten
+    })
+    .catch(() => {
+      dragScaleListenerPromise = null
+    })
+}
+
+const queueTouchPosition = () => {
+  // WebView2 touch coordinates are relative to the moving viewport. Keep only
+  // one position IPC in flight so the next pointer sample uses the new baseline.
+  if (
+    dragPointerId === null ||
+    dragEnding ||
+    touchPreparing ||
+    touchScaleRebasing ||
+    touchIsSettingPos ||
+    !touchInitialized ||
+    !Number.isFinite(touchBasePhysicalX) ||
+    !Number.isFinite(touchBasePhysicalY)
+  ) {
+    return
+  }
+
+  touchPendingPhysicalX = touchBasePhysicalX +
+    (touchLatestClientX - touchStartClientX) * touchScaleFactor
+  touchPendingPhysicalY = touchBasePhysicalY +
+    (touchLatestClientY - touchStartClientY) * touchScaleFactor
+
+  if (touchRafId === null) {
+    touchRafId = requestAnimationFrame(touchApplyPosition)
+  }
+}
+
+const prepareTouchDrag = async (generation, pointerId) => {
+  const initialScaleFactorVersion = touchScaleFactorVersion
+  const [position, scaleFactor] = await Promise.all([
+    appWindow.outerPosition(),
+    appWindow.scaleFactor(),
+  ])
+  if (!isCurrentDrag(generation, pointerId) || dragEnding) return
+
+  if (touchScaleFactorVersion === initialScaleFactorVersion) {
+    touchScaleFactor = normalizeDragScaleFactor(scaleFactor)
+  }
+  touchBasePhysicalX = position.x
+  touchBasePhysicalY = position.y
+  touchPendingPhysicalX = position.x
+  touchPendingPhysicalY = position.y
+  touchInitialized = true
+
+  if (hasMoved) {
+    queueTouchPosition()
+  }
+}
+
 const onContainerDragStart = (e) => {
   if (menuVisible.value) {
     onDragStart(e)
@@ -896,118 +1122,215 @@ const onContainerDragStart = (e) => {
 }
 
 const onDragStart = (e) => {
-  if (e.button !== 0) return
+  if (
+    e.button !== 0 ||
+    isDragging ||
+    dragPointerId !== null ||
+    (e.pointerType === 'touch' && !e.isPrimary)
+  ) {
+    return
+  }
+
+  const generation = ++dragGeneration
+  const pointerId = e.pointerId
   e.preventDefault()
   isDragging = true
   hasMoved = false
+  dragEnding = false
   dragPointerType = e.pointerType
+  dragPointerId = pointerId
+  dragPointerTarget = e.currentTarget
   dragStartScreenX = e.screenX
   dragStartScreenY = e.screenY
-  
-  document.addEventListener('pointermove', onDragMove)
+
+  try {
+    dragPointerTarget.setPointerCapture(dragPointerId)
+  } catch {}
+
+  document.addEventListener('pointermove', onDragMove, { passive: false })
   document.addEventListener('pointerup', onDragEnd)
   document.addEventListener('pointercancel', onDragEnd)
-  
+
   if (e.pointerType === 'touch') {
+    ensureDragScaleListener()
     touchStartClientX = e.clientX
     touchStartClientY = e.clientY
-    touchBaseLogX = NaN
-    touchBaseLogY = NaN
+    touchLatestClientX = e.clientX
+    touchLatestClientY = e.clientY
+    touchBasePhysicalX = Number.NaN
+    touchBasePhysicalY = Number.NaN
+    touchPendingPhysicalX = Number.NaN
+    touchPendingPhysicalY = Number.NaN
+    touchInitialized = false
+    touchPreparing = true
     touchIsSettingPos = false
-    const dpr = window.devicePixelRatio || 1
-    appWindow.outerPosition().then((pos) => {
-      touchBaseLogX = pos.x / dpr
-      touchBaseLogY = pos.y / dpr
-    }).catch(() => { isDragging = false })
+    touchScaleRebasing = false
+
+    let preparationPromise
+    preparationPromise = prepareTouchDrag(generation, pointerId)
+      .catch(() => {
+        if (isCurrentDrag(generation, pointerId)) {
+          clearDragState()
+        }
+      })
+      .finally(() => {
+        if (isCurrentDrag(generation, pointerId)) {
+          touchPreparing = false
+        }
+        if (touchPreparationPromise === preparationPromise) {
+          touchPreparationPromise = null
+        }
+      })
+    touchPreparationPromise = preparationPromise
   }
 }
 
-// 触摸拖拽：rAF 回调，串行 await setPosition 避免竞态
 const touchApplyPosition = async () => {
   touchRafId = null
-  if (!isDragging || touchIsSettingPos) return
+  if (
+    !isDragging ||
+    dragEnding ||
+    touchPreparing ||
+    touchScaleRebasing ||
+    touchIsSettingPos ||
+    !touchInitialized ||
+    !Number.isFinite(touchPendingPhysicalX) ||
+    !Number.isFinite(touchPendingPhysicalY)
+  ) {
+    return
+  }
+
+  const generation = dragGeneration
+  const pointerId = dragPointerId
+  const nextPhysicalX = touchPendingPhysicalX
+  const nextPhysicalY = touchPendingPhysicalY
   touchIsSettingPos = true
-  const dpr = window.devicePixelRatio || 1
-  const physX = Math.round(touchPendingLogX * dpr)
-  const physY = Math.round(touchPendingLogY * dpr)
+
   try {
-    await appWindow.setPosition(new PhysicalPosition(physX, physY))
-    // 更新 baseline（用物理→逻辑避免累积舍入误差）
-    touchBaseLogX = physX / dpr
-    touchBaseLogY = physY / dpr
-  } catch {} finally {
-    touchIsSettingPos = false
+    await commitTouchPosition(nextPhysicalX, nextPhysicalY)
+    if (!isCurrentDrag(generation, pointerId)) return
+
+    touchBasePhysicalX = nextPhysicalX
+    touchBasePhysicalY = nextPhysicalY
+  } catch {
+    if (isCurrentDrag(generation, pointerId)) {
+      clearDragState()
+    }
+  } finally {
+    if (isCurrentDrag(generation, pointerId)) {
+      touchIsSettingPos = false
+    }
   }
 }
 
 const onDragMove = (e) => {
-  if (!isDragging) return
-  // 过滤非同类型指针（避免 Windows 触摸模拟鼠标事件）
-  if (e.pointerType !== dragPointerType) return
-  
+  if (
+    !isDragging ||
+    e.pointerId !== dragPointerId ||
+    e.pointerType !== dragPointerType ||
+    dragEnding
+  ) {
+    return
+  }
+
   if (dragPointerType === 'mouse' || dragPointerType === 'pen') {
     const dx = e.screenX - dragStartScreenX
     const dy = e.screenY - dragStartScreenY
     if (!hasMoved && Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return
     hasMoved = true
     e.preventDefault()
-    // 超过阈值 → 切换为 OS 原生拖拽（完美处理跨 DPI 显示器）
+    const generation = dragGeneration
+    const pointerId = dragPointerId
     isDragging = false
+    dragEnding = true
     removeDragListeners()
+    releaseDragPointerCapture()
     appWindow.startDragging().then(async () => {
       try {
         const finalPos = await appWindow.outerPosition()
-        await invoke('save_toolbar_position', { x: finalPos.x, y: finalPos.y })
+        if (!isCurrentDrag(generation, pointerId)) return
+
+        queueToolbarPositionSave(finalPos)
       } catch {}
-    }).catch(() => {})
+      finishDrag(generation, pointerId, true)
+    }).catch(() => {
+      finishDrag(generation, pointerId, true)
+    })
     return
   }
-  
-  // === 触摸拖拽 ===
-  if (Number.isNaN(touchBaseLogX) || touchIsSettingPos) return
-  
-  const dcx = e.clientX - touchStartClientX
-  const dcy = e.clientY - touchStartClientY
-  if (!hasMoved && Math.abs(dcx) < DRAG_THRESHOLD && Math.abs(dcy) < DRAG_THRESHOLD) return
+
+  touchLatestClientX = e.clientX
+  touchLatestClientY = e.clientY
+  const deltaX = touchLatestClientX - touchStartClientX
+  const deltaY = touchLatestClientY - touchStartClientY
+  if (
+    !hasMoved &&
+    Math.abs(deltaX) < DRAG_THRESHOLD &&
+    Math.abs(deltaY) < DRAG_THRESHOLD
+  ) {
+    return
+  }
+
   hasMoved = true
   e.preventDefault()
-  
-  // 目标 = 已确认位置 + clientX delta（详见 docs/toolbar_interaction.md）
-  touchPendingLogX = touchBaseLogX + dcx
-  touchPendingLogY = touchBaseLogY + dcy
-  if (!touchRafId) {
-    touchRafId = requestAnimationFrame(touchApplyPosition)
-  }
+  queueTouchPosition()
 }
 
 const onDragEnd = async (e) => {
+  if (
+    dragPointerId === null ||
+    e.pointerId !== dragPointerId ||
+    e.pointerType !== dragPointerType
+  ) {
+    return
+  }
+
+  const generation = dragGeneration
+  const pointerId = dragPointerId
   const wasDragged = isDragging && hasMoved
   isDragging = false
-  if (touchRafId) {
+  dragEnding = true
+  removeDragListeners()
+  releaseDragPointerCapture()
+  if (touchRafId !== null) {
     cancelAnimationFrame(touchRafId)
     touchRafId = null
   }
-  removeDragListeners()
-  
+
   if (wasDragged && dragPointerType === 'touch') {
-    // 等待 flight 中的 setPosition 完成
-    while (touchIsSettingPos) {
-      await new Promise(r => setTimeout(r, 10))
+    if (touchPreparationPromise) {
+      await touchPreparationPromise
+      if (!isCurrentDrag(generation, pointerId)) return
     }
-    try {
-      const dpr = window.devicePixelRatio || 1
-      await appWindow.setPosition(new PhysicalPosition(
-        Math.round(touchPendingLogX * dpr),
-        Math.round(touchPendingLogY * dpr)
-      ))
-      const finalPos = await appWindow.outerPosition()
-      await invoke('save_toolbar_position', { x: finalPos.x, y: finalPos.y })
-    } catch {}
+    if (touchScaleRebasePromise) {
+      await touchScaleRebasePromise
+      if (!isCurrentDrag(generation, pointerId)) return
+    }
+    while (touchIsSettingPos) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      if (!isCurrentDrag(generation, pointerId)) return
+    }
+
+    if (
+      touchInitialized &&
+      Number.isFinite(touchPendingPhysicalX) &&
+      Number.isFinite(touchPendingPhysicalY)
+    ) {
+      try {
+        await commitTouchPosition(touchPendingPhysicalX, touchPendingPhysicalY)
+        if (!isCurrentDrag(generation, pointerId)) return
+
+        const finalPos = await appWindow.outerPosition()
+        if (!isCurrentDrag(generation, pointerId)) return
+
+        queueToolbarPositionSave(finalPos)
+      } catch {}
+    }
   }
-  requestAnimationFrame(() => { hasMoved = false })
+
+  finishDrag(generation, pointerId, wasDragged)
 }
 
-// 点击切换菜单（鼠标 click + 触摸合成 click 都走这里）
 const onIconClick = () => {
   if (!hasMoved) toggleMenu()
 }
@@ -1037,8 +1360,8 @@ const setCursorIgnore = (ignore) => {
 }
 
 const hitTestTick = async () => {
-  // 拖拽期间维持非穿透，避免打断 startDragging
-  if (isDragging) {
+  // 拖拽会话结束前维持非穿透，避免打断原生拖拽或触摸收尾。
+  if (dragPointerId !== null) {
     setCursorIgnore(false)
     return
   }
@@ -1048,6 +1371,11 @@ const hitTestTick = async () => {
       appWindow.outerSize(),
       cursorPosition(),
     ])
+    if (dragPointerId !== null) {
+      setCursorIgnore(false)
+      return
+    }
+
     // PhysicalPosition: 物理像素
     const relX = cur.x - winPos.x
     const relY = cur.y - winPos.y
@@ -1081,7 +1409,7 @@ const initBubbleClickThrough = () => {
       if (!hitTestEnabled) return
       await hitTestTick()
       if (!hitTestEnabled) return
-      const active = isDragging || menuVisible.value || !cursorIgnoreState
+      const active = dragPointerId !== null || menuVisible.value || !cursorIgnoreState
       scheduleNextHitTest(active ? HIT_TEST_ACTIVE_INTERVAL_MS : HIT_TEST_IDLE_INTERVAL_MS)
     }, delay)
   }
@@ -1102,6 +1430,13 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  dragDisposed = true
+  toolbarPositionSaveGeneration += 1
+  clearDragState()
+  if (unlistenDragScaleChanged) {
+    unlistenDragScaleChanged()
+    unlistenDragScaleChanged = null
+  }
   if (refreshTimer) {
     clearInterval(refreshTimer)
     refreshTimer = null
@@ -1116,8 +1451,6 @@ onUnmounted(() => {
   }
   cleanupPixiApp()
   // 清理拖拽
-  removeDragListeners()
-  if (touchRafId) { cancelAnimationFrame(touchRafId); touchRafId = null }
   hitTestEnabled = false
   if (hitTestTimer) { clearTimeout(hitTestTimer); hitTestTimer = null }
   if (speechBroadcast) {

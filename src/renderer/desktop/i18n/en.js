@@ -1045,7 +1045,11 @@ Output only one short sentence, no explanation. Reply in English.`,
 
   // === Update Dialog ===
   updateDialog: {
-    downloading: 'Downloading... {progress}%',
+    downloading: 'Downloading update...',
+    downloadActive: 'Downloading from',
+    downloadConnecting: 'Connecting to an available download source...',
+    downloadRetrying: 'The current source was interrupted. Switching sources...',
+    downloadVerifying: 'Download complete. Verifying the file...',
     viewInBrowser: 'View in Browser',
     close: 'Close',
     openInBrowser: 'Open in Browser',

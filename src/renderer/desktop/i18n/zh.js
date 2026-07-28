@@ -1045,7 +1045,11 @@ export const zh = {
 
   // === 更新对话框 ===
   updateDialog: {
-    downloading: '正在下载... {progress}%',
+    downloading: '正在下载更新...',
+    downloadActive: '正在下载',
+    downloadConnecting: '正在连接可用下载源...',
+    downloadRetrying: '当前下载源已中断，正在切换...',
+    downloadVerifying: '下载完成，正在校验文件...',
     viewInBrowser: '在浏览器中查看',
     close: '关闭',
     openInBrowser: '在浏览器中打开',

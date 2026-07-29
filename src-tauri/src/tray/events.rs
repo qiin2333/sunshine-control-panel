@@ -59,7 +59,8 @@ async fn consume_event_stream<R: Runtime + 'static>(
             .get(endpoint.clone())
             .header("Accept", "text/event-stream")
     })
-    .await?;
+    .await
+    .map_err(|error| format!("Connect tray event stream failed: {}", error))?;
     if !response.status().is_success() {
         return Err(format!(
             "Tray event stream returned status {}",

@@ -71,7 +71,7 @@ fn build_authed_clients(token: &str) -> Result<(reqwest::Client, reqwest::Client
     Ok((https, sse))
 }
 
-async fn authed_clients() -> Result<(reqwest::Client, reqwest::Client), String> {
+async fn authed_clients() -> Result<(String, reqwest::Client, reqwest::Client), String> {
     let token = crate::gui_auth::current_async()
         .await
         .ok_or_else(|| GUI_AUTH_UNAVAILABLE.to_string())?;
@@ -81,19 +81,19 @@ async fn authed_clients() -> Result<(reqwest::Client, reqwest::Client), String> 
             .map_err(|_| "GUI auth client lock poisoned".to_string())?;
         if let Some(cached) = guard.as_ref() {
             if cached.token == token {
-                return Ok((cached.https.clone(), cached.sse.clone()));
+                return Ok((token, cached.https.clone(), cached.sse.clone()));
             }
         }
     }
     let (https, sse) = build_authed_clients(&token)?;
     if let Ok(mut guard) = AUTHED_CLIENTS.write() {
         *guard = Some(AuthedClients {
-            token,
+            token: token.clone(),
             https: https.clone(),
             sse: sse.clone(),
         });
     }
-    Ok((https, sse))
+    Ok((token, https, sse))
 }
 
 pub const TRAY_PROTOCOL_VERSION: u32 = 1;
@@ -911,7 +911,7 @@ async fn send_with_authed_client<F>(
 where
     F: Fn(&reqwest::Client) -> reqwest::RequestBuilder,
 {
-    let (https, event_client) = authed_clients()
+    let (observed_token, https, event_client) = authed_clients()
         .await
         .map_err(AuthedRequestError::Definite)?;
     let client = if sse { &event_client } else { &https };
@@ -927,11 +927,14 @@ where
         return Ok(response);
     }
 
-    if crate::gui_auth::refresh_async().await.is_none() {
+    if crate::gui_auth::refresh_async(observed_token)
+        .await
+        .is_none()
+    {
         return Ok(response);
     }
 
-    let (https, event_client) = match authed_clients().await {
+    let (_, https, event_client) = match authed_clients().await {
         Ok(clients) => clients,
         Err(_) => return Ok(response),
     };
@@ -982,8 +985,13 @@ mod auth_request_tests {
         let server_requests = requests.clone();
 
         tokio::spawn(async move {
-            for (status, body) in responses {
-                let (mut stream, _) = listener.accept().await.unwrap();
+            let mut listener = Some(listener);
+            let mut responses = responses.into_iter().peekable();
+            while let Some((status, body)) = responses.next() {
+                let (mut stream, _) = listener.as_ref().unwrap().accept().await.unwrap();
+                if responses.peek().is_none() {
+                    drop(listener.take());
+                }
                 let mut request_buf = [0_u8; 4096];
                 let read = stream.read(&mut request_buf).await.unwrap();
                 server_requests

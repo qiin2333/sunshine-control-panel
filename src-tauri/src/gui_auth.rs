@@ -87,12 +87,18 @@ fn token_from_pipe() -> Option<String> {
     None
 }
 
+#[cfg(test)]
+fn test_pipe_token() -> Option<Option<String>> {
+    TEST_PIPE_TOKEN
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .clone()
+}
+
 fn initial_token() -> Option<String> {
     #[cfg(test)]
-    if let Ok(guard) = TEST_PIPE_TOKEN.lock()
-        && let Some(result) = guard.as_ref()
-    {
-        return result.clone();
+    if let Some(result) = test_pipe_token() {
+        return result;
     }
 
     token_from_pipe().or_else(token_from_env)
@@ -100,10 +106,8 @@ fn initial_token() -> Option<String> {
 
 fn read_pipe_token() -> Option<String> {
     #[cfg(test)]
-    if let Ok(guard) = TEST_PIPE_TOKEN.lock()
-        && let Some(result) = guard.as_ref()
-    {
-        return result.clone();
+    if let Some(result) = test_pipe_token() {
+        return result;
     }
 
     token_from_pipe()
@@ -139,7 +143,9 @@ where
         return Some(token);
     }
 
-    let _fetch_guard = TOKEN_FETCH_LOCK.lock().ok()?;
+    let _fetch_guard = TOKEN_FETCH_LOCK
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     if let Some(token) = cached() {
         return Some(token);
     }
@@ -152,10 +158,24 @@ pub fn current() -> Option<String> {
     acquire_current_with(initial_token)
 }
 
-/// 强制从命名管道重新获取（Sunshine 重启后 token 会轮换，收到 401 时调用）。
-pub fn refresh() -> Option<String> {
-    let _fetch_guard = TOKEN_FETCH_LOCK.lock().ok()?;
-    store(read_pipe_token(), true)
+fn refresh_with<F>(observed_token: &str, read_pipe: F) -> Option<String>
+where
+    F: FnOnce() -> Option<String>,
+{
+    let _fetch_guard = TOKEN_FETCH_LOCK
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    if let Some(token) = cached()
+        && token != observed_token
+    {
+        return Some(token);
+    }
+    store(read_pipe(), true)
+}
+
+/// 收到 401 后刷新 token。若其他请求已刷新为新值，则直接复用该值。
+pub fn refresh(observed_token: &str) -> Option<String> {
+    refresh_with(observed_token, read_pipe_token)
 }
 
 /// current() 的异步封装，避免在 async 上下文中直接做管道 I/O。
@@ -164,8 +184,10 @@ pub async fn current_async() -> Option<String> {
 }
 
 /// refresh() 的异步封装。
-pub async fn refresh_async() -> Option<String> {
-    tokio::task::spawn_blocking(refresh).await.unwrap_or(None)
+pub async fn refresh_async(observed_token: String) -> Option<String> {
+    tokio::task::spawn_blocking(move || refresh(&observed_token))
+        .await
+        .unwrap_or(None)
 }
 
 #[cfg(test)]
@@ -269,11 +291,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stale_refresh_reuses_newer_cached_token() {
+        let _lock = TEST_AUTH_LOCK.lock().await;
+        let _state = test_set_state(Some("fedcba9876543210"), None);
+
+        assert_eq!(
+            refresh("0123456789abcdef").as_deref(),
+            Some("fedcba9876543210")
+        );
+        assert_eq!(cached().as_deref(), Some("fedcba9876543210"));
+    }
+
+    #[tokio::test]
     async fn forced_refresh_failure_clears_old_token() {
         let _lock = TEST_AUTH_LOCK.lock().await;
         let _state = test_set_state(Some("0123456789abcdef"), None);
 
-        assert!(refresh().is_none());
+        assert!(refresh("0123456789abcdef").is_none());
         assert!(cached().is_none());
     }
 }

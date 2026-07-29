@@ -649,19 +649,16 @@ async fn proxy_handler(req: Request) -> Response {
             }
             response
         }
+        Err(ProxyFetchError::GuiAuthUnavailable) => proxy_error_response(
+            is_api,
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "Sunshine GUI authentication is not ready",
+            None,
+        ),
         Err(e) => {
             let error_str = e.to_string();
             let error_kind = proxy_error_kind(&error_str);
             error!("❌ 代理错误 [{}] ({}): {}", path, error_kind, error_str);
-
-            if error_str == GUI_AUTH_UNAVAILABLE {
-                return proxy_error_response(
-                    is_api,
-                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
-                    "Sunshine GUI authentication is not ready",
-                    None,
-                );
-            }
 
             if is_connection_error(&error_str) {
                 match refresh_sunshine_target_internal().await {
@@ -679,6 +676,12 @@ async fn proxy_handler(req: Request) -> Response {
                                 mark_available();
                                 response
                             }
+                            Err(ProxyFetchError::GuiAuthUnavailable) => proxy_error_response(
+                                is_api,
+                                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                                "Sunshine GUI authentication is not ready",
+                                None,
+                            ),
                             Err(retry_err) => {
                                 let retry_error = retry_err.to_string();
                                 let retry_kind = proxy_error_kind(&retry_error);
@@ -1039,19 +1042,58 @@ async fn send_request(
     req_builder.send().await
 }
 
-const GUI_AUTH_UNAVAILABLE: &str = "Sunshine GUI authentication token is unavailable";
+#[derive(Debug)]
+enum ProxyFetchError {
+    GuiAuthUnavailable,
+    Upstream(reqwest::Error),
+    BuildResponse(axum::http::Error),
+}
+
+impl std::fmt::Display for ProxyFetchError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::GuiAuthUnavailable => {
+                formatter.write_str("Sunshine GUI authentication token is unavailable")
+            }
+            Self::Upstream(error) => error.fmt(formatter),
+            Self::BuildResponse(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for ProxyFetchError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::GuiAuthUnavailable => None,
+            Self::Upstream(error) => Some(error),
+            Self::BuildResponse(error) => Some(error),
+        }
+    }
+}
+
+impl From<reqwest::Error> for ProxyFetchError {
+    fn from(error: reqwest::Error) -> Self {
+        Self::Upstream(error)
+    }
+}
+
+impl From<axum::http::Error> for ProxyFetchError {
+    fn from(error: axum::http::Error) -> Self {
+        Self::BuildResponse(error)
+    }
+}
 
 /// 注入 GUI 内存鉴权 token（仅用于 Sunshine 目标；Steam/外部代理不走此路径，
 /// 避免 token 泄漏给第三方域名）。覆盖客户端可能自带的 authorization 头。
-async fn apply_gui_token(headers: &mut axum::http::HeaderMap) -> Result<(), &'static str> {
+async fn apply_gui_token(headers: &mut axum::http::HeaderMap) -> Result<String, ProxyFetchError> {
     let token = crate::gui_auth::current_async()
         .await
-        .ok_or(GUI_AUTH_UNAVAILABLE)?;
+        .ok_or(ProxyFetchError::GuiAuthUnavailable)?;
     let mut value = axum::http::HeaderValue::from_str(&format!("Bearer {}", token))
-        .map_err(|_| GUI_AUTH_UNAVAILABLE)?;
+        .map_err(|_| ProxyFetchError::GuiAuthUnavailable)?;
     value.set_sensitive(true);
     headers.insert(axum::http::header::AUTHORIZATION, value);
-    Ok(())
+    Ok(token)
 }
 
 /// 发送请求，HTTPS 失败时降级到 HTTP（仅限非连接错误）
@@ -1061,15 +1103,15 @@ async fn send_with_scheme_fallback(
     method: &axum::http::Method,
     headers: &axum::http::HeaderMap,
     body: &Bytes,
-) -> Result<reqwest::Response, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<reqwest::Response, reqwest::Error> {
     match send_request(client, url, method, headers, body).await {
         Ok(resp) => Ok(resp),
         Err(e) if url.starts_with("https://") && !is_connection_error(&e.to_string()) => {
             let http_url = url.replace("https://", "http://");
             warn!("⚠️  HTTPS 连接失败，尝试 HTTP: {}", http_url);
-            Ok(send_request(client, &http_url, method, headers, body).await?)
+            send_request(client, &http_url, method, headers, body).await
         }
-        Err(e) => Err(e.into()),
+        Err(e) => Err(e),
     }
 }
 
@@ -1080,7 +1122,7 @@ async fn fetch_and_proxy(
     headers: &axum::http::HeaderMap,
     body: &Bytes,
     is_ai_api: bool,
-) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Response, ProxyFetchError> {
     let client = if is_ai_api {
         get_ai_http_client()
     } else {
@@ -1088,19 +1130,19 @@ async fn fetch_and_proxy(
     };
 
     let mut auth_headers = headers.clone();
-    apply_gui_token(&mut auth_headers)
-        .await
-        .map_err(|error| error.to_string())?;
+    let observed_token = apply_gui_token(&mut auth_headers).await?;
 
     let mut response = send_with_scheme_fallback(client, url, method, &auth_headers, body).await?;
 
     // 401 说明 token 可能已轮换（Sunshine 重启），刷新后重试一次。
     // 刷新后的 token 注入或重试发送失败时，保留首次 401 响应。
     if response.status() == reqwest::StatusCode::UNAUTHORIZED
-        && crate::gui_auth::refresh_async().await.is_some()
+        && crate::gui_auth::refresh_async(observed_token)
+            .await
+            .is_some()
     {
         match apply_gui_token(&mut auth_headers).await {
-            Ok(()) => {
+            Ok(_) => {
                 match send_with_scheme_fallback(client, url, method, &auth_headers, body).await {
                     Ok(retry_response) => response = retry_response,
                     Err(error) => warn!(

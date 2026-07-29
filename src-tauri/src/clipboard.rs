@@ -420,6 +420,7 @@ async fn post_capability_once() -> Result<(), String> {
 async fn upload_blob(bytes: Vec<u8>, mime: &str) -> Result<String, String> {
     let url = get_sunshine_url().await?;
     let endpoint = format!("{}/api/v1/clipboard/blob", url.trim_end_matches('/'));
+    let bytes = bytes::Bytes::from(bytes);
     let mime = mime.to_string();
     let resp = send_https_request(|client| {
         client

@@ -601,9 +601,16 @@ const getBubbleStyle = (index) => {
   }
 }
 
+const destroyTextureSource = (source) => {
+  if (!source || source.destroyed) return
+
+  const resource = source.resource
+  source.destroy()
+  resource?.close?.()
+}
+
 const destroySpriteFrames = (frames) => {
   const sources = new Set(frames.map((texture) => texture.source).filter(Boolean))
-
   for (const texture of frames) {
     if (!texture.destroyed) {
       texture.destroy(false)
@@ -611,11 +618,7 @@ const destroySpriteFrames = (frames) => {
   }
 
   for (const source of sources) {
-    if (source.destroyed) continue
-
-    const resource = source.resource
-    source.destroy()
-    resource?.close?.()
+    destroyTextureSource(source)
   }
 }
 
@@ -635,6 +638,17 @@ const createSpriteFrameSet = async (imageSource) => {
   const frames = []
 
   try {
+    if (
+      baseTexture.width < 4 ||
+      baseTexture.height < 4 ||
+      baseTexture.width % 4 !== 0 ||
+      baseTexture.height % 4 !== 0
+    ) {
+      throw new Error(
+        `基地娘资源必须是可被 4×4 整分的图集: ${baseTexture.width}x${baseTexture.height}`,
+      )
+    }
+
     for (let row = 0; row < 4; row++) {
       for (let col = 0; col < 4; col++) {
         const frame = new PIXI.Rectangle(
@@ -647,15 +661,9 @@ const createSpriteFrameSet = async (imageSource) => {
       }
     }
   } catch (error) {
-    for (const texture of frames) {
-      if (!texture.destroyed) {
-        texture.destroy(false)
-      }
-    }
     baseTexture.destroy(false)
-    const resource = source.resource
-    source.destroy()
-    resource?.close?.()
+    destroySpriteFrames(frames)
+    destroyTextureSource(source)
     throw error
   }
 
@@ -706,11 +714,14 @@ const updateSpritesheetCacheInBackground = async (cachedEtag) => {
 
       if (applySpriteFrameSet(frameSet)) {
         console.info('✅ [桌宠] 基地娘缓存和当前显示已更新')
+      } else {
+        console.info('ℹ️ [桌宠] 基地娘缓存已更新，当前显示不可用，下次启动时加载')
       }
       return true // 表示有更新
     }
     return false // 304 未修改
-  } catch (_) {
+  } catch (error) {
+    console.warn('⚠️ [桌宠] 基地娘后台更新失败:', error?.message || String(error))
     return false
   }
 }

@@ -83,7 +83,7 @@ const loadPixi = async () => {
   return pixiModulePromise
 }
 
-// 精灵图集 URL
+// 基地娘资源 URL
 const SPRITESHEET_URL =
   'https://assets.alkaidlab.com/toolbar-spritesheet.webp'
 const getSpritesheetRequestUrl = () => `${SPRITESHEET_URL}?t=${Date.now()}`
@@ -690,7 +690,7 @@ const createSpriteFrameSetFromBlob = async (blob) => {
   return createSpriteFrameSet(imageBitmap)
 }
 
-// 后台更新精灵图缓存（ETag 条件请求）
+// 后台更新基地娘缓存（ETag 条件请求）
 const updateSpritesheetCacheInBackground = async (cachedEtag) => {
   try {
     const result = await invoke('fetch_remote_bytes', {
@@ -705,7 +705,7 @@ const updateSpritesheetCacheInBackground = async (cachedEtag) => {
       await setCacheEntry(CACHE_KEY_SPRITE, blob, result.etag)
 
       if (applySpriteFrameSet(frameSet)) {
-        console.info('✅ [桌宠] 精灵图缓存和当前显示已更新')
+        console.info('✅ [桌宠] 基地娘缓存和当前显示已更新')
       }
       return true // 表示有更新
     }
@@ -715,7 +715,7 @@ const updateSpritesheetCacheInBackground = async (cachedEtag) => {
   }
 }
 
-// 生成本地 fallback 精灵图（当网络和缓存都不可用时）
+// 生成本地备用基地娘（当网络和缓存都不可用时）
 // 用 Canvas 绘制 4x4 共 16 帧简单表情图案
 const generateFallbackSpritesheet = () => {
   const frameSize = 64
@@ -762,7 +762,7 @@ const generateFallbackSpritesheet = () => {
     }
   }
 
-  console.info('🎨 [桌宠] 已生成本地 fallback 精灵图:', canvas.width, 'x', canvas.height)
+  console.info('🎨 [桌宠] 已生成本地备用基地娘:', canvas.width, 'x', canvas.height)
   return canvas
 }
 
@@ -797,16 +797,16 @@ const initPixiApp = async () => {
       const imageBitmap = await createImageBitmap(cachedEntry.data)
       frameSet = await createSpriteFrameSet(imageBitmap)
       cachedEtag = cachedEntry.etag || null
-      console.info('⚡ [桌宠] 缓存精灵图加载成功:', frameSet.width, 'x', frameSet.height, 'etag:', cachedEtag)
+      console.info('⚡ [桌宠] 基地娘缓存加载成功:', frameSet.width, 'x', frameSet.height, 'etag:', cachedEtag)
     } catch (error) {
-      console.warn('⚠️ [桌宠] 缓存精灵图加载失败，将从远程下载:', error?.message || String(error))
+      console.warn('⚠️ [桌宠] 基地娘缓存加载失败，将从远程下载:', error?.message || String(error))
       frameSet = null
     }
   }
 
   if (!frameSet) {
     // 无缓存，全量下载
-    console.info('📥 [桌宠] 通过 Rust 代理下载精灵图...')
+    console.info('📥 [桌宠] 通过 Rust 代理下载基地娘...')
     try {
       const result = await invoke('fetch_remote_bytes', {
         url: getSpritesheetRequestUrl(),
@@ -817,7 +817,7 @@ const initPixiApp = async () => {
         const blob = await resp.blob()
         const imageBitmap = await createImageBitmap(blob)
         frameSet = await createSpriteFrameSet(imageBitmap)
-        console.info('✅ [桌宠] 精灵图下载成功:', frameSet.width, 'x', frameSet.height)
+        console.info('✅ [桌宠] 基地娘下载成功:', frameSet.width, 'x', frameSet.height)
 
         // 缓存到 IndexedDB（含 ETag）
         try {
@@ -827,7 +827,7 @@ const initPixiApp = async () => {
         }
       }
     } catch (proxyErr) {
-      console.error('❌ [桌宠] 精灵图下载失败:', proxyErr?.message || String(proxyErr))
+      console.error('❌ [桌宠] 基地娘下载失败:', proxyErr?.message || String(proxyErr))
     }
   } else {
     // 有缓存 → 延迟后台 ETag 条件请求检查更新
@@ -838,12 +838,12 @@ const initPixiApp = async () => {
 
   // 如果远程和缓存都失败了，使用本地生成的 fallback
   if (!frameSet) {
-    console.warn('⚠️ [桌宠] 远程和缓存均不可用，使用本地 fallback 精灵图')
+    console.warn('⚠️ [桌宠] 远程和缓存均不可用，使用本地备用基地娘')
     try {
       const fallbackCanvas = generateFallbackSpritesheet()
       frameSet = await createSpriteFrameSet(fallbackCanvas)
     } catch (fallbackErr) {
-      console.error('❌ [桌宠] Fallback 精灵图也失败:', fallbackErr?.message || String(fallbackErr))
+      console.error('❌ [桌宠] 本地备用基地娘也失败:', fallbackErr?.message || String(fallbackErr))
       return
     }
   }
@@ -922,7 +922,7 @@ const startResourceRefresh = () => {
       }
     } catch (_) {}
 
-    // 刷新精灵图缓存，并同步更新当前显示
+    // 刷新基地娘缓存，并同步更新当前显示
     try {
       const cachedSprite = await getCacheEntry(CACHE_KEY_SPRITE)
       await updateSpritesheetCacheInBackground(cachedSprite?.etag)

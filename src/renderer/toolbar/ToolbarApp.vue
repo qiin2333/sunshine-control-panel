@@ -86,6 +86,8 @@ const loadPixi = async () => {
 // 精灵图集 URL
 const SPRITESHEET_URL =
   'https://assets.alkaidlab.com/toolbar-spritesheet.webp'
+const getSpritesheetRequestUrl = () => `${SPRITESHEET_URL}?t=${Date.now()}`
+const SPRITE_SCALE_FACTOR = 0.99
 
 // IndexedDB 缓存配置
 const DB_NAME = 'toolbar-cache'
@@ -599,18 +601,112 @@ const getBubbleStyle = (index) => {
   }
 }
 
-// 后台更新精灵图缓存（ETag 条件请求，静默失败）
+const destroySpriteFrames = (frames) => {
+  const sources = new Set(frames.map((texture) => texture.source).filter(Boolean))
+
+  for (const texture of frames) {
+    if (!texture.destroyed) {
+      texture.destroy(false)
+    }
+  }
+
+  for (const source of sources) {
+    if (source.destroyed) continue
+
+    const resource = source.resource
+    source.destroy()
+    resource?.close?.()
+  }
+}
+
+const createSpriteFrameSet = async (imageSource) => {
+  const PIXI = await loadPixi()
+  let baseTexture
+  try {
+    baseTexture = PIXI.Texture.from(imageSource, true)
+  } catch (error) {
+    imageSource?.close?.()
+    throw error
+  }
+
+  const source = baseTexture.source
+  const frameWidth = baseTexture.width / 4
+  const frameHeight = baseTexture.height / 4
+  const frames = []
+
+  try {
+    for (let row = 0; row < 4; row++) {
+      for (let col = 0; col < 4; col++) {
+        const frame = new PIXI.Rectangle(
+          col * frameWidth,
+          row * frameHeight,
+          frameWidth,
+          frameHeight,
+        )
+        frames.push(new PIXI.Texture({ source, frame }))
+      }
+    }
+  } catch (error) {
+    for (const texture of frames) {
+      if (!texture.destroyed) {
+        texture.destroy(false)
+      }
+    }
+    baseTexture.destroy(false)
+    const resource = source.resource
+    source.destroy()
+    resource?.close?.()
+    throw error
+  }
+
+  baseTexture.destroy(false)
+  return {
+    frames,
+    width: source.width,
+    height: source.height,
+    frameWidth,
+    frameHeight,
+  }
+}
+
+const applySpriteFrameSet = (frameSet) => {
+  if (!pixiApp || !currentSprite) {
+    destroySpriteFrames(frameSet.frames)
+    return false
+  }
+
+  const previousFrames = spriteFrames
+  spriteFrames = frameSet.frames
+  currentSprite.texture = spriteFrames[0]
+  currentSprite.scale.set(
+    Math.min(80 / frameSet.frameWidth, 80 / frameSet.frameHeight) * SPRITE_SCALE_FACTOR,
+  )
+  destroySpriteFrames(previousFrames)
+  return true
+}
+
+const createSpriteFrameSetFromBlob = async (blob) => {
+  const imageBitmap = await createImageBitmap(blob)
+  return createSpriteFrameSet(imageBitmap)
+}
+
+// 后台更新精灵图缓存（ETag 条件请求）
 const updateSpritesheetCacheInBackground = async (cachedEtag) => {
   try {
     const result = await invoke('fetch_remote_bytes', {
-      url: SPRITESHEET_URL,
+      url: getSpritesheetRequestUrl(),
       ifNoneMatch: cachedEtag || null,
     })
-    if (result) {
+    if (result && (!result.etag || result.etag !== cachedEtag)) {
       // 有新数据
       const resp = await fetch(result.data_url)
       const blob = await resp.blob()
+      const frameSet = await createSpriteFrameSetFromBlob(blob)
       await setCacheEntry(CACHE_KEY_SPRITE, blob, result.etag)
+
+      if (applySpriteFrameSet(frameSet)) {
+        console.info('✅ [桌宠] 精灵图缓存和当前显示已更新')
+      }
       return true // 表示有更新
     }
     return false // 304 未修改
@@ -692,51 +788,39 @@ const initPixiApp = async () => {
     autoDensity: true,
   })
 
-  let spritesheet = null
+  let frameSet = null
   let cachedEtag = null
 
   const cachedEntry = await getCacheEntry(CACHE_KEY_SPRITE)
   if (cachedEntry && cachedEntry.data) {
     try {
       const imageBitmap = await createImageBitmap(cachedEntry.data)
-      const texture = PIXI.Texture.from(imageBitmap)
-      spritesheet = {
-        width: imageBitmap.width,
-        height: imageBitmap.height,
-        source: texture.source,
-      }
+      frameSet = await createSpriteFrameSet(imageBitmap)
       cachedEtag = cachedEntry.etag || null
-      console.info('⚡ [桌宠] 缓存精灵图加载成功:', spritesheet.width, 'x', spritesheet.height, 'etag:', cachedEtag)
+      console.info('⚡ [桌宠] 缓存精灵图加载成功:', frameSet.width, 'x', frameSet.height, 'etag:', cachedEtag)
     } catch (error) {
       console.warn('⚠️ [桌宠] 缓存精灵图加载失败，将从远程下载:', error?.message || String(error))
-      spritesheet = null
+      frameSet = null
     }
   }
 
-  if (!spritesheet) {
+  if (!frameSet) {
     // 无缓存，全量下载
     console.info('📥 [桌宠] 通过 Rust 代理下载精灵图...')
     try {
-      const result = await invoke('fetch_remote_bytes', { url: SPRITESHEET_URL, ifNoneMatch: null })
+      const result = await invoke('fetch_remote_bytes', {
+        url: getSpritesheetRequestUrl(),
+        ifNoneMatch: null,
+      })
       if (result) {
-        const img = new Image()
-        await new Promise((resolve, reject) => {
-          img.onload = resolve
-          img.onerror = reject
-          img.src = result.data_url
-        })
-        const texture = PIXI.Texture.from(img)
-        spritesheet = {
-          width: img.width,
-          height: img.height,
-          source: texture.source,
-        }
-        console.info('✅ [桌宠] 精灵图下载成功:', spritesheet.width, 'x', spritesheet.height)
+        const resp = await fetch(result.data_url)
+        const blob = await resp.blob()
+        const imageBitmap = await createImageBitmap(blob)
+        frameSet = await createSpriteFrameSet(imageBitmap)
+        console.info('✅ [桌宠] 精灵图下载成功:', frameSet.width, 'x', frameSet.height)
 
         // 缓存到 IndexedDB（含 ETag）
         try {
-          const resp = await fetch(result.data_url)
-          const blob = await resp.blob()
           await setCacheEntry(CACHE_KEY_SPRITE, blob, result.etag)
         } catch (cacheErr) {
           console.warn('⚠️ [桌宠] 缓存写入失败（不影响显示）:', cacheErr?.message || String(cacheErr))
@@ -753,42 +837,25 @@ const initPixiApp = async () => {
   }
 
   // 如果远程和缓存都失败了，使用本地生成的 fallback
-  if (!spritesheet) {
+  if (!frameSet) {
     console.warn('⚠️ [桌宠] 远程和缓存均不可用，使用本地 fallback 精灵图')
     try {
       const fallbackCanvas = generateFallbackSpritesheet()
-      const texture = PIXI.Texture.from(fallbackCanvas)
-      spritesheet = {
-        width: fallbackCanvas.width,
-        height: fallbackCanvas.height,
-        source: texture.source,
-      }
+      frameSet = await createSpriteFrameSet(fallbackCanvas)
     } catch (fallbackErr) {
       console.error('❌ [桌宠] Fallback 精灵图也失败:', fallbackErr?.message || String(fallbackErr))
       return
     }
   }
 
-  // 4列x4行 (16帧)
-  const frameWidth = spritesheet.width / 4
-  const frameHeight = spritesheet.height / 4
-
-  for (let row = 0; row < 4; row++) {
-    for (let col = 0; col < 4; col++) {
-      const rect = new PIXI.Rectangle(col * frameWidth, row * frameHeight, frameWidth, frameHeight)
-      const texture = new PIXI.Texture({
-        source: spritesheet.source,
-        frame: rect,
-      })
-      spriteFrames.push(texture)
-    }
-  }
+  spriteFrames = frameSet.frames
   console.info('🐾 [桌宠] 纹理帧创建完毕，共', spriteFrames.length, '帧')
 
   // 创建精灵并添加到舞台
   currentSprite = new PIXI.Sprite(spriteFrames[0])
 
-  const scale = Math.min(80 / frameWidth, 80 / frameHeight) * 0.9
+  const scale =
+    Math.min(80 / frameSet.frameWidth, 80 / frameSet.frameHeight) * SPRITE_SCALE_FACTOR
   currentSprite.scale.set(scale)
   currentSprite.anchor.set(0.5)
   currentSprite.x = 40
@@ -826,11 +893,13 @@ const cleanupPixiApp = () => {
     clearTimeout(animationTimer)
     animationTimer = null
   }
+  const framesToDestroy = spriteFrames
+  spriteFrames = []
   if (pixiApp) {
-    pixiApp.destroy(true, { children: true, texture: true, baseTexture: true })
+    pixiApp.destroy(true, { children: true })
     pixiApp = null
   }
-  spriteFrames = []
+  destroySpriteFrames(framesToDestroy)
   currentSprite = null
 }
 
@@ -853,7 +922,7 @@ const startResourceRefresh = () => {
       }
     } catch (_) {}
 
-    // 刷新精灵图缓存（ETag 条件请求，下次启动时生效）
+    // 刷新精灵图缓存，并同步更新当前显示
     try {
       const cachedSprite = await getCacheEntry(CACHE_KEY_SPRITE)
       await updateSpritesheetCacheInBackground(cachedSprite?.etag)

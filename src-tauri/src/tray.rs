@@ -1046,6 +1046,9 @@ pub async fn set_locale_preferences(
     info!("🌍 前端同步 UI 与托盘语言: {}", locale);
     let revision = next_locale_change_revision();
     let locale = apply_tray_locale(&app, &locale);
+    if revision != LOCALE_CHANGE_REVISION.load(Ordering::Acquire) {
+        return Ok(());
+    }
     sunshine::set_sunshine_locale(locale.clone()).await?;
     if revision == LOCALE_CHANGE_REVISION.load(Ordering::Acquire) {
         let _ = app.emit(

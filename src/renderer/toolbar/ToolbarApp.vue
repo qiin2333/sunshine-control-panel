@@ -253,6 +253,7 @@ const cancelSpeechAnimationFrame = () => {
 const showSpeech = () => {
   if (
     componentDisposed ||
+    menuVisible.value ||
     !loadMasterEnabled() ||
     !loadRandomEnabled() ||
     speechVisible.value
@@ -277,7 +278,7 @@ const showSpeech = () => {
 // 直接显示桌面观察的状态或错误文本。
 // 与 showSpeech 共用同一气泡组件与入场动画
 const showSpeechRaw = (text, durationMs) => {
-  if (componentDisposed || !loadMasterEnabled() || !text) return
+  if (componentDisposed || menuVisible.value || !loadMasterEnabled() || !text) return
   // 先关再开，确保 v-if 重新挂载、走 bubble-enter 过渡
   speechVisible.value = false
   if (speechTimer) {
@@ -293,6 +294,7 @@ const showSpeechRaw = (text, durationMs) => {
   // 下一帧再设为 true，让 Vue 触发离开→进入过渡
   speechRafId = requestAnimationFrame(() => {
     speechRafId = null
+    if (componentDisposed || menuVisible.value || !loadMasterEnabled()) return
     speechSource.value = 'vision'
     speechText.value = normalized
     speechVisible.value = true
@@ -414,6 +416,7 @@ const awaitWithSignal = (promise, signal) => new Promise((resolve, reject) => {
     reject(error)
   }
   if (signal.aborted) {
+    Promise.resolve(promise).catch(() => {})
     rejectAborted()
     return
   }
@@ -432,7 +435,7 @@ const awaitWithSignal = (promise, signal) => new Promise((resolve, reject) => {
 })
 
 const setVisionSpeech = (text) => {
-  if (componentDisposed || !isPetVisionEnabled()) return false
+  if (componentDisposed || menuVisible.value || !isPetVisionEnabled()) return false
   cancelSpeechAnimationFrame()
   speechSource.value = 'vision'
   speechText.value = text
@@ -740,6 +743,7 @@ const menuItems = computed(() => [
 const toggleMenu = () => {
   menuVisible.value = !menuVisible.value
   if (menuVisible.value) {
+    visionAbortController?.abort('menu-opened')
     cancelSpeechAnimationFrame()
     speechVisible.value = false
     if (speechTimer) {
@@ -898,27 +902,44 @@ const createSpriteFrameSetFromBlob = async (blob) => {
 
 // 后台更新基地娘缓存（ETag 条件请求）
 const updateSpritesheetCacheInBackground = async (cachedEtag) => {
+  if (componentDisposed) return false
+  let pendingFrameSet = null
   try {
     const result = await invoke('fetch_remote_bytes', {
       url: getSpritesheetRequestUrl(),
       ifNoneMatch: cachedEtag || null,
     })
+    if (componentDisposed) return false
     if (result && (!result.etag || result.etag !== cachedEtag)) {
       // 有新数据
       const resp = await fetch(result.data_url)
+      if (componentDisposed) return false
       const blob = await resp.blob()
-      const frameSet = await createSpriteFrameSetFromBlob(blob)
+      if (componentDisposed) return false
+      pendingFrameSet = await createSpriteFrameSetFromBlob(blob)
+      if (componentDisposed) {
+        destroySpriteFrames(pendingFrameSet.frames)
+        pendingFrameSet = null
+        return false
+      }
       await setCacheEntry(CACHE_KEY_SPRITE, blob, result.etag)
+      if (componentDisposed) {
+        destroySpriteFrames(pendingFrameSet.frames)
+        pendingFrameSet = null
+        return false
+      }
 
-      if (applySpriteFrameSet(frameSet)) {
+      if (applySpriteFrameSet(pendingFrameSet)) {
         console.info('✅ [桌宠] 基地娘缓存和当前显示已更新')
       } else {
         console.info('ℹ️ [桌宠] 基地娘缓存已更新，当前显示不可用，下次启动时加载')
       }
+      pendingFrameSet = null
       return true // 表示有更新
     }
     return false // 304 未修改
   } catch (error) {
+    if (pendingFrameSet) destroySpriteFrames(pendingFrameSet.frames)
     console.warn('⚠️ [桌宠] 基地娘后台更新失败:', error?.message || String(error))
     return false
   }
@@ -1152,13 +1173,17 @@ let refreshTimer = null
 // 后台定时检查资源更新（ETag 条件请求，无变化不下载）
 const startResourceRefresh = () => {
   refreshTimer = setInterval(async () => {
+    if (componentDisposed) return
     // 刷新当前语言的话术（ETag 条件请求）。
     await loadSpeechPhrases()
+    if (componentDisposed) return
 
     // 刷新基地娘缓存，并同步更新当前显示
     try {
       const cachedSprite = await getCacheEntry(CACHE_KEY_SPRITE)
+      if (componentDisposed) return
       await updateSpritesheetCacheInBackground(cachedSprite?.etag)
+      if (componentDisposed) return
     } catch (_) {}
   }, REFRESH_INTERVAL_MS)
 }
@@ -1830,6 +1855,11 @@ onMounted(async () => {
   try {
     await initPixiApp()
   } catch (error) {
+    if (initialSpriteRefreshTimer) {
+      clearTimeout(initialSpriteRefreshTimer)
+      initialSpriteRefreshTimer = null
+    }
+    cleanupPixiApp()
     console.error('❌ [桌宠] PixiJS 初始化异常:', error?.message || String(error))
   }
   if (componentDisposed) return

@@ -146,20 +146,27 @@ async function syncLocalePreferences(locale, requestId) {
   }
 }
 
+function requestLocaleChange(value) {
+  const normalized = normalizeDesktopLocale(value)
+  if (normalized === currentLocale.value) return
+
+  const requestId = createLocaleRequestId()
+  setLatestLocaleRequest(requestId)
+  updateCurrentLocale(normalized, true)
+  syncLocalePreferences(normalized, requestId)
+}
+
 export function useI18n() {
   const t = computed(() => messages[currentLocale.value] || messages.en)
   const locale = computed({
     get: () => currentLocale.value,
     set: (val) => {
-      updateCurrentLocale(val, true)
+      requestLocaleChange(val)
     },
   })
   const toggleLocale = () => {
     const newLocale = locale.value === 'zh' ? 'en' : 'zh'
-    const requestId = createLocaleRequestId()
-    setLatestLocaleRequest(requestId)
     locale.value = newLocale
-    syncLocalePreferences(newLocale, requestId)
   }
   return { t, locale, toggleLocale }
 }

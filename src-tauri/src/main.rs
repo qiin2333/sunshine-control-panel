@@ -3,6 +3,7 @@
 
 mod app;
 mod bat_runner;
+mod client_fingerprint_rules;
 mod clipboard;
 mod commands;
 mod controllermeta;
@@ -112,6 +113,7 @@ fn main() {
         .setup(|app| {
             // 初始化日志系统（需要在 setup 中获取 app handle）
             logger::init_logger(app.handle().clone());
+            client_fingerprint_rules::start();
             info!("🚀 Sunshine Control Panel 启动中...");
 
             app::setup_application(app)

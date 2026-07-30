@@ -14,6 +14,9 @@ pub struct SunshineConfig {
     pub resolutions: Option<String>,
     pub fps: Option<String>,
     pub locale: Option<String>,
+    pub client_fingerprint_remote_rules: Option<String>,
+    pub client_fingerprint_rules_url: Option<String>,
+    pub client_fingerprint_rules_refresh_hours: Option<String>,
 }
 
 // 缓存 Sunshine 路径，避免重复查找和记录日志
@@ -277,6 +280,15 @@ fn parse_sunshine_config_content(content: &str) -> SunshineConfig {
                 "resolutions" => config.resolutions = Some(value.to_string()),
                 "fps" => config.fps = Some(value.to_string()),
                 "locale" => config.locale = Some(value.to_string()),
+                "client_fingerprint_remote_rules" => {
+                    config.client_fingerprint_remote_rules = Some(value.to_string())
+                }
+                "client_fingerprint_rules_url" => {
+                    config.client_fingerprint_rules_url = Some(value.to_string())
+                }
+                "client_fingerprint_rules_refresh_hours" => {
+                    config.client_fingerprint_rules_refresh_hours = Some(value.to_string())
+                }
                 _ => {}
             }
         }
@@ -412,6 +424,8 @@ pub struct TrayClientSession {
     pub id: u32,
     #[serde(default)]
     pub client_name: String,
+    #[serde(default)]
+    pub highly_suspected_unknown_client: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
@@ -844,6 +858,51 @@ pub async fn get_tray_state() -> Result<TrayState, String> {
     }
 
     parse_tray_state_json(&response_text)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ClientFingerprintRuleInstallResponse {
+    pub status: bool,
+    pub installed: bool,
+    pub unchanged: bool,
+    pub revision: u64,
+}
+
+pub async fn post_client_fingerprint_rules(
+    envelope: &str,
+) -> Result<ClientFingerprintRuleInstallResponse, String> {
+    let endpoint = local_tray_endpoint("client-fingerprint-rules").await?;
+    let client = create_https_client()?;
+    let response = client
+        .post(&endpoint)
+        .json(&serde_json::json!({ "envelope": envelope }))
+        .send()
+        .await
+        .map_err(|e| format!("Submit client fingerprint rules failed: {}", e))?;
+
+    let status = response.status();
+    let response_text = response
+        .text()
+        .await
+        .map_err(|e| format!("Read client fingerprint rule response failed: {}", e))?;
+    if !status.is_success() {
+        return Err(format!(
+            "Client fingerprint rules were rejected (status {}): {}",
+            status, response_text
+        ));
+    }
+
+    let result: ClientFingerprintRuleInstallResponse = serde_json::from_str(&response_text)
+        .map_err(|e| {
+            format!(
+                "Parse client fingerprint rule response failed: {}; body: {}",
+                e, response_text
+            )
+        })?;
+    if !result.status {
+        return Err("Client fingerprint rule response reported failure".to_string());
+    }
+    Ok(result)
 }
 
 pub fn create_https_client() -> Result<reqwest::Client, String> {

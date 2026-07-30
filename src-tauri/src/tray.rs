@@ -1,4 +1,5 @@
 use log::{debug, error, info, warn};
+use once_cell::sync::Lazy;
 use serde::Serialize;
 use std::{
     sync::{
@@ -43,6 +44,8 @@ static SUNSHINE_USER_MODE_STATE: Mutex<bool> = Mutex::new(false);
 // 当前语言状态管理 ("zh" 或 "en")
 static CURRENT_LOCALE: Mutex<Option<String>> = Mutex::new(None);
 static LOCALE_CHANGE_REVISION: AtomicU64 = AtomicU64::new(0);
+static LOCALE_PERSIST_LOCK: Lazy<tokio::sync::Mutex<()>> =
+    Lazy::new(|| tokio::sync::Mutex::new(()));
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,6 +57,16 @@ struct TrayLocaleChangedPayload {
 
 fn next_locale_change_revision() -> u64 {
     LOCALE_CHANGE_REVISION.fetch_add(1, Ordering::AcqRel) + 1
+}
+
+async fn persist_latest_locale(revision: u64, locale: String) -> Result<bool, String> {
+    let _guard = LOCALE_PERSIST_LOCK.lock().await;
+    if revision != LOCALE_CHANGE_REVISION.load(Ordering::Acquire) {
+        return Ok(false);
+    }
+
+    sunshine::set_sunshine_locale(locale).await?;
+    Ok(true)
 }
 
 // Last icon name applied from the Sunshine core state. This avoids repeatedly
@@ -989,10 +1002,7 @@ fn switch_tray_locale<R: Runtime>(app: &AppHandle<R>, locale: &str) {
     let locale = apply_tray_locale(app, locale);
     let locale_to_persist = locale.clone();
     tauri::async_runtime::spawn(async move {
-        if revision != LOCALE_CHANGE_REVISION.load(Ordering::Acquire) {
-            return;
-        }
-        if let Err(error) = sunshine::set_sunshine_locale(locale_to_persist.clone()).await {
+        if let Err(error) = persist_latest_locale(revision, locale_to_persist.clone()).await {
             warn!(
                 "Failed to persist Sunshine locale '{}': {}",
                 locale_to_persist, error
@@ -1046,10 +1056,9 @@ pub async fn set_locale_preferences(
     info!("🌍 前端同步 UI 与托盘语言: {}", locale);
     let revision = next_locale_change_revision();
     let locale = apply_tray_locale(&app, &locale);
-    if revision != LOCALE_CHANGE_REVISION.load(Ordering::Acquire) {
+    if !persist_latest_locale(revision, locale.clone()).await? {
         return Ok(());
     }
-    sunshine::set_sunshine_locale(locale.clone()).await?;
     if revision == LOCALE_CHANGE_REVISION.load(Ordering::Acquire) {
         let _ = app.emit(
             "tray-locale-changed",

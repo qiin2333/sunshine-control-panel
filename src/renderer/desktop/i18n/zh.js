@@ -522,7 +522,7 @@ export const zh = {
     pokeNowDesc: '让桌宠马上看一眼屏幕并说一句',
     pokeBtn: '戳一下',
     pokePending: '观察中…',
-    pokeFailed: '工具栏没有响应，请重新打开桌宠后再试',
+    pokeFailed: '观察未完成，请检查 AI 配置和桌宠状态后重试',
     visionHistory: '最近历史',
     visionHistoryDesc: '查看桌宠最近的 5 句历史',
     visionHistoryEmpty: '还没有历史记录，戳一下试试～',

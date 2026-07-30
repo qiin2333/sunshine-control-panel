@@ -32,7 +32,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ChatDotRound } from '@element-plus/icons-vue'
 import { useDesktopPet } from '../../../composables/useDesktopPet.js'
 import { useI18n } from '../../i18n/index.js'
@@ -55,6 +55,9 @@ const {
 } = useDesktopPet()
 
 const petIntervalSec = ref(Math.round(observeInterval.value / 1000))
+watch(observeInterval, (value) => {
+  petIntervalSec.value = Math.round(value / 1000)
+})
 
 const petIntervalOptions = computed(() => [
   { value: 15, label: t.value.settings.intervals.s15 },

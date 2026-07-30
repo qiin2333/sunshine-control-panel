@@ -522,7 +522,7 @@ export const en = {
     pokeNowDesc: 'Make the pet take a look and say something right now',
     pokeBtn: 'Poke',
     pokePending: 'Observing…',
-    pokeFailed: 'The toolbar did not respond. Reopen the desktop pet and try again.',
+    pokeFailed: 'Observation did not complete. Check the AI settings and desktop pet, then try again.',
     visionHistory: 'Recent Comments',
     visionHistoryDesc: 'View the pet\'s last 5 desktop comments',
     visionHistoryEmpty: 'No history yet, give the pet a poke~',

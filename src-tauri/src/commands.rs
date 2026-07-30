@@ -8,6 +8,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use tauri::{AppHandle, Emitter, Manager};
+use url::Url;
 
 /// Shared CDN HTTP client with connection pooling.
 pub fn cdn_client() -> &'static reqwest::Client {
@@ -40,6 +41,14 @@ fn utf8_prefix(value: &str, max_bytes: usize) -> &str {
         end -= 1;
     }
     &value[..end]
+}
+
+fn is_allowed_asset_url(value: &str) -> bool {
+    Url::parse(value).is_ok_and(|url| {
+        url.scheme() == "https"
+            && url.host_str() == Some("assets.alkaidlab.com")
+            && url.port_or_known_default() == Some(443)
+    })
 }
 
 /// CDN GET with one retry and optional ETag conditional request.
@@ -435,7 +444,7 @@ pub async fn fetch_remote_bytes(
     if_none_match: Option<String>,
 ) -> Result<Option<RemoteBytesResponse>, String> {
     // Allowlist the asset CDN only.
-    if !url.starts_with("https://assets.alkaidlab.com/") {
+    if !is_allowed_asset_url(&url) {
         return Err(format!("Proxying this URL is not allowed: {}", url));
     }
 
@@ -626,7 +635,7 @@ pub async fn capture_screenshot(window: tauri::WebviewWindow) -> Result<String, 
 
 #[cfg(test)]
 mod tests {
-    use super::{scaled_image_dimensions, utf8_prefix};
+    use super::{is_allowed_asset_url, scaled_image_dimensions, utf8_prefix};
 
     #[test]
     fn utf8_prefix_stops_at_a_character_boundary() {
@@ -641,5 +650,24 @@ mod tests {
         assert_eq!(scaled_image_dimensions(1920, 1080, 1024), (1024, 576));
         assert_eq!(scaled_image_dimensions(1080, 1920, 1024), (576, 1024));
         assert_eq!(scaled_image_dimensions(800, 600, 1024), (800, 600));
+    }
+
+    #[test]
+    fn remote_asset_url_requires_the_exact_https_cdn_host() {
+        assert!(is_allowed_asset_url(
+            "https://assets.alkaidlab.com/toolbar-spritesheet.webp?t=1"
+        ));
+        assert!(is_allowed_asset_url(
+            "https://assets.alkaidlab.com:443/speech-phrases.json"
+        ));
+        assert!(!is_allowed_asset_url(
+            "https://assets.alkaidlab.com.example.com/toolbar-spritesheet.webp"
+        ));
+        assert!(!is_allowed_asset_url(
+            "http://assets.alkaidlab.com/toolbar-spritesheet.webp"
+        ));
+        assert!(!is_allowed_asset_url(
+            "https://assets.alkaidlab.com:444/toolbar-spritesheet.webp"
+        ));
     }
 }

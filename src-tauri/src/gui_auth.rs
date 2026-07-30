@@ -14,7 +14,7 @@ const ENV_TOKEN: &str = "SUNSHINE_GUI_TOKEN";
 #[cfg(windows)]
 const TOKEN_PIPE: &str = r"\\.\pipe\sunshine_gui_token";
 
-static TOKEN: Lazy<RwLock<Option<String>>> = Lazy::new(|| RwLock::new(token_from_env()));
+static TOKEN: Lazy<RwLock<Option<String>>> = Lazy::new(|| RwLock::new(None));
 static TOKEN_FETCH_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 #[cfg(test)]
@@ -251,6 +251,29 @@ mod tests {
         let _state = test_set_state(None, None);
 
         assert!(current().is_none());
+    }
+
+    #[tokio::test]
+    async fn first_acquisition_prefers_pipe_over_environment() {
+        const ENVIRONMENT_TOKEN: &str = "0123456789abcdef";
+        const PIPE_TOKEN: &str = "fedcba9876543210";
+
+        let _lock = TEST_AUTH_LOCK.lock().await;
+        let previous_env = std::env::var_os(ENV_TOKEN);
+        unsafe { std::env::set_var(ENV_TOKEN, ENVIRONMENT_TOKEN) };
+
+        let result = {
+            let _state = test_set_state(None, Some(PIPE_TOKEN));
+            current()
+        };
+
+        if let Some(value) = previous_env {
+            unsafe { std::env::set_var(ENV_TOKEN, value) };
+        } else {
+            unsafe { std::env::remove_var(ENV_TOKEN) };
+        }
+
+        assert_eq!(result.as_deref(), Some(PIPE_TOKEN));
     }
 
     #[tokio::test]

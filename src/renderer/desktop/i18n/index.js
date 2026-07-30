@@ -5,6 +5,7 @@ import { en } from './en.js'
 const messages = { zh, en }
 const LOCALE_REQUEST_KEY = 'foundation-desktop-locale-request'
 let localLocaleRequestId = null
+let latestBackendLocaleRevision = 0
 
 function normalizeDesktopLocale(locale) {
   return locale?.toLowerCase().startsWith('zh') ? 'zh' : 'en'
@@ -110,6 +111,11 @@ async function listenTrayLocaleChanged() {
 
       const source = typeof payload === 'object' ? payload.source : 'tray'
       const requestId = typeof payload === 'object' ? payload.requestId : null
+      const revision = typeof payload === 'object' ? Number(payload.revision) : Number.NaN
+      if (Number.isSafeInteger(revision)) {
+        if (revision <= latestBackendLocaleRevision) return
+        latestBackendLocaleRevision = revision
+      }
       if (source === 'frontend' && requestId) {
         const latestRequestId = getLatestLocaleRequest()
         if (latestRequestId && latestRequestId !== requestId) return

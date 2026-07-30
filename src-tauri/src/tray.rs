@@ -53,6 +53,7 @@ struct TrayLocaleChangedPayload {
     locale: String,
     source: &'static str,
     request_id: Option<String>,
+    revision: u64,
 }
 
 fn next_locale_change_revision() -> u64 {
@@ -67,6 +68,14 @@ async fn persist_latest_locale(revision: u64, locale: String) -> Result<bool, St
 
     sunshine::set_sunshine_locale(locale).await?;
     Ok(true)
+}
+
+fn emit_tray_locale_changed<R: Runtime>(
+    app: &AppHandle<R>,
+    payload: &TrayLocaleChangedPayload,
+) -> Result<(), String> {
+    app.emit("tray-locale-changed", payload)
+        .map_err(|error| format!("Failed to broadcast locale change: {error}"))
 }
 
 // Last icon name applied from the Sunshine core state. This avoids repeatedly
@@ -1010,14 +1019,18 @@ fn switch_tray_locale<R: Runtime>(app: &AppHandle<R>, locale: &str) {
         }
     });
     // 所有已打开的 webview 都维护独立的 Vue 状态，需要一起同步。
-    let _ = app.emit(
-        "tray-locale-changed",
-        TrayLocaleChangedPayload {
-            locale,
-            source: "tray",
-            request_id: None,
-        },
-    );
+    let payload = TrayLocaleChangedPayload {
+        locale,
+        source: "tray",
+        request_id: None,
+        revision,
+    };
+    if let Err(error) = emit_tray_locale_changed(app, &payload) {
+        warn!("{error}; retrying once");
+        if let Err(retry_error) = emit_tray_locale_changed(app, &payload) {
+            warn!("{retry_error}");
+        }
+    }
 }
 
 /// 重建托盘菜单（语言切换后调用）
@@ -1060,14 +1073,15 @@ pub async fn set_locale_preferences(
         return Ok(());
     }
     if revision == LOCALE_CHANGE_REVISION.load(Ordering::Acquire) {
-        let _ = app.emit(
-            "tray-locale-changed",
-            TrayLocaleChangedPayload {
+        emit_tray_locale_changed(
+            &app,
+            &TrayLocaleChangedPayload {
                 locale,
                 source: "frontend",
                 request_id,
+                revision,
             },
-        );
+        )?;
     }
     Ok(())
 }

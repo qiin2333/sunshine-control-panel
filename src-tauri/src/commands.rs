@@ -48,6 +48,8 @@ fn is_allowed_asset_url(value: &str) -> bool {
         url.scheme() == "https"
             && url.host_str() == Some("assets.alkaidlab.com")
             && url.port_or_known_default() == Some(443)
+            && url.username().is_empty()
+            && url.password().is_none()
     })
 }
 
@@ -668,6 +670,9 @@ mod tests {
         ));
         assert!(!is_allowed_asset_url(
             "https://assets.alkaidlab.com:444/toolbar-spritesheet.webp"
+        ));
+        assert!(!is_allowed_asset_url(
+            "https://user:secret@assets.alkaidlab.com/toolbar-spritesheet.webp"
         ));
     }
 }

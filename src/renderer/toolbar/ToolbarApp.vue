@@ -344,6 +344,7 @@ const extractErrorMessage = (err) => {
 
 // 错误特征 → i18n key 映射；命中即返回对应短提示
 const VISION_ERROR_PATTERNS = [
+  [/capture is already in progress/, 'visionBusy'],
   [/not a vlm|vision language model|text-only|no vision|不支持视觉|不支持图像/, 'notVlm'],
   [/401|unauthor|invalid api key/, 'unauthorized'],
   [/403|forbidden|permission/, 'forbidden'],
@@ -355,9 +356,10 @@ const VISION_ERROR_PATTERNS = [
 
 const friendlyVisionError = (msg) => {
   const m = (msg || '').toLowerCase()
-  const errors = rt().errors || {}
+  const runtime = rt()
+  const errors = runtime.errors || {}
   for (const [re, key] of VISION_ERROR_PATTERNS) {
-    if (re.test(m)) return errors[key] || null
+    if (re.test(m)) return key === 'visionBusy' ? runtime.visionBusy || null : errors[key] || null
   }
   return null
 }
@@ -568,6 +570,9 @@ const rescheduleSpeech = () => {
     speechVisible.value = false
     if (speechTimer) { clearTimeout(speechTimer); speechTimer = null }
     return
+  }
+  if (!visionOn) {
+    cancelSpeechAnimationFrame()
   }
   if (!speechVisible.value) return
   if (speechSource.value === 'vision' && !visionOn) {

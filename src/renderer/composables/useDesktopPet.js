@@ -13,16 +13,25 @@ import {
 const isObserving = ref(false)
 const petEnabled = ref(loadVisionEnabled())
 const observeInterval = ref(loadVisionIntervalSec() * 1000)
+const pokeFailed = ref(false)
+
+function persistSetting(key, value) {
+  try {
+    localStorage.setItem(key, value)
+  } catch (error) {
+    console.warn('[桌宠] 配置持久化失败:', error)
+  }
+}
 
 function startObserving() {
   petEnabled.value = true
-  localStorage.setItem(PET_VISION_ENABLED_KEY, 'true')
+  persistSetting(PET_VISION_ENABLED_KEY, 'true')
   notifyPetConfigChanged()
 }
 
 function stopObserving() {
   petEnabled.value = false
-  localStorage.setItem(PET_VISION_ENABLED_KEY, 'false')
+  persistSetting(PET_VISION_ENABLED_KEY, 'false')
   notifyPetConfigChanged()
 }
 
@@ -32,17 +41,20 @@ function setIntervalSeconds(seconds) {
     ? Math.min(MAX_INTERVAL_SEC, Math.max(MIN_INTERVAL_SEC, parsed))
     : MIN_INTERVAL_SEC
   observeInterval.value = clamped * 1000
-  localStorage.setItem(PET_VISION_INTERVAL_KEY, String(observeInterval.value))
+  persistSetting(PET_VISION_INTERVAL_KEY, String(observeInterval.value))
   notifyPetConfigChanged()
 }
 
 async function poke() {
   if (isObserving.value) return
   isObserving.value = true
+  pokeFailed.value = false
   try {
-    await requestPetVision({ ensureToolbar: true })
+    const result = await requestPetVision({ ensureToolbar: true })
+    pokeFailed.value = !result?.success
   } catch (error) {
     console.warn('[桌宠] 立即观察失败:', error)
+    pokeFailed.value = true
   } finally {
     isObserving.value = false
   }
@@ -67,6 +79,7 @@ export function useDesktopPet() {
     petEnabled,
     isObserving,
     observeInterval,
+    pokeFailed,
     startObserving,
     stopObserving,
     setIntervalSeconds,

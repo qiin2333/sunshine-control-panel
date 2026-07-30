@@ -19,8 +19,11 @@
     <SettingsRow
       v-if="petEnabled"
       :name="t.settings.pokeMita"
-      :description="t.settings.pokeMitaDesc"
     >
+      <template #description>
+        {{ t.settings.pokeMitaDesc }}
+        <span v-if="pokeFailed" class="pet-error">{{ t.petTool.pokeFailed }}</span>
+      </template>
       <button class="desktop-btn" :disabled="isObserving" @click="poke">
         {{ isObserving ? t.settings.pokeBtnObserving : t.settings.pokeBtn }}
       </button>
@@ -44,6 +47,7 @@ const {
   petEnabled,
   isObserving,
   observeInterval,
+  pokeFailed,
   startObserving,
   stopObserving,
   setIntervalSeconds,
@@ -72,3 +76,11 @@ function onPetIntervalChange(nextValue = petIntervalSec.value) {
   setIntervalSeconds(nextValue)
 }
 </script>
+
+<style lang="less" scoped>
+.pet-error {
+  display: block;
+  margin-top: 4px;
+  color: var(--fd-status-danger, #ff6b35);
+}
+</style>

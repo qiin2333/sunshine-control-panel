@@ -3,7 +3,10 @@ use base64::Engine as _;
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{
+    OnceLock,
+    atomic::{AtomicBool, Ordering},
+};
 use tauri::{AppHandle, Emitter, Manager};
 
 /// Shared CDN HTTP client with connection pooling.
@@ -526,7 +529,24 @@ pub async fn ai_api_proxy(request: AiProxyRequest) -> Result<String, String> {
 
 // ===== Desktop screenshot for pet vision =====
 
-static SCREENSHOT_CAPTURE_LOCK: Mutex<()> = Mutex::new(());
+static SCREENSHOT_CAPTURE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+struct ScreenshotCaptureGuard;
+
+impl ScreenshotCaptureGuard {
+    fn try_acquire() -> Result<Self, String> {
+        SCREENSHOT_CAPTURE_IN_PROGRESS
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map(|_| Self)
+            .map_err(|_| "A screenshot capture is already in progress".to_string())
+    }
+}
+
+impl Drop for ScreenshotCaptureGuard {
+    fn drop(&mut self) {
+        SCREENSHOT_CAPTURE_IN_PROGRESS.store(false, Ordering::Release);
+    }
+}
 
 fn scaled_image_dimensions(width: u32, height: u32, max_dimension: u32) -> (u32, u32) {
     let max_dimension = max_dimension.max(1);
@@ -554,9 +574,7 @@ pub async fn capture_screenshot(window: tauri::WebviewWindow) -> Result<String, 
 
     // xcap uses a synchronous API, so capture on a blocking thread.
     tokio::task::spawn_blocking(|| {
-        let _capture_guard = SCREENSHOT_CAPTURE_LOCK
-            .try_lock()
-            .map_err(|_| "A screenshot capture is already in progress".to_string())?;
+        let _capture_guard = ScreenshotCaptureGuard::try_acquire()?;
 
         let mut monitors =
             Monitor::all().map_err(|e| format!("Failed to enumerate monitors: {}", e))?;

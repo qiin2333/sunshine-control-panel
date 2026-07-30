@@ -157,9 +157,11 @@ function createVisionRequestId() {
 export async function requestPetVision({
   ensureToolbar = false,
   onStatus,
-  readyTimeoutMs = 5000,
+  readyTimeoutMs,
   completionTimeoutMs = 130000,
 } = {}) {
+  const effectiveReadyTimeoutMs = readyTimeoutMs ?? (ensureToolbar ? 15000 : 5000)
+
   if (ensureToolbar) {
     const { invoke } = await import('@tauri-apps/api/core')
     await invoke('create_toolbar_window')
@@ -226,7 +228,7 @@ export async function requestPetVision({
     }, 250)
     readyTimer = setTimeout(() => {
       finish(reject, new Error('Desktop pet toolbar did not accept the request'))
-    }, readyTimeoutMs)
+    }, effectiveReadyTimeoutMs)
     completionTimer = setTimeout(() => {
       finish(reject, new Error('Desktop pet observation timed out'))
     }, completionTimeoutMs)

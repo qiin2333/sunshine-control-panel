@@ -80,6 +80,13 @@ fn allow_id(command: &str) -> String {
 /// 该 capability 仅包含 app commands 的 allow- 权限并绑定 sunshine backend
 /// remote URLs；窗口/插件/外部 URL 等由 `capabilities/default.json` 维护。
 fn write_capability(commands: &[String]) {
+    for local_only in LOCAL_ONLY_COMMANDS {
+        assert!(
+            commands.iter().any(|command| command == local_only),
+            "LOCAL_ONLY_COMMANDS entry `{local_only}` was not found in generate_handler!"
+        );
+    }
+
     let permissions: Vec<String> = commands
         .iter()
         .filter(|command| !LOCAL_ONLY_COMMANDS.contains(&command.as_str()))

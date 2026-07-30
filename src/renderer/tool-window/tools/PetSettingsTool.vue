@@ -193,7 +193,7 @@
                   <div class="row-info">
                     <div class="row-name">{{ t.petTool.pokeNow }}</div>
                     <div class="row-desc">{{ t.petTool.pokeNowDesc }}</div>
-                    <div v-if="pokeError" class="row-desc warn">{{ pokeError }}</div>
+                    <div v-if="pokeFailed" class="row-desc warn">{{ t.petTool.pokeFailed }}</div>
                   </div>
                   <div class="row-control">
                     <button class="pet-btn" :disabled="pokePending" @click="onPokeNow">
@@ -310,7 +310,8 @@ const aiConfigVersion = ref(0)
 
 // AI 配置状态（决定桌面观察是否可用）
 const aiConfigReady = computed(() => {
-  void aiConfigVersion.value
+  const configVersion = aiConfigVersion.value
+  if (!Number.isFinite(configVersion)) return false
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
     const cfg = saved ? { ...DEFAULT_CONFIG, ...JSON.parse(saved) } : { ...DEFAULT_CONFIG }
@@ -326,7 +327,7 @@ const visionToggleDisabled = computed(() => !masterEnabled.value || !aiConfigRea
 const visionHistory = ref(loadVisionHistory())
 const showHistory = ref(false)
 const pokePending = ref(false)
-const pokeError = ref('')
+const pokeFailed = ref(false)
 
 function refreshHistory() {
   visionHistory.value = loadVisionHistory()
@@ -461,13 +462,17 @@ function setVisionIntervalPreset(sec) {
 async function onPokeNow() {
   if (!aiConfigReady.value || !visionEnabled.value || pokePending.value) return
   pokePending.value = true
-  pokeError.value = ''
+  pokeFailed.value = false
   try {
-    await requestPetVision({ ensureToolbar: true })
-    refreshHistory()
+    const result = await requestPetVision({ ensureToolbar: true })
+    if (result?.success) {
+      refreshHistory()
+    } else {
+      pokeFailed.value = true
+    }
   } catch (error) {
     console.warn('[桌宠设置] 立即观察失败:', error)
-    pokeError.value = t.value.petTool.pokeFailed
+    pokeFailed.value = true
   } finally {
     pokePending.value = false
   }

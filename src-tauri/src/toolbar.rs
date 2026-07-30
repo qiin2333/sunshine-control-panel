@@ -255,12 +255,13 @@ fn default_toolbar_position(
     };
     let monitor_position = monitor.position();
     let monitor_size = monitor.size();
-    let width = (toolbar_size * scale).round() as i32;
+    let physical_size = (toolbar_size * scale).round() as i32;
+    let (width, height) = (physical_size, physical_size);
     let right_inset = (80.0 * scale).round() as i32;
     let bottom_inset = (100.0 * scale).round() as i32;
     tauri::PhysicalPosition::new(
         monitor_position.x + monitor_size.width as i32 - width - right_inset,
-        monitor_position.y + monitor_size.height as i32 - width - bottom_inset,
+        monitor_position.y + monitor_size.height as i32 - height - bottom_inset,
     )
 }
 

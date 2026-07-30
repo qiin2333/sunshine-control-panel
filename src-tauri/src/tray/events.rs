@@ -54,12 +54,13 @@ async fn consume_event_stream<R: Runtime + 'static>(
     last_state_key: &mut Option<(String, u64)>,
 ) -> Result<(), String> {
     let endpoint = sunshine::get_tray_events_url().await?;
-    let response = sunshine::create_sse_https_client()?
-        .get(endpoint)
-        .header("Accept", "text/event-stream")
-        .send()
-        .await
-        .map_err(|e| format!("Connect tray event stream failed: {}", e))?;
+    let response = sunshine::send_sse_https_request(|client| {
+        client
+            .get(endpoint.clone())
+            .header("Accept", "text/event-stream")
+    })
+    .await
+    .map_err(|error| format!("Connect tray event stream failed: {}", error))?;
     if !response.status().is_success() {
         return Err(format!(
             "Tray event stream returned status {}",

@@ -10,9 +10,11 @@ mod desktop_settings;
 mod file_mapping;
 mod file_transfer;
 mod fs_utils;
+mod gui_auth;
 mod hwinfo;
 mod logger;
 mod moonlight_web;
+mod proxy_gate;
 mod proxy_server;
 mod rtss;
 #[cfg(target_os = "windows")]

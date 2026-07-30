@@ -1,8 +1,12 @@
 use axum::{
     Router,
-    extract::Request,
+    extract::{
+        Request,
+        connect_info::{ConnectInfo, Connected},
+    },
     middleware::Next,
     response::{IntoResponse, Response},
+    serve::IncomingStream,
 };
 use bytes::Bytes;
 use log::{debug, error, info, warn};
@@ -10,7 +14,7 @@ use once_cell::sync::Lazy;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
-use tokio::sync::Notify;
+use tokio::sync::{Notify, OnceCell};
 use tower_http::cors::CorsLayer;
 
 /// 全局 Sunshine 目标 URL（动态配置）
@@ -165,6 +169,64 @@ const INJECT_SCRIPT: &str = include_str!("../inject-script.js");
 /// 调皮的404页面（当Sunshine未启动时显示，编译时从文件读取）
 const ERROR_404_PAGE: &str = include_str!("../error-404.html");
 
+/// 门禁拒绝页：本机浏览器等外部进程不允许借道代理绕过 Sunshine 密码认证
+const GATE_DENIED_PAGE: &str = r#"<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>Sunshine</title></head>
+<body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+<div style="text-align:center"><h2>此端口仅供 Sunshine 控制面板内部使用</h2>
+<p>请通过 <a href="https://localhost:47990">https://localhost:47990</a> 访问 WebUI（需要用户名密码）。</p></div>
+</body></html>"#;
+
+/// 每条 TCP 连接独立保存一次门禁判定，避免临时端口复用时跨连接继承结果。
+#[derive(Clone, Debug)]
+struct GuiConnectionInfo {
+    peer: SocketAddr,
+    allowed: Arc<OnceCell<bool>>,
+}
+
+impl Connected<IncomingStream<'_, tokio::net::TcpListener>> for GuiConnectionInfo {
+    fn connect_info(stream: IncomingStream<'_, tokio::net::TcpListener>) -> Self {
+        Self {
+            peer: *stream.remote_addr(),
+            allowed: Arc::new(OnceCell::new()),
+        }
+    }
+}
+
+/// 本地代理门禁中间件：反查对端连接的进程，只放行本进程及其
+/// WebView2 子进程。否则任何本机浏览器都能借代理注入的 token 绕过
+/// Sunshine 的密码认证。
+async fn gui_gate_middleware(
+    ConnectInfo(connection): ConnectInfo<GuiConnectionInfo>,
+    req: Request,
+    next: Next,
+) -> Response {
+    let peer = connection.peer;
+    let allowed = *connection
+        .allowed
+        .get_or_init(|| async move {
+            let peer_port = peer.port();
+            let proxy_port = get_proxy_port();
+            tokio::task::spawn_blocking(move || {
+                crate::proxy_gate::peer_allowed(peer_port, proxy_port)
+            })
+            .await
+            .unwrap_or(false)
+        })
+        .await;
+
+    if !allowed {
+        warn!("🚫 拒绝非 GUI 进程访问本地代理: {}", peer);
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            GATE_DENIED_PAGE,
+        )
+            .into_response();
+    }
+    next.run(req).await
+}
+
 /// Private Network Access (PNA) Middleware
 /// 根据 Microsoft Edge 143+ 的要求添加 PNA 支持头部
 async fn pna_middleware(req: Request, next: Next) -> Response {
@@ -202,7 +264,9 @@ pub async fn start_proxy_server() -> Result<(), Box<dyn std::error::Error + Send
     let app = Router::new()
         .fallback(proxy_handler)
         .layer(CorsLayer::permissive())
-        .layer(axum::middleware::from_fn(pna_middleware));
+        .layer(axum::middleware::from_fn(pna_middleware))
+        // 最外层：先过门禁再进任何业务逻辑（包括 OPTIONS 预检）
+        .layer(axum::middleware::from_fn(gui_gate_middleware));
 
     // 尝试在端口范围内找到可用端口
     let mut listener = None;
@@ -247,7 +311,13 @@ pub async fn start_proxy_server() -> Result<(), Box<dyn std::error::Error + Send
     );
     info!("   开始监听请求...");
 
-    let result = axum::serve(listener, app).await.map_err(|e| {
+    let result = axum::serve(
+        listener,
+        // 门禁需要连接级状态来复用一次进程校验结果
+        app.into_make_service_with_connect_info::<GuiConnectionInfo>(),
+    )
+    .await
+    .map_err(|e| {
         error!("❌ 代理服务器运行失败: {}", e);
         e.into()
     });
@@ -579,6 +649,12 @@ async fn proxy_handler(req: Request) -> Response {
             }
             response
         }
+        Err(ProxyFetchError::GuiAuthUnavailable) => proxy_error_response(
+            is_api,
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "Sunshine GUI authentication is not ready",
+            None,
+        ),
         Err(e) => {
             let error_str = e.to_string();
             let error_kind = proxy_error_kind(&error_str);
@@ -600,6 +676,12 @@ async fn proxy_handler(req: Request) -> Response {
                                 mark_available();
                                 response
                             }
+                            Err(ProxyFetchError::GuiAuthUnavailable) => proxy_error_response(
+                                is_api,
+                                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                                "Sunshine GUI authentication is not ready",
+                                None,
+                            ),
                             Err(retry_err) => {
                                 let retry_error = retry_err.to_string();
                                 let retry_kind = proxy_error_kind(&retry_error);
@@ -960,6 +1042,79 @@ async fn send_request(
     req_builder.send().await
 }
 
+#[derive(Debug)]
+enum ProxyFetchError {
+    GuiAuthUnavailable,
+    Upstream(reqwest::Error),
+    BuildResponse(axum::http::Error),
+}
+
+impl std::fmt::Display for ProxyFetchError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::GuiAuthUnavailable => {
+                formatter.write_str("Sunshine GUI authentication token is unavailable")
+            }
+            Self::Upstream(error) => error.fmt(formatter),
+            Self::BuildResponse(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for ProxyFetchError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::GuiAuthUnavailable => None,
+            Self::Upstream(error) => Some(error),
+            Self::BuildResponse(error) => Some(error),
+        }
+    }
+}
+
+impl From<reqwest::Error> for ProxyFetchError {
+    fn from(error: reqwest::Error) -> Self {
+        Self::Upstream(error)
+    }
+}
+
+impl From<axum::http::Error> for ProxyFetchError {
+    fn from(error: axum::http::Error) -> Self {
+        Self::BuildResponse(error)
+    }
+}
+
+/// 注入 GUI 内存鉴权 token（仅用于 Sunshine 目标；Steam/外部代理不走此路径，
+/// 避免 token 泄漏给第三方域名）。覆盖客户端可能自带的 authorization 头。
+async fn apply_gui_token(headers: &mut axum::http::HeaderMap) -> Result<String, ProxyFetchError> {
+    let token = crate::gui_auth::current_async()
+        .await
+        .ok_or(ProxyFetchError::GuiAuthUnavailable)?;
+    let mut value = axum::http::HeaderValue::from_str(&format!("Bearer {}", token))
+        .map_err(|_| ProxyFetchError::GuiAuthUnavailable)?;
+    value.set_sensitive(true);
+    headers.insert(axum::http::header::AUTHORIZATION, value);
+    Ok(token)
+}
+
+/// 发送请求，HTTPS 失败时降级到 HTTP（仅限非连接错误）
+async fn send_with_scheme_fallback(
+    client: &reqwest::Client,
+    url: &str,
+    method: &axum::http::Method,
+    headers: &axum::http::HeaderMap,
+    body: &Bytes,
+) -> Result<reqwest::Response, reqwest::Error> {
+    match send_request(client, url, method, headers, body).await {
+        Ok(resp) => Ok(resp),
+        Err(e) if url.starts_with("https://") && !is_connection_error(&e.to_string()) => {
+            let http_url = url.replace("https://", "http://");
+            warn!("⚠️  HTTPS 连接失败，尝试 HTTP: {}", http_url);
+            send_request(client, &http_url, method, headers, body).await
+        }
+        Err(e) => Err(e),
+    }
+}
+
 /// 获取并代理内容
 async fn fetch_and_proxy(
     url: &str,
@@ -967,23 +1122,41 @@ async fn fetch_and_proxy(
     headers: &axum::http::HeaderMap,
     body: &Bytes,
     is_ai_api: bool,
-) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Response, ProxyFetchError> {
     let client = if is_ai_api {
         get_ai_http_client()
     } else {
         get_http_client()
     };
 
-    // 尝试请求，HTTPS 失败时降级到 HTTP（仅限非连接错误）
-    let response = match send_request(client, url, method, headers, body).await {
-        Ok(resp) => resp,
-        Err(e) if url.starts_with("https://") && !is_connection_error(&e.to_string()) => {
-            let http_url = url.replace("https://", "http://");
-            warn!("⚠️  HTTPS 连接失败，尝试 HTTP: {}", http_url);
-            send_request(client, &http_url, method, headers, body).await?
+    let mut auth_headers = headers.clone();
+    let observed_token = apply_gui_token(&mut auth_headers).await?;
+
+    let mut response = send_with_scheme_fallback(client, url, method, &auth_headers, body).await?;
+
+    // 401 说明 token 可能已轮换（Sunshine 重启），刷新后重试一次。
+    // 刷新后的 token 注入或重试发送失败时，保留首次 401 响应。
+    if response.status() == reqwest::StatusCode::UNAUTHORIZED
+        && crate::gui_auth::refresh_async(observed_token)
+            .await
+            .is_some()
+    {
+        match apply_gui_token(&mut auth_headers).await {
+            Ok(_) => {
+                match send_with_scheme_fallback(client, url, method, &auth_headers, body).await {
+                    Ok(retry_response) => response = retry_response,
+                    Err(error) => warn!(
+                        "Sunshine GUI auth retry failed; returning original 401: {}",
+                        error
+                    ),
+                }
+            }
+            Err(error) => warn!(
+                "Sunshine GUI auth token unavailable after refresh; returning original 401: {}",
+                error
+            ),
         }
-        Err(e) => return Err(e.into()),
-    };
+    }
 
     let status = response.status();
     let resp_headers = response.headers().clone();
@@ -1097,37 +1270,59 @@ fn inject_theme_script(html: String) -> String {
 mod tests {
     use super::*;
     use axum::body::Body;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     static TEST_LOCK: Lazy<tokio::sync::Mutex<()>> = Lazy::new(|| tokio::sync::Mutex::new(()));
+    const TEST_TOKEN: &str = "0123456789abcdef";
+    const REFRESHED_TEST_TOKEN: &str = "fedcba9876543210";
 
     async fn unused_local_port() -> u16 {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         listener.local_addr().unwrap().port()
     }
 
-    async fn spawn_one_shot_http_server(body: &'static str) -> String {
+    async fn spawn_http_sequence(
+        responses: Vec<(u16, &'static str)>,
+    ) -> (String, Arc<AtomicUsize>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
+        let requests = Arc::new(AtomicUsize::new(0));
+        let server_requests = requests.clone();
 
         tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let mut request_buf = [0_u8; 1024];
-            let _ = stream.read(&mut request_buf).await;
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                body.len(),
-                body
-            );
-            stream.write_all(response.as_bytes()).await.unwrap();
+            for (status, body) in responses {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request_buf = [0_u8; 2048];
+                let _ = stream.read(&mut request_buf).await;
+                server_requests.fetch_add(1, Ordering::SeqCst);
+                let reason = match status {
+                    200 => "OK",
+                    401 => "Unauthorized",
+                    _ => "Test",
+                };
+                let response = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
         });
 
-        format!("http://{}", addr)
+        (format!("http://{}", addr), requests)
+    }
+
+    async fn spawn_one_shot_http_server(body: &'static str) -> String {
+        spawn_http_sequence(vec![(200, body)]).await.0
     }
 
     #[tokio::test]
     async fn proxy_retries_with_refreshed_target_when_port_changes() {
         let _guard = TEST_LOCK.lock().await;
+        let _auth_lock = crate::gui_auth::TEST_AUTH_LOCK.lock().await;
+        let _auth_state = crate::gui_auth::test_set_state(Some(TEST_TOKEN), None);
         let marker = "proxy-refresh-target-ok";
         let old_port = unused_local_port().await;
         let new_target = spawn_one_shot_http_server(marker).await;
@@ -1160,6 +1355,8 @@ mod tests {
     #[tokio::test]
     async fn ai_api_bypasses_fast_fail_cache() {
         let _guard = TEST_LOCK.lock().await;
+        let _auth_lock = crate::gui_auth::TEST_AUTH_LOCK.lock().await;
+        let _auth_state = crate::gui_auth::test_set_state(Some(TEST_TOKEN), None);
         let marker = "ai-fast-fail-bypass-ok";
         let new_target = spawn_one_shot_http_server(marker).await;
 
@@ -1194,6 +1391,8 @@ mod tests {
     #[tokio::test]
     async fn ai_api_connection_failure_does_not_mark_sunshine_unavailable() {
         let _guard = TEST_LOCK.lock().await;
+        let _auth_lock = crate::gui_auth::TEST_AUTH_LOCK.lock().await;
+        let _auth_state = crate::gui_auth::test_set_state(Some(TEST_TOKEN), None);
         let old_port = unused_local_port().await;
         let target = format!("http://127.0.0.1:{}", old_port);
 
@@ -1230,5 +1429,88 @@ mod tests {
             SUNSHINE_AVAILABLE.load(std::sync::atomic::Ordering::Relaxed),
             "AI proxy failure should not poison the Sunshine fast-fail cache"
         );
+    }
+
+    #[tokio::test]
+    async fn no_token_returns_503_without_connecting_upstream() {
+        let _guard = TEST_LOCK.lock().await;
+        let _auth_lock = crate::gui_auth::TEST_AUTH_LOCK.lock().await;
+        let _auth_state = crate::gui_auth::test_set_state(None, None);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target = format!("http://{}", listener.local_addr().unwrap());
+        set_sunshine_target(target);
+
+        let request = axum::http::Request::builder()
+            .method(axum::http::Method::GET)
+            .uri("/")
+            .body(Body::empty())
+            .unwrap();
+        let response = proxy_handler(request).await;
+
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), listener.accept())
+                .await
+                .is_err(),
+            "proxy connected to upstream without a GUI token"
+        );
+    }
+
+    #[tokio::test]
+    async fn proxy_retries_401_once_with_refreshed_token() {
+        let _guard = TEST_LOCK.lock().await;
+        let _auth_lock = crate::gui_auth::TEST_AUTH_LOCK.lock().await;
+        let _auth_state =
+            crate::gui_auth::test_set_state(Some(TEST_TOKEN), Some(REFRESHED_TEST_TOKEN));
+        let (target, requests) =
+            spawn_http_sequence(vec![(401, "first-401"), (200, "refreshed-ok")]).await;
+
+        let response = fetch_and_proxy(
+            &target,
+            &axum::http::Method::GET,
+            &axum::http::HeaderMap::new(),
+            &Bytes::new(),
+            false,
+        )
+        .await
+        .unwrap();
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(String::from_utf8_lossy(&body), "refreshed-ok");
+        assert_eq!(requests.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn proxy_retry_failure_keeps_original_401() {
+        let _guard = TEST_LOCK.lock().await;
+        let _auth_lock = crate::gui_auth::TEST_AUTH_LOCK.lock().await;
+        let _auth_state =
+            crate::gui_auth::test_set_state(Some(TEST_TOKEN), Some(REFRESHED_TEST_TOKEN));
+        let (target, requests) = spawn_http_sequence(vec![(401, "original-401")]).await;
+
+        let response = fetch_and_proxy(
+            &target,
+            &axum::http::Method::GET,
+            &axum::http::HeaderMap::new(),
+            &Bytes::new(),
+            false,
+        )
+        .await
+        .unwrap();
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+
+        assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED);
+        assert_eq!(String::from_utf8_lossy(&body), "original-401");
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
     }
 }

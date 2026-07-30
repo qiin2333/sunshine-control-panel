@@ -163,6 +163,63 @@ fn load_tool_window_position<R: Runtime>(app: &AppHandle<R>) -> Option<(f64, f64
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct MonitorBounds {
+    position: tauri::PhysicalPosition<i32>,
+    size: tauri::PhysicalSize<u32>,
+}
+
+fn squared_distance_to_monitor(point: tauri::PhysicalPosition<i32>, monitor: MonitorBounds) -> i64 {
+    let min_x = monitor.position.x as i64;
+    let min_y = monitor.position.y as i64;
+    let max_x = min_x + monitor.size.width.saturating_sub(1) as i64;
+    let max_y = min_y + monitor.size.height.saturating_sub(1) as i64;
+    let x = point.x as i64;
+    let y = point.y as i64;
+    let dx = if x < min_x {
+        min_x - x
+    } else if x > max_x {
+        x - max_x
+    } else {
+        0
+    };
+    let dy = if y < min_y {
+        min_y - y
+    } else if y > max_y {
+        y - max_y
+    } else {
+        0
+    };
+    dx * dx + dy * dy
+}
+
+fn monitor_index_for_position(
+    position: tauri::PhysicalPosition<i32>,
+    monitors: &[MonitorBounds],
+) -> Option<usize> {
+    monitors
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, monitor)| squared_distance_to_monitor(position, **monitor))
+        .map(|(index, _)| index)
+}
+
+fn monitor_for_position<R: Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    position: tauri::PhysicalPosition<i32>,
+) -> Option<tauri::Monitor> {
+    let monitors = window.available_monitors().ok()?;
+    let bounds = monitors
+        .iter()
+        .map(|monitor| MonitorBounds {
+            position: *monitor.position(),
+            size: *monitor.size(),
+        })
+        .collect::<Vec<_>>();
+    let index = monitor_index_for_position(position, &bounds)?;
+    monitors.into_iter().nth(index)
+}
+
 // Keep persisted floating panel positions visible after display or DPI changes.
 fn clamp_tool_window_position<R: Runtime>(
     window: &tauri::WebviewWindow<R>,
@@ -170,8 +227,10 @@ fn clamp_tool_window_position<R: Runtime>(
     logical_width: f64,
     logical_height: f64,
 ) -> tauri::PhysicalPosition<i32> {
-    match window.current_monitor() {
-        Ok(Some(monitor)) => windows::clamp_window_position_to_monitor(
+    let monitor =
+        monitor_for_position(window, position).or_else(|| window.current_monitor().ok().flatten());
+    match monitor {
+        Some(monitor) => windows::clamp_window_position_to_monitor(
             position,
             *monitor.position(),
             *monitor.size(),
@@ -182,6 +241,27 @@ fn clamp_tool_window_position<R: Runtime>(
         ),
         _ => position,
     }
+}
+
+fn default_toolbar_position(
+    monitor: &tauri::Monitor,
+    toolbar_size: f64,
+) -> tauri::PhysicalPosition<i32> {
+    let scale = monitor.scale_factor();
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
+    let monitor_position = monitor.position();
+    let monitor_size = monitor.size();
+    let width = (toolbar_size * scale).round() as i32;
+    let right_inset = (80.0 * scale).round() as i32;
+    let bottom_inset = (100.0 * scale).round() as i32;
+    tauri::PhysicalPosition::new(
+        monitor_position.x + monitor_size.width as i32 - width - right_inset,
+        monitor_position.y + monitor_size.height as i32 - width - bottom_inset,
+    )
 }
 
 // 辅助函数：创建工具窗口
@@ -345,8 +425,6 @@ pub fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<
 
     // 窗口大小和边距配置
     let toolbar_size = 240.0; // 窗口大小（紧凑布局：80px 图标 + 80px 气泡半径 × 2）
-    let margin = 20.0; // 距离屏幕边缘的边距
-
     // 先创建窗口在默认位置
     let window = match tauri::WebviewWindowBuilder::new(
         app,
@@ -399,106 +477,29 @@ pub fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<
         }
     };
 
-    // 尝试加载保存的位置，如果没有则使用默认位置（右下角）
+    // 保存值是物理坐标。根据该坐标选择对应显示器后再按该屏幕的
+    // 原点和缩放约束位置，支持负坐标与混合 DPI。
     if let Some((saved_x, saved_y)) = load_toolbar_position(app) {
-        // 保存的坐标已经是物理像素，需要验证是否在屏幕范围内
         debug!("📂 读取保存的工具栏位置: ({}, {})", saved_x, saved_y);
-
-        // 获取当前显示器信息进行边界检查
-        if let Ok(monitor) = window.current_monitor() {
-            if let Some(monitor) = monitor {
-                let size = monitor.size();
-                let scale_factor = monitor.scale_factor();
-
-                // 计算逻辑像素尺寸
-                let screen_width = size.width as f64 / scale_factor;
-                let screen_height = size.height as f64 / scale_factor;
-
-                // 转换保存的物理坐标为逻辑坐标（用于边界检查）
-                let logical_x = saved_x / scale_factor;
-                let logical_y = saved_y / scale_factor;
-
-                // 边界保护：确保工具栏至少有一部分可见
-                let min_visible = 50.0; // 至少 50px 可见
-                let max_x = screen_width - min_visible;
-                let max_y = screen_height - min_visible;
-
-                // 检查是否越界
-                let is_out_of_bounds = logical_x < -toolbar_size + min_visible
-                    || logical_y < -toolbar_size + min_visible
-                    || logical_x > max_x
-                    || logical_y > max_y;
-
-                if is_out_of_bounds {
-                    warn!("⚠️  保存的位置越界，使用默认位置");
-                    debug!(
-                        "   屏幕尺寸: {}x{}, 保存位置(逻辑): ({}, {})",
-                        screen_width, screen_height, logical_x, logical_y
-                    );
-                    // 使用默认位置（右下角）
-                    let x = screen_width - toolbar_size - margin - 60.0;
-                    let y = screen_height - toolbar_size - margin - 80.0;
-
-                    if let Err(e) = window.set_position(tauri::PhysicalPosition::new(
-                        (x * scale_factor) as i32,
-                        (y * scale_factor) as i32,
-                    )) {
-                        error!("❌ 设置默认位置失败: {}", e);
-                    }
-                } else {
-                    // 位置有效，直接使用
-                    debug!("✅ 位置有效，应用保存的位置");
-                    if let Err(e) = window
-                        .set_position(tauri::PhysicalPosition::new(saved_x as i32, saved_y as i32))
-                    {
-                        error!("❌ 设置工具栏位置失败: {}", e);
-                    }
-                }
-            } else {
-                // 无法获取显示器信息，直接使用保存的位置
-                warn!("⚠️  无法获取显示器信息，直接使用保存的位置");
-                if let Err(e) = window
-                    .set_position(tauri::PhysicalPosition::new(saved_x as i32, saved_y as i32))
-                {
-                    error!("❌ 设置工具栏位置失败: {}", e);
-                }
-            }
-        } else {
-            // 无法获取显示器，直接使用保存的位置
-            warn!("⚠️  无法获取当前显示器，直接使用保存的位置");
-            if let Err(e) =
-                window.set_position(tauri::PhysicalPosition::new(saved_x as i32, saved_y as i32))
-            {
-                error!("❌ 设置工具栏位置失败: {}", e);
-            }
+        let saved_position =
+            tauri::PhysicalPosition::new(saved_x.round() as i32, saved_y.round() as i32);
+        let position =
+            clamp_tool_window_position(&window, saved_position, toolbar_size, toolbar_size);
+        if let Err(e) = window.set_position(position) {
+            error!("❌ 设置工具栏位置失败: {}", e);
         }
     } else {
-        // 获取主显示器信息并计算右下角位置
-        if let Ok(monitor) = window.current_monitor() {
-            if let Some(monitor) = monitor {
-                let size = monitor.size();
-                let scale_factor = monitor.scale_factor();
-
-                // 计算逻辑像素尺寸
-                let screen_width = size.width as f64 / scale_factor;
-                let screen_height = size.height as f64 / scale_factor;
-
-                // 计算右下角位置（考虑任务栏）
-                let x = screen_width - toolbar_size - margin - 60.0;
-                let y = screen_height - toolbar_size - margin - 80.0;
-
-                debug!(
-                    "📍 屏幕尺寸: {}x{}, 缩放: {}, 默认工具栏位置: ({}, {})",
-                    screen_width, screen_height, scale_factor, x, y
-                );
-
-                // 转换为物理坐标
-                if let Err(e) = window.set_position(tauri::PhysicalPosition::new(
-                    (x * scale_factor) as i32,
-                    (y * scale_factor) as i32,
-                )) {
-                    error!("❌ 设置工具栏位置失败: {}", e);
-                }
+        // 首次显示放在主显示器右下角，并包含显示器物理原点。
+        let monitor = window
+            .primary_monitor()
+            .ok()
+            .flatten()
+            .or_else(|| window.available_monitors().ok()?.into_iter().next());
+        if let Some(monitor) = monitor {
+            let desired = default_toolbar_position(&monitor, toolbar_size);
+            let position = clamp_tool_window_position(&window, desired, toolbar_size, toolbar_size);
+            if let Err(e) = window.set_position(position) {
+                error!("❌ 设置工具栏位置失败: {}", e);
             }
         }
     }
@@ -524,4 +525,52 @@ pub async fn handle_toolbar_menu_action(app: AppHandle, action: String) -> Resul
     debug!("🔧 处理菜单操作: {}", action);
     handle_toolbar_menu_event(&app, &action);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MonitorBounds, monitor_index_for_position};
+    use tauri::{PhysicalPosition, PhysicalSize};
+
+    #[test]
+    fn selects_the_monitor_containing_a_saved_negative_position() {
+        let monitors = [
+            MonitorBounds {
+                position: PhysicalPosition::new(0, 0),
+                size: PhysicalSize::new(1920, 1080),
+            },
+            MonitorBounds {
+                position: PhysicalPosition::new(-1280, 0),
+                size: PhysicalSize::new(1280, 1024),
+            },
+        ];
+
+        assert_eq!(
+            monitor_index_for_position(PhysicalPosition::new(-900, 100), &monitors),
+            Some(1)
+        );
+        assert_eq!(
+            monitor_index_for_position(PhysicalPosition::new(400, 100), &monitors),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn selects_the_nearest_monitor_after_a_display_is_removed() {
+        let monitors = [
+            MonitorBounds {
+                position: PhysicalPosition::new(0, 0),
+                size: PhysicalSize::new(1920, 1080),
+            },
+            MonitorBounds {
+                position: PhysicalPosition::new(1920, 0),
+                size: PhysicalSize::new(2560, 1440),
+            },
+        ];
+
+        assert_eq!(
+            monitor_index_for_position(PhysicalPosition::new(5000, 300), &monitors),
+            Some(1)
+        );
+    }
 }

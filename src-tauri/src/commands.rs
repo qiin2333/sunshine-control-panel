@@ -3,7 +3,7 @@ use base64::Engine as _;
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter, Manager};
 
 /// Shared CDN HTTP client with connection pooling.
@@ -25,6 +25,18 @@ enum CdnResult {
     NotModified,
     /// 200 OK response and optional ETag.
     Fresh(reqwest::Response, Option<String>),
+}
+
+fn utf8_prefix(value: &str, max_bytes: usize) -> &str {
+    if value.len() <= max_bytes {
+        return value;
+    }
+
+    let mut end = max_bytes;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
 }
 
 /// CDN GET with one retry and optional ETag conditional request.
@@ -397,11 +409,7 @@ pub async fn fetch_speech_phrases(
     let body_text = body_text.trim_start_matches('\u{FEFF}');
 
     let phrases: Vec<String> = serde_json::from_str(body_text).map_err(|e| {
-        let preview = if body_text.len() > 200 {
-            &body_text[..200]
-        } else {
-            body_text
-        };
+        let preview = utf8_prefix(body_text, 200);
         format!("Failed to parse JSON: {}; first 200 chars: {}", e, preview)
     })?;
 
@@ -510,7 +518,7 @@ pub async fn ai_api_proxy(request: AiProxyRequest) -> Result<String, String> {
         .map_err(|e| format!("Failed to read AI API response: {}", e))?;
 
     if status >= 400 {
-        return Err(format!("{} - {}", status, &body[..body.len().min(500)]));
+        return Err(format!("{} - {}", status, utf8_prefix(&body, 500)));
     }
 
     Ok(body)
@@ -518,35 +526,67 @@ pub async fn ai_api_proxy(request: AiProxyRequest) -> Result<String, String> {
 
 // ===== Desktop screenshot for pet vision =====
 
+static SCREENSHOT_CAPTURE_LOCK: Mutex<()> = Mutex::new(());
+
+fn scaled_image_dimensions(width: u32, height: u32, max_dimension: u32) -> (u32, u32) {
+    let max_dimension = max_dimension.max(1);
+    let longest = width.max(height);
+    if longest <= max_dimension || longest == 0 {
+        return (width, height);
+    }
+
+    let scale = max_dimension as f64 / longest as f64;
+    (
+        ((width as f64 * scale).round() as u32).max(1),
+        ((height as f64 * scale).round() as u32).max(1),
+    )
+}
+
 /// Capture the primary display as a base64 JPEG.
 #[tauri::command]
-pub async fn capture_screenshot() -> Result<String, String> {
+pub async fn capture_screenshot(window: tauri::WebviewWindow) -> Result<String, String> {
     use std::io::Cursor;
     use xcap::Monitor;
 
+    if window.label() != "toolbar" {
+        return Err("Screenshot capture is only available to the desktop pet toolbar".to_string());
+    }
+
     // xcap uses a synchronous API, so capture on a blocking thread.
     tokio::task::spawn_blocking(|| {
-        let monitors =
+        let _capture_guard = SCREENSHOT_CAPTURE_LOCK
+            .try_lock()
+            .map_err(|_| "A screenshot capture is already in progress".to_string())?;
+
+        let mut monitors =
             Monitor::all().map_err(|e| format!("Failed to enumerate monitors: {}", e))?;
-        let monitor = monitors.into_iter().next().ok_or("No monitor found")?;
+        let primary_index = monitors
+            .iter()
+            .position(|monitor| monitor.is_primary().unwrap_or(false))
+            .unwrap_or(0);
+        let monitor = if monitors.is_empty() {
+            return Err("No monitor found".to_string());
+        } else {
+            monitors.swap_remove(primary_index)
+        };
 
         let image = monitor
             .capture_image()
             .map_err(|e| format!("Screenshot failed: {}", e))?;
 
-        // Limit image width to reduce token usage.
+        // Limit the longest edge to reduce token usage for both landscape and
+        // portrait displays.
         let (w, h) = (image.width(), image.height());
-        let max_width = 1024u32;
-        let resized = if w > max_width {
-            let new_h = (h as f64 * max_width as f64 / w as f64) as u32;
+        let (target_w, target_h) = scaled_image_dimensions(w, h, 1024);
+        let resized = if (target_w, target_h) != (w, h) {
             image::imageops::resize(
                 &image,
-                max_width,
-                new_h,
+                target_w,
+                target_h,
                 image::imageops::FilterType::Triangle,
             )
         } else {
-            image::imageops::resize(&image, w, h, image::imageops::FilterType::Triangle)
+            image
         };
 
         // JPEG does not support alpha.
@@ -564,4 +604,24 @@ pub async fn capture_screenshot() -> Result<String, String> {
     })
     .await
     .map_err(|e| format!("Screenshot task failed: {}", e))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{scaled_image_dimensions, utf8_prefix};
+
+    #[test]
+    fn utf8_prefix_stops_at_a_character_boundary() {
+        let value = "abc桌面观察";
+        assert_eq!(utf8_prefix(value, 4), "abc");
+        assert_eq!(utf8_prefix(value, 6), "abc桌");
+        assert_eq!(utf8_prefix(value, value.len()), value);
+    }
+
+    #[test]
+    fn screenshot_scaling_limits_the_longest_edge() {
+        assert_eq!(scaled_image_dimensions(1920, 1080, 1024), (1024, 576));
+        assert_eq!(scaled_image_dimensions(1080, 1920, 1024), (576, 1024));
+        assert_eq!(scaled_image_dimensions(800, 600, 1024), (800, 600));
+    }
 }

@@ -463,7 +463,7 @@ async function onPokeNow() {
   pokePending.value = true
   pokeError.value = ''
   try {
-    await requestPetVision()
+    await requestPetVision({ ensureToolbar: true })
     refreshHistory()
   } catch (error) {
     console.warn('[桌宠设置] 立即观察失败:', error)

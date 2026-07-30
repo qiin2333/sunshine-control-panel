@@ -80,6 +80,7 @@ let currentSprite = null
 let animationTimer = null
 let initialSpriteRefreshTimer = null
 let pixiModulePromise = null
+let componentDisposed = false
 
 const loadPixi = async () => {
   if (!pixiModulePromise) {
@@ -164,6 +165,24 @@ const setCacheEntry = async (key, data, etag) => {
   }
 }
 
+const deleteCacheEntry = async (key) => {
+  let db
+  try {
+    db = await openDB()
+    const tx = db.transaction([DB_STORE], 'readwrite')
+    const store = tx.objectStore(DB_STORE)
+    await new Promise((resolve, reject) => {
+      const request = store.delete(key)
+      request.onsuccess = () => resolve()
+      request.onerror = () => reject(request.error)
+    })
+  } catch (error) {
+    console.warn('⚠️  IndexedDB 删除失败:', error)
+  } finally {
+    db?.close()
+  }
+}
+
 // 默认话术（fallback）：从 i18n 读取，跟随 locale 切换
 const defaultPhrases = computed(() => t.value.petTool?.runtime?.defaultPhrases || [])
 
@@ -184,12 +203,21 @@ const loadSpeechPhrases = async () => {
   try {
     const cacheKey = phraseCacheKey(targetLocale)
     let cached = await getCacheEntry(cacheKey)
+    let loadedLegacyCache = false
     if (!cached) {
       cached = await getCacheEntry(LEGACY_CACHE_KEY_PHRASES)
+      loadedLegacyCache = !!cached
       if (cached) await setCacheEntry(cacheKey, cached.data, cached.etag)
     }
     const hasValidCachedPhrases =
-      Array.isArray(cached?.data) && cached.data.some((phrase) => typeof phrase === 'string' && phrase.trim())
+      Array.isArray(cached?.data) &&
+      cached.data.length > 0 &&
+      cached.data.every((phrase) => typeof phrase === 'string' && phrase.trim())
+    if (cached && !hasValidCachedPhrases) {
+      await deleteCacheEntry(cacheKey)
+      if (loadedLegacyCache) await deleteCacheEntry(LEGACY_CACHE_KEY_PHRASES)
+      cached = null
+    }
     // 先应用缓存数据（如果有）
     if (
       generation === phraseLoadGeneration &&
@@ -215,10 +243,6 @@ const loadSpeechPhrases = async () => {
   }
 }
 
-watch(locale, () => {
-  loadSpeechPhrases()
-})
-
 const cancelSpeechAnimationFrame = () => {
   if (speechRafId !== null) {
     cancelAnimationFrame(speechRafId)
@@ -227,7 +251,12 @@ const cancelSpeechAnimationFrame = () => {
 }
 
 const showSpeech = () => {
-  if (speechVisible.value) return
+  if (
+    componentDisposed ||
+    !loadMasterEnabled() ||
+    !loadRandomEnabled() ||
+    speechVisible.value
+  ) return
   // 后端对话为空时回落到 i18n 内置话术
   const phrases = speechPhrases.value.length > 0 ? speechPhrases.value : defaultPhrases.value
   if (phrases.length === 0) return
@@ -245,10 +274,10 @@ const showSpeech = () => {
   }, 2600)
 }
 
-// 直接显示一段固定文本（用于反馈失败/状态提示）
+// 直接显示桌面观察的状态或错误文本。
 // 与 showSpeech 共用同一气泡组件与入场动画
 const showSpeechRaw = (text, durationMs) => {
-  if (!text) return
+  if (componentDisposed || !loadMasterEnabled() || !text) return
   // 先关再开，确保 v-if 重新挂载、走 bubble-enter 过渡
   speechVisible.value = false
   if (speechTimer) {
@@ -264,7 +293,7 @@ const showSpeechRaw = (text, durationMs) => {
   // 下一帧再设为 true，让 Vue 触发离开→进入过渡
   speechRafId = requestAnimationFrame(() => {
     speechRafId = null
-    speechSource.value = 'raw'
+    speechSource.value = 'vision'
     speechText.value = normalized
     speechVisible.value = true
     speechTimer = setTimeout(() => {
@@ -358,6 +387,16 @@ const sanitizeLlmReply = (raw) => {
 // 防止用户连点 / 多 trigger 同时跑
 let visionInflight = false
 let visionAbortController = null
+watch(locale, () => {
+  visionAbortController?.abort('locale-changed')
+  cancelSpeechAnimationFrame()
+  speechVisible.value = false
+  if (speechTimer) {
+    clearTimeout(speechTimer)
+    speechTimer = null
+  }
+  loadSpeechPhrases()
+})
 // 戳一下成功/失败后的冷静期，避免连按
 const VISION_COOLDOWN_MS = 3000
 let visionCooldownUntil = 0
@@ -366,9 +405,10 @@ const VISION_REQUEST_TIMEOUT_MS = 120000
 
 const awaitWithSignal = (promise, signal) => new Promise((resolve, reject) => {
   const rejectAborted = () => {
-    const error = new Error('timeout')
+    const isTimeout = signal.reason === 'timeout'
+    const error = new Error(isTimeout ? 'timeout' : 'cancelled')
     error.name = 'AbortError'
-    error.isTimeout = true
+    error.isTimeout = isTimeout
     reject(error)
   }
   if (signal.aborted) {
@@ -390,6 +430,7 @@ const awaitWithSignal = (promise, signal) => new Promise((resolve, reject) => {
 })
 
 const setVisionSpeech = (text) => {
+  if (componentDisposed || !isPetVisionEnabled()) return false
   cancelSpeechAnimationFrame()
   speechSource.value = 'vision'
   speechText.value = text
@@ -400,6 +441,7 @@ const setVisionSpeech = (text) => {
   speechTimer = setTimeout(() => {
     speechVisible.value = false
   }, showMs)
+  return true
 }
 
 const tryVisionSpeech = async (isManual = false) => {
@@ -438,7 +480,11 @@ const tryVisionSpeech = async (isManual = false) => {
   const t0 = performance.now()
   const controller = new AbortController()
   visionAbortController = controller
-  const timeoutTimer = setTimeout(() => controller.abort(), VISION_REQUEST_TIMEOUT_MS)
+  let visionTimedOut = false
+  const timeoutTimer = setTimeout(() => {
+    visionTimedOut = true
+    controller.abort('timeout')
+  }, VISION_REQUEST_TIMEOUT_MS)
   console.info(`[桌宠Vision] 开始捕获屏幕 trigger=${trigger} model=${config.model || '(default)'}`)
 
   try {
@@ -448,20 +494,23 @@ const tryVisionSpeech = async (isManual = false) => {
     console.info(`[桌宠Vision] 截图完成 ${shotMs}ms size=${shotLen}`)
 
     const t1 = performance.now()
-    const response = await callVisionLLM(
-      config,
-      r.visionPrompt,
-      r.visionUserMsg,
-      screenshot,
-      150,
-      { signal: controller.signal }
+    const response = await awaitWithSignal(
+      callVisionLLM(
+        config,
+        r.visionPrompt,
+        r.visionUserMsg,
+        screenshot,
+        150,
+        { signal: controller.signal }
+      ),
+      controller.signal
     )
     const llmMs = Math.round(performance.now() - t1)
     console.info(`[桌宠Vision] AI 响应 ${llmMs}ms`)
 
     const cleaned = sanitizeLlmReply(response)
     if (cleaned) {
-      setVisionSpeech(cleaned)
+      if (!setVisionSpeech(cleaned)) return false
       // 写入历史（仅成功评论，不记录错误提示）
       pushVisionHistory(cleaned)
       return true
@@ -469,7 +518,9 @@ const tryVisionSpeech = async (isManual = false) => {
     console.warn('[桌宠Vision] AI 返回空内容（清洗后）')
     if (isManual) showSpeechRaw(r.visionEmpty || '')
   } catch (err) {
-    if (err?.isTimeout || err?.name === 'AbortError') {
+    if (controller.signal.aborted && !visionTimedOut) {
+      console.info('[桌宠Vision] 请求已取消:', controller.signal.reason || 'cancelled')
+    } else if (visionTimedOut || err?.isTimeout || err?.name === 'AbortError') {
       console.warn('[桌宠Vision] 请求超时', VISION_REQUEST_TIMEOUT_MS, 'ms')
       if (isManual) showSpeechRaw(r.visionTimeout || '')
     } else {
@@ -508,6 +559,10 @@ const rescheduleSpeech = () => {
 
   // 当前可见或等待下一帧显示的气泡若被总开关关闭，立即收起。
   const masterOn = loadMasterEnabled()
+  const visionOn = loadVisionEnabled()
+  if ((!masterOn || !visionOn) && visionAbortController) {
+    visionAbortController.abort('config-changed')
+  }
   if (!masterOn) {
     cancelSpeechAnimationFrame()
     speechVisible.value = false
@@ -515,7 +570,7 @@ const rescheduleSpeech = () => {
     return
   }
   if (!speechVisible.value) return
-  if (speechSource.value === 'vision' && !loadVisionEnabled()) {
+  if (speechSource.value === 'vision' && !visionOn) {
     speechVisible.value = false
     if (speechTimer) { clearTimeout(speechTimer); speechTimer = null }
     return
@@ -749,6 +804,12 @@ const destroySpriteFrames = (frames) => {
   }
 }
 
+const invalidSpritesheetError = (message) => {
+  const error = new Error(message)
+  error.invalidSpritesheet = true
+  return error
+}
+
 const createSpriteFrameSet = async (imageSource) => {
   const PIXI = await loadPixi()
   let baseTexture
@@ -771,7 +832,7 @@ const createSpriteFrameSet = async (imageSource) => {
       baseTexture.width % 4 !== 0 ||
       baseTexture.height % 4 !== 0
     ) {
-      throw new Error(
+      throw invalidSpritesheetError(
         `基地娘资源必须是可被 4×4 整分的图集: ${baseTexture.width}x${baseTexture.height}`,
       )
     }
@@ -821,7 +882,12 @@ const applySpriteFrameSet = (frameSet) => {
 }
 
 const createSpriteFrameSetFromBlob = async (blob) => {
-  const imageBitmap = await createImageBitmap(blob)
+  let imageBitmap
+  try {
+    imageBitmap = await createImageBitmap(blob)
+  } catch (error) {
+    throw invalidSpritesheetError(`基地娘资源无法解码: ${error?.message || String(error)}`)
+  }
   return createSpriteFrameSet(imageBitmap)
 }
 
@@ -904,41 +970,67 @@ const generateFallbackSpritesheet = () => {
   return canvas
 }
 
+const stopPixiInitialization = (app, frameSet = null) => {
+  const stopped = componentDisposed || pixiApp !== app
+  if (stopped && frameSet) {
+    destroySpriteFrames(frameSet.frames)
+  }
+  return stopped
+}
+
 // 初始化 PixiJS 精灵动画
 const initPixiApp = async () => {
-  if (!pixiCanvas.value) {
-    console.error('❌ [桌宠] pixiCanvas ref 为空，无法初始化')
-    return
+  if (!pixiCanvas.value || componentDisposed) {
+    console.error('❌ [桌宠] pixiCanvas ref 为空或窗口已卸载，无法初始化')
+    return false
   }
 
   const PIXI = await loadPixi()
+  if (componentDisposed) return false
 
-  // 创建 PixiJS 应用
-  pixiApp = new PIXI.Application()
-  await pixiApp.init({
-    canvas: pixiCanvas.value,
-    width: 80,
-    height: 80,
-    backgroundColor: 0x000000,
-    backgroundAlpha: 0,
-    antialias: true,
-    resolution: window.devicePixelRatio || 1,
-    autoDensity: true,
-  })
+  // 应用初始化完成前只保留局部引用，避免卸载逻辑销毁半初始化对象。
+  const app = new PIXI.Application()
+  try {
+    await app.init({
+      canvas: pixiCanvas.value,
+      width: 80,
+      height: 80,
+      backgroundColor: 0x000000,
+      backgroundAlpha: 0,
+      antialias: true,
+      resolution: window.devicePixelRatio || 1,
+      autoDensity: true,
+    })
+  } catch (error) {
+    try { app.destroy(true, { children: true }) } catch (_) {}
+    throw error
+  }
+  if (componentDisposed) {
+    app.destroy(true, { children: true })
+    return false
+  }
+  pixiApp = app
 
   let frameSet = null
   let cachedEtag = null
+  let loadedFromCache = false
 
   const cachedEntry = await getCacheEntry(CACHE_KEY_SPRITE)
-  if (cachedEntry && cachedEntry.data) {
+  if (stopPixiInitialization(app)) return false
+  if (cachedEntry?.data) {
     try {
-      const imageBitmap = await createImageBitmap(cachedEntry.data)
-      frameSet = await createSpriteFrameSet(imageBitmap)
+      frameSet = await createSpriteFrameSetFromBlob(cachedEntry.data)
+      if (stopPixiInitialization(app, frameSet)) return false
       cachedEtag = cachedEntry.etag || null
+      loadedFromCache = true
       console.info('⚡ [桌宠] 基地娘缓存加载成功:', frameSet.width, 'x', frameSet.height, 'etag:', cachedEtag)
     } catch (error) {
-      console.warn('⚠️ [桌宠] 基地娘缓存加载失败，将从远程下载:', error?.message || String(error))
+      console.warn('⚠️ [桌宠] 基地娘缓存加载失败，将重新下载:', error?.message || String(error))
       frameSet = null
+      if (error?.invalidSpritesheet) {
+        await deleteCacheEntry(CACHE_KEY_SPRITE)
+      }
+      if (stopPixiInitialization(app)) return false
     }
   }
 
@@ -950,28 +1042,30 @@ const initPixiApp = async () => {
         url: getSpritesheetRequestUrl(),
         ifNoneMatch: null,
       })
+      if (stopPixiInitialization(app)) return false
       if (result) {
         const resp = await fetch(result.data_url)
+        if (stopPixiInitialization(app)) return false
         const blob = await resp.blob()
-        const imageBitmap = await createImageBitmap(blob)
-        frameSet = await createSpriteFrameSet(imageBitmap)
+        if (stopPixiInitialization(app)) return false
+        frameSet = await createSpriteFrameSetFromBlob(blob)
+        if (stopPixiInitialization(app, frameSet)) return false
         console.info('✅ [桌宠] 基地娘下载成功:', frameSet.width, 'x', frameSet.height)
 
-        // 缓存到 IndexedDB（含 ETag）
-        try {
-          await setCacheEntry(CACHE_KEY_SPRITE, blob, result.etag)
-        } catch (cacheErr) {
-          console.warn('⚠️ [桌宠] 缓存写入失败（不影响显示）:', cacheErr?.message || String(cacheErr))
-        }
+        await setCacheEntry(CACHE_KEY_SPRITE, blob, result.etag)
+        if (stopPixiInitialization(app, frameSet)) return false
       }
     } catch (proxyErr) {
       console.error('❌ [桌宠] 基地娘下载失败:', proxyErr?.message || String(proxyErr))
+      if (stopPixiInitialization(app, frameSet)) return false
     }
-  } else {
+  }
+
+  if (loadedFromCache) {
     // 有缓存 → 延迟后台 ETag 条件请求检查更新
     initialSpriteRefreshTimer = setTimeout(() => {
       initialSpriteRefreshTimer = null
-      updateSpritesheetCacheInBackground(cachedEtag)
+      if (!componentDisposed) updateSpritesheetCacheInBackground(cachedEtag)
     }, 3000)
   }
 
@@ -981,12 +1075,15 @@ const initPixiApp = async () => {
     try {
       const fallbackCanvas = generateFallbackSpritesheet()
       frameSet = await createSpriteFrameSet(fallbackCanvas)
+      if (stopPixiInitialization(app, frameSet)) return false
     } catch (fallbackErr) {
       console.error('❌ [桌宠] 本地备用基地娘也失败:', fallbackErr?.message || String(fallbackErr))
-      return
+      cleanupPixiApp()
+      return false
     }
   }
 
+  if (stopPixiInitialization(app, frameSet)) return false
   spriteFrames = frameSet.frames
   console.info('🐾 [桌宠] 纹理帧创建完毕，共', spriteFrames.length, '帧')
 
@@ -1000,10 +1097,11 @@ const initPixiApp = async () => {
   currentSprite.x = 40
   currentSprite.y = 40
 
-  pixiApp.stage.addChild(currentSprite)
+  app.stage.addChild(currentSprite)
 
   startIdleAnimation()
   console.info('✅ [桌宠] PixiJS 精灵动画已启动')
+  return true
 }
 
 // 随机切换表情/动作帧（静态显示，不连续播放）
@@ -1720,6 +1818,7 @@ const initBubbleClickThrough = () => {
 }
 
 onMounted(async () => {
+  componentDisposed = false
   // 先建立跨窗口通信和命中测试，避免资源加载期间丢失设置请求。
   initSpeechBroadcast()
   initBubbleClickThrough()
@@ -1728,13 +1827,16 @@ onMounted(async () => {
   } catch (error) {
     console.error('❌ [桌宠] PixiJS 初始化异常:', error?.message || String(error))
   }
+  if (componentDisposed) return
   startSpeechLoop()
   loadSpeechPhrases()
   startResourceRefresh()
 })
 
 onUnmounted(() => {
-  visionAbortController?.abort()
+  componentDisposed = true
+  phraseLoadGeneration += 1
+  visionAbortController?.abort('disposed')
   visionAbortController = null
   dragDisposed = true
   clearDragState()

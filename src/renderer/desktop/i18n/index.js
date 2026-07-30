@@ -21,6 +21,22 @@ function getDefaultLocale() {
 }
 
 const currentLocale = ref(getDefaultLocale())
+let localeRevision = 0
+
+function updateCurrentLocale(locale, persist = false) {
+  const normalized = normalizeDesktopLocale(locale)
+  localeRevision += 1
+  if (normalized !== currentLocale.value) {
+    currentLocale.value = normalized
+  }
+  if (persist) {
+    try {
+      localStorage.setItem('language', normalized)
+    } catch {
+      // Keep the in-memory locale when storage is unavailable.
+    }
+  }
+}
 
 function setDocumentLanguage(locale) {
   document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en'
@@ -33,16 +49,14 @@ let syncInitialized = false
 async function syncLocaleFromSunshine() {
   if (syncInitialized) return
   syncInitialized = true
+  const revision = localeRevision
   try {
     const { invoke } = await import('@tauri-apps/api/core')
     const config = await invoke('parse_sunshine_config')
-    if (!config?.locale) return
+    if (!config?.locale || revision !== localeRevision) return
     // Sunshine 用 'zh'/'zh_TW' 等，桌面 GUI 只有 'zh'/'en'
     const guiLocale = normalizeDesktopLocale(config.locale)
-    if (guiLocale !== currentLocale.value) {
-      currentLocale.value = guiLocale
-      localStorage.setItem('language', guiLocale)
-    }
+    updateCurrentLocale(guiLocale, true)
   } catch {
     // 非 Tauri 环境或 API 不可用，忽略
   }
@@ -55,11 +69,7 @@ async function listenTrayLocaleChanged() {
     const { listen } = await import('@tauri-apps/api/event')
     listen('tray-locale-changed', (event) => {
       if (!event.payload) return
-      const newLocale = normalizeDesktopLocale(event.payload)
-      if (newLocale !== currentLocale.value) {
-        currentLocale.value = newLocale
-        localStorage.setItem('language', newLocale)
-      }
+      updateCurrentLocale(event.payload, true)
     })
   } catch {
     // 非 Tauri 环境，忽略
@@ -72,10 +82,7 @@ listenTrayLocaleChanged()
 // window changing the language.
 window.addEventListener('storage', (event) => {
   if (event.key !== 'language' || !event.newValue) return
-  const newLocale = normalizeDesktopLocale(event.newValue)
-  if (newLocale !== currentLocale.value) {
-    currentLocale.value = newLocale
-  }
+  updateCurrentLocale(event.newValue)
 })
 
 // 用户明确切换时，通过同一条命令更新 Sunshine UI 和托盘语言。
@@ -94,8 +101,7 @@ export function useI18n() {
   const locale = computed({
     get: () => currentLocale.value,
     set: (val) => {
-      currentLocale.value = val
-      localStorage.setItem('language', val)
+      updateCurrentLocale(val, true)
     },
   })
   const toggleLocale = () => {

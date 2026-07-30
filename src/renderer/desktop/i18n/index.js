@@ -9,8 +9,12 @@ function normalizeDesktopLocale(locale) {
 }
 
 function getDefaultLocale() {
-  const saved = localStorage.getItem('language')
-  if (saved === 'zh' || saved === 'en') return saved
+  try {
+    const saved = localStorage.getItem('language')
+    if (saved === 'zh' || saved === 'en') return saved
+  } catch {
+    // Fall back to the browser locale when storage is unavailable.
+  }
 
   const browserLang = navigator.language || navigator.userLanguage || ''
   return normalizeDesktopLocale(browserLang)
@@ -62,6 +66,17 @@ async function listenTrayLocaleChanged() {
   }
 }
 listenTrayLocaleChanged()
+
+// localStorage is shared by the app webviews, but each webview owns its Vue
+// state. Keep already-open toolbar and tool windows in sync with another
+// window changing the language.
+window.addEventListener('storage', (event) => {
+  if (event.key !== 'language' || !event.newValue) return
+  const newLocale = normalizeDesktopLocale(event.newValue)
+  if (newLocale !== currentLocale.value) {
+    currentLocale.value = newLocale
+  }
+})
 
 // 用户明确切换时，通过同一条命令更新 Sunshine UI 和托盘语言。
 async function syncLocalePreferences(locale) {

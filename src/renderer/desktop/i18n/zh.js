@@ -510,8 +510,8 @@ export const zh = {
     randomDesc: '预设对话',
     speechInterval: '对话间隔',
     speechIntervalDesc: '两句话之间的间隔时间（最小 15 秒）',
-    jitter: '变化频率',
-    jitterDesc: '修改变化频率间隔，可以缓解机械感（0% 关闭，最高 100%）',
+    jitter: '间隔浮动',
+    jitterDesc: '每次随机对话间隔上下浮动的范围（0% 为固定间隔，最高 100%）',
     vision: '桌面观察',
     visionDesc: '桌宠会定时偏看你的屏幕并生成评论（需要多模态 AI）',
     visionHelp: '需要在「米塔 AI 助手」中配置好 API Key，且选择支持视觉的模型。\n启用后桌宠会定时截屏并交给 AI 生成一句针对屏幕内容的吐槽。',
@@ -521,13 +521,15 @@ export const zh = {
     pokeNow: '立即观察',
     pokeNowDesc: '让桌宠马上看一眼屏幕并说一句',
     pokeBtn: '戳一下',
+    pokePending: '观察中…',
+    pokeFailed: '工具栏没有响应，请重新打开桌宠后再试',
     visionHistory: '最近历史',
     visionHistoryDesc: '查看桌宠最近的 5 句历史',
     visionHistoryEmpty: '还没有历史记录，戳一下试试～',
     visionHistoryClear: '清空',
     visionHistoryView: '查看',
     aiKeyMissing: '尚未配置 AI 助手',
-    aiKeyMissingDesc: '请先在「米塔 AI 助手」中填入 API Key 并启用，然后重新打开此面板，才能开启桌面观察。',
+    aiKeyMissingDesc: '请先在「米塔 AI 助手」中填入 API Key 并启用，才能开启桌面观察。',
     // 桌宠气泡中使用的运行时提示
     runtime: {
       // 后端话术加载失败时用的内置傅本

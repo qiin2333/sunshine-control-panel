@@ -510,8 +510,8 @@ export const en = {
     randomDesc: 'Preset phrases',
     speechInterval: 'Talk Interval',
     speechIntervalDesc: 'Time between two phrases (minimum 15s)',
-    jitter: 'Variation',
-    jitterDesc: 'Adjust the variation range to reduce mechanical feel (0% off, max 100%)',
+    jitter: 'Interval Variation',
+    jitterDesc: 'Randomize each talk interval within this range (0% is fixed, max 100%)',
     vision: 'Desktop Observation',
     visionDesc: 'Pet peeks at your screen and generates AI comments (multimodal AI required)',
     visionHelp: 'Configure an API key under \'Mita AI Assistant\' and pick a vision-capable model (e.g. GPT-4o).\nWhen enabled, the pet periodically captures the screen and asks the AI for a snarky comment about what it sees.',
@@ -521,13 +521,15 @@ export const en = {
     pokeNow: 'Observe Now',
     pokeNowDesc: 'Make the pet take a look and say something right now',
     pokeBtn: 'Poke',
+    pokePending: 'Observing…',
+    pokeFailed: 'The toolbar did not respond. Reopen the desktop pet and try again.',
     visionHistory: 'Recent Comments',
     visionHistoryDesc: 'View the pet\'s last 5 desktop comments',
     visionHistoryEmpty: 'No history yet, give the pet a poke~',
     visionHistoryClear: 'Clear',
     visionHistoryView: 'View',
     aiKeyMissing: 'AI assistant not configured',
-    aiKeyMissingDesc: 'Configure an API key in \'Mita AI Assistant\' first, then refresh this panel to enable Desktop Observation.',
+    aiKeyMissingDesc: 'Configure and enable an API key in \'Mita AI Assistant\' to use Desktop Observation.',
 
     // Runtime tips used inside the toolbar speech bubble
     runtime: {

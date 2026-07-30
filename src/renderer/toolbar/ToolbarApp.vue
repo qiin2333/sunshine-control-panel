@@ -40,7 +40,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onUnmounted, onMounted } from 'vue'
+import { ref, computed, watch, onUnmounted, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { cursorPosition } from '@tauri-apps/api/window'
@@ -57,6 +57,7 @@ import {
   loadVisionIntervalSec,
   pushVisionHistory,
   MIN_INTERVAL_SEC,
+  PET_SPEECH_CHANNEL,
 } from '../composables/petSpeechConfig.js'
 
 const { t, locale, toggleLocale } = useI18n()
@@ -67,6 +68,9 @@ const speechSource = ref('random')
 const speechText = ref('')
 let speechTimer = null
 let speechInterval = null
+let startupSpeechTimer = null
+let speechRafId = null
+let speechTickRunning = false
 
 // PixiJS 相关
 const pixiCanvas = ref(null)
@@ -74,6 +78,7 @@ let pixiApp = null
 let spriteFrames = []
 let currentSprite = null
 let animationTimer = null
+let initialSpriteRefreshTimer = null
 let pixiModulePromise = null
 
 const loadPixi = async () => {
@@ -94,7 +99,8 @@ const DB_NAME = 'toolbar-cache'
 const DB_VERSION = 2
 const DB_STORE = 'resources'
 const CACHE_KEY_SPRITE = 'spritesheet'
-const CACHE_KEY_PHRASES = 'phrases'
+const LEGACY_CACHE_KEY_PHRASES = 'phrases'
+const phraseCacheKey = (language) => `phrases:${language}`
 
 // 打开 IndexedDB
 const openDB = () => {
@@ -117,11 +123,12 @@ const openDB = () => {
 
 // 缓存读取（返回 { data, etag } 或 null）
 const getCacheEntry = async (key) => {
+  let db
   try {
-    const db = await openDB()
+    db = await openDB()
     const tx = db.transaction([DB_STORE], 'readonly')
     const store = tx.objectStore(DB_STORE)
-    return new Promise((resolve, reject) => {
+    return await new Promise((resolve, reject) => {
       const request = store.get(key)
       request.onsuccess = () => {
         const entry = request.result
@@ -133,13 +140,16 @@ const getCacheEntry = async (key) => {
   } catch (error) {
     console.warn('⚠️  IndexedDB 读取失败:', error)
     return null
+  } finally {
+    db?.close()
   }
 }
 
 // 缓存写入（data + etag）
 const setCacheEntry = async (key, data, etag) => {
+  let db
   try {
-    const db = await openDB()
+    db = await openDB()
     const tx = db.transaction([DB_STORE], 'readwrite')
     const store = tx.objectStore(DB_STORE)
     await new Promise((resolve, reject) => {
@@ -149,6 +159,8 @@ const setCacheEntry = async (key, data, etag) => {
     })
   } catch (error) {
     console.warn('⚠️  IndexedDB 写入失败:', error)
+  } finally {
+    db?.close()
   }
 }
 
@@ -157,27 +169,60 @@ const defaultPhrases = computed(() => t.value.petTool?.runtime?.defaultPhrases |
 
 // 响应式话术列表（后端拉到的话术优先；未拉到时回退到 i18n fallback）
 const speechPhrases = ref([])
+let phraseLoadGeneration = 0
 
 // 加载话术（ETag 条件请求：有缓存则先用缓存，同时带 ETag 请求确认是否需要更新）
 const loadSpeechPhrases = async () => {
+  const targetLocale = locale.value
+  const generation = ++phraseLoadGeneration
+  speechPhrases.value = []
+
+  // CDN 当前只提供中文话术。英文界面直接使用英文内置话术，
+  // 避免把旧的中文缓存显示到英文窗口。
+  if (targetLocale !== 'zh') return
+
   try {
-    const cached = await getCacheEntry(CACHE_KEY_PHRASES)
+    const cacheKey = phraseCacheKey(targetLocale)
+    let cached = await getCacheEntry(cacheKey)
+    if (!cached) {
+      cached = await getCacheEntry(LEGACY_CACHE_KEY_PHRASES)
+      if (cached) await setCacheEntry(cacheKey, cached.data, cached.etag)
+    }
+    const hasValidCachedPhrases =
+      Array.isArray(cached?.data) && cached.data.some((phrase) => typeof phrase === 'string' && phrase.trim())
     // 先应用缓存数据（如果有）
-    if (cached && Array.isArray(cached.data) && cached.data.length > 0) {
+    if (
+      generation === phraseLoadGeneration &&
+      locale.value === targetLocale &&
+      hasValidCachedPhrases
+    ) {
       speechPhrases.value = cached.data
     }
     // 带 ETag 条件请求后端
     const result = await invoke('fetch_speech_phrases', {
-      ifNoneMatch: cached?.etag || null,
+      // Invalid cached data must not reuse its ETag; otherwise a 304 would
+      // preserve the invalid entry indefinitely.
+      ifNoneMatch: hasValidCachedPhrases ? (cached?.etag || null) : null,
     })
-    if (result) {
+    if (result && generation === phraseLoadGeneration && locale.value === targetLocale) {
       // 有新数据（200）
       speechPhrases.value = result.phrases
-      await setCacheEntry(CACHE_KEY_PHRASES, result.phrases, result.etag)
+      await setCacheEntry(cacheKey, result.phrases, result.etag)
     }
     // result 为 null 表示 304 未修改，不需要更新
   } catch (error) {
     console.warn('⚠️  话术加载失败，使用默认话术:', error)
+  }
+}
+
+watch(locale, () => {
+  loadSpeechPhrases()
+})
+
+const cancelSpeechAnimationFrame = () => {
+  if (speechRafId !== null) {
+    cancelAnimationFrame(speechRafId)
+    speechRafId = null
   }
 }
 
@@ -187,6 +232,8 @@ const showSpeech = () => {
   const phrases = speechPhrases.value.length > 0 ? speechPhrases.value : defaultPhrases.value
   if (phrases.length === 0) return
   const text = phrases[Math.floor(Math.random() * phrases.length)]
+  cancelSpeechAnimationFrame()
+  speechSource.value = 'random'
   speechText.value = text
   speechVisible.value = true
   if (speechTimer) {
@@ -208,13 +255,15 @@ const showSpeechRaw = (text, durationMs) => {
     clearTimeout(speechTimer)
     speechTimer = null
   }
+  cancelSpeechAnimationFrame()
   // 文本中可能含换行/缩进，统一压成单行避免气泡顶部高度异常
   const normalized = String(text).replace(/\s+/g, ' ').trim()
   const auto = Math.min(12000, 4000 + Math.floor(normalized.length / 8) * 1000)
   const ms = typeof durationMs === 'number' ? durationMs : auto
 
   // 下一帧再设为 true，让 Vue 触发离开→进入过渡
-  requestAnimationFrame(() => {
+  speechRafId = requestAnimationFrame(() => {
+    speechRafId = null
     speechSource.value = 'raw'
     speechText.value = normalized
     speechVisible.value = true
@@ -308,19 +357,49 @@ const sanitizeLlmReply = (raw) => {
 
 // 防止用户连点 / 多 trigger 同时跑
 let visionInflight = false
+let visionAbortController = null
 // 戳一下成功/失败后的冷静期，避免连按
 const VISION_COOLDOWN_MS = 3000
 let visionCooldownUntil = 0
-// AI 请求 120s 客户端超时（即使后端继续处理，前端也释放锁）
+// 截图与 AI 请求共用一个 120s 截止时间。
 const VISION_REQUEST_TIMEOUT_MS = 120000
 
-// Promise.race 实现的客户端超时
-const withTimeout = (promise, ms, timeoutErr) => {
-  let timer
-  const t = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(timeoutErr || new Error('timeout')), ms)
-  })
-  return Promise.race([promise, t]).finally(() => clearTimeout(timer))
+const awaitWithSignal = (promise, signal) => new Promise((resolve, reject) => {
+  const rejectAborted = () => {
+    const error = new Error('timeout')
+    error.name = 'AbortError'
+    error.isTimeout = true
+    reject(error)
+  }
+  if (signal.aborted) {
+    rejectAborted()
+    return
+  }
+
+  signal.addEventListener('abort', rejectAborted, { once: true })
+  promise.then(
+    (value) => {
+      signal.removeEventListener('abort', rejectAborted)
+      resolve(value)
+    },
+    (error) => {
+      signal.removeEventListener('abort', rejectAborted)
+      reject(error)
+    }
+  )
+})
+
+const setVisionSpeech = (text) => {
+  cancelSpeechAnimationFrame()
+  speechSource.value = 'vision'
+  speechText.value = text
+  speechVisible.value = true
+  if (speechTimer) clearTimeout(speechTimer)
+  // 桌面观察的内容信息量较大，按文本长度自适应：基础 7s，每 8 字 +1s，最长 15s
+  const showMs = Math.min(15000, 7000 + Math.floor(text.length / 8) * 1000)
+  speechTimer = setTimeout(() => {
+    speechVisible.value = false
+  }, showMs)
 }
 
 const tryVisionSpeech = async (isManual = false) => {
@@ -357,34 +436,32 @@ const tryVisionSpeech = async (isManual = false) => {
 
   const trigger = isManual ? 'manual' : 'auto'
   const t0 = performance.now()
+  const controller = new AbortController()
+  visionAbortController = controller
+  const timeoutTimer = setTimeout(() => controller.abort(), VISION_REQUEST_TIMEOUT_MS)
   console.info(`[桌宠Vision] 开始捕获屏幕 trigger=${trigger} model=${config.model || '(default)'}`)
 
   try {
-    const screenshot = await invoke('capture_screenshot')
+    const screenshot = await awaitWithSignal(invoke('capture_screenshot'), controller.signal)
     const shotMs = Math.round(performance.now() - t0)
     const shotLen = typeof screenshot === 'string' ? screenshot.length : (screenshot?.byteLength || 0)
     console.info(`[桌宠Vision] 截图完成 ${shotMs}ms size=${shotLen}`)
 
     const t1 = performance.now()
-    const timeoutErr = new Error('timeout')
-    timeoutErr.isTimeout = true
-    const response = await withTimeout(
-      callVisionLLM(config, r.visionPrompt, r.visionUserMsg, screenshot, 150),
-      VISION_REQUEST_TIMEOUT_MS,
-      timeoutErr
+    const response = await callVisionLLM(
+      config,
+      r.visionPrompt,
+      r.visionUserMsg,
+      screenshot,
+      150,
+      { signal: controller.signal }
     )
     const llmMs = Math.round(performance.now() - t1)
-    console.info(`[桌宠Vision] AI 响应 ${llmMs}ms reply=${JSON.stringify(response)}`)
+    console.info(`[桌宠Vision] AI 响应 ${llmMs}ms`)
 
     const cleaned = sanitizeLlmReply(response)
     if (cleaned) {
-      speechSource.value = 'vision'
-      speechText.value = cleaned
-      speechVisible.value = true
-      if (speechTimer) clearTimeout(speechTimer)
-      // 桌面观察的内容信息量较大，按文本长度自适应：基础 7s，每 8 字 +1s，最长 15s
-      const showMs = Math.min(15000, 7000 + Math.floor(cleaned.length / 8) * 1000)
-      speechTimer = setTimeout(() => { speechVisible.value = false }, showMs)
+      setVisionSpeech(cleaned)
       // 写入历史（仅成功评论，不记录错误提示）
       pushVisionHistory(cleaned)
       return true
@@ -392,7 +469,7 @@ const tryVisionSpeech = async (isManual = false) => {
     console.warn('[桌宠Vision] AI 返回空内容（清洗后）')
     if (isManual) showSpeechRaw(r.visionEmpty || '')
   } catch (err) {
-    if (err?.isTimeout) {
+    if (err?.isTimeout || err?.name === 'AbortError') {
       console.warn('[桌宠Vision] 请求超时', VISION_REQUEST_TIMEOUT_MS, 'ms')
       if (isManual) showSpeechRaw(r.visionTimeout || '')
     } else {
@@ -405,6 +482,8 @@ const tryVisionSpeech = async (isManual = false) => {
       }
     }
   } finally {
+    clearTimeout(timeoutTimer)
+    if (visionAbortController === controller) visionAbortController = null
     visionInflight = false
     if (isManual) visionCooldownUntil = Date.now() + VISION_COOLDOWN_MS
   }
@@ -427,15 +506,15 @@ const rescheduleSpeech = () => {
     visionInMs: nextVisionAt - now,
   })
 
-  // 当前可见气泡若与"被关掉的功能"对应，立即收起
-  if (!speechVisible.value) return
+  // 当前可见或等待下一帧显示的气泡若被总开关关闭，立即收起。
   const masterOn = loadMasterEnabled()
   if (!masterOn) {
-    // 总开关关掉 → 任何来源的气泡都收起
+    cancelSpeechAnimationFrame()
     speechVisible.value = false
     if (speechTimer) { clearTimeout(speechTimer); speechTimer = null }
     return
   }
+  if (!speechVisible.value) return
   if (speechSource.value === 'vision' && !loadVisionEnabled()) {
     speechVisible.value = false
     if (speechTimer) { clearTimeout(speechTimer); speechTimer = null }
@@ -450,8 +529,9 @@ const rescheduleSpeech = () => {
 const startSpeechLoop = () => {
   // 首次延迟随机出现（随机对话）
   const firstDelay = 4000 + Math.random() * 6000
-  setTimeout(() => {
-    if (loadMasterEnabled() && loadRandomEnabled()) showSpeech()
+  startupSpeechTimer = setTimeout(() => {
+    startupSpeechTimer = null
+    if (!menuVisible.value && loadMasterEnabled() && loadRandomEnabled()) showSpeech()
   }, firstDelay)
 
   // 随机对话与桌面观察使用两个独立的下一次调度点，
@@ -473,43 +553,82 @@ const startSpeechLoop = () => {
   }
 
   speechInterval = setInterval(async () => {
-    if (!loadMasterEnabled()) return
-    if (menuVisible.value) return
-    const now = Date.now()
+    if (speechTickRunning || !loadMasterEnabled() || menuVisible.value) return
+    speechTickRunning = true
+    try {
+      const now = Date.now()
 
-    // 桌面观察（优先调度，如果到点则尝试截屏）
-    if (loadVisionEnabled() && now >= nextVisionAt) {
-      nextVisionAt = computeNextVision()
-      const used = await tryVisionSpeech()
-      if (used) {
-        // 视觉说过话了，同时把随机对话下次点往后推一点避免接踵
-        if (loadRandomEnabled()) {
-          nextRandomAt = Math.max(nextRandomAt, Date.now() + Math.max(5, MIN_INTERVAL_SEC / 2) * 1000)
+      // 桌面观察（优先调度，如果到点则尝试截屏）
+      if (loadVisionEnabled() && now >= nextVisionAt) {
+        nextVisionAt = computeNextVision()
+        const used = await tryVisionSpeech()
+        if (used) {
+          // 视觉说过话了，同时把随机对话下次点往后推一点避免接踵
+          if (loadRandomEnabled()) {
+            nextRandomAt = Math.max(nextRandomAt, Date.now() + Math.max(5, MIN_INTERVAL_SEC / 2) * 1000)
+          }
+          return
         }
-        return
       }
-    }
 
-    // 随机对话
-    if (loadRandomEnabled() && now >= nextRandomAt) {
-      nextRandomAt = computeNextRandom()
-      showSpeech()
+      // 随机对话
+      if (loadRandomEnabled() && now >= nextRandomAt) {
+        nextRandomAt = computeNextRandom()
+        showSpeech()
+      }
+    } finally {
+      speechTickRunning = false
     }
   }, TICK_MS)
 }
 
 // 设置弹窗跨窗口通信
 let speechBroadcast = null
+const visionRequestStates = new Map()
+
+const sendVisionRequestStatus = (requestId, status, success) => {
+  speechBroadcast?.postMessage({
+    type: 'vision-status',
+    requestId,
+    status,
+    ...(status === 'completed' ? { success: !!success } : {}),
+  })
+}
+
+const handleVisionRequest = async (requestId) => {
+  if (!requestId) return
+
+  const existing = visionRequestStates.get(requestId)
+  if (existing) {
+    sendVisionRequestStatus(requestId, existing.status, existing.success)
+    return
+  }
+
+  if (visionRequestStates.size >= 100) {
+    const oldestRequestId = visionRequestStates.keys().next().value
+    visionRequestStates.delete(oldestRequestId)
+  }
+  visionRequestStates.set(requestId, { status: 'accepted' })
+  sendVisionRequestStatus(requestId, 'accepted')
+
+  const success = await tryVisionSpeech(true)
+  visionRequestStates.set(requestId, { status: 'completed', success })
+  sendVisionRequestStatus(requestId, 'completed', success)
+}
+
 const initSpeechBroadcast = () => {
   try {
-    speechBroadcast = new BroadcastChannel('sunshine-pet-speech')
+    speechBroadcast = new BroadcastChannel(PET_SPEECH_CHANNEL)
     speechBroadcast.addEventListener('message', async (e) => {
-      const type = e?.data?.type
+      const message = e?.data
+      const type = message?.type
       if (type === 'config-changed') {
         // 设置面板修改了间隔等：根据新值收紧已有调度
         rescheduleSpeech()
+      } else if (type === 'vision-request') {
+        await handleVisionRequest(message.requestId)
       } else if (type === 'poke-vision') {
-        // 强制触发桌面观察（设置面板的"立即观察"按钮）
+        // 兼容旧版本设置窗口。
         await tryVisionSpeech(true)
       } else if (type === 'poke') {
         // 兼容旧消息：优先视觉，失败则随机
@@ -560,6 +679,14 @@ const menuItems = computed(() => [
 
 const toggleMenu = () => {
   menuVisible.value = !menuVisible.value
+  if (menuVisible.value) {
+    cancelSpeechAnimationFrame()
+    speechVisible.value = false
+    if (speechTimer) {
+      clearTimeout(speechTimer)
+      speechTimer = null
+    }
+  }
 }
 
 const handleOutsideClick = () => {
@@ -588,11 +715,11 @@ const handleMenuItem = async (action) => {
   }
 }
 
-// 计算气泡位置（六角星布局：固定六个顶点分布）
+// 计算气泡位置：根据当前菜单项数量均匀分布，避免新增菜单后重叠。
 const getBubbleStyle = (index) => {
   const outerRadius = 80
-  const baseAngles = [-90, -30, 30, 90, 150, -150]
-  const angle = baseAngles[index % 6]
+  const itemCount = Math.max(1, menuItems.value.length)
+  const angle = -90 + (index * 360) / itemCount
   const rad = (angle * Math.PI) / 180
 
   return {
@@ -842,7 +969,8 @@ const initPixiApp = async () => {
     }
   } else {
     // 有缓存 → 延迟后台 ETag 条件请求检查更新
-    setTimeout(() => {
+    initialSpriteRefreshTimer = setTimeout(() => {
+      initialSpriteRefreshTimer = null
       updateSpritesheetCacheInBackground(cachedEtag)
     }, 3000)
   }
@@ -921,17 +1049,8 @@ let refreshTimer = null
 // 后台定时检查资源更新（ETag 条件请求，无变化不下载）
 const startResourceRefresh = () => {
   refreshTimer = setInterval(async () => {
-    // 刷新话术（ETag 条件请求）
-    try {
-      const cachedPhrases = await getCacheEntry(CACHE_KEY_PHRASES)
-      const result = await invoke('fetch_speech_phrases', {
-        ifNoneMatch: cachedPhrases?.etag || null,
-      })
-      if (result) {
-        speechPhrases.value = result.phrases
-        await setCacheEntry(CACHE_KEY_PHRASES, result.phrases, result.etag)
-      }
-    } catch (_) {}
+    // 刷新当前语言的话术（ETag 条件请求）。
+    await loadSpeechPhrases()
 
     // 刷新基地娘缓存，并同步更新当前显示
     try {
@@ -1507,17 +1626,40 @@ const onIconClick = () => {
 //   - 鼠标在内圈 80×80 桌宠图标 → ignore=false（可点击/拖拽）
 //   - 菜单展开时：鼠标在 240×240 整窗内 → ignore=false（可点气泡按钮 / 点空白关闭）
 //   - 否则（外圈空白 / 完全在窗口外）→ ignore=true（穿透到下层）
-let cursorIgnoreState = false
+let cursorIgnoreDesired = false
+let cursorIgnoreApplied = false
+let cursorIgnoreUpdate = null
 let hitTestTimer = null
 let hitTestEnabled = false
 const HIT_TEST_ACTIVE_INTERVAL_MS = 80
 const HIT_TEST_IDLE_INTERVAL_MS = 250
+
+const flushCursorIgnore = async () => {
+  let failed = false
+  while (hitTestEnabled && cursorIgnoreApplied !== cursorIgnoreDesired) {
+    const target = cursorIgnoreDesired
+    try {
+      await appWindow.setIgnoreCursorEvents(target)
+      cursorIgnoreApplied = target
+    } catch (error) {
+      console.warn('[桌宠HitTest] setIgnoreCursorEvents 失败', target, error)
+      failed = true
+      break
+    }
+  }
+  cursorIgnoreUpdate = null
+
+  // 目标可能在最后一次 IPC 完成时发生变化。
+  if (!failed && hitTestEnabled && cursorIgnoreApplied !== cursorIgnoreDesired) {
+    cursorIgnoreUpdate = flushCursorIgnore()
+  }
+}
+
 const setCursorIgnore = (ignore) => {
-  if (ignore === cursorIgnoreState) return
-  cursorIgnoreState = ignore
-  appWindow.setIgnoreCursorEvents(ignore).catch((e) => {
-    console.warn('[桌宠HitTest] setIgnoreCursorEvents 失败', ignore, e)
-  })
+  cursorIgnoreDesired = ignore
+  if (!cursorIgnoreUpdate && cursorIgnoreApplied !== cursorIgnoreDesired) {
+    cursorIgnoreUpdate = flushCursorIgnore()
+  }
 }
 
 const hitTestTick = async () => {
@@ -1570,7 +1712,7 @@ const initBubbleClickThrough = () => {
       if (!hitTestEnabled) return
       await hitTestTick()
       if (!hitTestEnabled) return
-      const active = dragPointerId !== null || menuVisible.value || !cursorIgnoreState
+      const active = dragPointerId !== null || menuVisible.value || !cursorIgnoreApplied
       scheduleNextHitTest(active ? HIT_TEST_ACTIVE_INTERVAL_MS : HIT_TEST_IDLE_INTERVAL_MS)
     }, delay)
   }
@@ -1578,6 +1720,9 @@ const initBubbleClickThrough = () => {
 }
 
 onMounted(async () => {
+  // 先建立跨窗口通信和命中测试，避免资源加载期间丢失设置请求。
+  initSpeechBroadcast()
+  initBubbleClickThrough()
   try {
     await initPixiApp()
   } catch (error) {
@@ -1586,11 +1731,11 @@ onMounted(async () => {
   startSpeechLoop()
   loadSpeechPhrases()
   startResourceRefresh()
-  initSpeechBroadcast()
-  initBubbleClickThrough()
 })
 
 onUnmounted(() => {
+  visionAbortController?.abort()
+  visionAbortController = null
   dragDisposed = true
   clearDragState()
   if (unlistenDragScaleChanged) {
@@ -1605,10 +1750,19 @@ onUnmounted(() => {
     clearInterval(speechInterval)
     speechInterval = null
   }
+  if (initialSpriteRefreshTimer) {
+    clearTimeout(initialSpriteRefreshTimer)
+    initialSpriteRefreshTimer = null
+  }
+  if (startupSpeechTimer) {
+    clearTimeout(startupSpeechTimer)
+    startupSpeechTimer = null
+  }
   if (speechTimer) {
     clearTimeout(speechTimer)
     speechTimer = null
   }
+  cancelSpeechAnimationFrame()
   cleanupPixiApp()
   // 清理拖拽
   hitTestEnabled = false
@@ -1617,6 +1771,7 @@ onUnmounted(() => {
     try { speechBroadcast.close() } catch (_) {}
     speechBroadcast = null
   }
+  visionRequestStates.clear()
 })
 </script>
 
@@ -1820,10 +1975,11 @@ onUnmounted(() => {
 
 .speech-bubble {
   position: absolute;
-  bottom: calc(50% + 60px);
+  bottom: calc(50% + 43px);
   left: 50%;
   transform: translateX(-50%);
   max-width: 220px;
+  max-height: 72px;
   width: max-content;
   padding: 8px 12px;
   color: #4b2b34;
@@ -1833,7 +1989,9 @@ onUnmounted(() => {
   border-radius: 12px;
   pointer-events: none;
   white-space: normal;
-  word-break: break-all;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  word-break: normal;
   z-index: 150;
 
   &::after {

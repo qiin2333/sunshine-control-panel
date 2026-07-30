@@ -91,6 +91,36 @@
                   </div>
                 </div>
               </div>
+              <div v-if="masterEnabled && randomEnabled" class="row row-detail">
+                <div class="row-info">
+                  <div class="row-name">{{ t.petTool.jitter }}</div>
+                  <div class="row-desc">{{ t.petTool.jitterDesc }}</div>
+                </div>
+                <div class="row-control row-control-stack">
+                  <div class="preset-btns">
+                    <button
+                      v-for="preset in JITTER_PRESETS"
+                      :key="preset"
+                      class="pet-btn small"
+                      :class="{ active: jitterPercent === preset }"
+                      @click="setJitterPreset(preset)"
+                    >
+                      {{ preset }}%
+                    </button>
+                  </div>
+                  <div class="number-input">
+                    <input
+                      type="number"
+                      v-model.number="jitterPercent"
+                      :min="0"
+                      :max="MAX_JITTER_PERCENT"
+                      step="1"
+                      class="number-control"
+                    />
+                    <span class="unit">%</span>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <!-- 桌面观察 -->
@@ -163,9 +193,12 @@
                   <div class="row-info">
                     <div class="row-name">{{ t.petTool.pokeNow }}</div>
                     <div class="row-desc">{{ t.petTool.pokeNowDesc }}</div>
+                    <div v-if="pokeError" class="row-desc warn">{{ pokeError }}</div>
                   </div>
                   <div class="row-control">
-                    <button class="pet-btn" @click="onPokeNow">{{ t.petTool.pokeBtn }}</button>
+                    <button class="pet-btn" :disabled="pokePending" @click="onPokeNow">
+                      {{ pokePending ? t.petTool.pokePending : t.petTool.pokeBtn }}
+                    </button>
                   </div>
                 </div>
 
@@ -209,45 +242,7 @@
 
         <!-- ==================== 动画 ==================== -->
         <div v-else-if="activeTab === 'animation'" class="panel-content">
-          <!-- 节奏抖动 -->
-          <div class="row">
-            <div class="row-info">
-              <div class="row-name">{{ t.petTool.jitter }}</div>
-              <div class="row-desc">{{ t.petTool.jitterDesc }}</div>
-            </div>
-            <div class="row-control row-control-stack">
-              <div class="preset-btns">
-                <button
-                  v-for="preset in JITTER_PRESETS"
-                  :key="preset"
-                  class="pet-btn small"
-                  :class="{ active: jitterPercent === preset }"
-                  @click="setJitterPreset(preset)"
-                >
-                  {{ preset }}%
-                </button>
-              </div>
-              <div class="number-input">
-                <input
-                  type="number"
-                  v-model.number="jitterPercent"
-                  :min="0"
-                  :max="MAX_JITTER_PERCENT"
-                  step="1"
-                  class="number-control"
-                />
-                <span class="unit">%</span>
-              </div>
-            </div>
-          </div>
-
           <div class="empty-hint">{{ t.petTool.animationMore }}</div>
-
-          <div class="panel-footer">
-            <button class="pet-btn ghost" :title="t.petTool.resetTooltip" @click="resetAnimationDefaults">
-              {{ t.petTool.reset }}
-            </button>
-          </div>
         </div>
       </section>
     </div>
@@ -255,7 +250,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from '../../desktop/i18n/index.js'
 import { STORAGE_KEY, DEFAULT_CONFIG } from '../../composables/aiProviders.js'
 import { isApiKeyRequired } from '../../composables/aiClient.js'
@@ -278,8 +273,11 @@ import {
   loadJitterPercent,
   loadVisionEnabled,
   loadVisionIntervalSec,
+  PET_VISION_HISTORY_KEY,
   loadVisionHistory,
   clearVisionHistory,
+  notifyPetConfigChanged,
+  requestPetVision,
 } from '../../composables/petSpeechConfig.js'
 
 const { t, locale, toggleLocale } = useI18n()
@@ -308,9 +306,11 @@ const randomIntervalSec = ref(loadRandomIntervalSec())
 const jitterPercent = ref(loadJitterPercent())
 const visionEnabled = ref(loadVisionEnabled())
 const visionIntervalSec = ref(loadVisionIntervalSec())
+const aiConfigVersion = ref(0)
 
 // AI 配置状态（决定桌面观察是否可用）
 const aiConfigReady = computed(() => {
+  void aiConfigVersion.value
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
     const cfg = saved ? { ...DEFAULT_CONFIG, ...JSON.parse(saved) } : { ...DEFAULT_CONFIG }
@@ -325,6 +325,8 @@ const visionToggleDisabled = computed(() => !masterEnabled.value || !aiConfigRea
 // 桌面观察历史
 const visionHistory = ref(loadVisionHistory())
 const showHistory = ref(false)
+const pokePending = ref(false)
+const pokeError = ref('')
 
 function refreshHistory() {
   visionHistory.value = loadVisionHistory()
@@ -361,11 +363,7 @@ function onToggleLocale() {
 }
 
 function emitConfigChanged() {
-  try {
-    const bc = new BroadcastChannel('sunshine-pet-speech')
-    bc.postMessage({ type: 'config-changed' })
-    bc.close()
-  } catch (_) {}
+  notifyPetConfigChanged()
 }
 
 function clampInterval(n) {
@@ -460,47 +458,35 @@ function setVisionIntervalPreset(sec) {
   visionIntervalSec.value = sec
 }
 
-function onPokeNow() {
-  if (!aiConfigReady.value || !visionEnabled.value) return
+async function onPokeNow() {
+  if (!aiConfigReady.value || !visionEnabled.value || pokePending.value) return
+  pokePending.value = true
+  pokeError.value = ''
   try {
-    const bc = new BroadcastChannel('sunshine-pet-speech')
-    bc.postMessage({ type: 'poke-vision' })
-    bc.close()
-  } catch (_) {}
+    await requestPetVision()
+    refreshHistory()
+  } catch (error) {
+    console.warn('[桌宠设置] 立即观察失败:', error)
+    pokeError.value = t.value.petTool.pokeFailed
+  } finally {
+    pokePending.value = false
+  }
 }
 
-function resetDefaults() {
-  suppressWatch = true
-  masterEnabled.value = true
-  randomEnabled.value = true
-  randomIntervalSec.value = DEFAULT_RANDOM_INTERVAL_SEC
-  jitterPercent.value = DEFAULT_JITTER_PERCENT
-  visionEnabled.value = false
-  visionIntervalSec.value = DEFAULT_VISION_INTERVAL_SEC
-  try {
-    localStorage.setItem(PET_MASTER_KEY, 'true')
-    localStorage.setItem(PET_RANDOM_ENABLED_KEY, 'true')
-    localStorage.setItem(PET_RANDOM_INTERVAL_KEY, String(DEFAULT_RANDOM_INTERVAL_SEC))
-    localStorage.setItem(PET_RANDOM_JITTER_KEY, String(DEFAULT_JITTER_PERCENT))
-    localStorage.setItem(PET_VISION_ENABLED_KEY, 'false')
-    localStorage.setItem(PET_VISION_INTERVAL_KEY, String(DEFAULT_VISION_INTERVAL_SEC * 1000))
-  } catch (_) {}
-  Promise.resolve().then(() => { suppressWatch = false })
-  emitConfigChanged()
-}
-
-// 仅恢复对话相关默认（总开关 / 随机对话 / 桌面观察 / 各间隔）
+// 恢复对话相关默认（总开关 / 随机对话 / 桌面观察 / 各间隔）
 function resetSpeechDefaults() {
   suppressWatch = true
   masterEnabled.value = true
   randomEnabled.value = true
   randomIntervalSec.value = DEFAULT_RANDOM_INTERVAL_SEC
+  jitterPercent.value = DEFAULT_JITTER_PERCENT
   visionEnabled.value = false
   visionIntervalSec.value = DEFAULT_VISION_INTERVAL_SEC
   try {
     localStorage.setItem(PET_MASTER_KEY, 'true')
     localStorage.setItem(PET_RANDOM_ENABLED_KEY, 'true')
     localStorage.setItem(PET_RANDOM_INTERVAL_KEY, String(DEFAULT_RANDOM_INTERVAL_SEC))
+    localStorage.setItem(PET_RANDOM_JITTER_KEY, String(DEFAULT_JITTER_PERCENT))
     localStorage.setItem(PET_VISION_ENABLED_KEY, 'false')
     localStorage.setItem(PET_VISION_INTERVAL_KEY, String(DEFAULT_VISION_INTERVAL_SEC * 1000))
   } catch (_) {}
@@ -508,16 +494,36 @@ function resetSpeechDefaults() {
   emitConfigChanged()
 }
 
-// 仅恢复动画相关默认（节奏抖动）
-function resetAnimationDefaults() {
+function syncSettingFromStorage(event) {
+  if (event.key === PET_VISION_HISTORY_KEY) {
+    if (showHistory.value) refreshHistory()
+    return
+  }
+
+  if (event.key === STORAGE_KEY) {
+    aiConfigVersion.value += 1
+    if (!aiConfigReady.value && visionEnabled.value) {
+      visionEnabled.value = false
+    }
+    return
+  }
+
   suppressWatch = true
-  jitterPercent.value = DEFAULT_JITTER_PERCENT
-  try {
-    localStorage.setItem(PET_RANDOM_JITTER_KEY, String(DEFAULT_JITTER_PERCENT))
-  } catch (_) {}
+  if (event.key === PET_MASTER_KEY) masterEnabled.value = loadMasterEnabled()
+  else if (event.key === PET_RANDOM_ENABLED_KEY) randomEnabled.value = loadRandomEnabled()
+  else if (event.key === PET_RANDOM_INTERVAL_KEY) randomIntervalSec.value = loadRandomIntervalSec()
+  else if (event.key === PET_RANDOM_JITTER_KEY) jitterPercent.value = loadJitterPercent()
+  else if (event.key === PET_VISION_ENABLED_KEY) visionEnabled.value = loadVisionEnabled()
+  else if (event.key === PET_VISION_INTERVAL_KEY) visionIntervalSec.value = loadVisionIntervalSec()
+  else {
+    suppressWatch = false
+    return
+  }
   Promise.resolve().then(() => { suppressWatch = false })
-  emitConfigChanged()
 }
+
+onMounted(() => window.addEventListener('storage', syncSettingFromStorage))
+onUnmounted(() => window.removeEventListener('storage', syncSettingFromStorage))
 </script>
 
 <style lang="less" scoped>

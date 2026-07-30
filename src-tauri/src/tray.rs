@@ -975,14 +975,8 @@ fn switch_tray_locale<R: Runtime>(app: &AppHandle<R>, locale: &str) {
             );
         }
     });
-    // 通知前端同步语言
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.emit("tray-locale-changed", locale.as_str());
-    }
-    // 同时通知 desktop 窗口
-    if let Some(window) = app.get_webview_window("desktop") {
-        let _ = window.emit("tray-locale-changed", locale.as_str());
-    }
+    // 所有已打开的 webview 都维护独立的 Vue 状态，需要一起同步。
+    let _ = app.emit("tray-locale-changed", locale.as_str());
 }
 
 /// 重建托盘菜单（语言切换后调用）
@@ -1016,7 +1010,9 @@ pub fn refresh_menu<R: Runtime>(app: &AppHandle<R>) {
 pub async fn set_locale_preferences(app: AppHandle, locale: String) -> Result<(), String> {
     info!("🌍 前端同步 UI 与托盘语言: {}", locale);
     let locale = apply_tray_locale(&app, &locale);
-    sunshine::set_sunshine_locale(locale).await.map(|_| ())
+    sunshine::set_sunshine_locale(locale.clone()).await?;
+    let _ = app.emit("tray-locale-changed", locale.as_str());
+    Ok(())
 }
 
 /// Tauri 命令：前端获取当前 tray 语言

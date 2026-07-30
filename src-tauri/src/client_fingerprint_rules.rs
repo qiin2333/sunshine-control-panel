@@ -7,6 +7,7 @@ use std::time::Duration;
 use crate::sunshine;
 
 const MAX_ENVELOPE_BYTES: usize = 512 * 1024;
+const DEFAULT_RULES_URL: &str = "https://raw.githubusercontent.com/AlkaidLab/sunshine-client-fingerprint-rules/main/stable.json";
 const DEFAULT_REFRESH_HOURS: u64 = 24;
 const MIN_REFRESH_HOURS: u64 = 1;
 const MAX_REFRESH_HOURS: u64 = 168;
@@ -45,6 +46,14 @@ fn refresh_interval(value: Option<&str>) -> Duration {
         .unwrap_or(DEFAULT_REFRESH_HOURS)
         .clamp(MIN_REFRESH_HOURS, MAX_REFRESH_HOURS);
     Duration::from_secs(hours * 60 * 60)
+}
+
+fn configured_rules_url(value: Option<&str>) -> Option<&str> {
+    match value {
+        None => Some(DEFAULT_RULES_URL),
+        Some(value) if value.trim().is_empty() => None,
+        Some(value) => Some(value.trim()),
+    }
 }
 
 async fn fetch_candidate(url: &str, etag: Option<&str>) -> Result<FetchResult, String> {
@@ -130,15 +139,13 @@ async fn updater_loop() {
             tokio::time::sleep(CONFIG_RECHECK_INTERVAL).await;
             continue;
         }
-        let Some(url) = config
-            .client_fingerprint_rules_url
-            .as_deref()
-            .map(str::trim)
-            .filter(|url| !url.is_empty())
-        else {
-            debug!("Client fingerprint rule URL is not configured");
-            tokio::time::sleep(CONFIG_RECHECK_INTERVAL).await;
-            continue;
+        let url = match configured_rules_url(config.client_fingerprint_rules_url.as_deref()) {
+            Some(url) => url,
+            None => {
+                debug!("Client fingerprint rule URL is explicitly disabled");
+                tokio::time::sleep(CONFIG_RECHECK_INTERVAL).await;
+                continue;
+            }
         };
 
         match fetch_candidate(url, accepted_etag.as_deref()).await {
@@ -197,6 +204,16 @@ mod tests {
         assert_eq!(
             refresh_interval(Some("bad")),
             Duration::from_secs(DEFAULT_REFRESH_HOURS * 60 * 60)
+        );
+    }
+
+    #[test]
+    fn defaults_rule_url_but_allows_explicit_disable() {
+        assert_eq!(configured_rules_url(None), Some(DEFAULT_RULES_URL));
+        assert_eq!(configured_rules_url(Some("  ")), None);
+        assert_eq!(
+            configured_rules_url(Some(" https://rules.example/stable.json ")),
+            Some("https://rules.example/stable.json")
         );
     }
 }

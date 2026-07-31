@@ -348,7 +348,7 @@ async fn update_vdd_xml_extra_fields(settings: &VddSettings) -> Result<(), Strin
     write_vdd_xml(&vdd_xml_path, &full_xml).await?;
 
     // 验证文件是否更新
-    verify_vdd_xml(&vdd_xml_path)?;
+    verify_vdd_xml(&vdd_xml_path).await?;
 
     Ok(())
 }
@@ -427,17 +427,17 @@ fn prepare_hardware_cursor_migration(content: &str) -> Result<Option<String>, St
 async fn migrate_hardware_cursor_setting() -> Result<bool, String> {
     let _operation_guard = VDD_SETTINGS_OPERATION_LOCK.lock().await;
     let path = get_vdd_settings_path();
-    if !path.exists() {
-        return Ok(false);
-    }
-
-    let content = fs::read_to_string(&path).map_err(|e| format!("读取 VDD 配置文件失败: {}", e))?;
+    let content = match tokio::fs::read_to_string(&path).await {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("读取 VDD 配置文件失败: {}", error)),
+    };
     let Some(full_xml) = prepare_hardware_cursor_migration(&content)? else {
         return Ok(false);
     };
 
     write_vdd_xml(&path, &full_xml).await?;
-    verify_vdd_xml(&path)?;
+    verify_vdd_xml(&path).await?;
     info!("✅ 已在启动时将旧版 HardwareCursor=false 配置迁移为 true");
     Ok(true)
 }
@@ -457,7 +457,9 @@ async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), Stri
     // 写入临时文件
     let temp_path = std::env::temp_dir().join(format!("vdd_extra_{}.xml", std::process::id()));
     debug!("  📝 写入临时文件: {:?}", temp_path);
-    fs::write(&temp_path, content).map_err(|e| format!("写入临时文件失败: {}", e))?;
+    tokio::fs::write(&temp_path, content)
+        .await
+        .map_err(|e| format!("写入临时文件失败: {}", e))?;
 
     debug!("  📝 目标文件: {:?}", vdd_xml_path);
 
@@ -467,7 +469,7 @@ async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), Stri
             debug!("  🔧 已请求使用 ShellExecuteW 提权复制");
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-            match fs::read_to_string(vdd_xml_path) {
+            match tokio::fs::read_to_string(vdd_xml_path).await {
                 Ok(written) if written == content => {
                     info!("  ✅ ShellExecuteW 提权复制成功");
                     true
@@ -506,7 +508,7 @@ async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), Stri
 
         let powershell_success = match run_elevated_powershell(&inner_command, "写入 VDD XML").await
         {
-            Ok(()) => match fs::read_to_string(vdd_xml_path) {
+            Ok(()) => match tokio::fs::read_to_string(vdd_xml_path).await {
                 Ok(written) if written == content => {
                     info!("  ✅ PowerShell 提权复制成功");
                     true
@@ -531,17 +533,16 @@ async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), Stri
 
             // 尝试直接写入（可能会因权限不足而失败）
             warn!("  ⚠️ 尝试直接写入...");
-            fs::write(vdd_xml_path, content).map_err(|e| {
-                // 清理临时文件
-                let _ = fs::remove_file(&temp_path);
-                format!("写入失败，需要管理员权限: {}", e)
-            })?;
+            if let Err(error) = tokio::fs::write(vdd_xml_path, content).await {
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                return Err(format!("写入失败，需要管理员权限: {}", error));
+            }
             info!("  ✓ 直接写入成功");
         }
     }
 
     // 清理临时文件
-    let _ = fs::remove_file(&temp_path);
+    let _ = tokio::fs::remove_file(&temp_path).await;
 
     Ok(())
 }
@@ -560,10 +561,6 @@ fn elevated_copy_with_shell_execute(source: &Path, destination: &Path) -> Result
 
     let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
     let cmd_path: PathBuf = Path::new(&system_root).join("System32").join("cmd.exe");
-
-    if !cmd_path.exists() {
-        return Err(format!("找不到 cmd.exe: {:?}", cmd_path));
-    }
 
     let parameters = format!(
         r#"/C copy "{}" "{}" /Y"#,
@@ -595,9 +592,6 @@ fn elevated_copy_with_shell_execute(source: &Path, destination: &Path) -> Result
 
 #[cfg(target_os = "windows")]
 async fn run_elevated_powershell(inner_command: &str, action_label: &str) -> Result<(), String> {
-    use std::os::windows::process::CommandExt;
-    use std::process::Command;
-
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     let escaped_command = inner_command.replace("'", "''");
@@ -606,10 +600,11 @@ async fn run_elevated_powershell(inner_command: &str, action_label: &str) -> Res
         escaped_command
     );
 
-    let status = Command::new("powershell")
+    let status = tokio::process::Command::new("powershell")
         .args(&["-NoProfile", "-Command", &ps_script])
         .creation_flags(CREATE_NO_WINDOW)
         .status()
+        .await
         .map_err(|e| format!("{}失败: {}", action_label, e))?;
 
     if !status.success() {
@@ -626,10 +621,14 @@ async fn run_elevated_powershell(inner_command: &str, action_label: &str) -> Res
 async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), String> {
     // 确保目录存在
     if let Some(parent) = vdd_xml_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {}", e))?;
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| format!("创建目录失败: {}", e))?;
     }
 
-    fs::write(vdd_xml_path, content).map_err(|e| format!("写入 VDD XML 失败: {}", e))?;
+    tokio::fs::write(vdd_xml_path, content)
+        .await
+        .map_err(|e| format!("写入 VDD XML 失败: {}", e))?;
 
     debug!("  ✓ 已写入 VDD XML 扩展字段");
 
@@ -637,13 +636,14 @@ async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), Stri
 }
 
 /// 验证 VDD XML 文件
-fn verify_vdd_xml(vdd_xml_path: &PathBuf) -> Result<(), String> {
-    if !vdd_xml_path.exists() {
-        return Err("验证失败: 文件不存在".to_string());
-    }
-
-    let verify_content =
-        fs::read_to_string(vdd_xml_path).map_err(|e| format!("验证文件失败: {}", e))?;
+async fn verify_vdd_xml(vdd_xml_path: &PathBuf) -> Result<(), String> {
+    let verify_content = match tokio::fs::read_to_string(vdd_xml_path).await {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err("验证失败: 文件不存在".to_string());
+        }
+        Err(error) => return Err(format!("验证文件失败: {}", error)),
+    };
 
     if verify_content.contains("<colour>")
         || verify_content.contains("<cursor>")

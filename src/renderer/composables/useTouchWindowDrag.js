@@ -3,6 +3,7 @@ import { PhysicalPosition } from '@tauri-apps/api/dpi'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 
 const DRAG_THRESHOLD = 4
+const INITIAL_PREPARATION_TIMEOUT_MS = 1000
 const RESTORE_RESIZE_TIMEOUT_MS = 500
 
 /**
@@ -284,6 +285,22 @@ export function useTouchWindowDrag(isMaximized = null) {
     return Number.isFinite(pendingPhysicalX) && Number.isFinite(pendingPhysicalY)
   }
 
+  const waitForInitialPreparation = async (promise) => {
+    let timeoutId = null
+    try {
+      return await Promise.race([
+        promise.then(() => true, () => false),
+        new Promise((resolve) => {
+          timeoutId = setTimeout(() => resolve(false), INITIAL_PREPARATION_TIMEOUT_MS)
+        }),
+      ])
+    } finally {
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId)
+      }
+    }
+  }
+
   const queueLatestPosition = () => {
     if (
       pointerId === null ||
@@ -450,8 +467,12 @@ export function useTouchWindowDrag(isMaximized = null) {
     }
 
     if (initialPreparationPromise && hasMoved) {
-      await initialPreparationPromise
+      const prepared = await waitForInitialPreparation(initialPreparationPromise)
       if (!isCurrentDrag(generation, activePointerId)) return
+      if (!prepared) {
+        clearDragState()
+        return
+      }
     }
 
     if (preparationPromise) {

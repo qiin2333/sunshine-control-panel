@@ -515,6 +515,12 @@ export const zh = {
     vision: '桌面观察',
     visionDesc: '桌宠会定时偏看你的屏幕并生成评论（需要多模态 AI）',
     visionHelp: '需要在「米塔 AI 助手」中配置好 API Key，且选择支持视觉的模型。\n启用后桌宠会定时截屏并交给 AI 生成一句针对屏幕内容的吐槽。',
+    visionPrivacyConfirm: {
+      title: '开启桌面观察？',
+      message: '桌面观察会定期截取当前屏幕，并将截图发送到您配置的 AI 服务进行分析。截图可能包含账号、聊天、文件、通知等个人或敏感信息。请确认您了解所选 AI 服务提供商的数据处理与安全政策，并仅在可信环境中启用。',
+      accept: '了解风险并开启',
+      cancel: '取消',
+    },
     visionInterval: '观察间隔',
     visionIntervalDesc: '多久看一次桌面并生成评论（最小 15 秒）',
     visionCostHint: '间隔较短会频繁调用 AI，可能消耗较多 API 额度',

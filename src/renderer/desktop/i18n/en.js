@@ -515,6 +515,12 @@ export const en = {
     vision: 'Desktop Observation',
     visionDesc: 'Pet peeks at your screen and generates AI comments (multimodal AI required)',
     visionHelp: 'Configure an API key under \'Mita AI Assistant\' and pick a vision-capable model (e.g. GPT-4o).\nWhen enabled, the pet periodically captures the screen and asks the AI for a snarky comment about what it sees.',
+    visionPrivacyConfirm: {
+      title: 'Enable Desktop Observation?',
+      message: 'Desktop Observation periodically captures your current screen and sends screenshots to your configured AI service for analysis. Screenshots may contain account details, messages, files, notifications, or other personal and sensitive information. Confirm that you understand the selected AI provider\'s data handling and security policies, and only enable this feature in a trusted environment.',
+      accept: 'Understand and Enable',
+      cancel: 'Cancel',
+    },
     visionInterval: 'Observation Interval',
     visionIntervalDesc: 'How often to capture the screen and generate a comment (minimum 15s)',
     visionCostHint: 'A short interval calls the AI frequently and may consume more API quota',

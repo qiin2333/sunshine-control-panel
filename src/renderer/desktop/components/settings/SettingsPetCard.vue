@@ -1,7 +1,11 @@
 <template>
   <SettingsCard :title="t.settings.pet" :icon="ChatDotRound">
     <SettingsRow :name="t.settings.deskObserve" :description="t.settings.deskObserveDesc">
-      <SettingsSwitch v-model="petEnabled" @change="onPetToggle" />
+      <SettingsSwitch
+        v-model="petEnabled"
+        :disabled="visionConfirmPending"
+        @change="onPetToggle"
+      />
     </SettingsRow>
 
     <SettingsRow
@@ -35,6 +39,7 @@
 import { computed, ref, watch } from 'vue'
 import { ChatDotRound } from '@element-plus/icons-vue'
 import { useDesktopPet } from '../../../composables/useDesktopPet.js'
+import { confirmPetVisionEnable } from '../../../composables/petVisionConsent.js'
 import { useI18n } from '../../i18n/index.js'
 import SettingsCard from './SettingsCard.vue'
 import SettingsRow from './SettingsRow.vue'
@@ -55,6 +60,7 @@ const {
 } = useDesktopPet()
 
 const petIntervalSec = ref(Math.round(observeInterval.value / 1000))
+const visionConfirmPending = ref(false)
 watch(observeInterval, (value) => {
   petIntervalSec.value = Math.round(value / 1000)
 })
@@ -67,11 +73,23 @@ const petIntervalOptions = computed(() => [
   { value: 300, label: t.value.settings.intervals.m5 },
 ])
 
-function onPetToggle(nextValue = petEnabled.value) {
-  if (nextValue) {
-    startObserving()
-  } else {
+async function onPetToggle(nextValue = petEnabled.value) {
+  if (!nextValue) {
     stopObserving()
+    return
+  }
+
+  // v-model updates first; keep the feature off until the user confirms.
+  petEnabled.value = false
+  if (visionConfirmPending.value) return
+
+  visionConfirmPending.value = true
+  try {
+    if (await confirmPetVisionEnable(t.value.petTool.visionPrivacyConfirm)) {
+      startObserving()
+    }
+  } finally {
+    visionConfirmPending.value = false
   }
 }
 

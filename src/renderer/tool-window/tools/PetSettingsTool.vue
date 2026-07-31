@@ -137,8 +137,9 @@
                   <label class="switch">
                     <input
                       type="checkbox"
-                      v-model="visionEnabled"
-                      :disabled="visionToggleDisabled"
+                      :checked="visionEnabled"
+                      :disabled="visionToggleDisabled || visionConfirmPending"
+                      @change="onVisionToggle"
                     />
                     <span class="slider"></span>
                   </label>
@@ -254,6 +255,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from '../../desktop/i18n/index.js'
 import { STORAGE_KEY, DEFAULT_CONFIG } from '../../composables/aiProviders.js'
 import { isApiKeyRequired } from '../../composables/aiClient.js'
+import { confirmPetVisionEnable } from '../../composables/petVisionConsent.js'
 import {
   PET_MASTER_KEY,
   PET_RANDOM_ENABLED_KEY,
@@ -307,6 +309,7 @@ const jitterPercent = ref(loadJitterPercent())
 const visionEnabled = ref(loadVisionEnabled())
 const visionIntervalSec = ref(loadVisionIntervalSec())
 const aiConfigVersion = ref(0)
+const visionConfirmPending = ref(false)
 
 // AI 配置状态（决定桌面观察是否可用）
 const aiConfigReady = computed(() => {
@@ -457,6 +460,26 @@ function setJitterPreset(pct) {
 
 function setVisionIntervalPreset(sec) {
   visionIntervalSec.value = sec
+}
+
+async function onVisionToggle(event) {
+  const nextValue = event.currentTarget.checked
+  event.currentTarget.checked = visionEnabled.value
+
+  if (!nextValue) {
+    visionEnabled.value = false
+    return
+  }
+  if (visionToggleDisabled.value || visionConfirmPending.value) return
+
+  visionConfirmPending.value = true
+  try {
+    if (await confirmPetVisionEnable(t.value.petTool.visionPrivacyConfirm)) {
+      visionEnabled.value = true
+    }
+  } finally {
+    visionConfirmPending.value = false
+  }
 }
 
 async function onPokeNow() {

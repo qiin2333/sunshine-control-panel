@@ -126,12 +126,13 @@ export async function callAnthropic(apiBase, apiKey, model, messages, maxTokens 
   return data.content?.map((c) => c.text).join('') || ''
 }
 
-export async function callLLM(config, messages, maxTokens = 2048) {
+export async function callLLM(config, messages, maxTokens = 2048, requestOptions = {}) {
   const proxyUrl = await getProxyUrl()
   const url = `${proxyUrl}/api/ai/chat/completions`
   const options = {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    signal: requestOptions.signal,
     body: JSON.stringify({
       model: config.model,
       messages,
@@ -179,7 +180,14 @@ export function buildAnthropicVisionContent(text, imageDataUrl) {
   ]
 }
 
-export async function callVisionLLM(config, systemPrompt, userText, imageDataUrl, maxTokens = 512) {
+export async function callVisionLLM(
+  config,
+  systemPrompt,
+  userText,
+  imageDataUrl,
+  maxTokens = 512,
+  requestOptions = {}
+) {
   const isAnthropic = getCompatibility(config.provider) === 'anthropic-messages' || config.compatibility === 'anthropic-messages'
   const content = isAnthropic
     ? buildAnthropicVisionContent(userText, imageDataUrl)
@@ -188,7 +196,7 @@ export async function callVisionLLM(config, systemPrompt, userText, imageDataUrl
   return callLLM(config, [
     { role: 'system', content: systemPrompt },
     { role: 'user', content },
-  ], maxTokens)
+  ], maxTokens, requestOptions)
 }
 
 export async function fetchModels(apiBase, apiKey, providerValue) {

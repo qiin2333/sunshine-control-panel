@@ -14,6 +14,7 @@
         <button
           v-for="tab in TABS"
           :key="tab.id"
+          type="button"
           class="sidebar-item"
           :class="{ active: activeTab === tab.id }"
           @click="activeTab = tab.id"
@@ -24,7 +25,12 @@
       </aside>
 
       <!-- 右侧内容区 -->
-      <section class="tab-panel">
+      <section
+        class="tab-panel"
+        @touchstart.passive="onTabTouchStart"
+        @touchend.passive="onTabTouchEnd"
+        @touchcancel="resetTabTouch"
+      >
         <!-- ==================== 对话 ==================== -->
         <div v-if="activeTab === 'speech'" class="panel-content">
           <!-- 总开关 -->
@@ -91,6 +97,36 @@
                   </div>
                 </div>
               </div>
+              <div v-if="masterEnabled && randomEnabled" class="row row-detail">
+                <div class="row-info">
+                  <div class="row-name">{{ t.petTool.jitter }}</div>
+                  <div class="row-desc">{{ t.petTool.jitterDesc }}</div>
+                </div>
+                <div class="row-control row-control-stack">
+                  <div class="preset-btns">
+                    <button
+                      v-for="preset in JITTER_PRESETS"
+                      :key="preset"
+                      class="pet-btn small"
+                      :class="{ active: jitterPercent === preset }"
+                      @click="setJitterPreset(preset)"
+                    >
+                      {{ preset }}%
+                    </button>
+                  </div>
+                  <div class="number-input">
+                    <input
+                      type="number"
+                      v-model.number="jitterPercent"
+                      :min="0"
+                      :max="MAX_JITTER_PERCENT"
+                      step="1"
+                      class="number-control"
+                    />
+                    <span class="unit">%</span>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <!-- 桌面观察 -->
@@ -107,8 +143,9 @@
                   <label class="switch">
                     <input
                       type="checkbox"
-                      v-model="visionEnabled"
-                      :disabled="visionToggleDisabled"
+                      :checked="visionEnabled"
+                      :disabled="visionToggleDisabled || visionConfirmPending"
+                      @change="onVisionToggle"
                     />
                     <span class="slider"></span>
                   </label>
@@ -163,9 +200,12 @@
                   <div class="row-info">
                     <div class="row-name">{{ t.petTool.pokeNow }}</div>
                     <div class="row-desc">{{ t.petTool.pokeNowDesc }}</div>
+                    <div v-if="pokeFailed" class="row-desc warn">{{ t.petTool.pokeFailed }}</div>
                   </div>
                   <div class="row-control">
-                    <button class="pet-btn" @click="onPokeNow">{{ t.petTool.pokeBtn }}</button>
+                    <button class="pet-btn" :disabled="pokePending" @click="onPokeNow">
+                      {{ pokePending ? t.petTool.pokePending : t.petTool.pokeBtn }}
+                    </button>
                   </div>
                 </div>
 
@@ -209,56 +249,26 @@
 
         <!-- ==================== 动画 ==================== -->
         <div v-else-if="activeTab === 'animation'" class="panel-content">
-          <!-- 节奏抖动 -->
-          <div class="row">
-            <div class="row-info">
-              <div class="row-name">{{ t.petTool.jitter }}</div>
-              <div class="row-desc">{{ t.petTool.jitterDesc }}</div>
-            </div>
-            <div class="row-control row-control-stack">
-              <div class="preset-btns">
-                <button
-                  v-for="preset in JITTER_PRESETS"
-                  :key="preset"
-                  class="pet-btn small"
-                  :class="{ active: jitterPercent === preset }"
-                  @click="setJitterPreset(preset)"
-                >
-                  {{ preset }}%
-                </button>
-              </div>
-              <div class="number-input">
-                <input
-                  type="number"
-                  v-model.number="jitterPercent"
-                  :min="0"
-                  :max="MAX_JITTER_PERCENT"
-                  step="1"
-                  class="number-control"
-                />
-                <span class="unit">%</span>
-              </div>
-            </div>
-          </div>
-
           <div class="empty-hint">{{ t.petTool.animationMore }}</div>
-
-          <div class="panel-footer">
-            <button class="pet-btn ghost" :title="t.petTool.resetTooltip" @click="resetAnimationDefaults">
-              {{ t.petTool.reset }}
-            </button>
-          </div>
         </div>
       </section>
     </div>
+
+    <PetVisionConsentDialog
+      :open="visionConfirmOpen"
+      :text="t.petTool.visionPrivacyConfirm"
+      @confirm="finishVisionConfirmation(true)"
+      @cancel="finishVisionConfirmation(false)"
+    />
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from '../../desktop/i18n/index.js'
 import { STORAGE_KEY, DEFAULT_CONFIG } from '../../composables/aiProviders.js'
 import { isApiKeyRequired } from '../../composables/aiClient.js'
+import PetVisionConsentDialog from '../../components/PetVisionConsentDialog.vue'
 import {
   PET_MASTER_KEY,
   PET_RANDOM_ENABLED_KEY,
@@ -278,8 +288,11 @@ import {
   loadJitterPercent,
   loadVisionEnabled,
   loadVisionIntervalSec,
+  PET_VISION_HISTORY_KEY,
   loadVisionHistory,
   clearVisionHistory,
+  notifyPetConfigChanged,
+  requestPetVision,
 } from '../../composables/petSpeechConfig.js'
 
 const { t, locale, toggleLocale } = useI18n()
@@ -308,9 +321,15 @@ const randomIntervalSec = ref(loadRandomIntervalSec())
 const jitterPercent = ref(loadJitterPercent())
 const visionEnabled = ref(loadVisionEnabled())
 const visionIntervalSec = ref(loadVisionIntervalSec())
+const aiConfigVersion = ref(0)
+const visionConfirmPending = ref(false)
+const visionConfirmOpen = ref(false)
+let tabTouchStart = null
 
 // AI 配置状态（决定桌面观察是否可用）
 const aiConfigReady = computed(() => {
+  const configVersion = aiConfigVersion.value
+  if (!Number.isFinite(configVersion)) return false
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
     const cfg = saved ? { ...DEFAULT_CONFIG, ...JSON.parse(saved) } : { ...DEFAULT_CONFIG }
@@ -325,6 +344,8 @@ const visionToggleDisabled = computed(() => !masterEnabled.value || !aiConfigRea
 // 桌面观察历史
 const visionHistory = ref(loadVisionHistory())
 const showHistory = ref(false)
+const pokePending = ref(false)
+const pokeFailed = ref(false)
 
 function refreshHistory() {
   visionHistory.value = loadVisionHistory()
@@ -360,12 +381,52 @@ function onToggleLocale() {
   toggleLocale()
 }
 
+function onTabTouchStart(event) {
+  if (event.touches.length !== 1) return
+  if (event.target?.closest?.('button, input, label, a, [role="button"]')) return
+
+  const touch = event.touches[0]
+  tabTouchStart = {
+    x: touch.clientX,
+    y: touch.clientY,
+    startedAt: performance.now(),
+  }
+}
+
+function resetTabTouch() {
+  tabTouchStart = null
+}
+
+function onTabTouchEnd(event) {
+  const start = tabTouchStart
+  resetTabTouch()
+  if (!start || event.changedTouches.length !== 1) return
+
+  const touch = event.changedTouches[0]
+  const deltaX = touch.clientX - start.x
+  const deltaY = touch.clientY - start.y
+  const elapsed = performance.now() - start.startedAt
+  if (elapsed > 800 || Math.abs(deltaX) < 56 || Math.abs(deltaX) < Math.abs(deltaY) * 1.2) {
+    return
+  }
+
+  const currentIndex = TABS.findIndex((tab) => tab.id === activeTab.value)
+  const nextIndex = deltaX < 0 ? currentIndex + 1 : currentIndex - 1
+  if (nextIndex >= 0 && nextIndex < TABS.length) {
+    activeTab.value = TABS[nextIndex].id
+  }
+}
+
 function emitConfigChanged() {
+  notifyPetConfigChanged()
+}
+
+function persistSetting(key, value) {
   try {
-    const bc = new BroadcastChannel('sunshine-pet-speech')
-    bc.postMessage({ type: 'config-changed' })
-    bc.close()
-  } catch (_) {}
+    localStorage.setItem(key, value)
+  } catch (error) {
+    console.warn(`[桌宠设置] 配置持久化失败 (${key}):`, error)
+  }
 }
 
 function clampInterval(n) {
@@ -393,14 +454,14 @@ function safeAssign(refObj, value) {
 // 总开关
 watch(masterEnabled, (v) => {
   if (suppressWatch) return
-  localStorage.setItem(PET_MASTER_KEY, String(!!v))
+  persistSetting(PET_MASTER_KEY, String(!!v))
   emitConfigChanged()
 })
 
 // 随机对话开关
 watch(randomEnabled, (v) => {
   if (suppressWatch) return
-  localStorage.setItem(PET_RANDOM_ENABLED_KEY, String(!!v))
+  persistSetting(PET_RANDOM_ENABLED_KEY, String(!!v))
   emitConfigChanged()
 })
 
@@ -411,7 +472,7 @@ watch(randomIntervalSec, (v) => {
   if (c !== v) {
     safeAssign(randomIntervalSec, c)
   }
-  localStorage.setItem(PET_RANDOM_INTERVAL_KEY, String(c))
+  persistSetting(PET_RANDOM_INTERVAL_KEY, String(c))
   emitConfigChanged()
 })
 
@@ -422,7 +483,7 @@ watch(jitterPercent, (v) => {
   if (c !== v) {
     safeAssign(jitterPercent, c)
   }
-  localStorage.setItem(PET_RANDOM_JITTER_KEY, String(c))
+  persistSetting(PET_RANDOM_JITTER_KEY, String(c))
   emitConfigChanged()
 })
 
@@ -433,7 +494,7 @@ watch(visionEnabled, (v) => {
     safeAssign(visionEnabled, false)
     return
   }
-  localStorage.setItem(PET_VISION_ENABLED_KEY, String(!!v))
+  persistSetting(PET_VISION_ENABLED_KEY, String(!!v))
   emitConfigChanged()
 })
 
@@ -444,7 +505,7 @@ watch(visionIntervalSec, (v) => {
   if (c !== v) {
     safeAssign(visionIntervalSec, c)
   }
-  localStorage.setItem(PET_VISION_INTERVAL_KEY, String(c * 1000))
+  persistSetting(PET_VISION_INTERVAL_KEY, String(c * 1000))
   emitConfigChanged()
 })
 
@@ -460,47 +521,60 @@ function setVisionIntervalPreset(sec) {
   visionIntervalSec.value = sec
 }
 
-function onPokeNow() {
-  if (!aiConfigReady.value || !visionEnabled.value) return
-  try {
-    const bc = new BroadcastChannel('sunshine-pet-speech')
-    bc.postMessage({ type: 'poke-vision' })
-    bc.close()
-  } catch (_) {}
+function onVisionToggle(event) {
+  const nextValue = event.currentTarget.checked
+  event.currentTarget.checked = visionEnabled.value
+
+  if (!nextValue) {
+    visionEnabled.value = false
+    return
+  }
+  if (visionToggleDisabled.value || visionConfirmPending.value) return
+
+  visionConfirmPending.value = true
+  visionConfirmOpen.value = true
 }
 
-function resetDefaults() {
-  suppressWatch = true
-  masterEnabled.value = true
-  randomEnabled.value = true
-  randomIntervalSec.value = DEFAULT_RANDOM_INTERVAL_SEC
-  jitterPercent.value = DEFAULT_JITTER_PERCENT
-  visionEnabled.value = false
-  visionIntervalSec.value = DEFAULT_VISION_INTERVAL_SEC
-  try {
-    localStorage.setItem(PET_MASTER_KEY, 'true')
-    localStorage.setItem(PET_RANDOM_ENABLED_KEY, 'true')
-    localStorage.setItem(PET_RANDOM_INTERVAL_KEY, String(DEFAULT_RANDOM_INTERVAL_SEC))
-    localStorage.setItem(PET_RANDOM_JITTER_KEY, String(DEFAULT_JITTER_PERCENT))
-    localStorage.setItem(PET_VISION_ENABLED_KEY, 'false')
-    localStorage.setItem(PET_VISION_INTERVAL_KEY, String(DEFAULT_VISION_INTERVAL_SEC * 1000))
-  } catch (_) {}
-  Promise.resolve().then(() => { suppressWatch = false })
-  emitConfigChanged()
+function finishVisionConfirmation(accepted) {
+  if (!visionConfirmPending.value) return
+  visionConfirmOpen.value = false
+  visionConfirmPending.value = false
+  if (accepted && !visionToggleDisabled.value) visionEnabled.value = true
 }
 
-// 仅恢复对话相关默认（总开关 / 随机对话 / 桌面观察 / 各间隔）
+async function onPokeNow() {
+  if (!aiConfigReady.value || !visionEnabled.value || pokePending.value) return
+  pokePending.value = true
+  pokeFailed.value = false
+  try {
+    const result = await requestPetVision({ ensureToolbar: true })
+    if (result?.success) {
+      refreshHistory()
+    } else {
+      pokeFailed.value = true
+    }
+  } catch (error) {
+    console.warn('[桌宠设置] 立即观察失败:', error)
+    pokeFailed.value = true
+  } finally {
+    pokePending.value = false
+  }
+}
+
+// 恢复对话相关默认（总开关 / 随机对话 / 桌面观察 / 各间隔）
 function resetSpeechDefaults() {
   suppressWatch = true
   masterEnabled.value = true
   randomEnabled.value = true
   randomIntervalSec.value = DEFAULT_RANDOM_INTERVAL_SEC
+  jitterPercent.value = DEFAULT_JITTER_PERCENT
   visionEnabled.value = false
   visionIntervalSec.value = DEFAULT_VISION_INTERVAL_SEC
   try {
     localStorage.setItem(PET_MASTER_KEY, 'true')
     localStorage.setItem(PET_RANDOM_ENABLED_KEY, 'true')
     localStorage.setItem(PET_RANDOM_INTERVAL_KEY, String(DEFAULT_RANDOM_INTERVAL_SEC))
+    localStorage.setItem(PET_RANDOM_JITTER_KEY, String(DEFAULT_JITTER_PERCENT))
     localStorage.setItem(PET_VISION_ENABLED_KEY, 'false')
     localStorage.setItem(PET_VISION_INTERVAL_KEY, String(DEFAULT_VISION_INTERVAL_SEC * 1000))
   } catch (_) {}
@@ -508,25 +582,50 @@ function resetSpeechDefaults() {
   emitConfigChanged()
 }
 
-// 仅恢复动画相关默认（节奏抖动）
-function resetAnimationDefaults() {
+function syncSettingFromStorage(event) {
+  if (event.key === PET_VISION_HISTORY_KEY) {
+    if (showHistory.value) refreshHistory()
+    return
+  }
+
+  if (event.key === STORAGE_KEY) {
+    aiConfigVersion.value += 1
+    if (!aiConfigReady.value && visionEnabled.value) {
+      visionEnabled.value = false
+    }
+    return
+  }
+
   suppressWatch = true
-  jitterPercent.value = DEFAULT_JITTER_PERCENT
-  try {
-    localStorage.setItem(PET_RANDOM_JITTER_KEY, String(DEFAULT_JITTER_PERCENT))
-  } catch (_) {}
+  if (event.key === PET_MASTER_KEY) masterEnabled.value = loadMasterEnabled()
+  else if (event.key === PET_RANDOM_ENABLED_KEY) randomEnabled.value = loadRandomEnabled()
+  else if (event.key === PET_RANDOM_INTERVAL_KEY) randomIntervalSec.value = loadRandomIntervalSec()
+  else if (event.key === PET_RANDOM_JITTER_KEY) jitterPercent.value = loadJitterPercent()
+  else if (event.key === PET_VISION_ENABLED_KEY) visionEnabled.value = loadVisionEnabled()
+  else if (event.key === PET_VISION_INTERVAL_KEY) visionIntervalSec.value = loadVisionIntervalSec()
+  else {
+    suppressWatch = false
+    return
+  }
   Promise.resolve().then(() => { suppressWatch = false })
-  emitConfigChanged()
 }
+
+onMounted(() => window.addEventListener('storage', syncSettingFromStorage))
+onUnmounted(() => window.removeEventListener('storage', syncSettingFromStorage))
 </script>
 
 <style lang="less" scoped>
 .tool-container {
-  width: 720px;
+  width: min(720px, calc(100vw - 32px));
+  height: min(560px, calc(100vh - 32px));
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
   color: white;
 }
 
 .tool-header {
+  flex-shrink: 0;
   padding: 14px 24px;
   background: rgba(255, 255, 255, 0.1);
   position: relative;
@@ -599,9 +698,9 @@ function resetAnimationDefaults() {
 }
 
 .tool-body {
+  flex: 1;
   display: flex;
-  min-height: 360px;
-  max-height: 70vh;
+  min-height: 0;
 }
 
 .sidebar {
@@ -612,6 +711,7 @@ function resetAnimationDefaults() {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  overflow-y: auto;
 }
 
 .sidebar-item {
@@ -625,6 +725,9 @@ function resetAnimationDefaults() {
   font-size: 13px;
   border-radius: 8px;
   cursor: pointer;
+  min-height: 44px;
+  touch-action: manipulation;
+  user-select: none;
   text-align: left;
   transition: background 0.18s, color 0.18s;
 
@@ -655,6 +758,8 @@ function resetAnimationDefaults() {
   flex: 1;
   min-width: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 
 .panel-content {
@@ -662,7 +767,8 @@ function resetAnimationDefaults() {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  min-height: 360px;
+  min-height: 100%;
+  box-sizing: border-box;
 }
 
 .panel-footer {

@@ -1,5 +1,13 @@
 use log::{debug, error, info, warn};
-use std::{sync::Mutex, time::Duration};
+use once_cell::sync::Lazy;
+use serde::Serialize;
+use std::{
+    sync::{
+        Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 use tauri::{
     AppHandle, Emitter, Manager, Runtime,
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
@@ -35,6 +43,40 @@ static SUNSHINE_USER_MODE_STATE: Mutex<bool> = Mutex::new(false);
 
 // 当前语言状态管理 ("zh" 或 "en")
 static CURRENT_LOCALE: Mutex<Option<String>> = Mutex::new(None);
+static LOCALE_CHANGE_REVISION: AtomicU64 = AtomicU64::new(0);
+static LOCALE_PERSIST_LOCK: Lazy<tokio::sync::Mutex<()>> =
+    Lazy::new(|| tokio::sync::Mutex::new(()));
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TrayLocaleChangedPayload {
+    locale: String,
+    source: &'static str,
+    request_id: Option<String>,
+    revision: u64,
+}
+
+fn next_locale_change_revision() -> u64 {
+    LOCALE_CHANGE_REVISION.fetch_add(1, Ordering::AcqRel) + 1
+}
+
+async fn persist_latest_locale(revision: u64, locale: String) -> Result<bool, String> {
+    let _guard = LOCALE_PERSIST_LOCK.lock().await;
+    if revision != LOCALE_CHANGE_REVISION.load(Ordering::Acquire) {
+        return Ok(false);
+    }
+
+    sunshine::set_sunshine_locale(locale).await?;
+    Ok(true)
+}
+
+fn emit_tray_locale_changed<R: Runtime>(
+    app: &AppHandle<R>,
+    payload: &TrayLocaleChangedPayload,
+) -> Result<(), String> {
+    app.emit("tray-locale-changed", payload)
+        .map_err(|error| format!("Failed to broadcast locale change: {error}"))
+}
 
 // Last icon name applied from the Sunshine core state. This avoids repeatedly
 // decoding the same .ico file during the polling loop.
@@ -950,42 +992,48 @@ pub fn handle_tray_double_click<R: Runtime>(app: &AppHandle<R>) {
     open_main_panel_from_tray(app, "double click");
 }
 
-fn apply_tray_locale<R: Runtime>(app: &AppHandle<R>, locale: &str) -> String {
+fn apply_next_tray_locale<R: Runtime>(app: &AppHandle<R>, locale: &str) -> (u64, String) {
     let locale = normalize_tray_locale(locale).to_string();
-    let changed = {
+    let (revision, changed) = {
         let mut current_locale = CURRENT_LOCALE.lock().unwrap();
+        let revision = next_locale_change_revision();
         let changed = current_locale.as_deref() != Some(locale.as_str());
         *current_locale = Some(locale.clone());
-        changed
+        (revision, changed)
     };
 
     if changed {
         rebuild_tray_menu(app);
     }
 
-    locale
+    (revision, locale)
 }
 
 /// 从托盘菜单切换语言
 fn switch_tray_locale<R: Runtime>(app: &AppHandle<R>, locale: &str) {
     info!("🌍 托盘菜单：切换语言为 {}", locale);
-    let locale = apply_tray_locale(app, locale);
+    let (revision, locale) = apply_next_tray_locale(app, locale);
     let locale_to_persist = locale.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(error) = sunshine::set_sunshine_locale(locale_to_persist.clone()).await {
+        if let Err(error) = persist_latest_locale(revision, locale_to_persist.clone()).await {
             warn!(
                 "Failed to persist Sunshine locale '{}': {}",
                 locale_to_persist, error
             );
         }
     });
-    // 通知前端同步语言
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.emit("tray-locale-changed", locale.as_str());
-    }
-    // 同时通知 desktop 窗口
-    if let Some(window) = app.get_webview_window("desktop") {
-        let _ = window.emit("tray-locale-changed", locale.as_str());
+    // 所有已打开的 webview 都维护独立的 Vue 状态，需要一起同步。
+    let payload = TrayLocaleChangedPayload {
+        locale,
+        source: "tray",
+        request_id: None,
+        revision,
+    };
+    if let Err(error) = emit_tray_locale_changed(app, &payload) {
+        warn!("{error}; retrying once");
+        if let Err(retry_error) = emit_tray_locale_changed(app, &payload) {
+            warn!("{retry_error}");
+        }
     }
 }
 
@@ -1017,10 +1065,28 @@ pub fn refresh_menu<R: Runtime>(app: &AppHandle<R>) {
 }
 
 #[tauri::command]
-pub async fn set_locale_preferences(app: AppHandle, locale: String) -> Result<(), String> {
+pub async fn set_locale_preferences(
+    app: AppHandle,
+    locale: String,
+    request_id: Option<String>,
+) -> Result<(), String> {
     info!("🌍 前端同步 UI 与托盘语言: {}", locale);
-    let locale = apply_tray_locale(&app, &locale);
-    sunshine::set_sunshine_locale(locale).await.map(|_| ())
+    let (revision, locale) = apply_next_tray_locale(&app, &locale);
+    if !persist_latest_locale(revision, locale.clone()).await? {
+        return Ok(());
+    }
+    if revision == LOCALE_CHANGE_REVISION.load(Ordering::Acquire) {
+        emit_tray_locale_changed(
+            &app,
+            &TrayLocaleChangedPayload {
+                locale,
+                source: "frontend",
+                request_id,
+                revision,
+            },
+        )?;
+    }
+    Ok(())
 }
 
 /// Tauri 命令：前端获取当前 tray 语言

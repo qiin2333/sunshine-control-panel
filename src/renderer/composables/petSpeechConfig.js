@@ -18,6 +18,7 @@ export const PET_RANDOM_JITTER_KEY = 'sunshine-pet-speech-jitter'
 // 桌面观察（视觉 AI）— 与 useDesktopPet.js 一致
 export const PET_VISION_ENABLED_KEY = 'sunshine-pet-enabled'
 export const PET_VISION_INTERVAL_KEY = 'sunshine-pet-interval' // 注意：useDesktopPet 中存储的是毫秒
+export const PET_SPEECH_CHANNEL = 'sunshine-pet-speech'
 
 // 范围与默认值
 export const MIN_INTERVAL_SEC = 15
@@ -121,4 +122,115 @@ export function clearVisionHistory() {
   } catch {
     // ignore
   }
+}
+
+function postPetMessage(message) {
+  try {
+    const channel = new BroadcastChannel(PET_SPEECH_CHANNEL)
+    channel.postMessage(message)
+    channel.close()
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function notifyPetConfigChanged() {
+  postPetMessage({ type: 'config-changed' })
+}
+
+function createVisionRequestId() {
+  try {
+    return crypto.randomUUID()
+  } catch {
+    return `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  }
+}
+
+/**
+ * Ask the toolbar webview to perform one visual observation.
+ *
+ * BroadcastChannel messages are not queued for webviews that have not loaded
+ * yet, so the request is retried with the same id until the toolbar accepts it.
+ * The toolbar de-duplicates ids and sends a terminal acknowledgement.
+ */
+export async function requestPetVision({
+  ensureToolbar = false,
+  onStatus,
+  readyTimeoutMs,
+  completionTimeoutMs = 130000,
+} = {}) {
+  const effectiveReadyTimeoutMs = readyTimeoutMs ?? (ensureToolbar ? 15000 : 5000)
+
+  if (ensureToolbar) {
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('create_toolbar_window')
+  }
+
+  if (typeof BroadcastChannel !== 'function') {
+    throw new Error('BroadcastChannel is unavailable')
+  }
+
+  const requestId = createVisionRequestId()
+  const channel = new BroadcastChannel(PET_SPEECH_CHANNEL)
+
+  return await new Promise((resolve, reject) => {
+    let accepted = false
+    let settled = false
+    let retryTimer = null
+    let readyTimer = null
+    let completionTimer = null
+
+    const cleanup = () => {
+      if (retryTimer) clearInterval(retryTimer)
+      if (readyTimer) clearTimeout(readyTimer)
+      if (completionTimer) clearTimeout(completionTimer)
+      channel.close()
+    }
+
+    const finish = (callback, value) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      callback(value)
+    }
+
+    const send = () => {
+      channel.postMessage({ type: 'vision-request', requestId })
+    }
+
+    channel.addEventListener('message', (event) => {
+      const message = event?.data
+      if (message?.type !== 'vision-status' || message.requestId !== requestId) return
+
+      onStatus?.(message.status)
+      if (message.status === 'accepted') {
+        accepted = true
+        if (retryTimer) {
+          clearInterval(retryTimer)
+          retryTimer = null
+        }
+        if (readyTimer) {
+          clearTimeout(readyTimer)
+          readyTimer = null
+        }
+        return
+      }
+
+      if (message.status === 'completed') {
+        finish(resolve, { success: !!message.success })
+      }
+    })
+
+    send()
+    retryTimer = setInterval(() => {
+      if (!accepted) send()
+    }, 250)
+    readyTimer = setTimeout(() => {
+      finish(reject, new Error('Desktop pet toolbar did not accept the request'))
+    }, effectiveReadyTimeoutMs)
+    completionTimer = setTimeout(() => {
+      finish(reject, new Error('Desktop pet observation timed out'))
+    }, completionTimeoutMs)
+  })
 }

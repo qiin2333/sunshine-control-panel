@@ -8,6 +8,10 @@ use tauri_build::{AppManifest, Attributes};
 /// tauri-build 默认扫描 `./capabilities/**/*` 加载所有 capability。
 const GENERATED_CAPABILITY_PATH: &str = "capabilities/app-commands.generated.json";
 
+/// Commands that must never be exposed to the Sunshine backend remote origin.
+/// Their local window-scoped grants live in hand-written capability files.
+const LOCAL_ONLY_COMMANDS: &[&str] = &["capture_screenshot"];
+
 /// 允许 sunshine backend remote origin 调用 app commands 的 URL 列表。
 ///
 /// sunshine GUI webview 启动后会跳转到 `https://localhost:47990` 等地址，
@@ -76,7 +80,18 @@ fn allow_id(command: &str) -> String {
 /// 该 capability 仅包含 app commands 的 allow- 权限并绑定 sunshine backend
 /// remote URLs；窗口/插件/外部 URL 等由 `capabilities/default.json` 维护。
 fn write_capability(commands: &[String]) {
-    let permissions: Vec<String> = commands.iter().map(|c| allow_id(c)).collect();
+    for local_only in LOCAL_ONLY_COMMANDS {
+        assert!(
+            commands.iter().any(|command| command == local_only),
+            "LOCAL_ONLY_COMMANDS entry `{local_only}` was not found in generate_handler!"
+        );
+    }
+
+    let permissions: Vec<String> = commands
+        .iter()
+        .filter(|command| !LOCAL_ONLY_COMMANDS.contains(&command.as_str()))
+        .map(|command| allow_id(command))
+        .collect();
     let permissions_lines = permissions
         .iter()
         .map(|p| format!("    {:?}", p))

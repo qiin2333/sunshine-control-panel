@@ -3,20 +3,77 @@ import { zh } from './zh.js'
 import { en } from './en.js'
 
 const messages = { zh, en }
+const LOCALE_REQUEST_KEY = 'foundation-desktop-locale-request'
+let localLocaleRequestId = null
+let latestBackendLocaleRevision = 0
 
 function normalizeDesktopLocale(locale) {
   return locale?.toLowerCase().startsWith('zh') ? 'zh' : 'en'
 }
 
 function getDefaultLocale() {
-  const saved = localStorage.getItem('language')
-  if (saved === 'zh' || saved === 'en') return saved
+  try {
+    const saved = localStorage.getItem('language')
+    if (saved === 'zh' || saved === 'en') return saved
+  } catch {
+    // Fall back to the browser locale when storage is unavailable.
+  }
 
   const browserLang = navigator.language || navigator.userLanguage || ''
   return normalizeDesktopLocale(browserLang)
 }
 
 const currentLocale = ref(getDefaultLocale())
+let localeRevision = 0
+
+function updateCurrentLocale(locale, persist = false) {
+  const normalized = normalizeDesktopLocale(locale)
+  localeRevision += 1
+  if (normalized !== currentLocale.value) {
+    currentLocale.value = normalized
+  }
+  if (persist) {
+    try {
+      localStorage.setItem('language', normalized)
+    } catch {
+      // Keep the in-memory locale when storage is unavailable.
+    }
+  }
+}
+
+function createLocaleRequestId() {
+  try {
+    return crypto.randomUUID()
+  } catch {
+    return `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  }
+}
+
+function setLatestLocaleRequest(requestId) {
+  localLocaleRequestId = requestId
+  try {
+    localStorage.setItem(LOCALE_REQUEST_KEY, requestId)
+  } catch {
+    // The originating webview can still reject its own stale confirmations.
+  }
+}
+
+function getLatestLocaleRequest() {
+  try {
+    return localStorage.getItem(LOCALE_REQUEST_KEY)
+  } catch {
+    return localLocaleRequestId
+  }
+}
+
+function clearLatestLocaleRequest() {
+  localLocaleRequestId = null
+  try {
+    localStorage.removeItem(LOCALE_REQUEST_KEY)
+  } catch {
+    // Ignore when storage is unavailable.
+  }
+}
 
 function setDocumentLanguage(locale) {
   document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en'
@@ -29,16 +86,14 @@ let syncInitialized = false
 async function syncLocaleFromSunshine() {
   if (syncInitialized) return
   syncInitialized = true
+  const revision = localeRevision
   try {
     const { invoke } = await import('@tauri-apps/api/core')
     const config = await invoke('parse_sunshine_config')
-    if (!config?.locale) return
+    if (!config?.locale || revision !== localeRevision) return
     // Sunshine 用 'zh'/'zh_TW' 等，桌面 GUI 只有 'zh'/'en'
     const guiLocale = normalizeDesktopLocale(config.locale)
-    if (guiLocale !== currentLocale.value) {
-      currentLocale.value = guiLocale
-      localStorage.setItem('language', guiLocale)
-    }
+    updateCurrentLocale(guiLocale, true)
   } catch {
     // 非 Tauri 环境或 API 不可用，忽略
   }
@@ -50,12 +105,28 @@ async function listenTrayLocaleChanged() {
   try {
     const { listen } = await import('@tauri-apps/api/event')
     listen('tray-locale-changed', (event) => {
-      if (!event.payload) return
-      const newLocale = normalizeDesktopLocale(event.payload)
-      if (newLocale !== currentLocale.value) {
-        currentLocale.value = newLocale
-        localStorage.setItem('language', newLocale)
+      const payload = event.payload
+      const eventLocale = typeof payload === 'string' ? payload : payload?.locale
+      if (!eventLocale) return
+
+      const source = typeof payload === 'object' ? payload.source : 'tray'
+      const requestId = typeof payload === 'object' ? payload.requestId : null
+      const revision = typeof payload === 'object' ? Number(payload.revision) : Number.NaN
+      if (Number.isSafeInteger(revision)) {
+        if (revision <= latestBackendLocaleRevision) return
+        latestBackendLocaleRevision = revision
       }
+      if (source === 'frontend' && requestId) {
+        const latestRequestId = getLatestLocaleRequest()
+        if (latestRequestId && latestRequestId !== requestId) return
+      } else if (source === 'tray') {
+        clearLatestLocaleRequest()
+      }
+
+      updateCurrentLocale(eventLocale, true)
+      window.dispatchEvent(new CustomEvent('locale-changed', {
+        detail: { locale: normalizeDesktopLocale(eventLocale) },
+      }))
     })
   } catch {
     // 非 Tauri 环境，忽略
@@ -63,15 +134,32 @@ async function listenTrayLocaleChanged() {
 }
 listenTrayLocaleChanged()
 
+// localStorage is shared by the app webviews, but each webview owns its Vue
+// state. Keep already-open toolbar and tool windows in sync with another
+// window changing the language.
+window.addEventListener('storage', (event) => {
+  if (event.key !== 'language' || !event.newValue) return
+  updateCurrentLocale(event.newValue)
+})
+
 // 用户明确切换时，通过同一条命令更新 Sunshine UI 和托盘语言。
-async function syncLocalePreferences(locale) {
+async function syncLocalePreferences(locale, requestId) {
   try {
     const { invoke } = await import('@tauri-apps/api/core')
-    await invoke('set_locale_preferences', { locale })
-    window.dispatchEvent(new CustomEvent('locale-changed', { detail: { locale } }))
+    await invoke('set_locale_preferences', { locale, requestId })
   } catch (error) {
     console.warn('Failed to sync locale preferences:', error)
   }
+}
+
+function requestLocaleChange(value) {
+  const normalized = normalizeDesktopLocale(value)
+  if (normalized === currentLocale.value) return
+
+  const requestId = createLocaleRequestId()
+  setLatestLocaleRequest(requestId)
+  updateCurrentLocale(normalized, true)
+  syncLocalePreferences(normalized, requestId)
 }
 
 export function useI18n() {
@@ -79,14 +167,12 @@ export function useI18n() {
   const locale = computed({
     get: () => currentLocale.value,
     set: (val) => {
-      currentLocale.value = val
-      localStorage.setItem('language', val)
+      requestLocaleChange(val)
     },
   })
   const toggleLocale = () => {
     const newLocale = locale.value === 'zh' ? 'en' : 'zh'
     locale.value = newLocale
-    syncLocalePreferences(newLocale)
   }
   return { t, locale, toggleLocale }
 }

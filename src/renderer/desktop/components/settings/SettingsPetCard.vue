@@ -1,7 +1,11 @@
 <template>
   <SettingsCard :title="t.settings.pet" :icon="ChatDotRound">
     <SettingsRow :name="t.settings.deskObserve" :description="t.settings.deskObserveDesc">
-      <SettingsSwitch v-model="petEnabled" @change="onPetToggle" />
+      <SettingsSwitch
+        v-model="petEnabled"
+        :disabled="visionConfirmPending"
+        @change="onPetToggle"
+      />
     </SettingsRow>
 
     <SettingsRow
@@ -19,19 +23,30 @@
     <SettingsRow
       v-if="petEnabled"
       :name="t.settings.pokeMita"
-      :description="t.settings.pokeMitaDesc"
     >
+      <template #description>
+        {{ t.settings.pokeMitaDesc }}
+        <span v-if="pokeFailed" class="pet-error">{{ t.petTool.pokeFailed }}</span>
+      </template>
       <button class="desktop-btn" :disabled="isObserving" @click="poke">
         {{ isObserving ? t.settings.pokeBtnObserving : t.settings.pokeBtn }}
       </button>
     </SettingsRow>
+
+    <PetVisionConsentDialog
+      :open="visionConfirmOpen"
+      :text="t.petTool.visionPrivacyConfirm"
+      @confirm="finishVisionConfirmation(true)"
+      @cancel="finishVisionConfirmation(false)"
+    />
   </SettingsCard>
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ChatDotRound } from '@element-plus/icons-vue'
 import { useDesktopPet } from '../../../composables/useDesktopPet.js'
+import PetVisionConsentDialog from '../../../components/PetVisionConsentDialog.vue'
 import { useI18n } from '../../i18n/index.js'
 import SettingsCard from './SettingsCard.vue'
 import SettingsRow from './SettingsRow.vue'
@@ -44,6 +59,7 @@ const {
   petEnabled,
   isObserving,
   observeInterval,
+  pokeFailed,
   startObserving,
   stopObserving,
   setIntervalSeconds,
@@ -51,6 +67,11 @@ const {
 } = useDesktopPet()
 
 const petIntervalSec = ref(Math.round(observeInterval.value / 1000))
+const visionConfirmPending = ref(false)
+const visionConfirmOpen = ref(false)
+watch(observeInterval, (value) => {
+  petIntervalSec.value = Math.round(value / 1000)
+})
 
 const petIntervalOptions = computed(() => [
   { value: 15, label: t.value.settings.intervals.s15 },
@@ -61,14 +82,35 @@ const petIntervalOptions = computed(() => [
 ])
 
 function onPetToggle(nextValue = petEnabled.value) {
-  if (nextValue) {
-    startObserving()
-  } else {
+  if (!nextValue) {
     stopObserving()
+    return
   }
+
+  // v-model updates first; keep the feature off until the user confirms.
+  petEnabled.value = false
+  if (visionConfirmPending.value) return
+
+  visionConfirmPending.value = true
+  visionConfirmOpen.value = true
+}
+
+function finishVisionConfirmation(accepted) {
+  if (!visionConfirmPending.value) return
+  visionConfirmOpen.value = false
+  visionConfirmPending.value = false
+  if (accepted) startObserving()
 }
 
 function onPetIntervalChange(nextValue = petIntervalSec.value) {
   setIntervalSeconds(nextValue)
 }
 </script>
+
+<style lang="less" scoped>
+.pet-error {
+  display: block;
+  margin-top: 4px;
+  color: var(--fd-status-danger, #ff6b35);
+}
+</style>

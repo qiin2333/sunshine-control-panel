@@ -3,7 +3,7 @@ import { PhysicalPosition } from '@tauri-apps/api/dpi'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 
 const DRAG_THRESHOLD = 4
-const INITIAL_PREPARATION_TIMEOUT_MS = 1000
+const DRAG_OPERATION_TIMEOUT_MS = 1000
 const RESTORE_RESIZE_TIMEOUT_MS = 500
 
 /**
@@ -285,13 +285,13 @@ export function useTouchWindowDrag(isMaximized = null) {
     return Number.isFinite(pendingPhysicalX) && Number.isFinite(pendingPhysicalY)
   }
 
-  const waitForInitialPreparation = async (promise) => {
+  const waitForDragOperation = async (promise) => {
     let timeoutId = null
     try {
       return await Promise.race([
         promise.then(() => true, () => false),
         new Promise((resolve) => {
-          timeoutId = setTimeout(() => resolve(false), INITIAL_PREPARATION_TIMEOUT_MS)
+          timeoutId = setTimeout(() => resolve(false), DRAG_OPERATION_TIMEOUT_MS)
         }),
       ])
     } finally {
@@ -299,6 +299,13 @@ export function useTouchWindowDrag(isMaximized = null) {
         clearTimeout(timeoutId)
       }
     }
+  }
+
+  const waitForCurrentDragOperation = async (promise, generation, activePointerId) => {
+    const completed = await waitForDragOperation(promise)
+    if (!isCurrentDrag(generation, activePointerId)) return false
+    if (!completed) clearDragState()
+    return completed
   }
 
   const queueLatestPosition = () => {
@@ -467,27 +474,39 @@ export function useTouchWindowDrag(isMaximized = null) {
     }
 
     if (initialPreparationPromise && hasMoved) {
-      const prepared = await waitForInitialPreparation(initialPreparationPromise)
-      if (!isCurrentDrag(generation, activePointerId)) return
-      if (!prepared) {
-        clearDragState()
-        return
-      }
+      if (!(await waitForCurrentDragOperation(
+        initialPreparationPromise,
+        generation,
+        activePointerId,
+      ))) return
     }
 
     if (preparationPromise) {
-      await preparationPromise
-      if (!isCurrentDrag(generation, activePointerId)) return
+      if (!(await waitForCurrentDragOperation(
+        preparationPromise,
+        generation,
+        activePointerId,
+      ))) return
     }
 
     if (scaleRebasePromise) {
-      await scaleRebasePromise
-      if (!isCurrentDrag(generation, activePointerId)) return
+      if (!(await waitForCurrentDragOperation(
+        scaleRebasePromise,
+        generation,
+        activePointerId,
+      ))) return
     }
 
-    while (settingPosition) {
-      await new Promise((resolve) => setTimeout(resolve, 0))
-      if (!isCurrentDrag(generation, activePointerId)) return
+    if (settingPosition) {
+      if (!(await waitForCurrentDragOperation(
+        (async () => {
+          while (settingPosition) {
+            await new Promise((resolve) => setTimeout(resolve, 0))
+          }
+        })(),
+        generation,
+        activePointerId,
+      ))) return
     }
 
     if (
@@ -496,12 +515,11 @@ export function useTouchWindowDrag(isMaximized = null) {
       Number.isFinite(pendingPhysicalX) &&
       Number.isFinite(pendingPhysicalY)
     ) {
-      try {
-        await commitPosition(pendingPhysicalX, pendingPhysicalY)
-        if (!isCurrentDrag(generation, activePointerId)) return
-      } catch {
-        // Keep the last position accepted by the operating system.
-      }
+      if (!(await waitForCurrentDragOperation(
+        commitPosition(pendingPhysicalX, pendingPhysicalY),
+        generation,
+        activePointerId,
+      ))) return
     }
 
     if (isCurrentDrag(generation, activePointerId)) {

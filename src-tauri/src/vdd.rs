@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 const VDD_TRACE_SESSION_NAME: &str = "ZakoVDD-Diagnostics";
 const VDD_TRACE_PROVIDER_GUID: &str = "{B254994F-46E6-4719-80A0-0A3AA50D6CE5}";
 const VDD_TRACE_FILE_PREFIX: &str = "zako-vdd";
+static VDD_SETTINGS_OPERATION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct VddTraceStatus {
@@ -373,6 +374,81 @@ fn normalize_hardware_cursor(settings: &mut VddSettings) -> bool {
 
     cursor.hardware_cursor = true;
     true
+}
+
+fn normalize_hardware_cursor_for_persistence(settings: &mut VddSettings) {
+    if settings.cursor.is_none() {
+        settings.cursor = default_cursor();
+    }
+    normalize_hardware_cursor(settings);
+}
+
+fn prepare_hardware_cursor_migration(content: &str) -> Result<Option<String>, String> {
+    let mut settings: VddSettings =
+        from_str(content).map_err(|e| format!("解析 VDD XML 失败: {}", e))?;
+    if !normalize_hardware_cursor(&mut settings) {
+        return Ok(None);
+    }
+
+    // Change only the existing value so driver fields unknown to this GUI are preserved.
+    const CURSOR_OPEN_TAG: &str = "<cursor>";
+    const CURSOR_CLOSE_TAG: &str = "</cursor>";
+    const OPEN_TAG: &str = "<HardwareCursor>";
+    const CLOSE_TAG: &str = "</HardwareCursor>";
+    let cursor_start = content
+        .find(CURSOR_OPEN_TAG)
+        .map(|index| index + CURSOR_OPEN_TAG.len())
+        .ok_or_else(|| "VDD XML 缺少 cursor 起始标签".to_string())?;
+    let cursor_end = content[cursor_start..]
+        .find(CURSOR_CLOSE_TAG)
+        .map(|index| cursor_start + index)
+        .ok_or_else(|| "VDD XML 缺少 cursor 结束标签".to_string())?;
+    let value_start = content[cursor_start..cursor_end]
+        .find(OPEN_TAG)
+        .map(|index| cursor_start + index + OPEN_TAG.len())
+        .ok_or_else(|| "VDD XML 缺少 HardwareCursor 起始标签".to_string())?;
+    let value_end = content[value_start..cursor_end]
+        .find(CLOSE_TAG)
+        .map(|index| value_start + index)
+        .ok_or_else(|| "VDD XML 缺少 HardwareCursor 结束标签".to_string())?;
+    let raw_value = &content[value_start..value_end];
+    let leading_whitespace = raw_value.len() - raw_value.trim_start().len();
+    let trailing_whitespace = raw_value.len() - raw_value.trim_end().len();
+    let replacement_start = value_start + leading_whitespace;
+    let replacement_end = value_end - trailing_whitespace;
+
+    let mut migrated = String::with_capacity(content.len());
+    migrated.push_str(&content[..replacement_start]);
+    migrated.push_str("true");
+    migrated.push_str(&content[replacement_end..]);
+    Ok(Some(migrated))
+}
+
+async fn migrate_hardware_cursor_setting() -> Result<bool, String> {
+    let _operation_guard = VDD_SETTINGS_OPERATION_LOCK.lock().await;
+    let path = get_vdd_settings_path();
+    if !path.exists() {
+        return Ok(false);
+    }
+
+    let content = fs::read_to_string(&path).map_err(|e| format!("读取 VDD 配置文件失败: {}", e))?;
+    let Some(full_xml) = prepare_hardware_cursor_migration(&content)? else {
+        return Ok(false);
+    };
+
+    write_vdd_xml(&path, &full_xml).await?;
+    verify_vdd_xml(&path)?;
+    info!("✅ 已在启动时将旧版 HardwareCursor=false 配置迁移为 true");
+    Ok(true)
+}
+
+/// Persist the HardwareCursor invariant without blocking application startup.
+pub fn start_hardware_cursor_migration() {
+    tauri::async_runtime::spawn(async {
+        if let Err(error) = migrate_hardware_cursor_setting().await {
+            warn!("VDD HardwareCursor 配置迁移失败，将在下次启动时重试: {error}");
+        }
+    });
 }
 
 /// 写入 VDD XML 文件（Windows - 使用管理员权限）
@@ -1001,6 +1077,7 @@ fn get_default_settings() -> VddSettings {
 
 #[tauri::command]
 pub async fn load_vdd_settings() -> Result<VddSettings, String> {
+    let _operation_guard = VDD_SETTINGS_OPERATION_LOCK.lock().await;
     let path = get_vdd_settings_path();
 
     if !path.exists() {
@@ -1018,13 +1095,7 @@ pub async fn load_vdd_settings() -> Result<VddSettings, String> {
         format!("XML 解析失败: {}", e)
     })?;
 
-    if normalize_hardware_cursor(&mut settings) {
-        let xml = serialize_vdd_settings(&settings)?;
-        let full_xml = format!("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n{}", xml);
-        write_vdd_xml(&path, &full_xml).await?;
-        verify_vdd_xml(&path)?;
-        info!("✅ 已将旧版 HardwareCursor=false 配置迁移为 true");
-    }
+    normalize_hardware_cursor(&mut settings);
 
     info!("✅ XML 解析成功！");
     debug!("🔍 解析后的 VDD 设置: {:?}", settings);
@@ -1042,8 +1113,10 @@ pub async fn load_vdd_settings() -> Result<VddSettings, String> {
 }
 
 #[tauri::command]
-pub async fn save_vdd_settings(settings: VddSettings) -> Result<String, String> {
+pub async fn save_vdd_settings(mut settings: VddSettings) -> Result<String, String> {
     info!("💾 开始保存 VDD 配置...");
+    normalize_hardware_cursor_for_persistence(&mut settings);
+    let _operation_guard = VDD_SETTINGS_OPERATION_LOCK.lock().await;
 
     // 步骤1: 调用 Sunshine Config API 保存主要配置（resolutions, fps, adapter_name）
     // C++ 会写入 monitors, gpu, global, resolutions 字段
@@ -1658,6 +1731,56 @@ mod tests {
         assert!(xml.contains("<HardwareCursor>true</HardwareCursor>"));
         assert!(!xml.contains("<HardwareCursor>false</HardwareCursor>"));
         assert!(!normalize_hardware_cursor(&mut settings));
+    }
+
+    #[test]
+    fn persistence_restores_a_missing_cursor_section() {
+        let mut settings = get_default_settings();
+        settings.cursor = None;
+
+        normalize_hardware_cursor_for_persistence(&mut settings);
+
+        assert!(
+            settings
+                .cursor
+                .expect("persistence should restore cursor defaults")
+                .hardware_cursor
+        );
+    }
+
+    #[test]
+    fn startup_migration_rewrites_disabled_hardware_cursor_once() {
+        let old_xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<vdd_settings>
+    <monitors><count>1</count></monitors>
+    <gpu><friendlyname></friendlyname></gpu>
+    <global><g_refresh_rate>60</g_refresh_rate></global>
+    <resolutions>
+        <resolution><width>1920</width><height>1080</height></resolution>
+    </resolutions>
+    <FutureDriverSetting><HardwareCursor>false</HardwareCursor></FutureDriverSetting>
+    <cursor>
+        <HardwareCursor> false </HardwareCursor>
+        <CursorMaxY>64</CursorMaxY>
+        <CursorMaxX>64</CursorMaxX>
+        <AlphaCursorSupport>true</AlphaCursorSupport>
+        <XorCursorSupportLevel>2</XorCursorSupportLevel>
+    </cursor>
+    <FutureDriverSetting>keep-me</FutureDriverSetting>
+</vdd_settings>"#;
+
+        let migrated = prepare_hardware_cursor_migration(old_xml)
+            .unwrap()
+            .expect("disabled cursor should require migration");
+        assert!(migrated.contains("<HardwareCursor> true </HardwareCursor>"));
+        assert!(migrated.contains(
+            "<FutureDriverSetting><HardwareCursor>false</HardwareCursor></FutureDriverSetting>"
+        ));
+        assert!(
+            prepare_hardware_cursor_migration(&migrated)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

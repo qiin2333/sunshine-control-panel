@@ -704,10 +704,6 @@ fn default_true() -> bool {
     true
 }
 
-fn default_false() -> bool {
-    false
-}
-
 fn default_cursor_max_size() -> u32 {
     128
 }
@@ -778,7 +774,7 @@ pub struct Colour {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Cursor {
-    #[serde(rename = "HardwareCursor", default = "default_false")]
+    #[serde(rename = "HardwareCursor", default = "default_true")]
     pub hardware_cursor: bool,
     #[serde(rename = "CursorMaxY", default = "default_cursor_max_size")]
     pub cursor_max_y: u32,
@@ -796,7 +792,7 @@ pub struct Cursor {
 impl Default for Cursor {
     fn default() -> Self {
         Self {
-            hardware_cursor: false,
+            hardware_cursor: true,
             cursor_max_y: default_cursor_max_size(),
             cursor_max_x: default_cursor_max_size(),
             alpha_cursor_support: true,
@@ -1535,13 +1531,13 @@ mod tests {
 "#;
 
     #[test]
-    fn missing_cursor_section_defaults_to_hardware_cursor_disabled() {
+    fn missing_cursor_section_defaults_to_hardware_cursor_enabled() {
         let settings: VddSettings = from_str(MINIMAL_VDD_XML_WITHOUT_CURSOR).unwrap();
         let cursor = settings
             .cursor
             .expect("cursor defaults should be populated");
 
-        assert!(!cursor.hardware_cursor);
+        assert!(cursor.hardware_cursor);
         assert_eq!(cursor.cursor_max_x, 128);
         assert_eq!(cursor.cursor_max_y, 128);
         assert!(cursor.alpha_cursor_support);
@@ -1556,7 +1552,7 @@ mod tests {
         assert!(xml.contains("<vdd_settings>"));
         assert!(!xml.contains("<VddSettings>"));
         assert!(xml.contains("<cursor>"));
-        assert!(xml.contains("<HardwareCursor>false</HardwareCursor>"));
+        assert!(xml.contains("<HardwareCursor>true</HardwareCursor>"));
         assert!(xml.contains("<CursorMaxX>128</CursorMaxX>"));
         assert!(xml.contains("<CursorMaxY>128</CursorMaxY>"));
         assert!(xml.contains("<AlphaCursorSupport>true</AlphaCursorSupport>"));

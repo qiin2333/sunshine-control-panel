@@ -836,7 +836,7 @@ export const zh = {
     sdr10bitTip: '为 SDR 会话声明 10bit 色深',
     hdr12bitTip: '为 HDR 会话声明 12bit HDR+ 能力',
     hardwareCursor: '硬件指针',
-    hardwareCursorTip: '开启后，VDD 会把鼠标指针作为硬件 cursor plane 交给系统；使用 Sunshine 的 VDD 直接捕获时会自动关闭它，否则远端可能看不到鼠标。',
+    hardwareCursorTip: '光标导出保持开启，Sunshine 可在视频合成与客户端本地渲染之间切换，无需重载驱动。',
     customEdid: '自定义EDID',
     customEdidTip: '仅在需要特殊分辨率、HDR 能力或兼容性调试时启用。',
     customEdidMissingInline: '已启用自定义 EDID，但当前还没有可用文件。请先上传有效的 .bin 文件，或关闭此选项。',

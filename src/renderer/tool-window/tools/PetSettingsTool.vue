@@ -14,6 +14,7 @@
         <button
           v-for="tab in TABS"
           :key="tab.id"
+          type="button"
           class="sidebar-item"
           :class="{ active: activeTab === tab.id }"
           @click="activeTab = tab.id"
@@ -24,7 +25,12 @@
       </aside>
 
       <!-- 右侧内容区 -->
-      <section class="tab-panel">
+      <section
+        class="tab-panel"
+        @touchstart.passive="onTabTouchStart"
+        @touchend.passive="onTabTouchEnd"
+        @touchcancel="resetTabTouch"
+      >
         <!-- ==================== 对话 ==================== -->
         <div v-if="activeTab === 'speech'" class="panel-content">
           <!-- 总开关 -->
@@ -247,6 +253,13 @@
         </div>
       </section>
     </div>
+
+    <PetVisionConsentDialog
+      :open="visionConfirmOpen"
+      :text="t.petTool.visionPrivacyConfirm"
+      @confirm="finishVisionConfirmation(true)"
+      @cancel="finishVisionConfirmation(false)"
+    />
   </div>
 </template>
 
@@ -255,7 +268,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from '../../desktop/i18n/index.js'
 import { STORAGE_KEY, DEFAULT_CONFIG } from '../../composables/aiProviders.js'
 import { isApiKeyRequired } from '../../composables/aiClient.js'
-import { confirmPetVisionEnable } from '../../composables/petVisionConsent.js'
+import PetVisionConsentDialog from '../../components/PetVisionConsentDialog.vue'
 import {
   PET_MASTER_KEY,
   PET_RANDOM_ENABLED_KEY,
@@ -310,6 +323,8 @@ const visionEnabled = ref(loadVisionEnabled())
 const visionIntervalSec = ref(loadVisionIntervalSec())
 const aiConfigVersion = ref(0)
 const visionConfirmPending = ref(false)
+const visionConfirmOpen = ref(false)
+let tabTouchStart = null
 
 // AI 配置状态（决定桌面观察是否可用）
 const aiConfigReady = computed(() => {
@@ -364,6 +379,42 @@ function formatSec(sec) {
 
 function onToggleLocale() {
   toggleLocale()
+}
+
+function onTabTouchStart(event) {
+  if (event.touches.length !== 1) return
+  if (event.target?.closest?.('button, input, label, a, [role="button"]')) return
+
+  const touch = event.touches[0]
+  tabTouchStart = {
+    x: touch.clientX,
+    y: touch.clientY,
+    startedAt: performance.now(),
+  }
+}
+
+function resetTabTouch() {
+  tabTouchStart = null
+}
+
+function onTabTouchEnd(event) {
+  const start = tabTouchStart
+  resetTabTouch()
+  if (!start || event.changedTouches.length !== 1) return
+
+  const touch = event.changedTouches[0]
+  const deltaX = touch.clientX - start.x
+  const deltaY = touch.clientY - start.y
+  const elapsed = performance.now() - start.startedAt
+  if (elapsed > 800 || Math.abs(deltaX) < 56 || Math.abs(deltaX) < Math.abs(deltaY) * 1.2) {
+    return
+  }
+
+  const currentIndex = TABS.findIndex((tab) => tab.id === activeTab.value)
+  const nextIndex = deltaX < 0 ? currentIndex + 1 : currentIndex - 1
+  if (nextIndex >= 0 && nextIndex < TABS.length) {
+    activeTab.value = TABS[nextIndex].id
+  }
 }
 
 function emitConfigChanged() {
@@ -470,7 +521,7 @@ function setVisionIntervalPreset(sec) {
   visionIntervalSec.value = sec
 }
 
-async function onVisionToggle(event) {
+function onVisionToggle(event) {
   const nextValue = event.currentTarget.checked
   event.currentTarget.checked = visionEnabled.value
 
@@ -481,13 +532,14 @@ async function onVisionToggle(event) {
   if (visionToggleDisabled.value || visionConfirmPending.value) return
 
   visionConfirmPending.value = true
-  try {
-    if (await confirmPetVisionEnable(t.value.petTool.visionPrivacyConfirm)) {
-      visionEnabled.value = true
-    }
-  } finally {
-    visionConfirmPending.value = false
-  }
+  visionConfirmOpen.value = true
+}
+
+function finishVisionConfirmation(accepted) {
+  if (!visionConfirmPending.value) return
+  visionConfirmOpen.value = false
+  visionConfirmPending.value = false
+  if (accepted && !visionToggleDisabled.value) visionEnabled.value = true
 }
 
 async function onPokeNow() {
@@ -564,11 +616,16 @@ onUnmounted(() => window.removeEventListener('storage', syncSettingFromStorage))
 
 <style lang="less" scoped>
 .tool-container {
-  width: 720px;
+  width: min(720px, calc(100vw - 32px));
+  height: min(560px, calc(100vh - 32px));
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
   color: white;
 }
 
 .tool-header {
+  flex-shrink: 0;
   padding: 14px 24px;
   background: rgba(255, 255, 255, 0.1);
   position: relative;
@@ -641,9 +698,9 @@ onUnmounted(() => window.removeEventListener('storage', syncSettingFromStorage))
 }
 
 .tool-body {
+  flex: 1;
   display: flex;
-  min-height: 360px;
-  max-height: 70vh;
+  min-height: 0;
 }
 
 .sidebar {
@@ -654,6 +711,7 @@ onUnmounted(() => window.removeEventListener('storage', syncSettingFromStorage))
   display: flex;
   flex-direction: column;
   gap: 4px;
+  overflow-y: auto;
 }
 
 .sidebar-item {
@@ -667,6 +725,9 @@ onUnmounted(() => window.removeEventListener('storage', syncSettingFromStorage))
   font-size: 13px;
   border-radius: 8px;
   cursor: pointer;
+  min-height: 44px;
+  touch-action: manipulation;
+  user-select: none;
   text-align: left;
   transition: background 0.18s, color 0.18s;
 
@@ -697,6 +758,8 @@ onUnmounted(() => window.removeEventListener('storage', syncSettingFromStorage))
   flex: 1;
   min-width: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 
 .panel-content {
@@ -704,7 +767,8 @@ onUnmounted(() => window.removeEventListener('storage', syncSettingFromStorage))
   display: flex;
   flex-direction: column;
   gap: 6px;
-  min-height: 360px;
+  min-height: 100%;
+  box-sizing: border-box;
 }
 
 .panel-footer {

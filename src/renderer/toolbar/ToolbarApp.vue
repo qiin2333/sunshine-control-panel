@@ -272,7 +272,7 @@ const showSpeech = () => {
   }
   speechTimer = setTimeout(() => {
     speechVisible.value = false
-  }, 2600)
+  }, 3600)
 }
 
 // 直接显示桌面观察的状态或错误文本。

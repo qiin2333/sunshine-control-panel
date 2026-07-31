@@ -32,6 +32,13 @@
         {{ isObserving ? t.settings.pokeBtnObserving : t.settings.pokeBtn }}
       </button>
     </SettingsRow>
+
+    <PetVisionConsentDialog
+      :open="visionConfirmOpen"
+      :text="t.petTool.visionPrivacyConfirm"
+      @confirm="finishVisionConfirmation(true)"
+      @cancel="finishVisionConfirmation(false)"
+    />
   </SettingsCard>
 </template>
 
@@ -39,7 +46,7 @@
 import { computed, ref, watch } from 'vue'
 import { ChatDotRound } from '@element-plus/icons-vue'
 import { useDesktopPet } from '../../../composables/useDesktopPet.js'
-import { confirmPetVisionEnable } from '../../../composables/petVisionConsent.js'
+import PetVisionConsentDialog from '../../../components/PetVisionConsentDialog.vue'
 import { useI18n } from '../../i18n/index.js'
 import SettingsCard from './SettingsCard.vue'
 import SettingsRow from './SettingsRow.vue'
@@ -61,6 +68,7 @@ const {
 
 const petIntervalSec = ref(Math.round(observeInterval.value / 1000))
 const visionConfirmPending = ref(false)
+const visionConfirmOpen = ref(false)
 watch(observeInterval, (value) => {
   petIntervalSec.value = Math.round(value / 1000)
 })
@@ -73,7 +81,7 @@ const petIntervalOptions = computed(() => [
   { value: 300, label: t.value.settings.intervals.m5 },
 ])
 
-async function onPetToggle(nextValue = petEnabled.value) {
+function onPetToggle(nextValue = petEnabled.value) {
   if (!nextValue) {
     stopObserving()
     return
@@ -84,13 +92,14 @@ async function onPetToggle(nextValue = petEnabled.value) {
   if (visionConfirmPending.value) return
 
   visionConfirmPending.value = true
-  try {
-    if (await confirmPetVisionEnable(t.value.petTool.visionPrivacyConfirm)) {
-      startObserving()
-    }
-  } finally {
-    visionConfirmPending.value = false
-  }
+  visionConfirmOpen.value = true
+}
+
+function finishVisionConfirmation(accepted) {
+  if (!visionConfirmPending.value) return
+  visionConfirmOpen.value = false
+  visionConfirmPending.value = false
+  if (accepted) startObserving()
 }
 
 function onPetIntervalChange(nextValue = petIntervalSec.value) {

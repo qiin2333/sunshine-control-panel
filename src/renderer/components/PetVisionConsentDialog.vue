@@ -67,6 +67,7 @@ watch(
 
     previousFocus = document.activeElement
     await nextTick()
+    if (!props.open) return
     if (cancelButtonRef.value) {
       cancelButtonRef.value.focus()
     } else {

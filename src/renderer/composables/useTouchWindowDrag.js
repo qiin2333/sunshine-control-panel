@@ -55,6 +55,9 @@ export function useTouchWindowDrag(isMaximized = null, options = {}) {
   let preparationPromise = null
   let settingPosition = false
   let positionRaf = null
+  let cancelRestoreResizeWait = null
+  let positionRequestSequence = 0
+  let latestRequestedPosition = null
 
   const normalizeScaleFactor = (value) => (
     Number.isFinite(value) && value > 0 ? value : 1
@@ -77,29 +80,78 @@ export function useTouchWindowDrag(isMaximized = null, options = {}) {
     }
   }
 
-  const commitPosition = (physicalX, physicalY) => {
-    return appWindow.setPosition(new PhysicalPosition(
-      Math.round(physicalX),
-      Math.round(physicalY),
-    ))
+  const commitPosition = async (physicalX, physicalY) => {
+    let requestSequence = ++positionRequestSequence
+    let requestedPosition = {
+      x: Math.round(physicalX),
+      y: Math.round(physicalY),
+    }
+    latestRequestedPosition = requestedPosition
+
+    // Tauri window IPC cannot be cancelled. If an older timed-out request
+    // finishes late, follow it with the newest requested position.
+    while (true) {
+      await appWindow.setPosition(new PhysicalPosition(
+        requestedPosition.x,
+        requestedPosition.y,
+      ))
+      if (requestSequence === positionRequestSequence) return
+
+      requestSequence = positionRequestSequence
+      requestedPosition = latestRequestedPosition
+    }
   }
 
-  const waitForRestoreResize = async () => {
+  const safelyUnlisten = (unlisten) => {
+    try {
+      const result = unlisten()
+      if (result && typeof result.catch === 'function') {
+        result.catch(() => {})
+      }
+    } catch {
+      // The window may already be closing.
+    }
+  }
+
+  const waitForRestoreResize = async (generation, activePointerId) => {
+    let cancelled = false
     let resolveResize
     let unlistenResize = null
     let timeoutId = null
     const resizePromise = new Promise((resolve) => {
       resolveResize = resolve
     })
+    const cancelWait = () => {
+      if (cancelled) return
+      cancelled = true
+      resolveResize()
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId)
+        timeoutId = null
+      }
+      if (unlistenResize) {
+        safelyUnlisten(unlistenResize)
+        unlistenResize = null
+      }
+    }
+    cancelRestoreResizeWait = cancelWait
 
     try {
       try {
-        unlistenResize = await appWindow.onResized(() => resolveResize())
+        const unlisten = await appWindow.onResized(() => resolveResize())
+        if (cancelled || !isCurrentDrag(generation, activePointerId)) {
+          safelyUnlisten(unlisten)
+          return false
+        }
+        unlistenResize = unlisten
       } catch {
         // Fall back to the bounded delay if resize events are unavailable.
       }
 
+      if (cancelled || !isCurrentDrag(generation, activePointerId)) return false
       await appWindow.unmaximize()
+      if (cancelled || !isCurrentDrag(generation, activePointerId)) return false
+
       if (!disposed && isMaximized && typeof isMaximized === 'object' && 'value' in isMaximized) {
         isMaximized.value = false
       }
@@ -109,13 +161,12 @@ export function useTouchWindowDrag(isMaximized = null, options = {}) {
           timeoutId = setTimeout(resolve, RESTORE_RESIZE_TIMEOUT_MS)
         }),
       ])
+      return !cancelled && isCurrentDrag(generation, activePointerId)
     } finally {
-      if (timeoutId !== null) {
-        clearTimeout(timeoutId)
+      if (cancelRestoreResizeWait === cancelWait) {
+        cancelRestoreResizeWait = null
       }
-      if (unlistenResize) {
-        unlistenResize()
-      }
+      cancelWait()
     }
   }
 
@@ -140,6 +191,11 @@ export function useTouchWindowDrag(isMaximized = null, options = {}) {
 
   const clearDragState = () => {
     dragGeneration += 1
+    if (cancelRestoreResizeWait) {
+      const cancelWait = cancelRestoreResizeWait
+      cancelRestoreResizeWait = null
+      cancelWait()
+    }
     if (positionRaf !== null) {
       cancelAnimationFrame(positionRaf)
       positionRaf = null
@@ -346,7 +402,7 @@ export function useTouchWindowDrag(isMaximized = null, options = {}) {
         Math.max(0, startClientX / Math.max(window.innerWidth, 1)),
       )
 
-      await waitForRestoreResize()
+      if (!(await waitForRestoreResize(generation, activePointerId))) return
       if (!isCurrentDrag(generation, activePointerId)) return
 
       const restoredSize = await appWindow.outerSize()

@@ -29,13 +29,16 @@ const installAnimationFrameMocks = () => {
 const installDragEnvironment = (invoke) => {
   const callbacks = new Map()
   const listeners = new Map()
+  const unregisteredListeners = []
   let callbackId = 0
-  const harness = { callbacks, listeners }
+  const harness = { callbacks, listeners, unregisteredListeners }
 
   globalThis.window = {
     innerWidth: 800,
     __TAURI_EVENT_PLUGIN_INTERNALS__: {
-      unregisterListener() {},
+      unregisterListener(event, eventId) {
+        unregisteredListeners.push({ event, eventId })
+      },
     },
     __TAURI_INTERNALS__: {
       metadata: { currentWindow: { label: 'main' } },
@@ -61,6 +64,7 @@ const installDragEnvironment = (invoke) => {
   return {
     callbacks,
     listeners,
+    unregisteredListeners,
     cleanup() {
       delete globalThis.window
       delete globalThis.document
@@ -301,8 +305,7 @@ test('releases touch drag state when restoring a maximized window never finishes
       return maximizedCalls === 1
     }
     if (command === 'plugin:window|scale_factor') return 2
-    if (command === 'plugin:window|unmaximize') return null
-    if (command === 'plugin:window|outer_size') return never
+    if (command === 'plugin:window|unmaximize') return never
     if (command === 'plugin:window|set_position') {
       committedPositions.push(args.value.toJSON().Physical)
       return null
@@ -323,6 +326,9 @@ test('releases touch drag state when restoring a maximized window never finishes
     moveTouchDrag(environment.listeners, 7, 35, 50)
     await environment.listeners.get('pointerup')({ pointerId: 7 })
     assert.deepEqual(committedPositions, [])
+    assert.deepEqual(environment.unregisteredListeners, [
+      { event: 'tauri://resize', eventId: 1 },
+    ])
 
     startTouchDrag(onTouchWindowDragStart, 8, 20, 30)
     moveTouchDrag(environment.listeners, 8, 45, 60)
@@ -390,10 +396,12 @@ test('releases touch drag state when DPI rebasing never finishes', async () => {
   }
 })
 
-test('releases touch drag state when a position commit never finishes', async () => {
+test('recovers from stalled position commits and corrects late writes', async () => {
   const never = new Promise(() => {})
+  const delayedSetPosition = deferred()
   const committedPositions = []
-  let hangNextSetPosition = false
+  let actualPosition = null
+  let nextSetPositionBehavior = null
   const environment = installDragEnvironment(async (command, args) => {
     if (command === 'plugin:event|listen') return 1
     if (command === 'plugin:event|unlisten') return null
@@ -401,11 +409,13 @@ test('releases touch drag state when a position commit never finishes', async ()
     if (command === 'plugin:window|is_maximized') return false
     if (command === 'plugin:window|scale_factor') return 2
     if (command === 'plugin:window|set_position') {
-      if (hangNextSetPosition) {
-        hangNextSetPosition = false
-        return never
-      }
-      committedPositions.push(args.value.toJSON().Physical)
+      const position = args.value.toJSON().Physical
+      const behavior = nextSetPositionBehavior
+      nextSetPositionBehavior = null
+      if (behavior === 'never') return never
+      if (behavior === 'delay') await delayedSetPosition.promise
+      actualPosition = position
+      committedPositions.push(position)
       return null
     }
     throw new Error(`Unexpected Tauri command: ${command}`)
@@ -419,7 +429,7 @@ test('releases touch drag state when a position commit never finishes', async ()
       operationTimeoutMs: TEST_OPERATION_TIMEOUT_MS,
     })
 
-    hangNextSetPosition = true
+    nextSetPositionBehavior = 'delay'
     startTouchDrag(onTouchWindowDragStart, 7, 10, 20)
     await nextTask()
     moveTouchDrag(environment.listeners, 7, 35, 50)
@@ -428,13 +438,16 @@ test('releases touch drag state when a position commit never finishes', async ()
 
     startTouchDrag(onTouchWindowDragStart, 8, 20, 30)
     await nextTask()
-    moveTouchDrag(environment.listeners, 8, 45, 60)
+    moveTouchDrag(environment.listeners, 8, 65, 80)
     await nextTask()
-    assert.deepEqual(committedPositions.at(-1), { x: 150, y: 260 })
+    assert.deepEqual(actualPosition, { x: 190, y: 300 })
     await environment.listeners.get('pointerup')({ pointerId: 8 })
+    delayedSetPosition.resolve()
+    await nextTask()
+    assert.deepEqual(actualPosition, { x: 190, y: 300 })
     const commitsBeforeFinalHang = committedPositions.length
 
-    hangNextSetPosition = true
+    nextSetPositionBehavior = 'never'
     startTouchDrag(onTouchWindowDragStart, 9, 10, 20)
     moveTouchDrag(environment.listeners, 9, 35, 50)
     await environment.listeners.get('pointerup')({ pointerId: 9 })

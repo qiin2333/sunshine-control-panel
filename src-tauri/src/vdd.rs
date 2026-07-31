@@ -363,6 +363,18 @@ fn serialize_vdd_settings(settings: &VddSettings) -> Result<String, String> {
     Ok(xml)
 }
 
+fn normalize_hardware_cursor(settings: &mut VddSettings) -> bool {
+    let Some(cursor) = settings.cursor.as_mut() else {
+        return false;
+    };
+    if cursor.hardware_cursor {
+        return false;
+    }
+
+    cursor.hardware_cursor = true;
+    true
+}
+
 /// 写入 VDD XML 文件（Windows - 使用管理员权限）
 #[cfg(target_os = "windows")]
 async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), String> {
@@ -1000,11 +1012,19 @@ pub async fn load_vdd_settings() -> Result<VddSettings, String> {
     debug!("📄 读取到的 XML 内容:\n{}", content);
 
     // 解析 XML
-    let settings: VddSettings = from_str(&content).map_err(|e| {
+    let mut settings: VddSettings = from_str(&content).map_err(|e| {
         error!("❌ XML 解析失败: {}", e);
         error!("📄 XML 内容:\n{}", content);
         format!("XML 解析失败: {}", e)
     })?;
+
+    if normalize_hardware_cursor(&mut settings) {
+        let xml = serialize_vdd_settings(&settings)?;
+        let full_xml = format!("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n{}", xml);
+        write_vdd_xml(&path, &full_xml).await?;
+        verify_vdd_xml(&path)?;
+        info!("✅ 已将旧版 HardwareCursor=false 配置迁移为 true");
+    }
 
     info!("✅ XML 解析成功！");
     debug!("🔍 解析后的 VDD 设置: {:?}", settings);
@@ -1545,6 +1565,34 @@ mod tests {
     }
 
     #[test]
+    fn missing_hardware_cursor_field_defaults_to_enabled() {
+        let xml = r#"
+<vdd_settings>
+    <monitors><count>1</count></monitors>
+    <gpu><friendlyname></friendlyname></gpu>
+    <global><g_refresh_rate>60</g_refresh_rate></global>
+    <resolutions>
+        <resolution><width>1920</width><height>1080</height></resolution>
+    </resolutions>
+    <cursor>
+        <CursorMaxY>64</CursorMaxY>
+        <CursorMaxX>64</CursorMaxX>
+        <AlphaCursorSupport>true</AlphaCursorSupport>
+        <XorCursorSupportLevel>2</XorCursorSupportLevel>
+    </cursor>
+</vdd_settings>
+"#;
+
+        let settings: VddSettings = from_str(xml).unwrap();
+        assert!(
+            settings
+                .cursor
+                .expect("cursor section should parse")
+                .hardware_cursor
+        );
+    }
+
+    #[test]
     fn default_settings_serialize_cursor_section() {
         let xml = serialize_vdd_settings(&get_default_settings()).unwrap();
 
@@ -1587,6 +1635,29 @@ mod tests {
         assert_eq!(cursor.cursor_max_y, 64);
         assert!(!cursor.alpha_cursor_support);
         assert_eq!(cursor.xor_cursor_support_level, 1);
+    }
+
+    #[test]
+    fn disabled_hardware_cursor_is_migrated_once() {
+        let mut settings = get_default_settings();
+        settings
+            .cursor
+            .as_mut()
+            .expect("cursor defaults should be populated")
+            .hardware_cursor = false;
+
+        assert!(normalize_hardware_cursor(&mut settings));
+        assert!(
+            settings
+                .cursor
+                .as_ref()
+                .expect("cursor section")
+                .hardware_cursor
+        );
+        let xml = serialize_vdd_settings(&settings).unwrap();
+        assert!(xml.contains("<HardwareCursor>true</HardwareCursor>"));
+        assert!(!xml.contains("<HardwareCursor>false</HardwareCursor>"));
+        assert!(!normalize_hardware_cursor(&mut settings));
     }
 
     #[test]

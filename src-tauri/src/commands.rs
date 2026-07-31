@@ -595,10 +595,17 @@ pub async fn capture_screenshot(window: tauri::WebviewWindow) -> Result<Option<S
         if monitors.is_empty() {
             return Ok(None);
         }
-        let primary_index = monitors
-            .iter()
-            .position(|monitor| monitor.is_primary().unwrap_or(false))
-            .unwrap_or(0);
+        let mut primary_index = None;
+        for (index, monitor) in monitors.iter().enumerate() {
+            if monitor
+                .is_primary()
+                .map_err(|e| format!("Failed to identify primary monitor: {}", e))?
+            {
+                primary_index = Some(index);
+                break;
+            }
+        }
+        let primary_index = primary_index.ok_or_else(|| "No primary monitor found".to_string())?;
         let monitor = monitors.swap_remove(primary_index);
 
         let image = monitor

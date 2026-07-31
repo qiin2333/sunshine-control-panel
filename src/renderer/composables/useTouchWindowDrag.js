@@ -43,6 +43,7 @@ export function useTouchWindowDrag(isMaximized = null) {
   let initialPosition = null
   let initialMaximized = false
   let initialized = false
+  let initialPreparationPromise = null
   let preparing = false
   let preparationPromise = null
   let settingPosition = false
@@ -145,6 +146,7 @@ export function useTouchWindowDrag(isMaximized = null) {
     initialPosition = null
     initialMaximized = false
     initialized = false
+    initialPreparationPromise = null
     preparing = false
     preparationPromise = null
     settingPosition = false
@@ -270,6 +272,18 @@ export function useTouchWindowDrag(isMaximized = null) {
     }
   }
 
+  const updatePendingPosition = () => {
+    if (
+      !initialized ||
+      !Number.isFinite(basePhysicalX) ||
+      !Number.isFinite(basePhysicalY)
+    ) return false
+
+    pendingPhysicalX = basePhysicalX + (latestClientX - startClientX) * activeScaleFactor
+    pendingPhysicalY = basePhysicalY + (latestClientY - startClientY) * activeScaleFactor
+    return Number.isFinite(pendingPhysicalX) && Number.isFinite(pendingPhysicalY)
+  }
+
   const queueLatestPosition = () => {
     if (
       pointerId === null ||
@@ -277,15 +291,10 @@ export function useTouchWindowDrag(isMaximized = null) {
       preparing ||
       scaleRebasing ||
       settingPosition ||
-      !initialized ||
-      !Number.isFinite(basePhysicalX) ||
-      !Number.isFinite(basePhysicalY)
+      !updatePendingPosition()
     ) {
       return
     }
-
-    pendingPhysicalX = basePhysicalX + (latestClientX - startClientX) * activeScaleFactor
-    pendingPhysicalY = basePhysicalY + (latestClientY - startClientY) * activeScaleFactor
 
     if (positionRaf === null) {
       positionRaf = requestAnimationFrame(applyPendingPosition)
@@ -356,7 +365,7 @@ export function useTouchWindowDrag(isMaximized = null) {
         appWindow.scaleFactor(),
       ])
 
-      if (!isCurrentDrag(generation, activePointerId) || dragEnding) return
+      if (!isCurrentDrag(generation, activePointerId)) return
 
       initialPosition = position
       initialMaximized = maximized
@@ -378,7 +387,11 @@ export function useTouchWindowDrag(isMaximized = null) {
       initialized = true
 
       if (hasMoved) {
-        queueLatestPosition()
+        if (dragEnding) {
+          updatePendingPosition()
+        } else {
+          queueLatestPosition()
+        }
       }
     } catch {
       if (isCurrentDrag(generation, activePointerId)) {
@@ -434,6 +447,11 @@ export function useTouchWindowDrag(isMaximized = null) {
     if (positionRaf !== null) {
       cancelAnimationFrame(positionRaf)
       positionRaf = null
+    }
+
+    if (initialPreparationPromise && hasMoved) {
+      await initialPreparationPromise
+      if (!isCurrentDrag(generation, activePointerId)) return
     }
 
     if (preparationPromise) {
@@ -506,7 +524,14 @@ export function useTouchWindowDrag(isMaximized = null) {
     document.addEventListener('pointerup', onPointerEnd)
     document.addEventListener('pointercancel', onPointerEnd)
 
-    void prepareWindowPosition(pointerId, generation)
+    let initialPromise
+    initialPromise = prepareWindowPosition(pointerId, generation)
+      .finally(() => {
+        if (initialPreparationPromise === initialPromise) {
+          initialPreparationPromise = null
+        }
+      })
+    initialPreparationPromise = initialPromise
   }
 
   onUnmounted(() => {

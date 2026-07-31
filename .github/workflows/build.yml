@@ -87,6 +87,9 @@ jobs:
       - name: Build frontend
         run: npm run build:renderer
 
+      - name: Test renderer logic
+        run: npm run test:renderer
+
       - name: Test Tauri backend
         run: cargo test --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
 

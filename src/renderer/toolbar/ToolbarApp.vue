@@ -494,6 +494,11 @@ const tryVisionSpeech = async (isManual = false) => {
 
   try {
     const screenshot = await awaitWithSignal(invoke('capture_screenshot'), controller.signal)
+    if (!screenshot) {
+      console.info('[桌宠Vision] 未检测到可用显示器，跳过本次观察')
+      // null 表示正常跳过：自动调度可以继续随机对话，手动请求也不显示失败。
+      return null
+    }
     const shotMs = Math.round(performance.now() - t0)
     const shotLen = typeof screenshot === 'string' ? screenshot.length : (screenshot?.byteLength || 0)
     console.info(`[桌宠Vision] 截图完成 ${shotMs}ms size=${shotLen}`)
@@ -674,7 +679,8 @@ const handleVisionRequest = async (requestId) => {
   visionRequestStates.set(requestId, { status: 'accepted' })
   sendVisionRequestStatus(requestId, 'accepted')
 
-  const success = await tryVisionSpeech(true)
+  const result = await tryVisionSpeech(true)
+  const success = result === true || result === null
   visionRequestStates.set(requestId, { status: 'completed', success })
   sendVisionRequestStatus(requestId, 'completed', success)
 }

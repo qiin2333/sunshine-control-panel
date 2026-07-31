@@ -14,6 +14,9 @@ use url::Url;
 pub fn cdn_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
+        // Redirect targets intentionally bypass the initial asset allowlist.
+        // assets.alkaidlab.com and its redirect configuration are controlled by
+        // the domain owner, so redirects are part of the trusted delivery chain.
         reqwest::Client::builder()
             .pool_max_idle_per_host(5)
             .timeout(std::time::Duration::from_secs(15))
@@ -575,7 +578,7 @@ fn scaled_image_dimensions(width: u32, height: u32, max_dimension: u32) -> (u32,
 
 /// Capture the primary display as a base64 JPEG.
 #[tauri::command]
-pub async fn capture_screenshot(window: tauri::WebviewWindow) -> Result<String, String> {
+pub async fn capture_screenshot(window: tauri::WebviewWindow) -> Result<Option<String>, String> {
     use std::io::Cursor;
     use xcap::Monitor;
 
@@ -589,15 +592,14 @@ pub async fn capture_screenshot(window: tauri::WebviewWindow) -> Result<String, 
 
         let mut monitors =
             Monitor::all().map_err(|e| format!("Failed to enumerate monitors: {}", e))?;
+        if monitors.is_empty() {
+            return Ok(None);
+        }
         let primary_index = monitors
             .iter()
             .position(|monitor| monitor.is_primary().unwrap_or(false))
             .unwrap_or(0);
-        let monitor = if monitors.is_empty() {
-            return Err("No monitor found".to_string());
-        } else {
-            monitors.swap_remove(primary_index)
-        };
+        let monitor = monitors.swap_remove(primary_index);
 
         let image = monitor
             .capture_image()
@@ -629,7 +631,7 @@ pub async fn capture_screenshot(window: tauri::WebviewWindow) -> Result<String, 
             .map_err(|e| format!("JPEG encoding failed: {}", e))?;
 
         let b64 = base64::engine::general_purpose::STANDARD.encode(buf.into_inner());
-        Ok(format!("data:image/jpeg;base64,{}", b64))
+        Ok(Some(format!("data:image/jpeg;base64,{}", b64)))
     })
     .await
     .map_err(|e| format!("Screenshot task failed: {}", e))?

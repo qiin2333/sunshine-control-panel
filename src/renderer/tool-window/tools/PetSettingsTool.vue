@@ -370,6 +370,14 @@ function emitConfigChanged() {
   notifyPetConfigChanged()
 }
 
+function persistSetting(key, value) {
+  try {
+    localStorage.setItem(key, value)
+  } catch (error) {
+    console.warn(`[桌宠设置] 配置持久化失败 (${key}):`, error)
+  }
+}
+
 function clampInterval(n) {
   const v = Math.round(Number(n))
   if (!Number.isFinite(v)) return MIN_INTERVAL_SEC
@@ -395,14 +403,14 @@ function safeAssign(refObj, value) {
 // 总开关
 watch(masterEnabled, (v) => {
   if (suppressWatch) return
-  localStorage.setItem(PET_MASTER_KEY, String(!!v))
+  persistSetting(PET_MASTER_KEY, String(!!v))
   emitConfigChanged()
 })
 
 // 随机对话开关
 watch(randomEnabled, (v) => {
   if (suppressWatch) return
-  localStorage.setItem(PET_RANDOM_ENABLED_KEY, String(!!v))
+  persistSetting(PET_RANDOM_ENABLED_KEY, String(!!v))
   emitConfigChanged()
 })
 
@@ -413,7 +421,7 @@ watch(randomIntervalSec, (v) => {
   if (c !== v) {
     safeAssign(randomIntervalSec, c)
   }
-  localStorage.setItem(PET_RANDOM_INTERVAL_KEY, String(c))
+  persistSetting(PET_RANDOM_INTERVAL_KEY, String(c))
   emitConfigChanged()
 })
 
@@ -424,7 +432,7 @@ watch(jitterPercent, (v) => {
   if (c !== v) {
     safeAssign(jitterPercent, c)
   }
-  localStorage.setItem(PET_RANDOM_JITTER_KEY, String(c))
+  persistSetting(PET_RANDOM_JITTER_KEY, String(c))
   emitConfigChanged()
 })
 
@@ -435,7 +443,7 @@ watch(visionEnabled, (v) => {
     safeAssign(visionEnabled, false)
     return
   }
-  localStorage.setItem(PET_VISION_ENABLED_KEY, String(!!v))
+  persistSetting(PET_VISION_ENABLED_KEY, String(!!v))
   emitConfigChanged()
 })
 
@@ -446,7 +454,7 @@ watch(visionIntervalSec, (v) => {
   if (c !== v) {
     safeAssign(visionIntervalSec, c)
   }
-  localStorage.setItem(PET_VISION_INTERVAL_KEY, String(c * 1000))
+  persistSetting(PET_VISION_INTERVAL_KEY, String(c * 1000))
   emitConfigChanged()
 })
 

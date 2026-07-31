@@ -3,6 +3,7 @@ import { PhysicalPosition } from '@tauri-apps/api/dpi'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 
 const DRAG_THRESHOLD = 4
+const DRAG_OPERATION_TIMEOUT_MS = 1000
 const RESTORE_RESIZE_TIMEOUT_MS = 500
 
 /**
@@ -14,8 +15,14 @@ const RESTORE_RESIZE_TIMEOUT_MS = 500
  *
  * @param {{ value: boolean } | null} isMaximized reactive window state used by
  * the custom maximize button
+ * @param {{ operationTimeoutMs?: number }} options internal timing overrides
  */
-export function useTouchWindowDrag(isMaximized = null) {
+export function useTouchWindowDrag(isMaximized = null, options = {}) {
+  const operationTimeoutMs = (
+    Number.isFinite(options?.operationTimeoutMs) && options.operationTimeoutMs >= 0
+      ? options.operationTimeoutMs
+      : DRAG_OPERATION_TIMEOUT_MS
+  )
   let appWindow = null
   let unlistenScaleChanged = null
   let scaleListenerPromise = null
@@ -43,10 +50,14 @@ export function useTouchWindowDrag(isMaximized = null) {
   let initialPosition = null
   let initialMaximized = false
   let initialized = false
+  let initialPreparationPromise = null
   let preparing = false
   let preparationPromise = null
   let settingPosition = false
   let positionRaf = null
+  let cancelRestoreResizeWait = null
+  let positionRequestSequence = 0
+  let latestRequestedPosition = null
 
   const normalizeScaleFactor = (value) => (
     Number.isFinite(value) && value > 0 ? value : 1
@@ -69,29 +80,78 @@ export function useTouchWindowDrag(isMaximized = null) {
     }
   }
 
-  const commitPosition = (physicalX, physicalY) => {
-    return appWindow.setPosition(new PhysicalPosition(
-      Math.round(physicalX),
-      Math.round(physicalY),
-    ))
+  const commitPosition = async (physicalX, physicalY) => {
+    let requestSequence = ++positionRequestSequence
+    let requestedPosition = {
+      x: Math.round(physicalX),
+      y: Math.round(physicalY),
+    }
+    latestRequestedPosition = requestedPosition
+
+    // Tauri window IPC cannot be cancelled. If an older timed-out request
+    // finishes late, follow it with the newest requested position.
+    while (true) {
+      await appWindow.setPosition(new PhysicalPosition(
+        requestedPosition.x,
+        requestedPosition.y,
+      ))
+      if (requestSequence === positionRequestSequence) return
+
+      requestSequence = positionRequestSequence
+      requestedPosition = latestRequestedPosition
+    }
   }
 
-  const waitForRestoreResize = async () => {
+  const safelyUnlisten = (unlisten) => {
+    try {
+      const result = unlisten()
+      if (result && typeof result.catch === 'function') {
+        result.catch(() => {})
+      }
+    } catch {
+      // The window may already be closing.
+    }
+  }
+
+  const waitForRestoreResize = async (generation, activePointerId) => {
+    let cancelled = false
     let resolveResize
     let unlistenResize = null
     let timeoutId = null
     const resizePromise = new Promise((resolve) => {
       resolveResize = resolve
     })
+    const cancelWait = () => {
+      if (cancelled) return
+      cancelled = true
+      resolveResize()
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId)
+        timeoutId = null
+      }
+      if (unlistenResize) {
+        safelyUnlisten(unlistenResize)
+        unlistenResize = null
+      }
+    }
+    cancelRestoreResizeWait = cancelWait
 
     try {
       try {
-        unlistenResize = await appWindow.onResized(() => resolveResize())
+        const unlisten = await appWindow.onResized(() => resolveResize())
+        if (cancelled || !isCurrentDrag(generation, activePointerId)) {
+          safelyUnlisten(unlisten)
+          return false
+        }
+        unlistenResize = unlisten
       } catch {
         // Fall back to the bounded delay if resize events are unavailable.
       }
 
+      if (cancelled || !isCurrentDrag(generation, activePointerId)) return false
       await appWindow.unmaximize()
+      if (cancelled || !isCurrentDrag(generation, activePointerId)) return false
+
       if (!disposed && isMaximized && typeof isMaximized === 'object' && 'value' in isMaximized) {
         isMaximized.value = false
       }
@@ -101,13 +161,12 @@ export function useTouchWindowDrag(isMaximized = null) {
           timeoutId = setTimeout(resolve, RESTORE_RESIZE_TIMEOUT_MS)
         }),
       ])
+      return !cancelled && isCurrentDrag(generation, activePointerId)
     } finally {
-      if (timeoutId !== null) {
-        clearTimeout(timeoutId)
+      if (cancelRestoreResizeWait === cancelWait) {
+        cancelRestoreResizeWait = null
       }
-      if (unlistenResize) {
-        unlistenResize()
-      }
+      cancelWait()
     }
   }
 
@@ -132,6 +191,11 @@ export function useTouchWindowDrag(isMaximized = null) {
 
   const clearDragState = () => {
     dragGeneration += 1
+    if (cancelRestoreResizeWait) {
+      const cancelWait = cancelRestoreResizeWait
+      cancelRestoreResizeWait = null
+      cancelWait()
+    }
     if (positionRaf !== null) {
       cancelAnimationFrame(positionRaf)
       positionRaf = null
@@ -145,6 +209,7 @@ export function useTouchWindowDrag(isMaximized = null) {
     initialPosition = null
     initialMaximized = false
     initialized = false
+    initialPreparationPromise = null
     preparing = false
     preparationPromise = null
     settingPosition = false
@@ -270,6 +335,41 @@ export function useTouchWindowDrag(isMaximized = null) {
     }
   }
 
+  const updatePendingPosition = () => {
+    if (
+      !initialized ||
+      !Number.isFinite(basePhysicalX) ||
+      !Number.isFinite(basePhysicalY)
+    ) return false
+
+    pendingPhysicalX = basePhysicalX + (latestClientX - startClientX) * activeScaleFactor
+    pendingPhysicalY = basePhysicalY + (latestClientY - startClientY) * activeScaleFactor
+    return Number.isFinite(pendingPhysicalX) && Number.isFinite(pendingPhysicalY)
+  }
+
+  const waitForDragOperation = async (promise) => {
+    let timeoutId = null
+    try {
+      return await Promise.race([
+        promise.then(() => true, () => false),
+        new Promise((resolve) => {
+          timeoutId = setTimeout(() => resolve(false), operationTimeoutMs)
+        }),
+      ])
+    } finally {
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId)
+      }
+    }
+  }
+
+  const waitForCurrentDragOperation = async (promise, generation, activePointerId) => {
+    const completed = await waitForDragOperation(promise)
+    if (!isCurrentDrag(generation, activePointerId)) return false
+    if (!completed) clearDragState()
+    return completed
+  }
+
   const queueLatestPosition = () => {
     if (
       pointerId === null ||
@@ -277,15 +377,10 @@ export function useTouchWindowDrag(isMaximized = null) {
       preparing ||
       scaleRebasing ||
       settingPosition ||
-      !initialized ||
-      !Number.isFinite(basePhysicalX) ||
-      !Number.isFinite(basePhysicalY)
+      !updatePendingPosition()
     ) {
       return
     }
-
-    pendingPhysicalX = basePhysicalX + (latestClientX - startClientX) * activeScaleFactor
-    pendingPhysicalY = basePhysicalY + (latestClientY - startClientY) * activeScaleFactor
 
     if (positionRaf === null) {
       positionRaf = requestAnimationFrame(applyPendingPosition)
@@ -307,7 +402,7 @@ export function useTouchWindowDrag(isMaximized = null) {
         Math.max(0, startClientX / Math.max(window.innerWidth, 1)),
       )
 
-      await waitForRestoreResize()
+      if (!(await waitForRestoreResize(generation, activePointerId))) return
       if (!isCurrentDrag(generation, activePointerId)) return
 
       const restoredSize = await appWindow.outerSize()
@@ -356,7 +451,7 @@ export function useTouchWindowDrag(isMaximized = null) {
         appWindow.scaleFactor(),
       ])
 
-      if (!isCurrentDrag(generation, activePointerId) || dragEnding) return
+      if (!isCurrentDrag(generation, activePointerId)) return
 
       initialPosition = position
       initialMaximized = maximized
@@ -378,7 +473,11 @@ export function useTouchWindowDrag(isMaximized = null) {
       initialized = true
 
       if (hasMoved) {
-        queueLatestPosition()
+        if (dragEnding) {
+          updatePendingPosition()
+        } else {
+          queueLatestPosition()
+        }
       }
     } catch {
       if (isCurrentDrag(generation, activePointerId)) {
@@ -436,19 +535,40 @@ export function useTouchWindowDrag(isMaximized = null) {
       positionRaf = null
     }
 
+    if (initialPreparationPromise && hasMoved) {
+      if (!(await waitForCurrentDragOperation(
+        initialPreparationPromise,
+        generation,
+        activePointerId,
+      ))) return
+    }
+
     if (preparationPromise) {
-      await preparationPromise
-      if (!isCurrentDrag(generation, activePointerId)) return
+      if (!(await waitForCurrentDragOperation(
+        preparationPromise,
+        generation,
+        activePointerId,
+      ))) return
     }
 
     if (scaleRebasePromise) {
-      await scaleRebasePromise
-      if (!isCurrentDrag(generation, activePointerId)) return
+      if (!(await waitForCurrentDragOperation(
+        scaleRebasePromise,
+        generation,
+        activePointerId,
+      ))) return
     }
 
-    while (settingPosition) {
-      await new Promise((resolve) => setTimeout(resolve, 0))
-      if (!isCurrentDrag(generation, activePointerId)) return
+    if (settingPosition) {
+      if (!(await waitForCurrentDragOperation(
+        (async () => {
+          while (settingPosition && isCurrentDrag(generation, activePointerId)) {
+            await new Promise((resolve) => setTimeout(resolve, 0))
+          }
+        })(),
+        generation,
+        activePointerId,
+      ))) return
     }
 
     if (
@@ -457,12 +577,11 @@ export function useTouchWindowDrag(isMaximized = null) {
       Number.isFinite(pendingPhysicalX) &&
       Number.isFinite(pendingPhysicalY)
     ) {
-      try {
-        await commitPosition(pendingPhysicalX, pendingPhysicalY)
-        if (!isCurrentDrag(generation, activePointerId)) return
-      } catch {
-        // Keep the last position accepted by the operating system.
-      }
+      if (!(await waitForCurrentDragOperation(
+        commitPosition(pendingPhysicalX, pendingPhysicalY),
+        generation,
+        activePointerId,
+      ))) return
     }
 
     if (isCurrentDrag(generation, activePointerId)) {
@@ -491,6 +610,7 @@ export function useTouchWindowDrag(isMaximized = null) {
     pointerTarget = event.currentTarget
     hasMoved = false
     dragEnding = false
+    settingPosition = false
     startClientX = event.clientX
     startClientY = event.clientY
     latestClientX = event.clientX
@@ -506,7 +626,14 @@ export function useTouchWindowDrag(isMaximized = null) {
     document.addEventListener('pointerup', onPointerEnd)
     document.addEventListener('pointercancel', onPointerEnd)
 
-    void prepareWindowPosition(pointerId, generation)
+    let initialPromise
+    initialPromise = prepareWindowPosition(pointerId, generation)
+      .finally(() => {
+        if (initialPreparationPromise === initialPromise) {
+          initialPreparationPromise = null
+        }
+      })
+    initialPreparationPromise = initialPromise
   }
 
   onUnmounted(() => {

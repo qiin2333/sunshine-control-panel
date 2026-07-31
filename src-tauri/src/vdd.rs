@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 const VDD_TRACE_SESSION_NAME: &str = "ZakoVDD-Diagnostics";
 const VDD_TRACE_PROVIDER_GUID: &str = "{B254994F-46E6-4719-80A0-0A3AA50D6CE5}";
 const VDD_TRACE_FILE_PREFIX: &str = "zako-vdd";
+static VDD_SETTINGS_OPERATION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct VddTraceStatus {
@@ -347,7 +348,7 @@ async fn update_vdd_xml_extra_fields(settings: &VddSettings) -> Result<(), Strin
     write_vdd_xml(&vdd_xml_path, &full_xml).await?;
 
     // 验证文件是否更新
-    verify_vdd_xml(&vdd_xml_path)?;
+    verify_vdd_xml(&vdd_xml_path).await?;
 
     Ok(())
 }
@@ -375,13 +376,90 @@ fn normalize_hardware_cursor(settings: &mut VddSettings) -> bool {
     true
 }
 
+fn normalize_hardware_cursor_for_persistence(settings: &mut VddSettings) {
+    if settings.cursor.is_none() {
+        settings.cursor = default_cursor();
+    }
+    normalize_hardware_cursor(settings);
+}
+
+fn prepare_hardware_cursor_migration(content: &str) -> Result<Option<String>, String> {
+    let mut settings: VddSettings =
+        from_str(content).map_err(|e| format!("解析 VDD XML 失败: {}", e))?;
+    if !normalize_hardware_cursor(&mut settings) {
+        return Ok(None);
+    }
+
+    // Change only the existing value so driver fields unknown to this GUI are preserved.
+    const CURSOR_OPEN_TAG: &str = "<cursor>";
+    const CURSOR_CLOSE_TAG: &str = "</cursor>";
+    const OPEN_TAG: &str = "<HardwareCursor>";
+    const CLOSE_TAG: &str = "</HardwareCursor>";
+    let cursor_start = content
+        .find(CURSOR_OPEN_TAG)
+        .map(|index| index + CURSOR_OPEN_TAG.len())
+        .ok_or_else(|| "VDD XML 缺少 cursor 起始标签".to_string())?;
+    let cursor_end = content[cursor_start..]
+        .find(CURSOR_CLOSE_TAG)
+        .map(|index| cursor_start + index)
+        .ok_or_else(|| "VDD XML 缺少 cursor 结束标签".to_string())?;
+    let value_start = content[cursor_start..cursor_end]
+        .find(OPEN_TAG)
+        .map(|index| cursor_start + index + OPEN_TAG.len())
+        .ok_or_else(|| "VDD XML 缺少 HardwareCursor 起始标签".to_string())?;
+    let value_end = content[value_start..cursor_end]
+        .find(CLOSE_TAG)
+        .map(|index| value_start + index)
+        .ok_or_else(|| "VDD XML 缺少 HardwareCursor 结束标签".to_string())?;
+    let raw_value = &content[value_start..value_end];
+    let leading_whitespace = raw_value.len() - raw_value.trim_start().len();
+    let trailing_whitespace = raw_value.len() - raw_value.trim_end().len();
+    let replacement_start = value_start + leading_whitespace;
+    let replacement_end = value_end - trailing_whitespace;
+
+    let mut migrated = String::with_capacity(content.len());
+    migrated.push_str(&content[..replacement_start]);
+    migrated.push_str("true");
+    migrated.push_str(&content[replacement_end..]);
+    Ok(Some(migrated))
+}
+
+async fn migrate_hardware_cursor_setting() -> Result<bool, String> {
+    let _operation_guard = VDD_SETTINGS_OPERATION_LOCK.lock().await;
+    let path = get_vdd_settings_path();
+    let content = match tokio::fs::read_to_string(&path).await {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("读取 VDD 配置文件失败: {}", error)),
+    };
+    let Some(full_xml) = prepare_hardware_cursor_migration(&content)? else {
+        return Ok(false);
+    };
+
+    write_vdd_xml(&path, &full_xml).await?;
+    verify_vdd_xml(&path).await?;
+    info!("✅ 已在启动时将旧版 HardwareCursor=false 配置迁移为 true");
+    Ok(true)
+}
+
+/// Persist the HardwareCursor invariant without blocking application startup.
+pub fn start_hardware_cursor_migration() {
+    tauri::async_runtime::spawn(async {
+        if let Err(error) = migrate_hardware_cursor_setting().await {
+            warn!("VDD HardwareCursor 配置迁移失败，将在下次启动时重试: {error}");
+        }
+    });
+}
+
 /// 写入 VDD XML 文件（Windows - 使用管理员权限）
 #[cfg(target_os = "windows")]
 async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), String> {
     // 写入临时文件
     let temp_path = std::env::temp_dir().join(format!("vdd_extra_{}.xml", std::process::id()));
     debug!("  📝 写入临时文件: {:?}", temp_path);
-    fs::write(&temp_path, content).map_err(|e| format!("写入临时文件失败: {}", e))?;
+    tokio::fs::write(&temp_path, content)
+        .await
+        .map_err(|e| format!("写入临时文件失败: {}", e))?;
 
     debug!("  📝 目标文件: {:?}", vdd_xml_path);
 
@@ -391,7 +469,7 @@ async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), Stri
             debug!("  🔧 已请求使用 ShellExecuteW 提权复制");
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-            match fs::read_to_string(vdd_xml_path) {
+            match tokio::fs::read_to_string(vdd_xml_path).await {
                 Ok(written) if written == content => {
                     info!("  ✅ ShellExecuteW 提权复制成功");
                     true
@@ -430,7 +508,7 @@ async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), Stri
 
         let powershell_success = match run_elevated_powershell(&inner_command, "写入 VDD XML").await
         {
-            Ok(()) => match fs::read_to_string(vdd_xml_path) {
+            Ok(()) => match tokio::fs::read_to_string(vdd_xml_path).await {
                 Ok(written) if written == content => {
                     info!("  ✅ PowerShell 提权复制成功");
                     true
@@ -455,17 +533,16 @@ async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), Stri
 
             // 尝试直接写入（可能会因权限不足而失败）
             warn!("  ⚠️ 尝试直接写入...");
-            fs::write(vdd_xml_path, content).map_err(|e| {
-                // 清理临时文件
-                let _ = fs::remove_file(&temp_path);
-                format!("写入失败，需要管理员权限: {}", e)
-            })?;
+            if let Err(error) = tokio::fs::write(vdd_xml_path, content).await {
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                return Err(format!("写入失败，需要管理员权限: {}", error));
+            }
             info!("  ✓ 直接写入成功");
         }
     }
 
     // 清理临时文件
-    let _ = fs::remove_file(&temp_path);
+    let _ = tokio::fs::remove_file(&temp_path).await;
 
     Ok(())
 }
@@ -484,10 +561,6 @@ fn elevated_copy_with_shell_execute(source: &Path, destination: &Path) -> Result
 
     let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
     let cmd_path: PathBuf = Path::new(&system_root).join("System32").join("cmd.exe");
-
-    if !cmd_path.exists() {
-        return Err(format!("找不到 cmd.exe: {:?}", cmd_path));
-    }
 
     let parameters = format!(
         r#"/C copy "{}" "{}" /Y"#,
@@ -519,9 +592,6 @@ fn elevated_copy_with_shell_execute(source: &Path, destination: &Path) -> Result
 
 #[cfg(target_os = "windows")]
 async fn run_elevated_powershell(inner_command: &str, action_label: &str) -> Result<(), String> {
-    use std::os::windows::process::CommandExt;
-    use std::process::Command;
-
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     let escaped_command = inner_command.replace("'", "''");
@@ -530,10 +600,11 @@ async fn run_elevated_powershell(inner_command: &str, action_label: &str) -> Res
         escaped_command
     );
 
-    let status = Command::new("powershell")
+    let status = tokio::process::Command::new("powershell")
         .args(&["-NoProfile", "-Command", &ps_script])
         .creation_flags(CREATE_NO_WINDOW)
         .status()
+        .await
         .map_err(|e| format!("{}失败: {}", action_label, e))?;
 
     if !status.success() {
@@ -550,10 +621,14 @@ async fn run_elevated_powershell(inner_command: &str, action_label: &str) -> Res
 async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), String> {
     // 确保目录存在
     if let Some(parent) = vdd_xml_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {}", e))?;
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| format!("创建目录失败: {}", e))?;
     }
 
-    fs::write(vdd_xml_path, content).map_err(|e| format!("写入 VDD XML 失败: {}", e))?;
+    tokio::fs::write(vdd_xml_path, content)
+        .await
+        .map_err(|e| format!("写入 VDD XML 失败: {}", e))?;
 
     debug!("  ✓ 已写入 VDD XML 扩展字段");
 
@@ -561,13 +636,14 @@ async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), Stri
 }
 
 /// 验证 VDD XML 文件
-fn verify_vdd_xml(vdd_xml_path: &PathBuf) -> Result<(), String> {
-    if !vdd_xml_path.exists() {
-        return Err("验证失败: 文件不存在".to_string());
-    }
-
-    let verify_content =
-        fs::read_to_string(vdd_xml_path).map_err(|e| format!("验证文件失败: {}", e))?;
+async fn verify_vdd_xml(vdd_xml_path: &PathBuf) -> Result<(), String> {
+    let verify_content = match tokio::fs::read_to_string(vdd_xml_path).await {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err("验证失败: 文件不存在".to_string());
+        }
+        Err(error) => return Err(format!("验证文件失败: {}", error)),
+    };
 
     if verify_content.contains("<colour>")
         || verify_content.contains("<cursor>")
@@ -1001,6 +1077,7 @@ fn get_default_settings() -> VddSettings {
 
 #[tauri::command]
 pub async fn load_vdd_settings() -> Result<VddSettings, String> {
+    let _operation_guard = VDD_SETTINGS_OPERATION_LOCK.lock().await;
     let path = get_vdd_settings_path();
 
     if !path.exists() {
@@ -1018,13 +1095,7 @@ pub async fn load_vdd_settings() -> Result<VddSettings, String> {
         format!("XML 解析失败: {}", e)
     })?;
 
-    if normalize_hardware_cursor(&mut settings) {
-        let xml = serialize_vdd_settings(&settings)?;
-        let full_xml = format!("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n{}", xml);
-        write_vdd_xml(&path, &full_xml).await?;
-        verify_vdd_xml(&path)?;
-        info!("✅ 已将旧版 HardwareCursor=false 配置迁移为 true");
-    }
+    normalize_hardware_cursor(&mut settings);
 
     info!("✅ XML 解析成功！");
     debug!("🔍 解析后的 VDD 设置: {:?}", settings);
@@ -1042,8 +1113,10 @@ pub async fn load_vdd_settings() -> Result<VddSettings, String> {
 }
 
 #[tauri::command]
-pub async fn save_vdd_settings(settings: VddSettings) -> Result<String, String> {
+pub async fn save_vdd_settings(mut settings: VddSettings) -> Result<String, String> {
     info!("💾 开始保存 VDD 配置...");
+    normalize_hardware_cursor_for_persistence(&mut settings);
+    let _operation_guard = VDD_SETTINGS_OPERATION_LOCK.lock().await;
 
     // 步骤1: 调用 Sunshine Config API 保存主要配置（resolutions, fps, adapter_name）
     // C++ 会写入 monitors, gpu, global, resolutions 字段
@@ -1658,6 +1731,56 @@ mod tests {
         assert!(xml.contains("<HardwareCursor>true</HardwareCursor>"));
         assert!(!xml.contains("<HardwareCursor>false</HardwareCursor>"));
         assert!(!normalize_hardware_cursor(&mut settings));
+    }
+
+    #[test]
+    fn persistence_restores_a_missing_cursor_section() {
+        let mut settings = get_default_settings();
+        settings.cursor = None;
+
+        normalize_hardware_cursor_for_persistence(&mut settings);
+
+        assert!(
+            settings
+                .cursor
+                .expect("persistence should restore cursor defaults")
+                .hardware_cursor
+        );
+    }
+
+    #[test]
+    fn startup_migration_rewrites_disabled_hardware_cursor_once() {
+        let old_xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<vdd_settings>
+    <monitors><count>1</count></monitors>
+    <gpu><friendlyname></friendlyname></gpu>
+    <global><g_refresh_rate>60</g_refresh_rate></global>
+    <resolutions>
+        <resolution><width>1920</width><height>1080</height></resolution>
+    </resolutions>
+    <FutureDriverSetting><HardwareCursor>false</HardwareCursor></FutureDriverSetting>
+    <cursor>
+        <HardwareCursor> false </HardwareCursor>
+        <CursorMaxY>64</CursorMaxY>
+        <CursorMaxX>64</CursorMaxX>
+        <AlphaCursorSupport>true</AlphaCursorSupport>
+        <XorCursorSupportLevel>2</XorCursorSupportLevel>
+    </cursor>
+    <FutureDriverSetting>keep-me</FutureDriverSetting>
+</vdd_settings>"#;
+
+        let migrated = prepare_hardware_cursor_migration(old_xml)
+            .unwrap()
+            .expect("disabled cursor should require migration");
+        assert!(migrated.contains("<HardwareCursor> true </HardwareCursor>"));
+        assert!(migrated.contains(
+            "<FutureDriverSetting><HardwareCursor>false</HardwareCursor></FutureDriverSetting>"
+        ));
+        assert!(
+            prepare_hardware_cursor_migration(&migrated)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

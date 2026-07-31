@@ -8,6 +8,7 @@
     "dev-webui": "cross-env WEBUI_DEV_TARGET=https://localhost:3000 tauri dev",
     "dev:toolbar": "npm run build:renderer && cargo build --manifest-path src-tauri/Cargo.toml && src-tauri\\target\\debug\\sunshine-gui.exe --toolbar",
     "dev:renderer": "vite --config vite.config.js",
+    "test:renderer": "node --test",
     "build": "tauri build",
     "build:renderer": "vite build --config vite.config.js",
     "build:home": "vite build --config vite.home.config.js --mode production",

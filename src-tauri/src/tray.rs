@@ -988,27 +988,27 @@ pub fn handle_tray_double_click<R: Runtime>(app: &AppHandle<R>) {
     open_main_panel_from_tray(app, "double click");
 }
 
-fn apply_tray_locale<R: Runtime>(app: &AppHandle<R>, locale: &str) -> String {
+fn apply_next_tray_locale<R: Runtime>(app: &AppHandle<R>, locale: &str) -> (u64, String) {
     let locale = normalize_tray_locale(locale).to_string();
-    let changed = {
+    let (revision, changed) = {
         let mut current_locale = CURRENT_LOCALE.lock().unwrap();
+        let revision = next_locale_change_revision();
         let changed = current_locale.as_deref() != Some(locale.as_str());
         *current_locale = Some(locale.clone());
-        changed
+        (revision, changed)
     };
 
     if changed {
         rebuild_tray_menu(app);
     }
 
-    locale
+    (revision, locale)
 }
 
 /// 从托盘菜单切换语言
 fn switch_tray_locale<R: Runtime>(app: &AppHandle<R>, locale: &str) {
     info!("🌍 托盘菜单：切换语言为 {}", locale);
-    let revision = next_locale_change_revision();
-    let locale = apply_tray_locale(app, locale);
+    let (revision, locale) = apply_next_tray_locale(app, locale);
     let locale_to_persist = locale.clone();
     tauri::async_runtime::spawn(async move {
         if let Err(error) = persist_latest_locale(revision, locale_to_persist.clone()).await {
@@ -1067,8 +1067,7 @@ pub async fn set_locale_preferences(
     request_id: Option<String>,
 ) -> Result<(), String> {
     info!("🌍 前端同步 UI 与托盘语言: {}", locale);
-    let revision = next_locale_change_revision();
-    let locale = apply_tray_locale(&app, &locale);
+    let (revision, locale) = apply_next_tray_locale(&app, &locale);
     if !persist_latest_locale(revision, locale.clone()).await? {
         return Ok(());
     }

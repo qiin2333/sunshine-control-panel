@@ -346,7 +346,7 @@
                 <el-form-item :label="t.vddSettings.hardwareCursor">
                   <div class="field-stack">
                     <div class="field-inline-control">
-                      <el-switch v-model="settings.cursor.HardwareCursor" />
+                      <el-switch v-model="settings.cursor.HardwareCursor" disabled />
                     </div>
                     <span class="form-tip">{{ t.vddSettings.hardwareCursorTip }}</span>
                   </div>
@@ -572,7 +572,7 @@ const createInitialSettings = () => ({
     ColourFormat: 'RGB',
   },
   cursor: {
-    HardwareCursor: false,
+    HardwareCursor: true,
     CursorMaxY: 128,
     CursorMaxX: 128,
     AlphaCursorSupport: true,
@@ -865,7 +865,12 @@ const applyLoadedSettings = (data) => {
     global: data?.global || initialSettings.global,
     resolutions: data?.resolutions || initialSettings.resolutions,
     colour: data?.colour || initialSettings.colour,
-    cursor: data?.cursor || initialSettings.cursor,
+    cursor: {
+      ...(data?.cursor || initialSettings.cursor),
+      // Cursor export is infrastructure. Sunshine switches ownership between
+      // video composition and client rendering without reloading the driver.
+      HardwareCursor: true,
+    },
     edid: data?.edid || initialSettings.edid,
   }
 

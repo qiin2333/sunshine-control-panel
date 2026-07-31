@@ -1,12 +1,29 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+const TEST_OPERATION_TIMEOUT_MS = 20
+
 const deferred = () => {
   let resolve
   const promise = new Promise((next) => {
     resolve = next
   })
   return { promise, resolve }
+}
+
+const installAnimationFrameMocks = () => {
+  const cancelledFrames = new Set()
+  let frameId = 0
+  globalThis.requestAnimationFrame = (callback) => {
+    const id = ++frameId
+    queueMicrotask(() => {
+      if (!cancelledFrames.delete(id)) callback(0)
+    })
+    return id
+  }
+  globalThis.cancelAnimationFrame = (id) => {
+    cancelledFrames.add(id)
+  }
 }
 
 const installDragEnvironment = (invoke) => {
@@ -39,11 +56,7 @@ const installDragEnvironment = (invoke) => {
       if (listeners.get(type) === listener) listeners.delete(type)
     },
   }
-  globalThis.requestAnimationFrame = (callback) => {
-    queueMicrotask(() => callback(0))
-    return 1
-  }
-  globalThis.cancelAnimationFrame = () => {}
+  installAnimationFrameMocks()
 
   return {
     callbacks,
@@ -124,11 +137,7 @@ test('commits a quick touch drag after the initial window queries finish', async
       if (listeners.get(type) === listener) listeners.delete(type)
     },
   }
-  globalThis.requestAnimationFrame = (callback) => {
-    queueMicrotask(() => callback(0))
-    return 1
-  }
-  globalThis.cancelAnimationFrame = () => {}
+  installAnimationFrameMocks()
 
   const originalWarn = console.warn
   console.warn = () => {}
@@ -215,17 +224,15 @@ test('releases touch drag state when the initial window query never finishes', a
       if (listeners.get(type) === listener) listeners.delete(type)
     },
   }
-  globalThis.requestAnimationFrame = (callback) => {
-    queueMicrotask(() => callback(0))
-    return 1
-  }
-  globalThis.cancelAnimationFrame = () => {}
+  installAnimationFrameMocks()
 
   const originalWarn = console.warn
   console.warn = () => {}
   try {
     const { useTouchWindowDrag } = await import('./useTouchWindowDrag.js')
-    const { onTouchWindowDragStart } = useTouchWindowDrag()
+    const { onTouchWindowDragStart } = useTouchWindowDrag(null, {
+      operationTimeoutMs: TEST_OPERATION_TIMEOUT_MS,
+    })
     const pointerTarget = {
       setPointerCapture() {},
       hasPointerCapture() { return true },
@@ -307,7 +314,9 @@ test('releases touch drag state when restoring a maximized window never finishes
   console.warn = () => {}
   try {
     const { useTouchWindowDrag } = await import('./useTouchWindowDrag.js')
-    const { onTouchWindowDragStart } = useTouchWindowDrag()
+    const { onTouchWindowDragStart } = useTouchWindowDrag(null, {
+      operationTimeoutMs: TEST_OPERATION_TIMEOUT_MS,
+    })
 
     startTouchDrag(onTouchWindowDragStart, 7, 10, 20)
     await nextTask()
@@ -355,7 +364,9 @@ test('releases touch drag state when DPI rebasing never finishes', async () => {
   console.warn = () => {}
   try {
     const { useTouchWindowDrag } = await import('./useTouchWindowDrag.js')
-    const { onTouchWindowDragStart } = useTouchWindowDrag()
+    const { onTouchWindowDragStart } = useTouchWindowDrag(null, {
+      operationTimeoutMs: TEST_OPERATION_TIMEOUT_MS,
+    })
 
     startTouchDrag(onTouchWindowDragStart, 7, 10, 20)
     await nextTask()
@@ -382,7 +393,7 @@ test('releases touch drag state when DPI rebasing never finishes', async () => {
 test('releases touch drag state when a position commit never finishes', async () => {
   const never = new Promise(() => {})
   const committedPositions = []
-  let setPositionCalls = 0
+  let hangNextSetPosition = false
   const environment = installDragEnvironment(async (command, args) => {
     if (command === 'plugin:event|listen') return 1
     if (command === 'plugin:event|unlisten') return null
@@ -390,8 +401,10 @@ test('releases touch drag state when a position commit never finishes', async ()
     if (command === 'plugin:window|is_maximized') return false
     if (command === 'plugin:window|scale_factor') return 2
     if (command === 'plugin:window|set_position') {
-      setPositionCalls += 1
-      if (setPositionCalls === 1 || setPositionCalls === 3) return never
+      if (hangNextSetPosition) {
+        hangNextSetPosition = false
+        return never
+      }
       committedPositions.push(args.value.toJSON().Physical)
       return null
     }
@@ -402,8 +415,11 @@ test('releases touch drag state when a position commit never finishes', async ()
   console.warn = () => {}
   try {
     const { useTouchWindowDrag } = await import('./useTouchWindowDrag.js')
-    const { onTouchWindowDragStart } = useTouchWindowDrag()
+    const { onTouchWindowDragStart } = useTouchWindowDrag(null, {
+      operationTimeoutMs: TEST_OPERATION_TIMEOUT_MS,
+    })
 
+    hangNextSetPosition = true
     startTouchDrag(onTouchWindowDragStart, 7, 10, 20)
     await nextTask()
     moveTouchDrag(environment.listeners, 7, 35, 50)
@@ -411,10 +427,14 @@ test('releases touch drag state when a position commit never finishes', async ()
     await environment.listeners.get('pointerup')({ pointerId: 7 })
 
     startTouchDrag(onTouchWindowDragStart, 8, 20, 30)
+    await nextTask()
     moveTouchDrag(environment.listeners, 8, 45, 60)
+    await nextTask()
+    assert.deepEqual(committedPositions.at(-1), { x: 150, y: 260 })
     await environment.listeners.get('pointerup')({ pointerId: 8 })
-    assert.deepEqual(committedPositions, [{ x: 150, y: 260 }])
+    const commitsBeforeFinalHang = committedPositions.length
 
+    hangNextSetPosition = true
     startTouchDrag(onTouchWindowDragStart, 9, 10, 20)
     moveTouchDrag(environment.listeners, 9, 35, 50)
     await environment.listeners.get('pointerup')({ pointerId: 9 })
@@ -422,10 +442,8 @@ test('releases touch drag state when a position commit never finishes', async ()
     startTouchDrag(onTouchWindowDragStart, 10, 20, 30)
     moveTouchDrag(environment.listeners, 10, 45, 60)
     await environment.listeners.get('pointerup')({ pointerId: 10 })
-    assert.deepEqual(committedPositions, [
-      { x: 150, y: 260 },
-      { x: 150, y: 260 },
-    ])
+    assert.equal(committedPositions.length, commitsBeforeFinalHang + 1)
+    assert.deepEqual(committedPositions.at(-1), { x: 150, y: 260 })
   } finally {
     console.warn = originalWarn
     environment.cleanup()

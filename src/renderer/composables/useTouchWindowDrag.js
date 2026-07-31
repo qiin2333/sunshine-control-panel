@@ -15,8 +15,14 @@ const RESTORE_RESIZE_TIMEOUT_MS = 500
  *
  * @param {{ value: boolean } | null} isMaximized reactive window state used by
  * the custom maximize button
+ * @param {{ operationTimeoutMs?: number }} options internal timing overrides
  */
-export function useTouchWindowDrag(isMaximized = null) {
+export function useTouchWindowDrag(isMaximized = null, options = {}) {
+  const operationTimeoutMs = (
+    Number.isFinite(options?.operationTimeoutMs) && options.operationTimeoutMs >= 0
+      ? options.operationTimeoutMs
+      : DRAG_OPERATION_TIMEOUT_MS
+  )
   let appWindow = null
   let unlistenScaleChanged = null
   let scaleListenerPromise = null
@@ -291,7 +297,7 @@ export function useTouchWindowDrag(isMaximized = null) {
       return await Promise.race([
         promise.then(() => true, () => false),
         new Promise((resolve) => {
-          timeoutId = setTimeout(() => resolve(false), DRAG_OPERATION_TIMEOUT_MS)
+          timeoutId = setTimeout(() => resolve(false), operationTimeoutMs)
         }),
       ])
     } finally {
@@ -500,7 +506,7 @@ export function useTouchWindowDrag(isMaximized = null) {
     if (settingPosition) {
       if (!(await waitForCurrentDragOperation(
         (async () => {
-          while (settingPosition) {
+          while (settingPosition && isCurrentDrag(generation, activePointerId)) {
             await new Promise((resolve) => setTimeout(resolve, 0))
           }
         })(),
@@ -548,6 +554,7 @@ export function useTouchWindowDrag(isMaximized = null) {
     pointerTarget = event.currentTarget
     hasMoved = false
     dragEnding = false
+    settingPosition = false
     startClientX = event.clientX
     startClientY = event.clientY
     latestClientX = event.clientX

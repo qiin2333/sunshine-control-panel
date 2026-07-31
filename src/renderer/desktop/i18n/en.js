@@ -535,7 +535,7 @@ export const en = {
     visionHistoryClear: 'Clear',
     visionHistoryView: 'View',
     aiKeyMissing: 'AI assistant not configured',
-    aiKeyMissingDesc: 'Configure and enable an API key in \'Mita AI Assistant\' to use Desktop Observation.',
+    aiKeyMissingDesc: 'Configure an API key and enable \'Mita AI Assistant\' to use Desktop Observation.',
 
     // Runtime tips used inside the toolbar speech bubble
     runtime: {

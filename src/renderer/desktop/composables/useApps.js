@@ -9,6 +9,7 @@ export function useApps() {
   const proxyUrl = ref('http://localhost:48081')
   const apps = ref([])
   const loading = ref(true)
+  const loadError = ref('')
   const searchQuery = ref('')
   const launchingApp = ref(null)
   const failedImages = ref(new Set())
@@ -203,14 +204,17 @@ export function useApps() {
 
   async function loadApps() {
     loading.value = true
+    loadError.value = ''
     try {
+      await initProxy()
       const resp = await fetch(`${proxyUrl.value}/api/apps`)
-      if (resp.ok) {
-        const data = await resp.json()
-        apps.value = data.apps || data || []
-      }
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+
+      const data = await resp.json()
+      apps.value = data.apps || data || []
     } catch (e) {
       console.error('Failed to load apps:', e)
+      loadError.value = t.value.apps.loadFailed
     } finally {
       loading.value = false
     }
@@ -250,18 +254,15 @@ export function useApps() {
   }
 
   async function initProxy() {
-    try {
-      const url = await tauriInvoke('get_proxy_url_command')
-      if (url) proxyUrl.value = url
-    } catch (e) {
-      console.log('Tauri invoke not available:', e)
-    }
+    const url = await tauriInvoke('wait_for_proxy_ready')
+    if (url) proxyUrl.value = url
   }
 
   return {
     proxyUrl,
     apps,
     loading,
+    loadError,
     searchQuery,
     launchingApp,
     launchError,
@@ -285,6 +286,5 @@ export function useApps() {
     invalidateAppImage,
     loadApps,
     launchApp,
-    initProxy,
   }
 }

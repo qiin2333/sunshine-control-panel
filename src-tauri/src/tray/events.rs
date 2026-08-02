@@ -1,25 +1,33 @@
 use super::*;
 use futures_util::StreamExt as _;
+use std::time::{Duration, Instant};
 
 const RECONNECT_DELAY: Duration = Duration::from_secs(3);
 const LEGACY_POLL_INTERVAL: Duration = Duration::from_secs(3);
 const HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(30);
+const CORE_DISCONNECT_GRACE_PERIOD: Duration = Duration::from_secs(15);
 
 pub(super) fn start_tray_state_monitoring<R: Runtime + 'static>(app: &AppHandle<R>) {
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
         let mut last_state_key: Option<(String, u64)> = None;
         let mut contract_error_visible = false;
+        let mut disconnected_since: Option<Instant> = None;
+        let mut tray_removed_for_disconnect = false;
 
         loop {
             match sunshine::get_tray_state().await {
                 Ok(state) => {
                     contract_error_visible = false;
+                    let recovered = disconnected_since.is_some();
+                    let force_reconcile = recovered || tray_removed_for_disconnect;
+                    disconnected_since = None;
+                    tray_removed_for_disconnect = false;
                     let supports_events = state
                         .capabilities
                         .iter()
                         .any(|capability| capability == "events-v1");
-                    apply_if_new(&app_handle, &mut last_state_key, state);
+                    apply_if_new(&app_handle, &mut last_state_key, state, force_reconcile);
 
                     if supports_events {
                         if let Err(e) = consume_event_stream(&app_handle, &mut last_state_key).await
@@ -32,7 +40,19 @@ pub(super) fn start_tray_state_monitoring<R: Runtime + 'static>(app: &AppHandle<
                     }
                 }
                 Err(e) => {
-                    mark_core_disconnected(&app_handle);
+                    if disconnected_since.is_none() {
+                        disconnected_since = Some(Instant::now());
+                        mark_core_disconnected(&app_handle);
+                    }
+
+                    if !tray_removed_for_disconnect
+                        && disconnected_since
+                            .is_some_and(|since| since.elapsed() >= CORE_DISCONNECT_GRACE_PERIOD)
+                    {
+                        remove_tray_after_core_disconnect(&app_handle);
+                        tray_removed_for_disconnect = true;
+                    }
+
                     let is_contract_error = e.contains("tray protocol")
                         || e.contains("Tray state is missing")
                         || e.contains("tray owner");
@@ -80,7 +100,7 @@ async fn consume_event_stream<R: Runtime + 'static>(
                     buffer.extend_from_slice(&bytes);
                     while let Some(frame) = take_sse_frame(&mut buffer) {
                         if let Some(state) = parse_tray_state_event(&frame)? {
-                            apply_if_new(app, last_state_key, state);
+                            apply_if_new(app, last_state_key, state, false);
                         }
                     }
                 }
@@ -89,7 +109,7 @@ async fn consume_event_stream<R: Runtime + 'static>(
             },
             _ = health_check.tick() => {
                 let state = sunshine::get_tray_state().await?;
-                apply_if_new(app, last_state_key, state);
+                apply_if_new(app, last_state_key, state, false);
             }
         }
     }
@@ -99,6 +119,7 @@ fn apply_if_new<R: Runtime + 'static>(
     app: &AppHandle<R>,
     last_state_key: &mut Option<(String, u64)>,
     state: sunshine::TrayState,
+    force_reconcile: bool,
 ) {
     let is_new = match last_state_key.as_ref() {
         Some((instance_id, revision)) if instance_id == &state.instance_id => {
@@ -106,7 +127,7 @@ fn apply_if_new<R: Runtime + 'static>(
         }
         _ => true,
     };
-    if is_new {
+    if is_new || force_reconcile {
         *last_state_key = Some((state.instance_id.clone(), state.revision));
         #[cfg(target_os = "windows")]
         if state.vdd.awaiting_confirmation && state.vdd.confirmation_operation_id != 0 {
@@ -122,6 +143,24 @@ fn mark_core_disconnected<R: Runtime + 'static>(app: &AppHandle<R>) {
         apply_core_disconnected(&disconnect_handle);
     }) {
         debug!("Failed to schedule disconnected tray state: {}", e);
+    }
+}
+
+fn remove_tray_after_core_disconnect<R: Runtime + 'static>(app: &AppHandle<R>) {
+    let app_handle = app.clone();
+    if let Err(e) = app.run_on_main_thread(move || {
+        // A successful Core response may already be queued on the main thread.
+        // Do not remove a tray that has been restored in the meantime.
+        if *CORE_CONNECTION_STATE.lock().unwrap() != CoreConnectionState::Disconnected {
+            return;
+        }
+
+        if app_handle.remove_tray_by_id(TRAY_ID).is_some() {
+            info!("Removed GUI tray because Sunshine Core did not recover");
+        }
+        *CURRENT_CORE_ICON.lock().unwrap() = None;
+    }) {
+        debug!("Failed to remove disconnected GUI tray: {}", e);
     }
 }
 

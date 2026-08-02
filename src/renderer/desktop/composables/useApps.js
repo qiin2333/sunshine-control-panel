@@ -3,6 +3,7 @@ import { tauriInvoke } from './useTauri'
 import { useI18n } from '../i18n/index.js'
 
 const STORAGE_KEY = 'foundation-desktop-apps'
+const APP_LIST_REQUEST_TIMEOUT_MS = 10000
 
 export function useApps() {
   const { t } = useI18n()
@@ -207,24 +208,34 @@ export function useApps() {
     const requestId = ++loadRequestId
     loading.value = true
     loadFailed.value = false
+    let timeoutTimer = null
     try {
       const requestProxyUrl = await tauriInvoke('wait_for_proxy_ready')
       if (requestId !== loadRequestId) return
 
       proxyUrl.value = requestProxyUrl
-      const resp = await fetch(`${requestProxyUrl}/api/apps`)
+      const requestController = new AbortController()
+      timeoutTimer = setTimeout(() => {
+        requestController.abort('timeout')
+      }, APP_LIST_REQUEST_TIMEOUT_MS)
+
+      const resp = await fetch(`${requestProxyUrl}/api/apps`, { signal: requestController.signal })
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
 
       const data = await resp.json()
       if (requestId !== loadRequestId) return
 
-      apps.value = data.apps || data || []
+      const appList = Array.isArray(data) ? data : data?.apps
+      if (!Array.isArray(appList)) throw new Error('Invalid apps response: expected an array')
+
+      apps.value = appList
     } catch (e) {
       if (requestId !== loadRequestId) return
 
       console.error('Failed to load apps:', e)
       loadFailed.value = true
     } finally {
+      if (timeoutTimer !== null) clearTimeout(timeoutTimer)
       if (requestId === loadRequestId) loading.value = false
     }
   }

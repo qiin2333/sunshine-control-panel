@@ -9,7 +9,7 @@ export function useApps() {
   const proxyUrl = ref('http://localhost:48081')
   const apps = ref([])
   const loading = ref(true)
-  const loadError = ref('')
+  const loadFailed = ref(false)
   const searchQuery = ref('')
   const launchingApp = ref(null)
   const failedImages = ref(new Set())
@@ -24,6 +24,7 @@ export function useApps() {
   // 收藏和最近启动（持久化）
   const favorites = ref(JSON.parse(localStorage.getItem(`${STORAGE_KEY}-favorites`) || '[]'))
   const recentHistory = ref(JSON.parse(localStorage.getItem(`${STORAGE_KEY}-recent`) || '[]'))
+  let loadRequestId = 0
 
   // 持久化（防抖批量写入）
   let persistTimer = null
@@ -203,20 +204,28 @@ export function useApps() {
   }
 
   async function loadApps() {
+    const requestId = ++loadRequestId
     loading.value = true
-    loadError.value = ''
+    loadFailed.value = false
     try {
-      await initProxy()
-      const resp = await fetch(`${proxyUrl.value}/api/apps`)
+      const requestProxyUrl = await tauriInvoke('wait_for_proxy_ready')
+      if (requestId !== loadRequestId) return
+
+      proxyUrl.value = requestProxyUrl
+      const resp = await fetch(`${requestProxyUrl}/api/apps`)
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
 
       const data = await resp.json()
+      if (requestId !== loadRequestId) return
+
       apps.value = data.apps || data || []
     } catch (e) {
+      if (requestId !== loadRequestId) return
+
       console.error('Failed to load apps:', e)
-      loadError.value = t.value.apps.loadFailed
+      loadFailed.value = true
     } finally {
-      loading.value = false
+      if (requestId === loadRequestId) loading.value = false
     }
   }
 
@@ -253,16 +262,11 @@ export function useApps() {
     }
   }
 
-  async function initProxy() {
-    const url = await tauriInvoke('wait_for_proxy_ready')
-    if (url) proxyUrl.value = url
-  }
-
   return {
     proxyUrl,
     apps,
     loading,
-    loadError,
+    loadFailed,
     searchQuery,
     launchingApp,
     launchError,

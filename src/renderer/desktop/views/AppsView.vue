@@ -31,11 +31,11 @@
     </div>
 
     <!-- 加载失败状态 -->
-    <div v-else-if="loadError" class="apps-empty apps-error">
+    <div v-else-if="loadFailed" class="apps-empty apps-error" role="alert">
       <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
         <circle cx="12" cy="12" r="9"/><path d="M12 7v6"/><path d="M12 17h.01"/>
       </svg>
-      <p>{{ loadError }}</p>
+      <p>{{ t.apps.loadFailed }}</p>
       <button class="retry-btn" type="button" @click="loadApps">{{ t.apps.retry }}</button>
     </div>
 
@@ -137,7 +137,7 @@ import CoverPickerModal from '../components/CoverPickerModal.vue'
 
 const {
   loading,
-  loadError,
+  loadFailed,
   searchQuery,
   launchingApp,
   launchError,

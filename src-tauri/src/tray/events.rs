@@ -19,8 +19,9 @@ pub(super) fn start_tray_state_monitoring<R: Runtime + 'static>(app: &AppHandle<
             match sunshine::get_tray_state().await {
                 Ok(state) => {
                     contract_error_visible = false;
+                    let recovered = disconnected_since.is_some();
+                    let force_reconcile = recovered || tray_removed_for_disconnect;
                     disconnected_since = None;
-                    let force_reconcile = tray_removed_for_disconnect;
                     tray_removed_for_disconnect = false;
                     let supports_events = state
                         .capabilities

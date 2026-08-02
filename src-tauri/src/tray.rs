@@ -916,7 +916,7 @@ fn apply_core_disconnected<R: Runtime + 'static>(app: &AppHandle<R>) {
 
     if let Err(e) = build_owned_system_tray(app) {
         error!(
-            "Failed to keep GUI tray available while core is offline: {}",
+            "Failed to keep GUI tray available during the Core reconnect window: {}",
             e
         );
         return;

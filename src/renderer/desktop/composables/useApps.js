@@ -3,12 +3,14 @@ import { tauriInvoke } from './useTauri'
 import { useI18n } from '../i18n/index.js'
 
 const STORAGE_KEY = 'foundation-desktop-apps'
+const APP_LIST_REQUEST_TIMEOUT_MS = 10000
 
 export function useApps() {
   const { t } = useI18n()
   const proxyUrl = ref('http://localhost:48081')
   const apps = ref([])
   const loading = ref(true)
+  const loadFailed = ref(false)
   const searchQuery = ref('')
   const launchingApp = ref(null)
   const failedImages = ref(new Set())
@@ -23,6 +25,7 @@ export function useApps() {
   // 收藏和最近启动（持久化）
   const favorites = ref(JSON.parse(localStorage.getItem(`${STORAGE_KEY}-favorites`) || '[]'))
   const recentHistory = ref(JSON.parse(localStorage.getItem(`${STORAGE_KEY}-recent`) || '[]'))
+  let loadRequestId = 0
 
   // 持久化（防抖批量写入）
   let persistTimer = null
@@ -202,17 +205,38 @@ export function useApps() {
   }
 
   async function loadApps() {
+    const requestId = ++loadRequestId
     loading.value = true
+    loadFailed.value = false
+    let timeoutTimer = null
     try {
-      const resp = await fetch(`${proxyUrl.value}/api/apps`)
-      if (resp.ok) {
-        const data = await resp.json()
-        apps.value = data.apps || data || []
-      }
+      const requestProxyUrl = await tauriInvoke('wait_for_proxy_ready')
+      if (requestId !== loadRequestId) return
+
+      proxyUrl.value = requestProxyUrl
+      const requestController = new AbortController()
+      timeoutTimer = setTimeout(() => {
+        requestController.abort('timeout')
+      }, APP_LIST_REQUEST_TIMEOUT_MS)
+
+      const resp = await fetch(`${requestProxyUrl}/api/apps`, { signal: requestController.signal })
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+
+      const data = await resp.json()
+      if (requestId !== loadRequestId) return
+
+      const appList = Array.isArray(data) ? data : data?.apps
+      if (!Array.isArray(appList)) throw new Error('Invalid apps response: expected an array')
+
+      apps.value = appList
     } catch (e) {
+      if (requestId !== loadRequestId) return
+
       console.error('Failed to load apps:', e)
+      loadFailed.value = true
     } finally {
-      loading.value = false
+      if (timeoutTimer !== null) clearTimeout(timeoutTimer)
+      if (requestId === loadRequestId) loading.value = false
     }
   }
 
@@ -249,19 +273,11 @@ export function useApps() {
     }
   }
 
-  async function initProxy() {
-    try {
-      const url = await tauriInvoke('get_proxy_url_command')
-      if (url) proxyUrl.value = url
-    } catch (e) {
-      console.log('Tauri invoke not available:', e)
-    }
-  }
-
   return {
     proxyUrl,
     apps,
     loading,
+    loadFailed,
     searchQuery,
     launchingApp,
     launchError,
@@ -285,6 +301,5 @@ export function useApps() {
     invalidateAppImage,
     loadApps,
     launchApp,
-    initProxy,
   }
 }

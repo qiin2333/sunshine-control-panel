@@ -372,6 +372,8 @@ export const en = {
   apps: {
     libraryTitle: 'Library',
     loading: 'Loading application list...',
+    loadFailed: 'Failed to load applications. Check Sunshine and try again.',
+    retry: 'Retry',
     searchPlaceholder: 'Search...',
     searchNoMatch: 'No matching applications found',
     noFavorites: 'No favorite applications yet',

@@ -30,6 +30,15 @@
       <span>{{ t.apps.loading }}</span>
     </div>
 
+    <!-- 加载失败状态 -->
+    <div v-else-if="loadFailed" class="apps-empty apps-error" role="alert">
+      <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <circle cx="12" cy="12" r="9"/><path d="M12 7v6"/><path d="M12 17h.01"/>
+      </svg>
+      <p>{{ t.apps.loadFailed }}</p>
+      <button class="retry-btn" type="button" @click="loadApps">{{ t.apps.retry }}</button>
+    </div>
+
     <!-- 空状态 -->
     <div v-else-if="displayApps.length === 0 && !loading" class="apps-empty">
       <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -128,6 +137,7 @@ import CoverPickerModal from '../components/CoverPickerModal.vue'
 
 const {
   loading,
+  loadFailed,
   searchQuery,
   launchingApp,
   launchError,
@@ -148,7 +158,6 @@ const {
   invalidateAppImage,
   loadApps,
   launchApp,
-  initProxy,
 } = useApps()
 
 // 右键菜单
@@ -243,7 +252,6 @@ function onDocClick() {
 
 onMounted(async () => {
   document.addEventListener('click', onDocClick)
-  await initProxy()
   await loadApps()
 })
 
@@ -290,7 +298,27 @@ onUnmounted(() => {
   .empty-icon { width: 56px; height: 56px; opacity: 0.25; margin-bottom: 8px; }
   p { margin: 0; font-size: 16px; }
   .empty-hint { font-size: 13px; color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.2); }
+
+  .retry-btn {
+    margin-top: 8px;
+    padding: 8px 20px;
+    border: 1px solid rgba(var(--fd-accent-rgb, 0, 255, 245), 0.45);
+    border-radius: 8px;
+    background: rgba(var(--fd-accent-rgb, 0, 255, 245), 0.1);
+    color: var(--fd-accent, #00fff5);
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+
+    &:hover,
+    &:focus-visible {
+      border-color: var(--fd-accent, #00fff5);
+      background: rgba(var(--fd-accent-rgb, 0, 255, 245), 0.18);
+      outline: none;
+    }
+  }
 }
+
+.apps-error { color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.55); }
 
 // === 启动错误 Toast ===
 .launch-error-toast {

@@ -372,6 +372,8 @@ export const zh = {
   apps: {
     libraryTitle: '游戏库',
     loading: '加载应用列表...',
+    loadFailed: '应用列表加载失败，请检查 Sunshine 状态后重试',
+    retry: '重试',
     searchPlaceholder: '搜索...',
     searchNoMatch: '没有找到匹配的应用',
     noFavorites: '还没有收藏的应用',

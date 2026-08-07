@@ -265,6 +265,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from '../../desktop/i18n/index.js'
 import { STORAGE_KEY, DEFAULT_CONFIG } from '../../composables/aiProviders.js'
 import { isApiKeyRequired } from '../../composables/aiClient.js'
@@ -322,6 +323,7 @@ const jitterPercent = ref(loadJitterPercent())
 const visionEnabled = ref(loadVisionEnabled())
 const visionIntervalSec = ref(loadVisionIntervalSec())
 const aiConfigVersion = ref(0)
+const serverAiConfig = ref(null)
 const visionConfirmPending = ref(false)
 const visionConfirmOpen = ref(false)
 let tabTouchStart = null
@@ -332,12 +334,24 @@ const aiConfigReady = computed(() => {
   if (!Number.isFinite(configVersion)) return false
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
-    const cfg = saved ? { ...DEFAULT_CONFIG, ...JSON.parse(saved) } : { ...DEFAULT_CONFIG }
+    const localConfig = saved ? { ...DEFAULT_CONFIG, ...JSON.parse(saved) } : { ...DEFAULT_CONFIG }
+    const cfg = serverAiConfig.value || localConfig
     return !!(cfg.enabled && (cfg.apiKey?.trim() || cfg.apiKeyConfigured || !isApiKeyRequired(cfg)))
   } catch {
     return false
   }
 })
+
+async function refreshAiConfigStatus() {
+  try {
+    const proxyUrl = await invoke('get_proxy_url_command')
+    const response = await fetch(`${proxyUrl}/api/ai/config`)
+    if (!response.ok) throw new Error(`Failed to load AI configuration (${response.status})`)
+    serverAiConfig.value = { ...DEFAULT_CONFIG, ...(await response.json()), apiKey: '' }
+  } catch {
+    serverAiConfig.value = null
+  }
+}
 
 const visionToggleDisabled = computed(() => !masterEnabled.value || !aiConfigReady.value)
 
@@ -590,9 +604,9 @@ function syncSettingFromStorage(event) {
 
   if (event.key === STORAGE_KEY) {
     aiConfigVersion.value += 1
-    if (!aiConfigReady.value && visionEnabled.value) {
-      visionEnabled.value = false
-    }
+    void refreshAiConfigStatus().then(() => {
+      if (!aiConfigReady.value && visionEnabled.value) visionEnabled.value = false
+    })
     return
   }
 
@@ -610,7 +624,10 @@ function syncSettingFromStorage(event) {
   Promise.resolve().then(() => { suppressWatch = false })
 }
 
-onMounted(() => window.addEventListener('storage', syncSettingFromStorage))
+onMounted(() => {
+  window.addEventListener('storage', syncSettingFromStorage)
+  void refreshAiConfigStatus()
+})
 onUnmounted(() => window.removeEventListener('storage', syncSettingFromStorage))
 </script>
 

@@ -312,13 +312,15 @@ const rt = () => t.value.petTool?.runtime || {}
 const getAiConfig = async (signal) => {
   let localConfig
   let legacyKey = ''
+  let sanitizedStoredConfig = null
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
     const parsed = saved ? JSON.parse(saved) : {}
     legacyKey = typeof parsed.apiKey === 'string' && !parsed.apiKey.includes('****') ? parsed.apiKey : ''
     delete parsed.apiKey
+    sanitizedStoredConfig = parsed
     localConfig = { ...DEFAULT_CONFIG, ...parsed, apiKey: '' }
-    if (saved) localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed))
+    if (saved && !legacyKey) localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed))
   } catch {
     localConfig = { ...DEFAULT_CONFIG, apiKey: '' }
   }
@@ -336,6 +338,7 @@ const getAiConfig = async (signal) => {
       if (!migration.ok || migrationResult.status === 'error') {
         throw new Error(migrationResult.error || `Failed to migrate AI credential (${migration.status})`)
       }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitizedStoredConfig))
     }
     const response = await fetch(`${proxyUrl}/api/ai/config`, { signal })
     if (response.ok) return { ...localConfig, ...(await response.json()), apiKey: '' }

@@ -204,11 +204,14 @@ export async function fetchModels(apiBase, apiKey, providerValue) {
   if (apiType === 'anthropic') return []
   if (!apiBase) return []
 
-  const headers = {}
-  if (apiKey) headers.Authorization = `Bearer ${apiKey}`
-
-  const base = apiBase.replace(/\/+$/, '')
-  const data = await proxyFetch(`${base}/models`, 'GET', headers, null)
+  let data
+  if (apiKey) {
+    const base = apiBase.replace(/\/+$/, '')
+    data = await proxyFetch(`${base}/models`, 'GET', { Authorization: `Bearer ${apiKey}` }, null)
+  } else {
+    const proxyUrl = await getProxyUrl()
+    data = await fetchJson(`${proxyUrl}/api/ai/models`)
+  }
 
   return (data.data || data.models || [])
     .map((m) => m.id || m.name || m)

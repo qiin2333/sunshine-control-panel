@@ -67,8 +67,12 @@
               type="password"
               show-password
               class="field-control"
-              placeholder="sk-..."
-            />
+              :placeholder="config.apiKeyConfigured ? '••••••••' : 'sk-...'"
+            >
+              <template v-if="config.apiKeyConfigured" #append>
+                <el-button @click="clearApiKey">{{ t.aiAssistant.clearApiKey }}</el-button>
+              </template>
+            </el-input>
             <span class="form-tip">{{ t.aiAssistant.apiKeyHint }}</span>
           </el-form-item>
 
@@ -235,6 +239,7 @@ const {
   retryLastMessage,
   applyAction,
   clearHistory,
+  clearApiKey,
   saveConfig,
 } = useAiAssistant()
 

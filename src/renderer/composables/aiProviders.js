@@ -7,6 +7,7 @@ export const STORAGE_KEY = 'sunshine-ai-config'
 export const DEFAULT_CONFIG = {
   provider: 'openai',
   apiKey: '',
+  apiKeyConfigured: false,
   apiBase: 'https://api.openai.com/v1',
   model: 'gpt-4.1-mini',
   compatibility: 'openai-chat',

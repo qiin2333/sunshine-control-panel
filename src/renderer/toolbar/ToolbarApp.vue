@@ -452,7 +452,7 @@ const setVisionSpeech = (text) => {
 const tryVisionSpeech = async (isManual = false) => {
   const config = getAiConfig()
   const r = rt()
-  if (!config.enabled || (!config.apiKey && isApiKeyRequired(config)) || !isPetVisionEnabled()) {
+  if (!config.enabled || (!(config.apiKey || config.apiKeyConfigured) && isApiKeyRequired(config)) || !isPetVisionEnabled()) {
     if (isManual) showSpeechRaw(r.visionNotConfigured || '')
     return false
   }

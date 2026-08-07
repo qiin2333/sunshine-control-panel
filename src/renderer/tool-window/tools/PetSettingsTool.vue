@@ -333,7 +333,7 @@ const aiConfigReady = computed(() => {
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
     const cfg = saved ? { ...DEFAULT_CONFIG, ...JSON.parse(saved) } : { ...DEFAULT_CONFIG }
-    return !!(cfg.enabled && (cfg.apiKey?.trim() || !isApiKeyRequired(cfg)))
+    return !!(cfg.enabled && (cfg.apiKey?.trim() || cfg.apiKeyConfigured || !isApiKeyRequired(cfg)))
   } catch {
     return false
   }

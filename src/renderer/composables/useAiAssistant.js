@@ -33,6 +33,15 @@ function isApiKeyRequired(cfg) {
     !apiBase.includes('[::1]')
 }
 
+function hasApiKey(cfg) {
+  return Boolean(cfg.apiKey || cfg.apiKeyConfigured)
+}
+
+function persistableConfig(cfg) {
+  const { apiKey, ...safe } = { ...cfg }
+  return safe
+}
+
 async function getProxyUrl() {
   try {
     const { invoke } = await import('@tauri-apps/api/core')
@@ -205,7 +214,7 @@ export function useAiAssistant() {
   const isConnected = ref(false)
   const isLoading = ref(false)
   const needsConfiguration = computed(
-    () => !config.enabled || !config.model || (isApiKeyRequired(config) && !config.apiKey),
+    () => !config.enabled || !config.model || (isApiKeyRequired(config) && !hasApiKey(config)),
   )
 
   // 聊天记录（从 sessionStorage 恢复，切换页面不丢失）
@@ -237,7 +246,8 @@ export function useAiAssistant() {
   function loadConfig() {
     try {
       const saved = localStorage.getItem(STORAGE_KEY)
-      return saved ? normalizeConfig(JSON.parse(saved)) : normalizeConfig()
+      const loaded = saved ? normalizeConfig(JSON.parse(saved)) : normalizeConfig()
+      return loaded
     } catch {
       return normalizeConfig()
     }
@@ -255,12 +265,12 @@ export function useAiAssistant() {
       const remote = await resp.json()
       const localKey = config.apiKey || ''
       Object.assign(config, normalizeConfig(remote))
-      if (remote.apiKey && !isMaskedKey(remote.apiKey)) {
-        config.apiKey = remote.apiKey
-      } else if (localKey && !isMaskedKey(localKey)) {
+      config.apiKey = ''
+      if (!remote.apiKeyConfigured && localKey && !isMaskedKey(localKey)) {
         config.apiKey = localKey
+        await syncToServer()
       }
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...config }))
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(persistableConfig(config)))
     } catch (e) {
       console.warn('从服务端同步 AI 配置失败:', e.message)
     }
@@ -270,24 +280,53 @@ export function useAiAssistant() {
    * 将当前 config 推送到服务端保存
    */
   async function syncToServer() {
+    const proxyUrl = await getProxyUrl()
+    const replacementKey = !isMaskedKey(config.apiKey) ? config.apiKey : ''
+    const resp = await fetch(`${proxyUrl}/api/ai/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        enabled: config.enabled,
+        provider: config.provider,
+        apiBase: config.apiBase,
+        model: config.model,
+        compatibility: config.compatibility,
+        temperature: Number(config.temperature) || DEFAULT_CONFIG.temperature,
+        max_tokens: Number(config.max_tokens) || DEFAULT_CONFIG.max_tokens,
+        apiKeyAction: replacementKey ? 'replace' : 'keep',
+        ...(replacementKey && { apiKey: replacementKey }),
+      }),
+    })
+    const result = await resp.json().catch(() => ({}))
+    if (!resp.ok || result.status === 'error') {
+      throw new Error(result.error || `Failed to save AI configuration (${resp.status})`)
+    }
+    config.apiKeyConfigured = Boolean(result.apiKeyConfigured)
+    config.apiKey = ''
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(persistableConfig(config)))
+    return result
+  }
+
+  async function clearApiKey() {
     try {
       const proxyUrl = await getProxyUrl()
-      await fetch(`${proxyUrl}/api/ai/config`, {
+      const resp = await fetch(`${proxyUrl}/api/ai/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          enabled: config.enabled,
-          provider: config.provider,
-          apiBase: config.apiBase,
-          model: config.model,
-          compatibility: config.compatibility,
-          temperature: Number(config.temperature) || DEFAULT_CONFIG.temperature,
-          max_tokens: Number(config.max_tokens) || DEFAULT_CONFIG.max_tokens,
-          ...(!isMaskedKey(config.apiKey) && { apiKey: config.apiKey }),
-        }),
+        body: JSON.stringify({ apiKeyAction: 'clear' }),
       })
-    } catch (e) {
-      console.warn('同步 AI 配置到服务端失败:', e.message)
+      const result = await resp.json().catch(() => ({}))
+      if (!resp.ok || result.status === 'error') {
+        throw new Error(result.error || `Failed to clear API key (${resp.status})`)
+      }
+      config.apiKey = ''
+      config.apiKeyConfigured = false
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(persistableConfig(config)))
+      ElMessage.success(ui().apiKeyCleared)
+      return true
+    } catch (error) {
+      ElMessage.error(ui().apiKeyClearFailed.replace('{error}', error.message))
+      return false
     }
   }
 
@@ -295,15 +334,21 @@ export function useAiAssistant() {
   function autoSaveConfig() {
     clearTimeout(saveTimer)
     saveTimer = setTimeout(() => {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...config }))
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(persistableConfig(config)))
     }, 300)
   }
 
-  function saveConfig(notify = true) {
+  async function saveConfig(notify = true) {
     clearTimeout(saveTimer)
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...config }))
-    syncToServer()
-    if (notify) ElMessage.success(ui().configSaved)
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(persistableConfig(config)))
+    try {
+      await syncToServer()
+      if (notify) ElMessage.success(ui().configSaved)
+      return true
+    } catch (error) {
+      if (notify) ElMessage.error(error.message)
+      return false
+    }
   }
 
   // 初始化时从服务端同步（不阻塞 UI）
@@ -355,7 +400,7 @@ export function useAiAssistant() {
   // ===== 连接测试 =====
 
   async function testConnection() {
-    if (!config.apiKey && isApiKeyRequired(config)) {
+    if (!hasApiKey(config) && isApiKeyRequired(config)) {
       ElMessage.warning(ui().apiKeyRequired)
       return false
     }
@@ -390,7 +435,7 @@ export function useAiAssistant() {
       return false
     }
 
-    if (!config.apiKey && isApiKeyRequired(config)) {
+    if (!hasApiKey(config) && isApiKeyRequired(config)) {
       ElMessage.warning(ui().apiKeyRequired)
       return false
     }
@@ -491,6 +536,7 @@ export function useAiAssistant() {
     retryLastMessage,
     applyAction,
     clearHistory,
+    clearApiKey,
     saveConfig,
   }
 }

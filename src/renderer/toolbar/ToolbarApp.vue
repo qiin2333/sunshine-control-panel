@@ -309,13 +309,23 @@ const showSpeechRaw = (text, durationMs) => {
 // 运行时文案统一从 i18n 读取（zh.js / en.js 中 petTool.runtime.*）
 const rt = () => t.value.petTool?.runtime || {}
 
-const getAiConfig = () => {
+const getAiConfig = async () => {
+  let localConfig
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
-    return saved ? { ...DEFAULT_CONFIG, ...JSON.parse(saved) } : { ...DEFAULT_CONFIG }
+    localConfig = saved ? { ...DEFAULT_CONFIG, ...JSON.parse(saved) } : { ...DEFAULT_CONFIG }
   } catch {
-    return { ...DEFAULT_CONFIG }
+    localConfig = { ...DEFAULT_CONFIG }
   }
+
+  try {
+    const proxyUrl = await invoke('get_proxy_url_command')
+    const response = await fetch(`${proxyUrl}/api/ai/config`)
+    if (response.ok) return { ...localConfig, ...(await response.json()), apiKey: '' }
+  } catch {
+    // Fall back to the safe local snapshot while Sunshine is unavailable.
+  }
+  return localConfig
 }
 
 const isPetVisionEnabled = () => {
@@ -450,7 +460,7 @@ const setVisionSpeech = (text) => {
 }
 
 const tryVisionSpeech = async (isManual = false) => {
-  const config = getAiConfig()
+  const config = await getAiConfig()
   const r = rt()
   if (!config.enabled || (!(config.apiKey || config.apiKeyConfigured) && isApiKeyRequired(config)) || !isPetVisionEnabled()) {
     if (isManual) showSpeechRaw(r.visionNotConfigured || '')

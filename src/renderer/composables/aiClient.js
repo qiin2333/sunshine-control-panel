@@ -199,7 +199,7 @@ export async function callVisionLLM(
   ], maxTokens, requestOptions)
 }
 
-export async function fetchModels(apiBase, apiKey, providerValue) {
+export async function fetchModels(apiBase, apiKey, providerValue, syncConfig) {
   const apiType = getApiType(providerValue)
   if (apiType === 'anthropic') return []
   if (!apiBase) return []
@@ -209,6 +209,7 @@ export async function fetchModels(apiBase, apiKey, providerValue) {
     const base = apiBase.replace(/\/+$/, '')
     data = await proxyFetch(`${base}/models`, 'GET', { Authorization: `Bearer ${apiKey}` }, null)
   } else {
+    await syncConfig()
     const proxyUrl = await getProxyUrl()
     data = await fetchJson(`${proxyUrl}/api/ai/models`)
   }

@@ -29,7 +29,7 @@
             </span>
           </div>
           <div class="section-actions">
-            <el-switch v-model="config.enabled" @change="saveConfig(false)" @click.stop />
+            <el-switch v-model="config.enabled" :disabled="isClearingApiKey" @change="saveConfig(false)" @click.stop />
             <el-button
               class="config-toggle"
               text
@@ -70,7 +70,7 @@
               :placeholder="config.apiKeyConfigured ? '••••••••' : 'sk-...'"
             >
               <template v-if="config.apiKeyConfigured" #append>
-                <el-button @click="clearApiKey">{{ t.aiAssistant.clearApiKey }}</el-button>
+                <el-button :loading="isClearingApiKey" @click="clearApiKey">{{ t.aiAssistant.clearApiKey }}</el-button>
               </template>
             </el-input>
             <span class="form-tip">{{ t.aiAssistant.apiKeyHint }}</span>
@@ -103,7 +103,7 @@
 
           <div class="form-actions">
             <el-button type="primary" @click="testConnection" :loading="isLoading"> {{ t.aiAssistant.testConnection }} </el-button>
-            <el-button @click="saveConfig()">{{ t.aiAssistant.saveConfig }}</el-button>
+            <el-button :disabled="isClearingApiKey" @click="saveConfig()">{{ t.aiAssistant.saveConfig }}</el-button>
             <el-tag v-if="isConnected" type="success" class="conn-status"> {{ t.aiAssistant.connected }} </el-tag>
           </div>
         </el-form>
@@ -228,6 +228,7 @@ const {
   needsConfiguration,
   isConnected,
   isLoading,
+  isClearingApiKey,
   isFetchingModels,
   chatHistory,
   currentInput,

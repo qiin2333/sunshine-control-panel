@@ -213,6 +213,7 @@ export function useAiAssistant() {
   const config = reactive(loadConfig())
   const isConnected = ref(false)
   const isLoading = ref(false)
+  const isClearingApiKey = ref(false)
   const needsConfiguration = computed(
     () => !config.enabled || !config.model || (isApiKeyRequired(config) && !hasApiKey(config)),
   )
@@ -254,8 +255,8 @@ export function useAiAssistant() {
   }
 
   /**
-   * 从服务端拉取 AI 配置并合并到当前 config（服务端为真实来源）
-   * API key 在 GET 响应中是掩码的，用 localStorage 中的完整 key 填充
+   * 从服务端拉取 AI 配置并合并到当前 config（服务端为真实来源）。
+   * GET 只返回 apiKeyConfigured，不返回密钥内容。
    */
   async function syncFromServer() {
     try {
@@ -276,49 +277,65 @@ export function useAiAssistant() {
     }
   }
 
-  /**
-   * 将当前 config 推送到服务端保存
-   */
-  async function syncToServer() {
-    const proxyUrl = await getProxyUrl()
-    const replacementKey = !isMaskedKey(config.apiKey) ? config.apiKey : ''
-    const resp = await fetch(`${proxyUrl}/api/ai/config`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        enabled: config.enabled,
-        provider: config.provider,
-        apiBase: config.apiBase,
-        model: config.model,
-        compatibility: config.compatibility,
-        temperature: Number(config.temperature) || DEFAULT_CONFIG.temperature,
-        max_tokens: Number(config.max_tokens) || DEFAULT_CONFIG.max_tokens,
-        apiKeyAction: replacementKey ? 'replace' : 'keep',
-        ...(replacementKey && { apiKey: replacementKey }),
-      }),
-    })
-    const result = await resp.json().catch(() => ({}))
-    if (!resp.ok || result.status === 'error') {
-      throw new Error(result.error || `Failed to save AI configuration (${resp.status})`)
-    }
-    config.apiKeyConfigured = Boolean(result.apiKeyConfigured)
-    config.apiKey = ''
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(persistableConfig(config)))
-    return result
+  let configWriteQueue = Promise.resolve()
+
+  function enqueueConfigWrite(operation) {
+    const queued = configWriteQueue.then(operation, operation)
+    configWriteQueue = queued.catch(() => {})
+    return queued
   }
 
-  async function clearApiKey() {
-    try {
+  /** 将当前 config 推送到服务端保存。所有写入共用一个队列。 */
+  async function syncToServer() {
+    const replacementKey = !isMaskedKey(config.apiKey) ? config.apiKey : ''
+    const payload = {
+      enabled: config.enabled,
+      provider: config.provider,
+      apiBase: config.apiBase,
+      model: config.model,
+      compatibility: config.compatibility,
+      temperature: Number(config.temperature) || DEFAULT_CONFIG.temperature,
+      max_tokens: Number(config.max_tokens) || DEFAULT_CONFIG.max_tokens,
+      apiKeyAction: replacementKey ? 'replace' : 'keep',
+      ...(replacementKey && { apiKey: replacementKey }),
+    }
+
+    return enqueueConfigWrite(async () => {
       const proxyUrl = await getProxyUrl()
       const resp = await fetch(`${proxyUrl}/api/ai/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKeyAction: 'clear' }),
+        body: JSON.stringify(payload),
       })
       const result = await resp.json().catch(() => ({}))
       if (!resp.ok || result.status === 'error') {
-        throw new Error(result.error || `Failed to clear API key (${resp.status})`)
+        throw new Error(result.error || `Failed to save AI configuration (${resp.status})`)
       }
+      config.apiKeyConfigured = Boolean(result.apiKeyConfigured)
+      if (replacementKey && config.apiKey === replacementKey) config.apiKey = ''
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(persistableConfig(config)))
+      return result
+    })
+  }
+
+  async function clearApiKey() {
+    if (isClearingApiKey.value) return false
+    isClearingApiKey.value = true
+    config.apiKey = ''
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(persistableConfig(config)))
+    try {
+      await enqueueConfigWrite(async () => {
+        const proxyUrl = await getProxyUrl()
+        const resp = await fetch(`${proxyUrl}/api/ai/config`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ apiKeyAction: 'clear' }),
+        })
+        const result = await resp.json().catch(() => ({}))
+        if (!resp.ok || result.status === 'error') {
+          throw new Error(result.error || `Failed to clear API key (${resp.status})`)
+        }
+      })
       config.apiKey = ''
       config.apiKeyConfigured = false
       localStorage.setItem(STORAGE_KEY, JSON.stringify(persistableConfig(config)))
@@ -327,6 +344,8 @@ export function useAiAssistant() {
     } catch (error) {
       ElMessage.error(ui().apiKeyClearFailed.replace('{error}', error.message))
       return false
+    } finally {
+      isClearingApiKey.value = false
     }
   }
 
@@ -339,6 +358,7 @@ export function useAiAssistant() {
   }
 
   async function saveConfig(notify = true) {
+    if (isClearingApiKey.value) return false
     clearTimeout(saveTimer)
     localStorage.setItem(STORAGE_KEY, JSON.stringify(persistableConfig(config)))
     try {
@@ -373,7 +393,7 @@ export function useAiAssistant() {
     if (!config.apiBase) return
     isFetchingModels.value = true
     try {
-      const models = await fetchModels(config.apiBase, config.apiKey, config.provider)
+      const models = await fetchModels(config.apiBase, config.apiKey, config.provider, syncToServer)
       remoteModels.value = models
       if (models.length > 0) {
         ElMessage.success(ui().modelsFetched.replace('{count}', models.length))
@@ -525,6 +545,7 @@ export function useAiAssistant() {
     needsConfiguration,
     isConnected,
     isLoading,
+    isClearingApiKey,
     isFetchingModels,
     chatHistory,
     currentInput,

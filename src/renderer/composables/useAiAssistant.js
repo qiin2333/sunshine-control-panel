@@ -33,6 +33,15 @@ function isApiKeyRequired(cfg) {
     !apiBase.includes('[::1]')
 }
 
+function hasApiKey(cfg) {
+  return Boolean(cfg.apiKey || cfg.apiKeyConfigured)
+}
+
+function persistableConfig(cfg) {
+  const { apiKey, ...safe } = { ...cfg }
+  return safe
+}
+
 async function getProxyUrl() {
   try {
     const { invoke } = await import('@tauri-apps/api/core')
@@ -204,8 +213,9 @@ export function useAiAssistant() {
   const config = reactive(loadConfig())
   const isConnected = ref(false)
   const isLoading = ref(false)
+  const isClearingApiKey = ref(false)
   const needsConfiguration = computed(
-    () => !config.enabled || !config.model || (isApiKeyRequired(config) && !config.apiKey),
+    () => !config.enabled || !config.model || (isApiKeyRequired(config) && !hasApiKey(config)),
   )
 
   // 聊天记录（从 sessionStorage 恢复，切换页面不丢失）
@@ -237,15 +247,16 @@ export function useAiAssistant() {
   function loadConfig() {
     try {
       const saved = localStorage.getItem(STORAGE_KEY)
-      return saved ? normalizeConfig(JSON.parse(saved)) : normalizeConfig()
+      const loaded = saved ? normalizeConfig(JSON.parse(saved)) : normalizeConfig()
+      return loaded
     } catch {
       return normalizeConfig()
     }
   }
 
   /**
-   * 从服务端拉取 AI 配置并合并到当前 config（服务端为真实来源）
-   * API key 在 GET 响应中是掩码的，用 localStorage 中的完整 key 填充
+   * 从服务端拉取 AI 配置并合并到当前 config（服务端为真实来源）。
+   * GET 只返回 apiKeyConfigured，不返回密钥内容。
    */
   async function syncFromServer() {
     try {
@@ -255,39 +266,86 @@ export function useAiAssistant() {
       const remote = await resp.json()
       const localKey = config.apiKey || ''
       Object.assign(config, normalizeConfig(remote))
-      if (remote.apiKey && !isMaskedKey(remote.apiKey)) {
-        config.apiKey = remote.apiKey
-      } else if (localKey && !isMaskedKey(localKey)) {
+      config.apiKey = ''
+      if (!remote.apiKeyConfigured && localKey && !isMaskedKey(localKey)) {
         config.apiKey = localKey
+        await syncToServer()
       }
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...config }))
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(persistableConfig(config)))
     } catch (e) {
       console.warn('从服务端同步 AI 配置失败:', e.message)
     }
   }
 
-  /**
-   * 将当前 config 推送到服务端保存
-   */
+  let configWriteQueue = Promise.resolve()
+
+  function enqueueConfigWrite(operation) {
+    const queued = configWriteQueue.then(operation, operation)
+    configWriteQueue = queued.catch(() => {})
+    return queued
+  }
+
+  /** 将当前 config 推送到服务端保存。所有写入共用一个队列。 */
   async function syncToServer() {
-    try {
+    const replacementKey = !isMaskedKey(config.apiKey) ? config.apiKey : ''
+    const payload = {
+      enabled: config.enabled,
+      provider: config.provider,
+      apiBase: config.apiBase,
+      model: config.model,
+      compatibility: config.compatibility,
+      temperature: Number(config.temperature) || DEFAULT_CONFIG.temperature,
+      max_tokens: Number(config.max_tokens) || DEFAULT_CONFIG.max_tokens,
+      apiKeyAction: replacementKey ? 'replace' : 'keep',
+      ...(replacementKey && { apiKey: replacementKey }),
+    }
+
+    return enqueueConfigWrite(async () => {
       const proxyUrl = await getProxyUrl()
-      await fetch(`${proxyUrl}/api/ai/config`, {
+      const resp = await fetch(`${proxyUrl}/api/ai/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          enabled: config.enabled,
-          provider: config.provider,
-          apiBase: config.apiBase,
-          model: config.model,
-          compatibility: config.compatibility,
-          temperature: Number(config.temperature) || DEFAULT_CONFIG.temperature,
-          max_tokens: Number(config.max_tokens) || DEFAULT_CONFIG.max_tokens,
-          ...(!isMaskedKey(config.apiKey) && { apiKey: config.apiKey }),
-        }),
+        body: JSON.stringify(payload),
       })
-    } catch (e) {
-      console.warn('同步 AI 配置到服务端失败:', e.message)
+      const result = await resp.json().catch(() => ({}))
+      if (!resp.ok || result.status === 'error') {
+        throw new Error(result.error || `Failed to save AI configuration (${resp.status})`)
+      }
+      config.apiKeyConfigured = Boolean(result.apiKeyConfigured)
+      if (replacementKey && config.apiKey === replacementKey) config.apiKey = ''
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(persistableConfig(config)))
+      return result
+    })
+  }
+
+  async function clearApiKey() {
+    if (isClearingApiKey.value) return false
+    isClearingApiKey.value = true
+    config.apiKey = ''
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(persistableConfig(config)))
+    try {
+      await enqueueConfigWrite(async () => {
+        const proxyUrl = await getProxyUrl()
+        const resp = await fetch(`${proxyUrl}/api/ai/config`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ apiKeyAction: 'clear' }),
+        })
+        const result = await resp.json().catch(() => ({}))
+        if (!resp.ok || result.status === 'error') {
+          throw new Error(result.error || `Failed to clear API key (${resp.status})`)
+        }
+      })
+      config.apiKey = ''
+      config.apiKeyConfigured = false
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(persistableConfig(config)))
+      ElMessage.success(ui().apiKeyCleared)
+      return true
+    } catch (error) {
+      ElMessage.error(ui().apiKeyClearFailed.replace('{error}', error.message))
+      return false
+    } finally {
+      isClearingApiKey.value = false
     }
   }
 
@@ -295,15 +353,22 @@ export function useAiAssistant() {
   function autoSaveConfig() {
     clearTimeout(saveTimer)
     saveTimer = setTimeout(() => {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...config }))
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(persistableConfig(config)))
     }, 300)
   }
 
-  function saveConfig(notify = true) {
+  async function saveConfig(notify = true) {
+    if (isClearingApiKey.value) return false
     clearTimeout(saveTimer)
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...config }))
-    syncToServer()
-    if (notify) ElMessage.success(ui().configSaved)
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(persistableConfig(config)))
+    try {
+      await syncToServer()
+      if (notify) ElMessage.success(ui().configSaved)
+      return true
+    } catch (error) {
+      if (notify) ElMessage.error(error.message)
+      return false
+    }
   }
 
   // 初始化时从服务端同步（不阻塞 UI）
@@ -328,7 +393,7 @@ export function useAiAssistant() {
     if (!config.apiBase) return
     isFetchingModels.value = true
     try {
-      const models = await fetchModels(config.apiBase, config.apiKey, config.provider)
+      const models = await fetchModels(config.apiBase, config.apiKey, config.provider, syncToServer)
       remoteModels.value = models
       if (models.length > 0) {
         ElMessage.success(ui().modelsFetched.replace('{count}', models.length))
@@ -355,7 +420,7 @@ export function useAiAssistant() {
   // ===== 连接测试 =====
 
   async function testConnection() {
-    if (!config.apiKey && isApiKeyRequired(config)) {
+    if (!hasApiKey(config) && isApiKeyRequired(config)) {
       ElMessage.warning(ui().apiKeyRequired)
       return false
     }
@@ -390,7 +455,7 @@ export function useAiAssistant() {
       return false
     }
 
-    if (!config.apiKey && isApiKeyRequired(config)) {
+    if (!hasApiKey(config) && isApiKeyRequired(config)) {
       ElMessage.warning(ui().apiKeyRequired)
       return false
     }
@@ -480,6 +545,7 @@ export function useAiAssistant() {
     needsConfiguration,
     isConnected,
     isLoading,
+    isClearingApiKey,
     isFetchingModels,
     chatHistory,
     currentInput,
@@ -491,6 +557,7 @@ export function useAiAssistant() {
     retryLastMessage,
     applyAction,
     clearHistory,
+    clearApiKey,
     saveConfig,
   }
 }

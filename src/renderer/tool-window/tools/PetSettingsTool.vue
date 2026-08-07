@@ -327,6 +327,11 @@ const serverAiConfig = ref(null)
 const visionConfirmPending = ref(false)
 const visionConfirmOpen = ref(false)
 let tabTouchStart = null
+let aiConfigRefreshGeneration = 0
+
+function hasUsableApiKey(key) {
+  return typeof key === 'string' && Boolean(key.trim()) && !key.includes('****')
+}
 
 // AI 配置状态（决定桌面观察是否可用）
 const aiConfigReady = computed(() => {
@@ -336,21 +341,30 @@ const aiConfigReady = computed(() => {
     const saved = localStorage.getItem(STORAGE_KEY)
     const localConfig = saved ? { ...DEFAULT_CONFIG, ...JSON.parse(saved) } : { ...DEFAULT_CONFIG }
     const cfg = serverAiConfig.value || localConfig
-    return !!(cfg.enabled && (cfg.apiKey?.trim() || cfg.apiKeyConfigured || !isApiKeyRequired(cfg)))
+    return !!(cfg.enabled && (hasUsableApiKey(cfg.apiKey) || cfg.apiKeyConfigured || !isApiKeyRequired(cfg)))
   } catch {
     return false
   }
 })
 
 async function refreshAiConfigStatus() {
+  const generation = ++aiConfigRefreshGeneration
   try {
     const proxyUrl = await invoke('get_proxy_url_command')
     const response = await fetch(`${proxyUrl}/api/ai/config`)
     if (!response.ok) throw new Error(`Failed to load AI configuration (${response.status})`)
-    serverAiConfig.value = { ...DEFAULT_CONFIG, ...(await response.json()), apiKey: '' }
+    const remoteConfig = await response.json()
+    if (generation !== aiConfigRefreshGeneration) return false
+    serverAiConfig.value = { ...DEFAULT_CONFIG, ...remoteConfig, apiKey: '' }
   } catch {
+    if (generation !== aiConfigRefreshGeneration) return false
     serverAiConfig.value = null
   }
+  return true
+}
+
+function correctVisionEnabled() {
+  if (!aiConfigReady.value && visionEnabled.value) visionEnabled.value = false
 }
 
 const visionToggleDisabled = computed(() => !masterEnabled.value || !aiConfigReady.value)
@@ -604,8 +618,8 @@ function syncSettingFromStorage(event) {
 
   if (event.key === STORAGE_KEY) {
     aiConfigVersion.value += 1
-    void refreshAiConfigStatus().then(() => {
-      if (!aiConfigReady.value && visionEnabled.value) visionEnabled.value = false
+    void refreshAiConfigStatus().then((applied) => {
+      if (applied) correctVisionEnabled()
     })
     return
   }
@@ -626,7 +640,9 @@ function syncSettingFromStorage(event) {
 
 onMounted(() => {
   window.addEventListener('storage', syncSettingFromStorage)
-  void refreshAiConfigStatus()
+  void refreshAiConfigStatus().then((applied) => {
+    if (applied) correctVisionEnabled()
+  })
 })
 onUnmounted(() => window.removeEventListener('storage', syncSettingFromStorage))
 </script>

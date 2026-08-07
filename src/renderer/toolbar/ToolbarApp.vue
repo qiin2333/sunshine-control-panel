@@ -309,18 +309,35 @@ const showSpeechRaw = (text, durationMs) => {
 // 运行时文案统一从 i18n 读取（zh.js / en.js 中 petTool.runtime.*）
 const rt = () => t.value.petTool?.runtime || {}
 
-const getAiConfig = async () => {
+const getAiConfig = async (signal) => {
   let localConfig
+  let legacyKey = ''
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
-    localConfig = saved ? { ...DEFAULT_CONFIG, ...JSON.parse(saved) } : { ...DEFAULT_CONFIG }
+    const parsed = saved ? JSON.parse(saved) : {}
+    legacyKey = typeof parsed.apiKey === 'string' && !parsed.apiKey.includes('****') ? parsed.apiKey : ''
+    delete parsed.apiKey
+    localConfig = { ...DEFAULT_CONFIG, ...parsed, apiKey: '' }
+    if (saved) localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed))
   } catch {
-    localConfig = { ...DEFAULT_CONFIG }
+    localConfig = { ...DEFAULT_CONFIG, apiKey: '' }
   }
 
   try {
-    const proxyUrl = await invoke('get_proxy_url_command')
-    const response = await fetch(`${proxyUrl}/api/ai/config`)
+    const proxyUrl = await awaitWithSignal(invoke('get_proxy_url_command'), signal)
+    if (legacyKey) {
+      const migration = await fetch(`${proxyUrl}/api/ai/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKeyAction: 'replace', apiKey: legacyKey }),
+        signal,
+      })
+      const migrationResult = await migration.json().catch(() => ({}))
+      if (!migration.ok || migrationResult.status === 'error') {
+        throw new Error(migrationResult.error || `Failed to migrate AI credential (${migration.status})`)
+      }
+    }
+    const response = await fetch(`${proxyUrl}/api/ai/config`, { signal })
     if (response.ok) return { ...localConfig, ...(await response.json()), apiKey: '' }
   } catch {
     // Fall back to the safe local snapshot while Sunshine is unavailable.
@@ -460,23 +477,7 @@ const setVisionSpeech = (text) => {
 }
 
 const tryVisionSpeech = async (isManual = false) => {
-  const config = await getAiConfig()
   const r = rt()
-  if (!config.enabled || (!(config.apiKey || config.apiKeyConfigured) && isApiKeyRequired(config)) || !isPetVisionEnabled()) {
-    if (isManual) showSpeechRaw(r.visionNotConfigured || '')
-    return false
-  }
-
-  // 冷静期：仅对 manual 触发提示，auto 静默跳过
-  const now = Date.now()
-  if (now < visionCooldownUntil) {
-    if (isManual) {
-      console.info('[桌宠Vision] 冷静期内，跳过', { remainMs: visionCooldownUntil - now })
-      showSpeechRaw(r.visionCooldown || '')
-    }
-    return false
-  }
-
   if (visionInflight) {
     if (isManual) {
       console.info('[桌宠Vision] 已有请求进行中，跳过本次触发')
@@ -485,24 +486,41 @@ const tryVisionSpeech = async (isManual = false) => {
     return false
   }
   visionInflight = true
-
-  // 手动触发：立即抢占当前气泡，显示加载提示，避免用户以为没生效
-  if (isManual && r.visionLoading) {
-    showSpeechRaw(r.visionLoading, 30000) // 30s 占位，下面成功/失败会覆盖
-  }
-
-  const trigger = isManual ? 'manual' : 'auto'
-  const t0 = performance.now()
   const controller = new AbortController()
   visionAbortController = controller
   let visionTimedOut = false
+  let applyCooldown = false
   const timeoutTimer = setTimeout(() => {
     visionTimedOut = true
     controller.abort('timeout')
   }, VISION_REQUEST_TIMEOUT_MS)
-  console.info(`[桌宠Vision] 开始捕获屏幕 trigger=${trigger} model=${config.model || '(default)'}`)
 
   try {
+    const config = await getAiConfig(controller.signal)
+    if (!config.enabled || (!(config.apiKey || config.apiKeyConfigured) && isApiKeyRequired(config)) || !isPetVisionEnabled()) {
+      if (isManual) showSpeechRaw(r.visionNotConfigured || '')
+      return false
+    }
+
+    // 冷静期：仅对 manual 触发提示，auto 静默跳过
+    const now = Date.now()
+    if (now < visionCooldownUntil) {
+      if (isManual) {
+        console.info('[桌宠Vision] 冷静期内，跳过', { remainMs: visionCooldownUntil - now })
+        showSpeechRaw(r.visionCooldown || '')
+      }
+      return false
+    }
+    applyCooldown = true
+
+    // 手动触发：立即抢占当前气泡，显示加载提示，避免用户以为没生效
+    if (isManual && r.visionLoading) {
+      showSpeechRaw(r.visionLoading, 30000) // 30s 占位，下面成功/失败会覆盖
+    }
+
+    const trigger = isManual ? 'manual' : 'auto'
+    const t0 = performance.now()
+    console.info(`[桌宠Vision] 开始捕获屏幕 trigger=${trigger} model=${config.model || '(default)'}`)
     const screenshot = await awaitWithSignal(invoke('capture_screenshot'), controller.signal)
     if (!screenshot) {
       console.info('[桌宠Vision] 未检测到可用显示器，跳过本次观察')
@@ -556,7 +574,7 @@ const tryVisionSpeech = async (isManual = false) => {
     clearTimeout(timeoutTimer)
     if (visionAbortController === controller) visionAbortController = null
     visionInflight = false
-    if (isManual) visionCooldownUntil = Date.now() + VISION_COOLDOWN_MS
+    if (isManual && applyCooldown) visionCooldownUntil = Date.now() + VISION_COOLDOWN_MS
   }
   return false
 }

@@ -265,6 +265,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from '../../desktop/i18n/index.js'
 import { STORAGE_KEY, DEFAULT_CONFIG } from '../../composables/aiProviders.js'
 import { isApiKeyRequired } from '../../composables/aiClient.js'
@@ -322,9 +323,15 @@ const jitterPercent = ref(loadJitterPercent())
 const visionEnabled = ref(loadVisionEnabled())
 const visionIntervalSec = ref(loadVisionIntervalSec())
 const aiConfigVersion = ref(0)
+const serverAiConfig = ref(null)
 const visionConfirmPending = ref(false)
 const visionConfirmOpen = ref(false)
 let tabTouchStart = null
+let aiConfigRefreshGeneration = 0
+
+function hasUsableApiKey(key) {
+  return typeof key === 'string' && Boolean(key.trim()) && !key.includes('****')
+}
 
 // AI 配置状态（决定桌面观察是否可用）
 const aiConfigReady = computed(() => {
@@ -332,12 +339,33 @@ const aiConfigReady = computed(() => {
   if (!Number.isFinite(configVersion)) return false
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
-    const cfg = saved ? { ...DEFAULT_CONFIG, ...JSON.parse(saved) } : { ...DEFAULT_CONFIG }
-    return !!(cfg.enabled && (cfg.apiKey?.trim() || cfg.apiKeyConfigured || !isApiKeyRequired(cfg)))
+    const localConfig = saved ? { ...DEFAULT_CONFIG, ...JSON.parse(saved) } : { ...DEFAULT_CONFIG }
+    const cfg = serverAiConfig.value || localConfig
+    return !!(cfg.enabled && (hasUsableApiKey(cfg.apiKey) || cfg.apiKeyConfigured || !isApiKeyRequired(cfg)))
   } catch {
     return false
   }
 })
+
+async function refreshAiConfigStatus() {
+  const generation = ++aiConfigRefreshGeneration
+  try {
+    const proxyUrl = await invoke('get_proxy_url_command')
+    const response = await fetch(`${proxyUrl}/api/ai/config`)
+    if (!response.ok) throw new Error(`Failed to load AI configuration (${response.status})`)
+    const remoteConfig = await response.json()
+    if (generation !== aiConfigRefreshGeneration) return false
+    serverAiConfig.value = { ...DEFAULT_CONFIG, ...remoteConfig, apiKey: '' }
+  } catch {
+    if (generation !== aiConfigRefreshGeneration) return false
+    serverAiConfig.value = null
+  }
+  return true
+}
+
+function correctVisionEnabled() {
+  if (!aiConfigReady.value && visionEnabled.value) visionEnabled.value = false
+}
 
 const visionToggleDisabled = computed(() => !masterEnabled.value || !aiConfigReady.value)
 
@@ -590,9 +618,9 @@ function syncSettingFromStorage(event) {
 
   if (event.key === STORAGE_KEY) {
     aiConfigVersion.value += 1
-    if (!aiConfigReady.value && visionEnabled.value) {
-      visionEnabled.value = false
-    }
+    void refreshAiConfigStatus().then((applied) => {
+      if (applied) correctVisionEnabled()
+    })
     return
   }
 
@@ -610,7 +638,12 @@ function syncSettingFromStorage(event) {
   Promise.resolve().then(() => { suppressWatch = false })
 }
 
-onMounted(() => window.addEventListener('storage', syncSettingFromStorage))
+onMounted(() => {
+  window.addEventListener('storage', syncSettingFromStorage)
+  void refreshAiConfigStatus().then((applied) => {
+    if (applied) correctVisionEnabled()
+  })
+})
 onUnmounted(() => window.removeEventListener('storage', syncSettingFromStorage))
 </script>
 

@@ -81,6 +81,7 @@ fn emit_tray_locale_changed<R: Runtime>(
 // Last icon name applied from the Sunshine core state. This avoids repeatedly
 // decoding the same .ico file during the polling loop.
 static CURRENT_CORE_ICON: Mutex<Option<String>> = Mutex::new(None);
+static MONITORED_STATE_RECEIPT: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CoreConnectionState {
@@ -92,29 +93,36 @@ enum CoreConnectionState {
 #[derive(Default)]
 struct RecoveryState {
     last_attempt: u64,
-    active_attempt: Option<u64>,
+    active_attempt: Option<(u64, u64)>,
 }
 
 impl RecoveryState {
-    fn begin(&mut self) -> Option<u64> {
+    fn begin(&mut self, monitored_state_baseline: u64) -> Option<u64> {
         if self.active_attempt.is_some() {
             return None;
         }
         self.last_attempt = self.last_attempt.wrapping_add(1).max(1);
-        self.active_attempt = Some(self.last_attempt);
-        self.active_attempt
+        self.active_attempt = Some((self.last_attempt, monitored_state_baseline));
+        Some(self.last_attempt)
     }
 
     fn finish(&mut self, attempt: u64) -> bool {
-        if self.active_attempt != Some(attempt) {
+        if self.active_attempt.map(|active| active.0) != Some(attempt) {
             return false;
         }
         self.active_attempt = None;
         true
     }
 
-    fn complete_active(&mut self) -> bool {
-        self.active_attempt.take().is_some()
+    fn complete_from_monitored_state(&mut self, receipt: u64) -> bool {
+        let Some((_, baseline)) = self.active_attempt else {
+            return false;
+        };
+        if receipt <= baseline {
+            return false;
+        }
+        self.active_attempt = None;
+        true
     }
 
     fn is_in_progress(&self) -> bool {
@@ -137,19 +145,25 @@ impl TrayRuntimeState {
         )
     }
 
-    fn begin_recovery_if_disconnected(&mut self) -> Option<u64> {
+    fn begin_recovery_if_disconnected(&mut self, monitored_state_baseline: u64) -> Option<u64> {
         if self.connection != CoreConnectionState::Disconnected {
             return None;
         }
-        self.recovery.begin()
+        self.recovery.begin(monitored_state_baseline)
     }
 
     fn apply_connected_state(
         &mut self,
         state: &sunshine::TrayState,
-    ) -> (Option<sunshine::TrayState>, bool) {
-        // A state response from Core is the authoritative recovery-success signal.
-        let recovery_completed = self.recovery.complete_active();
+        monitored_state_receipt: Option<u64>,
+    ) -> Option<(Option<sunshine::TrayState>, bool)> {
+        if monitored_state_receipt.is_none() && self.connection != CoreConnectionState::Connected {
+            return None;
+        }
+        // Only a monitor response accepted after recovery began is authoritative.
+        // Action responses may already be in flight when the attempt starts.
+        let recovery_completed = monitored_state_receipt
+            .is_some_and(|receipt| self.recovery.complete_from_monitored_state(receipt));
         let connection_changed = self.connection != CoreConnectionState::Connected;
         self.connection = CoreConnectionState::Connected;
 
@@ -157,10 +171,10 @@ impl TrayRuntimeState {
         let state_changed = self.tray_state.as_ref() != Some(state);
         self.tray_state = Some(state.clone());
 
-        (
+        Some((
             previous_state,
             connection_changed || state_changed || recovery_completed,
-        )
+        ))
     }
 
     fn mark_disconnected(&mut self) -> bool {
@@ -942,18 +956,19 @@ mod tests {
     fn recovery_state_rejects_duplicate_and_stale_completion() {
         let mut recovery = RecoveryState::default();
 
-        let first = recovery.begin().expect("first recovery should start");
+        let first = recovery.begin(7).expect("first recovery should start");
         assert!(recovery.is_in_progress());
-        assert_eq!(recovery.begin(), None);
+        assert_eq!(recovery.begin(7), None);
         assert!(!recovery.finish(first + 1));
         assert!(recovery.finish(first));
         assert!(!recovery.is_in_progress());
 
-        let second = recovery.begin().expect("second recovery should start");
+        let second = recovery.begin(11).expect("second recovery should start");
         assert_ne!(second, first);
         assert!(!recovery.finish(first));
-        assert!(recovery.complete_active());
-        assert!(!recovery.complete_active());
+        assert!(!recovery.complete_from_monitored_state(11));
+        assert!(recovery.complete_from_monitored_state(12));
+        assert!(!recovery.complete_from_monitored_state(13));
     }
 
     #[test]
@@ -963,28 +978,44 @@ mod tests {
             tray_state: None,
             recovery: RecoveryState::default(),
         };
-        assert_eq!(runtime.begin_recovery_if_disconnected(), None);
+        assert_eq!(runtime.begin_recovery_if_disconnected(3), None);
 
         assert!(runtime.mark_disconnected());
         assert!(!runtime.mark_disconnected());
-        assert!(runtime.begin_recovery_if_disconnected().is_some());
+        assert!(runtime.begin_recovery_if_disconnected(3).is_some());
 
         let state = tray_state("idle");
-        let (previous, should_rebuild) = runtime.apply_connected_state(&state);
+        assert!(runtime.apply_connected_state(&state, None).is_none());
+        let (previous, should_rebuild) = runtime
+            .apply_connected_state(&state, Some(4))
+            .expect("fresh monitor state should be accepted");
         assert!(previous.is_none());
         assert!(should_rebuild);
 
         let (_, connection, recovery_in_progress) = runtime.menu_snapshot();
         assert_eq!(connection, CoreConnectionState::Connected);
         assert!(!recovery_in_progress);
-        assert!(!runtime.apply_connected_state(&state).1);
+        assert!(
+            !runtime
+                .apply_connected_state(&state, Some(5))
+                .expect("connected monitor state should be accepted")
+                .1
+        );
     }
 }
 
-fn apply_tray_state<R: Runtime + 'static>(app: &AppHandle<R>, state: &sunshine::TrayState) {
-    let (previous_state, should_rebuild_menu) = {
+fn apply_tray_state<R: Runtime + 'static>(
+    app: &AppHandle<R>,
+    state: &sunshine::TrayState,
+    monitored_state_receipt: Option<u64>,
+) {
+    let applied = {
         let mut runtime = TRAY_RUNTIME_STATE.lock().unwrap();
-        runtime.apply_connected_state(state)
+        runtime.apply_connected_state(state, monitored_state_receipt)
+    };
+    let Some((previous_state, should_rebuild_menu)) = applied else {
+        debug!("Ignored non-monitor tray state while Core is unavailable");
+        return;
     };
 
     if state.owner != "gui" {
@@ -1047,9 +1078,25 @@ fn apply_tray_state_on_main_thread<R: Runtime + 'static>(
 ) {
     let app_handle = app.clone();
     if let Err(e) = app.run_on_main_thread(move || {
-        apply_tray_state(&app_handle, &state);
+        apply_tray_state(&app_handle, &state, None);
     }) {
         debug!("Failed to schedule tray state update on main thread: {}", e);
+    }
+}
+
+fn apply_monitored_tray_state_on_main_thread<R: Runtime + 'static>(
+    app: &AppHandle<R>,
+    state: sunshine::TrayState,
+) {
+    let receipt = MONITORED_STATE_RECEIPT.fetch_add(1, Ordering::AcqRel) + 1;
+    let app_handle = app.clone();
+    if let Err(e) = app.run_on_main_thread(move || {
+        apply_tray_state(&app_handle, &state, Some(receipt));
+    }) {
+        debug!(
+            "Failed to schedule monitored tray state update on main thread: {}",
+            e
+        );
     }
 }
 

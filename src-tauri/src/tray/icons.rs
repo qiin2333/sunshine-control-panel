@@ -57,10 +57,7 @@ pub(super) fn apply_disconnected_tray_icon<R: Runtime>(app: &AppHandle<R>) {
     };
     let file_name = "sunshine.ico";
     let icon_path = core_tray_icon_path(file_name);
-    let bytes =
-        std::fs::read(&icon_path).unwrap_or_else(|_| bundled_tray_icon_bytes(file_name).to_vec());
-
-    match decode_tray_icon(&bytes) {
+    match load_disconnected_icon(&icon_path, file_name) {
         Ok(mut image) => {
             grayscale(&mut image);
             if let Err(e) = tray.set_icon(Some(rgba_to_tauri_image(image))) {
@@ -71,6 +68,32 @@ pub(super) fn apply_disconnected_tray_icon<R: Runtime>(app: &AppHandle<R>) {
         }
         Err(e) => debug!("Failed to load disconnected tray icon: {}", e),
     }
+}
+
+fn load_disconnected_icon(path: &PathBuf, file_name: &str) -> Result<image::RgbaImage, String> {
+    if path.exists() {
+        match std::fs::read(path).map_err(|error| error.to_string()) {
+            Ok(bytes) => {
+                return decode_tray_icon_with_fallback(&bytes, bundled_tray_icon_bytes(file_name));
+            }
+            Err(error) => debug!(
+                "Failed to load disconnected core tray icon '{}': {}",
+                path.display(),
+                error
+            ),
+        }
+    }
+    decode_tray_icon(bundled_tray_icon_bytes(file_name))
+}
+
+fn decode_tray_icon_with_fallback(
+    bytes: &[u8],
+    fallback: &[u8],
+) -> Result<image::RgbaImage, String> {
+    decode_tray_icon(bytes).or_else(|error| {
+        debug!("Failed to decode custom tray icon: {}", error);
+        decode_tray_icon(fallback)
+    })
 }
 
 fn tray_icon_file_name(icon: &str) -> &'static str {
@@ -118,20 +141,21 @@ fn load_tray_icon_from_bytes(bytes: &'static [u8]) -> Result<Image<'static>, Str
 }
 
 fn decode_tray_icon(bytes: &[u8]) -> Result<image::RgbaImage, String> {
-    match select_small_ico_frame(bytes) {
-        Ok(selected_ico) => {
-            image::ImageReader::with_format(Cursor::new(selected_ico), image::ImageFormat::Ico)
-                .decode()
-                .map_err(|e| e.to_string())
-                .map(|image| image.to_rgba8())
-        }
-        Err(ico_error) => {
-            debug!("Failed to select small ICO frame: {}", ico_error);
+    let preferred_frame = select_small_ico_frame(bytes).and_then(|selected_ico| {
+        image::ImageReader::with_format(Cursor::new(selected_ico), image::ImageFormat::Ico)
+            .decode()
+            .map_err(|error| error.to_string())
+            .map(|image| image.to_rgba8())
+    });
+    match preferred_frame {
+        Ok(image) => Ok(image),
+        Err(error) => {
+            debug!("Failed to decode preferred ICO frame: {}", error);
             image::ImageReader::new(Cursor::new(bytes))
                 .with_guessed_format()
-                .map_err(|e| e.to_string())?
+                .map_err(|error| error.to_string())?
                 .decode()
-                .map_err(|e| e.to_string())
+                .map_err(|error| error.to_string())
                 .map(|image| image.to_rgba8())
         }
     }
@@ -249,5 +273,15 @@ mod tests {
         assert_eq!(pixel[0], pixel[1]);
         assert_eq!(pixel[1], pixel[2]);
         assert_eq!(pixel[3], 123);
+    }
+
+    #[test]
+    fn invalid_custom_icon_falls_back_to_bundled_icon() {
+        let image =
+            decode_tray_icon_with_fallback(b"not an icon", bundled_tray_icon_bytes("sunshine.ico"))
+                .expect("bundled icon should be used");
+
+        assert!(image.width() > 0);
+        assert!(image.height() > 0);
     }
 }

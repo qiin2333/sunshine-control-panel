@@ -98,6 +98,7 @@ pub(super) fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<M
         let runtime = TRAY_RUNTIME_STATE.lock().unwrap();
         runtime.menu_snapshot()
     };
+    let core_connected = connection == CoreConnectionState::Connected;
     let active_notification = tray_state
         .as_ref()
         .filter(|state| state.notification.active)
@@ -113,7 +114,7 @@ pub(super) fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<M
         .as_ref()
         .map(|state| {
             (
-                true,
+                core_connected,
                 state
                     .capabilities
                     .iter()
@@ -172,8 +173,13 @@ pub(super) fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<M
         desktop_settings::is_combined_auto_start_enabled(),
         None::<&str>,
     )?;
-    let open_sunshine =
-        MenuItem::with_id(app, "open_sunshine", s.open_sunshine, true, None::<&str>)?;
+    let open_sunshine = MenuItem::with_id(
+        app,
+        "open_sunshine",
+        s.open_sunshine,
+        core_connected,
+        None::<&str>,
+    )?;
     let interfaces_submenu = Submenu::with_id_and_items(
         app,
         "interfaces",
@@ -315,11 +321,27 @@ pub(super) fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<M
         None::<&str>,
     )?;
 
-    let import_config =
-        MenuItem::with_id(app, "import_config", s.import_config, true, None::<&str>)?;
-    let export_config =
-        MenuItem::with_id(app, "export_config", s.export_config, true, None::<&str>)?;
-    let reset_config = MenuItem::with_id(app, "reset_config", s.reset_config, true, None::<&str>)?;
+    let import_config = MenuItem::with_id(
+        app,
+        "import_config",
+        s.import_config,
+        core_connected,
+        None::<&str>,
+    )?;
+    let export_config = MenuItem::with_id(
+        app,
+        "export_config",
+        s.export_config,
+        core_connected,
+        None::<&str>,
+    )?;
+    let reset_config = MenuItem::with_id(
+        app,
+        "reset_config",
+        s.reset_config,
+        core_connected,
+        None::<&str>,
+    )?;
     let clear_cache = MenuItem::with_id(
         app,
         "clear_cache",

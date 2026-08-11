@@ -317,7 +317,7 @@ fn recover_sunshine_service<R: Runtime>(app: &AppHandle<R>) {
     let Some(attempt) = TRAY_RUNTIME_STATE
         .lock()
         .unwrap()
-        .begin_recovery_if_disconnected()
+        .begin_recovery_if_disconnected(MONITORED_STATE_RECEIPT.load(Ordering::Acquire))
     else {
         return;
     };

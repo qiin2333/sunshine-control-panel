@@ -118,7 +118,7 @@ fn apply_if_new<R: Runtime + 'static>(
         if state.vdd.awaiting_confirmation && state.vdd.confirmation_operation_id != 0 {
             vdd_confirmation::show(app, state.vdd.confirmation_operation_id);
         }
-        apply_tray_state_on_main_thread(app, state);
+        apply_monitored_tray_state_on_main_thread(app, state);
     }
 }
 

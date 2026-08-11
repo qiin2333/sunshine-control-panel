@@ -474,7 +474,7 @@ pub struct TrayOperationState {
     pub error: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
 pub struct TrayState {
     #[serde(default)]
     pub protocol_version: u32,

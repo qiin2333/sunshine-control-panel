@@ -81,7 +81,7 @@ fn emit_tray_locale_changed<R: Runtime>(
 // Last icon name applied from the Sunshine core state. This avoids repeatedly
 // decoding the same .ico file during the polling loop.
 static CURRENT_CORE_ICON: Mutex<Option<String>> = Mutex::new(None);
-static CURRENT_TRAY_STATE: Mutex<Option<sunshine::TrayState>> = Mutex::new(None);
+static MONITORED_STATE_RECEIPT: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CoreConnectionState {
@@ -90,8 +90,108 @@ enum CoreConnectionState {
     Disconnected,
 }
 
-static CORE_CONNECTION_STATE: Mutex<CoreConnectionState> =
-    Mutex::new(CoreConnectionState::Connecting);
+#[derive(Default)]
+struct RecoveryState {
+    last_attempt: u64,
+    active_attempt: Option<(u64, u64)>,
+}
+
+impl RecoveryState {
+    fn begin(&mut self, monitored_state_baseline: u64) -> Option<u64> {
+        if self.active_attempt.is_some() {
+            return None;
+        }
+        self.last_attempt = self.last_attempt.wrapping_add(1).max(1);
+        self.active_attempt = Some((self.last_attempt, monitored_state_baseline));
+        Some(self.last_attempt)
+    }
+
+    fn finish(&mut self, attempt: u64) -> bool {
+        if self.active_attempt.map(|active| active.0) != Some(attempt) {
+            return false;
+        }
+        self.active_attempt = None;
+        true
+    }
+
+    fn complete_from_monitored_state(&mut self, receipt: u64) -> bool {
+        let Some((_, baseline)) = self.active_attempt else {
+            return false;
+        };
+        if receipt <= baseline {
+            return false;
+        }
+        self.active_attempt = None;
+        true
+    }
+
+    fn is_in_progress(&self) -> bool {
+        self.active_attempt.is_some()
+    }
+}
+
+struct TrayRuntimeState {
+    connection: CoreConnectionState,
+    tray_state: Option<sunshine::TrayState>,
+    recovery: RecoveryState,
+}
+
+impl TrayRuntimeState {
+    fn menu_snapshot(&self) -> (Option<sunshine::TrayState>, CoreConnectionState, bool) {
+        (
+            self.tray_state.clone(),
+            self.connection,
+            self.recovery.is_in_progress(),
+        )
+    }
+
+    fn begin_recovery_if_disconnected(&mut self, monitored_state_baseline: u64) -> Option<u64> {
+        if self.connection != CoreConnectionState::Disconnected {
+            return None;
+        }
+        self.recovery.begin(monitored_state_baseline)
+    }
+
+    fn apply_connected_state(
+        &mut self,
+        state: &sunshine::TrayState,
+        monitored_state_receipt: Option<u64>,
+    ) -> Option<(Option<sunshine::TrayState>, bool)> {
+        if monitored_state_receipt.is_none() && self.connection != CoreConnectionState::Connected {
+            return None;
+        }
+        // Only a monitor response accepted after recovery began is authoritative.
+        // Action responses may already be in flight when the attempt starts.
+        let recovery_completed = monitored_state_receipt
+            .is_some_and(|receipt| self.recovery.complete_from_monitored_state(receipt));
+        let connection_changed = self.connection != CoreConnectionState::Connected;
+        self.connection = CoreConnectionState::Connected;
+
+        let previous_state = self.tray_state.clone();
+        let state_changed = self.tray_state.as_ref() != Some(state);
+        self.tray_state = Some(state.clone());
+
+        Some((
+            previous_state,
+            connection_changed || state_changed || recovery_completed,
+        ))
+    }
+
+    fn mark_disconnected(&mut self) -> bool {
+        let connection_changed = self.connection != CoreConnectionState::Disconnected;
+        self.connection = CoreConnectionState::Disconnected;
+        connection_changed || self.tray_state.take().is_some()
+    }
+}
+
+static TRAY_RUNTIME_STATE: Mutex<TrayRuntimeState> = Mutex::new(TrayRuntimeState {
+    connection: CoreConnectionState::Connecting,
+    tray_state: None,
+    recovery: RecoveryState {
+        last_attempt: 0,
+        active_attempt: None,
+    },
+});
 
 static MAIN_PANEL_BRIDGE: main_panel::Bridge = main_panel::Bridge::new();
 
@@ -187,6 +287,8 @@ struct TrayStrings {
     visit_project_sunshine: &'static str,
     visit_project_moonlight: &'static str,
     restart: &'static str,
+    recover_service: &'static str,
+    recovery_timeout: &'static str,
     tooltip: &'static str,
     tooltip_admin: &'static str,
 }
@@ -257,6 +359,8 @@ const ZH_STRINGS: TrayStrings = TrayStrings {
     visit_project_sunshine: "Sunshine 源代码",
     visit_project_moonlight: "Moonlight 源代码",
     restart: "重启 Sunshine",
+    recover_service: "重新启动 Sunshine 服务",
+    recovery_timeout: "Sunshine 服务未能在等待时间内恢复，请检查服务日志后重试。",
     tooltip: "Sunshine GUI",
     tooltip_admin: "Sunshine GUI (管理员)",
 };
@@ -327,6 +431,8 @@ const EN_STRINGS: TrayStrings = TrayStrings {
     visit_project_sunshine: "Sunshine Source Code",
     visit_project_moonlight: "Moonlight Source Code",
     restart: "Restart Sunshine",
+    recover_service: "Restart Sunshine Service",
+    recovery_timeout: "The Sunshine service did not recover in time. Check the service log and try again.",
     tooltip: "Sunshine GUI",
     tooltip_admin: "Sunshine GUI (Admin)",
 };
@@ -397,6 +503,8 @@ const JA_STRINGS: TrayStrings = TrayStrings {
     visit_project_sunshine: "Sunshine ソースコード",
     visit_project_moonlight: "Moonlight ソースコード",
     restart: "Sunshine を再起動",
+    recover_service: "Sunshine サービスを再起動",
+    recovery_timeout: "Sunshine サービスが時間内に復旧しませんでした。サービスログを確認して再試行してください。",
     tooltip: "Sunshine GUI",
     tooltip_admin: "Sunshine GUI (管理者)",
 };
@@ -843,34 +951,72 @@ mod tests {
         assert_eq!(compact_menu_text("1234567890", 8), "12345...");
         assert_eq!(compact_menu_text("  short  ", 8), "short");
     }
+
+    #[test]
+    fn recovery_state_rejects_duplicate_and_stale_completion() {
+        let mut recovery = RecoveryState::default();
+
+        let first = recovery.begin(7).expect("first recovery should start");
+        assert!(recovery.is_in_progress());
+        assert_eq!(recovery.begin(7), None);
+        assert!(!recovery.finish(first + 1));
+        assert!(recovery.finish(first));
+        assert!(!recovery.is_in_progress());
+
+        let second = recovery.begin(11).expect("second recovery should start");
+        assert_ne!(second, first);
+        assert!(!recovery.finish(first));
+        assert!(!recovery.complete_from_monitored_state(11));
+        assert!(recovery.complete_from_monitored_state(12));
+        assert!(!recovery.complete_from_monitored_state(13));
+    }
+
+    #[test]
+    fn runtime_state_applies_connection_transitions_atomically() {
+        let mut runtime = TrayRuntimeState {
+            connection: CoreConnectionState::Connecting,
+            tray_state: None,
+            recovery: RecoveryState::default(),
+        };
+        assert_eq!(runtime.begin_recovery_if_disconnected(3), None);
+
+        assert!(runtime.mark_disconnected());
+        assert!(!runtime.mark_disconnected());
+        assert!(runtime.begin_recovery_if_disconnected(3).is_some());
+
+        let state = tray_state("idle");
+        assert!(runtime.apply_connected_state(&state, None).is_none());
+        let (previous, should_rebuild) = runtime
+            .apply_connected_state(&state, Some(4))
+            .expect("fresh monitor state should be accepted");
+        assert!(previous.is_none());
+        assert!(should_rebuild);
+
+        let (_, connection, recovery_in_progress) = runtime.menu_snapshot();
+        assert_eq!(connection, CoreConnectionState::Connected);
+        assert!(!recovery_in_progress);
+        assert!(
+            !runtime
+                .apply_connected_state(&state, Some(5))
+                .expect("connected monitor state should be accepted")
+                .1
+        );
+    }
 }
 
-fn apply_tray_state<R: Runtime + 'static>(app: &AppHandle<R>, state: &sunshine::TrayState) {
-    let connection_changed = {
-        let mut connection = CORE_CONNECTION_STATE.lock().unwrap();
-        let changed = *connection != CoreConnectionState::Connected;
-        *connection = CoreConnectionState::Connected;
-        changed
+fn apply_tray_state<R: Runtime + 'static>(
+    app: &AppHandle<R>,
+    state: &sunshine::TrayState,
+    monitored_state_receipt: Option<u64>,
+) {
+    let applied = {
+        let mut runtime = TRAY_RUNTIME_STATE.lock().unwrap();
+        runtime.apply_connected_state(state, monitored_state_receipt)
     };
-    let state_changed = {
-        let mut current_state = CURRENT_TRAY_STATE.lock().unwrap();
-        let previous_state = current_state.clone();
-        let changed = current_state
-            .as_ref()
-            .map(|current_state| {
-                current_state.status != state.status
-                    || current_state.app_name != state.app_name
-                    || current_state.pairing_client_name != state.pairing_client_name
-                    || current_state.sessions != state.sessions
-                    || current_state.vdd != state.vdd
-                    || current_state.notification != state.notification
-            })
-            .unwrap_or(true);
-        *current_state = Some(state.clone());
-        (changed, previous_state)
+    let Some((previous_state, should_rebuild_menu)) = applied else {
+        debug!("Ignored non-monitor tray state while Core is unavailable");
+        return;
     };
-    let (state_changed, previous_state) = state_changed;
-    let should_rebuild_menu = connection_changed || state_changed;
 
     if state.owner != "gui" {
         if app.remove_tray_by_id(TRAY_ID).is_some() {
@@ -906,22 +1052,16 @@ fn apply_tray_state<R: Runtime + 'static>(app: &AppHandle<R>, state: &sunshine::
 }
 
 fn apply_core_disconnected<R: Runtime + 'static>(app: &AppHandle<R>) {
-    let connection_changed = {
-        let mut connection = CORE_CONNECTION_STATE.lock().unwrap();
-        let changed = *connection != CoreConnectionState::Disconnected;
-        *connection = CoreConnectionState::Disconnected;
-        changed
-    };
-    let had_state = CURRENT_TRAY_STATE.lock().unwrap().take().is_some();
+    let should_rebuild_menu = TRAY_RUNTIME_STATE.lock().unwrap().mark_disconnected();
 
     if let Err(e) = build_owned_system_tray(app) {
         error!(
-            "Failed to keep GUI tray available during the Core reconnect window: {}",
+            "Failed to keep GUI tray available while Core is unavailable: {}",
             e
         );
         return;
     }
-    if connection_changed || had_state {
+    if should_rebuild_menu {
         rebuild_tray_menu(app);
     }
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
@@ -929,7 +1069,7 @@ fn apply_core_disconnected<R: Runtime + 'static>(app: &AppHandle<R>) {
             tray_status_label(get_tray_strings(), None, CoreConnectionState::Disconnected);
         let _ = tray.set_tooltip(Some(tooltip.as_str()));
     }
-    icons::apply_tray_icon(app, "default");
+    icons::apply_disconnected_tray_icon(app);
 }
 
 fn apply_tray_state_on_main_thread<R: Runtime + 'static>(
@@ -938,9 +1078,25 @@ fn apply_tray_state_on_main_thread<R: Runtime + 'static>(
 ) {
     let app_handle = app.clone();
     if let Err(e) = app.run_on_main_thread(move || {
-        apply_tray_state(&app_handle, &state);
+        apply_tray_state(&app_handle, &state, None);
     }) {
         debug!("Failed to schedule tray state update on main thread: {}", e);
+    }
+}
+
+fn apply_monitored_tray_state_on_main_thread<R: Runtime + 'static>(
+    app: &AppHandle<R>,
+    state: sunshine::TrayState,
+) {
+    let receipt = MONITORED_STATE_RECEIPT.fetch_add(1, Ordering::AcqRel) + 1;
+    let app_handle = app.clone();
+    if let Err(e) = app.run_on_main_thread(move || {
+        apply_tray_state(&app_handle, &state, Some(receipt));
+    }) {
+        debug!(
+            "Failed to schedule monitored tray state update on main thread: {}",
+            e
+        );
     }
 }
 
@@ -1046,12 +1202,18 @@ fn rebuild_tray_menu<R: Runtime>(app: &AppHandle<R>) {
                     error!("❌ 重建托盘菜单失败: {}", e);
                 }
                 // 更新 tooltip
-                let tooltip = CURRENT_TRAY_STATE
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .map(tray_tooltip_from_state)
-                    .unwrap_or_else(|| default_tray_tooltip().to_string());
+                let tooltip = {
+                    let runtime = TRAY_RUNTIME_STATE.lock().unwrap();
+                    if runtime.connection == CoreConnectionState::Connected {
+                        runtime
+                            .tray_state
+                            .as_ref()
+                            .map(tray_tooltip_from_state)
+                            .unwrap_or_else(|| default_tray_tooltip().to_string())
+                    } else {
+                        tray_status_label(get_tray_strings(), None, runtime.connection)
+                    }
+                };
                 let _ = tray.set_tooltip(Some(tooltip));
             }
             Err(e) => error!("❌ 构建托盘菜单失败: {}", e),

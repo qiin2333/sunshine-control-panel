@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(target_os = "windows")]
+const RECOVERY_TIMEOUT: Duration = Duration::from_secs(30);
+
 pub fn handle_tray_menu_event<R: Runtime + 'static>(app: &AppHandle<R>, menu_id: &str) {
     let s = get_tray_strings();
     match menu_id {
@@ -12,6 +15,8 @@ pub fn handle_tray_menu_event<R: Runtime + 'static>(app: &AppHandle<R>, menu_id:
         }
         #[cfg(target_os = "windows")]
         "auto_start" => toggle_auto_start(app),
+        #[cfg(target_os = "windows")]
+        "recover_service" => recover_sunshine_service(app),
         "vdd_settings" => open_vdd_settings(app),
         "vdd_create" => run_vdd_create_action(app, s.vdd_create, s.vdd_create_confirm),
         "vdd_close" => run_tray_action(app, "vdd_destroy", None),
@@ -84,9 +89,10 @@ pub fn handle_tray_menu_event<R: Runtime + 'static>(app: &AppHandle<R>, menu_id:
 
 /// 打开 VDD 设置
 fn handle_tray_notification_action<R: Runtime>(app: &AppHandle<R>) {
-    let (notification, supports_ack) = CURRENT_TRAY_STATE
+    let (notification, supports_ack) = TRAY_RUNTIME_STATE
         .lock()
         .unwrap()
+        .tray_state
         .as_ref()
         .map(|state| {
             (
@@ -182,9 +188,10 @@ fn run_vdd_toggle_action<R: Runtime + 'static>(
     enable_title: &'static str,
     enable_message: &'static str,
 ) {
-    let enabled = CURRENT_TRAY_STATE
+    let enabled = TRAY_RUNTIME_STATE
         .lock()
         .unwrap()
+        .tray_state
         .as_ref()
         .map(|state| !current_value(state));
 
@@ -302,6 +309,63 @@ fn restart_sunshine<R: Runtime>(app: &AppHandle<R>) {
                 emit_message(&app_handle, "error", &error);
             }
         }
+    });
+}
+
+#[cfg(target_os = "windows")]
+fn recover_sunshine_service<R: Runtime>(app: &AppHandle<R>) {
+    let Some(attempt) = TRAY_RUNTIME_STATE
+        .lock()
+        .unwrap()
+        .begin_recovery_if_disconnected()
+    else {
+        return;
+    };
+    rebuild_tray_menu(app);
+
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = sunshine::restart_sunshine_service().await {
+            if finish_recovery_attempt(attempt) {
+                error!("Failed to recover Sunshine service from tray: {}", error);
+                refresh_recovery_menu(&app_handle);
+                let error_handle = app_handle.clone();
+                let _ = app_handle.run_on_main_thread(move || {
+                    emit_message(&error_handle, "error", &error);
+                });
+            }
+            return;
+        }
+
+        tokio::time::sleep(RECOVERY_TIMEOUT).await;
+        if finish_recovery_attempt(attempt) {
+            warn!(
+                "Sunshine service recovery attempt {} timed out after {:?}",
+                attempt, RECOVERY_TIMEOUT
+            );
+            refresh_recovery_menu(&app_handle);
+            let timeout_handle = app_handle.clone();
+            let _ = app_handle.run_on_main_thread(move || {
+                emit_message(
+                    &timeout_handle,
+                    "error",
+                    get_tray_strings().recovery_timeout,
+                );
+            });
+        }
+    });
+}
+
+#[cfg(target_os = "windows")]
+fn finish_recovery_attempt(attempt: u64) -> bool {
+    TRAY_RUNTIME_STATE.lock().unwrap().recovery.finish(attempt)
+}
+
+#[cfg(target_os = "windows")]
+fn refresh_recovery_menu<R: Runtime>(app: &AppHandle<R>) {
+    let recovery_handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        rebuild_tray_menu(&recovery_handle);
     });
 }
 

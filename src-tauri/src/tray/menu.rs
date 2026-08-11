@@ -64,6 +64,10 @@ pub(super) fn tray_status_label(
     format!("Sunshine · {}", status)
 }
 
+fn recovery_action_enabled(connection: CoreConnectionState, recovery_in_progress: bool) -> bool {
+    connection == CoreConnectionState::Disconnected && !recovery_in_progress
+}
+
 pub(super) fn tray_notification_label(s: &TrayStrings, state: &sunshine::TrayState) -> String {
     let notification = &state.notification;
     if notification.action == "open_pin" {
@@ -90,8 +94,10 @@ pub(super) fn tray_notification_label(s: &TrayStrings, state: &sunshine::TraySta
 pub(super) fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let s = get_tray_strings();
     let current_locale = get_current_locale();
-    let tray_state = CURRENT_TRAY_STATE.lock().unwrap().clone();
-    let connection = *CORE_CONNECTION_STATE.lock().unwrap();
+    let (tray_state, connection, recovery_in_progress) = {
+        let runtime = TRAY_RUNTIME_STATE.lock().unwrap();
+        runtime.menu_snapshot()
+    };
     let active_notification = tray_state
         .as_ref()
         .filter(|state| state.notification.active)
@@ -132,6 +138,14 @@ pub(super) fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<M
         "open_main_panel",
         s.open_main_panel,
         true,
+        None::<&str>,
+    )?;
+    #[cfg(target_os = "windows")]
+    let recover_service = MenuItem::with_id(
+        app,
+        "recover_service",
+        s.recover_service,
+        recovery_action_enabled(connection, recovery_in_progress),
         None::<&str>,
     )?;
     let notification_label = tray_state
@@ -383,6 +397,10 @@ pub(super) fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<M
     )?;
 
     let mut items: Vec<&dyn tauri::menu::IsMenuItem<R>> = vec![&status];
+    #[cfg(target_os = "windows")]
+    if connection == CoreConnectionState::Disconnected {
+        items.push(&recover_service);
+    }
     if active_notification.is_some() {
         items.push(&notification_item);
     }
@@ -401,4 +419,29 @@ pub(super) fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<M
     items.push(&shutdown);
 
     Menu::with_items(app, &items)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recovery_is_available_only_while_core_is_disconnected() {
+        assert!(recovery_action_enabled(
+            CoreConnectionState::Disconnected,
+            false
+        ));
+        assert!(!recovery_action_enabled(
+            CoreConnectionState::Disconnected,
+            true
+        ));
+        assert!(!recovery_action_enabled(
+            CoreConnectionState::Connecting,
+            false
+        ));
+        assert!(!recovery_action_enabled(
+            CoreConnectionState::Connected,
+            false
+        ));
+    }
 }

@@ -43,6 +43,36 @@ pub(super) fn apply_tray_icon<R: Runtime>(app: &AppHandle<R>, icon: &str) {
     }
 }
 
+pub(super) fn apply_disconnected_tray_icon<R: Runtime>(app: &AppHandle<R>) {
+    const ICON_STATE: &str = "disconnected";
+    {
+        let current_icon = CURRENT_CORE_ICON.lock().unwrap();
+        if current_icon.as_deref() == Some(ICON_STATE) {
+            return;
+        }
+    }
+
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return;
+    };
+    let file_name = "sunshine.ico";
+    let icon_path = core_tray_icon_path(file_name);
+    let bytes =
+        std::fs::read(&icon_path).unwrap_or_else(|_| bundled_tray_icon_bytes(file_name).to_vec());
+
+    match decode_tray_icon(&bytes) {
+        Ok(mut image) => {
+            grayscale(&mut image);
+            if let Err(e) = tray.set_icon(Some(rgba_to_tauri_image(image))) {
+                debug!("Failed to apply disconnected tray icon: {}", e);
+                return;
+            }
+            *CURRENT_CORE_ICON.lock().unwrap() = Some(ICON_STATE.to_string());
+        }
+        Err(e) => debug!("Failed to load disconnected tray icon: {}", e),
+    }
+}
+
 fn tray_icon_file_name(icon: &str) -> &'static str {
     match icon {
         "playing" => "sunshine-playing.ico",
@@ -80,43 +110,40 @@ fn load_tray_icon(path: &PathBuf, file_name: &str) -> Result<Image<'static>, Str
 
 fn load_tray_icon_from_path(path: &PathBuf) -> Result<Image<'static>, String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
-    load_tray_icon_from_ico_bytes(&bytes).or_else(|e| {
-        debug!(
-            "Failed to select small ICO frame from '{}': {}",
-            path.display(),
-            e
-        );
-        let image = image::ImageReader::open(path)
-            .map_err(|e| e.to_string())?
-            .with_guessed_format()
-            .map_err(|e| e.to_string())?
-            .decode()
-            .map_err(|e| e.to_string())?
-            .to_rgba8();
-        Ok(rgba_to_tauri_image(image))
-    })
+    decode_tray_icon(&bytes).map(rgba_to_tauri_image)
 }
 
 fn load_tray_icon_from_bytes(bytes: &'static [u8]) -> Result<Image<'static>, String> {
-    load_tray_icon_from_ico_bytes(bytes).or_else(|e| {
-        debug!("Failed to select small bundled ICO frame: {}", e);
-        let image = image::ImageReader::new(Cursor::new(bytes))
-            .with_guessed_format()
-            .map_err(|e| e.to_string())?
-            .decode()
-            .map_err(|e| e.to_string())?
-            .to_rgba8();
-        Ok(rgba_to_tauri_image(image))
-    })
+    decode_tray_icon(bytes).map(rgba_to_tauri_image)
 }
 
-fn load_tray_icon_from_ico_bytes(bytes: &[u8]) -> Result<Image<'static>, String> {
-    let selected_ico = select_small_ico_frame(bytes)?;
-    let image = image::ImageReader::with_format(Cursor::new(selected_ico), image::ImageFormat::Ico)
-        .decode()
-        .map_err(|e| e.to_string())?
-        .to_rgba8();
-    Ok(rgba_to_tauri_image(image))
+fn decode_tray_icon(bytes: &[u8]) -> Result<image::RgbaImage, String> {
+    match select_small_ico_frame(bytes) {
+        Ok(selected_ico) => {
+            image::ImageReader::with_format(Cursor::new(selected_ico), image::ImageFormat::Ico)
+                .decode()
+                .map_err(|e| e.to_string())
+                .map(|image| image.to_rgba8())
+        }
+        Err(ico_error) => {
+            debug!("Failed to select small ICO frame: {}", ico_error);
+            image::ImageReader::new(Cursor::new(bytes))
+                .with_guessed_format()
+                .map_err(|e| e.to_string())?
+                .decode()
+                .map_err(|e| e.to_string())
+                .map(|image| image.to_rgba8())
+        }
+    }
+}
+
+fn grayscale(image: &mut image::RgbaImage) {
+    for pixel in image.pixels_mut() {
+        let [red, green, blue, alpha] = pixel.0;
+        let luminance =
+            ((u16::from(red) * 54 + u16::from(green) * 183 + u16::from(blue) * 19) >> 8) as u8;
+        pixel.0 = [luminance, luminance, luminance, alpha];
+    }
 }
 
 fn select_small_ico_frame(bytes: &[u8]) -> Result<Vec<u8>, String> {
@@ -206,4 +233,21 @@ fn ico_dimension(value: u8) -> u16 {
 fn rgba_to_tauri_image(image: image::RgbaImage) -> Image<'static> {
     let (width, height) = image.dimensions();
     Image::new_owned(image.into_raw(), width, height)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grayscale_preserves_alpha_and_equalizes_color_channels() {
+        let mut image = image::RgbaImage::from_pixel(1, 1, image::Rgba([240, 80, 20, 123]));
+
+        grayscale(&mut image);
+
+        let pixel = image.get_pixel(0, 0).0;
+        assert_eq!(pixel[0], pixel[1]);
+        assert_eq!(pixel[1], pixel[2]);
+        assert_eq!(pixel[3], 123);
+    }
 }

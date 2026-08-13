@@ -172,7 +172,8 @@ pub fn open_url_in_browser(url: &str) {
     });
 }
 
-/// Tauri command for opening a URL or local path externally.
+/// Open a web or Windows Store URL. Local filesystem paths use a separate,
+/// local-window-only command so remote WebUI content cannot open host files.
 #[tauri::command]
 pub async fn open_external_url(url: String) -> Result<bool, String> {
     let target = url.trim().trim_matches('"').to_string();
@@ -180,7 +181,15 @@ pub async fn open_external_url(url: String) -> Result<bool, String> {
         return Ok(false);
     }
 
-    let is_url = target.starts_with("http://") || target.starts_with("https://");
+    // Keep protocol launching in the native layer. Tauri's generic shell scope
+    // does not allow Windows Store links by default, while ShellExecuteW does.
+    let normalized_target = target.to_ascii_lowercase();
+    let is_shell_uri = normalized_target.starts_with("http://")
+        || normalized_target.starts_with("https://")
+        || normalized_target.starts_with("ms-windows-store://");
+    if !is_shell_uri {
+        return Err("Only HTTP(S) and Microsoft Store URLs are allowed".to_string());
+    }
 
     #[cfg(target_os = "windows")]
     {
@@ -188,40 +197,26 @@ pub async fn open_external_url(url: String) -> Result<bool, String> {
         use ::windows::Win32::UI::Shell::ShellExecuteW;
         use ::windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
         use ::windows::core::PCWSTR;
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-        if is_url {
-            fn to_wide(value: &str) -> Vec<u16> {
-                value.encode_utf16().chain(std::iter::once(0)).collect()
-            }
+        fn to_wide(value: &str) -> Vec<u16> {
+            value.encode_utf16().chain(std::iter::once(0)).collect()
+        }
 
-            let operation = to_wide("open");
-            let target_wide = to_wide(&target);
-            let result = unsafe {
-                ShellExecuteW(
-                    Some(HWND(std::ptr::null_mut())),
-                    PCWSTR(operation.as_ptr()),
-                    PCWSTR(target_wide.as_ptr()),
-                    PCWSTR::null(),
-                    PCWSTR::null(),
-                    SW_SHOWNORMAL,
-                )
-            };
-            let code = result.0 as isize;
-            if code <= 32 {
-                return Err(format!("Failed to open URL: ShellExecuteW code {}", code));
-            }
-        } else {
-            let path = std::path::PathBuf::from(&target);
-            if !path.exists() {
-                return Err(format!("Path does not exist: {}", target));
-            }
-            Command::new("explorer")
-                .arg(path)
-                .creation_flags(CREATE_NO_WINDOW)
-                .spawn()
-                .map_err(|e| e.to_string())?;
+        let operation = to_wide("open");
+        let target_wide = to_wide(&target);
+        let result = unsafe {
+            ShellExecuteW(
+                Some(HWND(std::ptr::null_mut())),
+                PCWSTR(operation.as_ptr()),
+                PCWSTR(target_wide.as_ptr()),
+                PCWSTR::null(),
+                PCWSTR::null(),
+                SW_SHOWNORMAL,
+            )
+        };
+        let code = result.0 as isize;
+        if code <= 32 {
+            return Err(format!("Failed to open URI: ShellExecuteW code {}", code));
         }
     }
 
@@ -233,6 +228,34 @@ pub async fn open_external_url(url: String) -> Result<bool, String> {
             .map_err(|e| e.to_string())?;
     }
 
+    Ok(true)
+}
+
+/// Open an existing local directory from a bundled local window only.
+#[tauri::command]
+pub fn open_local_path(path: String) -> Result<bool, String> {
+    let path = std::path::PathBuf::from(path.trim().trim_matches('"'));
+    if !path.is_dir() {
+        return Err(format!("Directory does not exist: {}", path.display()));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        Command::new("explorer")
+            .arg(&path)
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    }
     Ok(true)
 }
 

@@ -4,7 +4,6 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { open } from '@tauri-apps/plugin-shell'
 
 // ─── Helpers ────────────────────────────────────────────
 
@@ -37,10 +36,14 @@ export const darkMode = {
 
 // ─── 外部 URL ────────────────────────────────────────────
 
+export function isAllowedExternalUrl(url) {
+  return /^(https?:\/\/|ms-windows-store:\/\/)/i.test(String(url || '').trim())
+}
+
 export async function openExternalUrl(url) {
   try {
-    await open(url)
-    return true
+    if (!isAllowedExternalUrl(url)) return false
+    return await invoke('open_external_url', { url })
   } catch (error) {
     console.error('打开外部URL失败:', error)
     return false
@@ -56,7 +59,6 @@ export const vdd = {
   setKeepEnabled: (enabled) => wrapResult('set_vdd_keep_enabled', { enabled }),
   setHeadlessCreateEnabled: (enabled) => wrapResult('set_vdd_headless_create_enabled', { enabled }),
   getGPUs: () => wrapResult('get_gpus'),
-  getSettingsFilePath: () => wrapResult('get_vdd_settings_file_path'),
   loadSettings: () => wrapResult('load_vdd_settings'),
   saveSettings: (settings) => wrapResult('save_vdd_settings', { settings }),
   getEdidFilePath: () => wrapResult('get_vdd_edid_file_path'),
@@ -67,6 +69,7 @@ export const vdd = {
   startTrace: () => wrapResult('start_vdd_trace'),
   stopTrace: () => wrapResult('stop_vdd_trace'),
   openTraceFolder: () => wrapResult('open_vdd_trace_folder'),
+  launchHdrCalibration: () => wrapResult('launch_windows_hdr_calibration'),
 
   async execVddCmd(command) {
     try {

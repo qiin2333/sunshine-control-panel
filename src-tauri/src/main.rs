@@ -26,6 +26,7 @@ mod tray_config;
 mod update;
 mod utils;
 mod vdd;
+mod vdd_calibration;
 #[cfg(target_os = "windows")]
 mod vdd_ioctl;
 mod vigem;
@@ -106,7 +107,6 @@ fn main() {
     };
 
     let application = builder
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_fs::init())
@@ -137,7 +137,6 @@ fn main() {
             commands::capture_screenshot,
             desktop_settings::get_desktop_settings,
             desktop_settings::save_desktop_settings,
-            vdd::get_vdd_settings_file_path,
             vdd::get_vdd_status,
             vdd::install_vdd_driver,
             vdd::set_vdd_keep_enabled,
@@ -154,6 +153,7 @@ fn main() {
             vdd::start_vdd_trace,
             vdd::stop_vdd_trace,
             vdd::open_vdd_trace_folder,
+            vdd_calibration::launch_windows_hdr_calibration,
             system::get_gpus,
             system::get_monitors,
             system::get_system_info,
@@ -176,6 +176,7 @@ fn main() {
             proxy_server::refresh_sunshine_target,
             proxy_server::wait_for_proxy_ready,
             utils::open_external_url,
+            utils::open_local_path,
             utils::restart_graphics_driver,
             utils::restart_as_admin,
             utils::is_running_as_admin,

@@ -101,7 +101,8 @@ pub async fn get_icc_file_list() -> Result<Vec<String>, String> {
                     if let Ok(entry) = entry {
                         if let Some(file_name) = entry.file_name().to_str() {
                             // 只包含 .icc 和 .icm 文件
-                            if file_name.ends_with(".icc") || file_name.ends_with(".icm") {
+                            let lower_name = file_name.to_ascii_lowercase();
+                            if lower_name.ends_with(".icc") || lower_name.ends_with(".icm") {
                                 files.push(file_name.to_string());
                             }
                         }

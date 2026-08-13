@@ -8,31 +8,45 @@
           </span>
           <div class="page-title-copy">
             <h2>{{ t.vddSettings.title }}</h2>
-            <div v-if="!isDriverCheckPending && (vddReady || hasUnsavedChanges)" class="page-header-meta">
-              <el-tag v-if="vddReady" size="small" round effect="plain">{{ currentEdidModeLabel }}</el-tag>
-              <el-tag v-if="hasUnsavedChanges" size="small" round type="warning" effect="light">
+            <div v-if="!isDriverCheckPending && hasUnsavedChanges" class="page-header-meta">
+              <el-tag size="small" round type="warning" effect="light">
                 {{ t.vddSettings.unsavedBadge }}
               </el-tag>
             </div>
           </div>
         </div>
 
-        <div
-          v-if="!isDriverCheckPending && vddReady && vddStatus.state === 'degraded'"
-          class="degraded-driver-notice"
-          role="status"
-          aria-live="polite"
-        >
-          <span class="degraded-driver-icon" aria-hidden="true">!</span>
-          <div class="degraded-driver-copy">
-            <strong>{{ vddStatusLabel }}</strong>
-            <span>{{ vddStatus.status_text }}</span>
-          </div>
-          <el-button type="warning" plain :loading="isInstallingDriver" @click="installOrRepairDriver">
-            <el-icon><Download /></el-icon>
-            {{ t.vddSettings.installRepairDriver }}
+        <div v-if="!isDriverCheckPending && vddReady" class="page-header-actions">
+          <el-button
+            v-for="action in heroActions"
+            :key="action.key"
+            :class="['page-header-action', `is-${action.key}`]"
+            :plain="action.plain"
+            :type="action.type"
+            :loading="action.loading"
+            @click="action.onClick"
+          >
+            <el-icon><component :is="action.icon" /></el-icon>
+            {{ action.label }}
           </el-button>
         </div>
+      </div>
+
+      <div
+        v-if="!isDriverCheckPending && vddReady && vddStatus.state === 'degraded'"
+        class="degraded-driver-notice"
+        role="status"
+        aria-live="polite"
+      >
+        <span class="degraded-driver-icon" aria-hidden="true">!</span>
+        <div class="degraded-driver-copy">
+          <strong>{{ vddStatusLabel }}</strong>
+          <span>{{ vddStatus.status_text }}</span>
+        </div>
+        <el-button class="driver-repair-action" type="warning" text :loading="isInstallingDriver" @click="installOrRepairDriver">
+          <el-icon><Download /></el-icon>
+          {{ t.vddSettings.installRepairDriver }}
+        </el-button>
       </div>
 
       <section
@@ -108,14 +122,38 @@
       </section>
 
       <template v-if="!isDriverCheckPending && vddReady">
-      <section class="hero-panel">
+      <div class="vdd-section-tabs" role="tablist" :aria-label="t.vddSettings.title">
+        <button
+          v-for="tab in sectionTabs"
+          :key="tab.key"
+          :id="`vdd-tab-${tab.key}`"
+          type="button"
+          role="tab"
+          :aria-controls="`vdd-panel-${tab.key}`"
+          :aria-selected="activeSection === tab.key"
+          :tabindex="activeSection === tab.key ? 0 : -1"
+          :class="['vdd-section-tab', { active: activeSection === tab.key }]"
+          @click="activeSection = tab.key"
+          @keydown.left.prevent="focusAdjacentSection(tab.key, -1)"
+          @keydown.right.prevent="focusAdjacentSection(tab.key, 1)"
+          @keydown.home.prevent="focusSectionByIndex(0)"
+          @keydown.end.prevent="focusSectionByIndex(sectionTabs.length - 1)"
+        >
+          <el-icon><component :is="tab.icon" /></el-icon>
+          {{ tab.label }}
+        </button>
+      </div>
+
+      <section
+        v-show="activeSection === 'overview'"
+        id="vdd-panel-overview"
+        role="tabpanel"
+        aria-labelledby="vdd-tab-overview"
+        class="hero-panel overview-panel"
+      >
         <div class="vdd-header">
           <div class="header-copy">
             <p class="header-subtitle">{{ t.vddSettings.subtitle }}</p>
-            <div class="header-meta-line">
-              <span class="meta-label">{{ t.vddSettings.overviewPath }}</span>
-              <span class="meta-value path-value">{{ configFilePath || t.vddSettings.configPathUnknown }}</span>
-            </div>
             <div class="cert-badges" aria-label="VDD capability badges">
               <div v-for="badge in capabilityBadges" :key="badge.key" :class="['cert-badge', badge.tone]">
                 <span class="cert-text">{{ badge.text }}</span>
@@ -123,27 +161,6 @@
               </div>
             </div>
           </div>
-
-          <el-affix class="hero-callout-affix" target=".vdd-content" :offset="20">
-            <div class="hero-callout">
-              <span class="hero-callout-label">{{ t.vddSettings.quickActions }}</span>
-              <div class="hero-callout-actions">
-                <el-button
-                  v-for="action in heroActions"
-                  :key="action.key"
-                  size="large"
-                  class="hero-action-button"
-                  :plain="action.plain"
-                  :type="action.type"
-                  :loading="action.loading"
-                  @click="action.onClick"
-                >
-                  <el-icon><component :is="action.icon" /></el-icon>
-                  {{ action.label }}
-                </el-button>
-              </div>
-            </div>
-          </el-affix>
         </div>
 
         <div class="overview-grid">
@@ -153,11 +170,141 @@
             <span v-if="card.hint" class="overview-hint">{{ card.hint }}</span>
           </div>
         </div>
+
+        <div class="overview-calibration-callout">
+          <span class="overview-calibration-icon" aria-hidden="true">
+            <el-icon><CircleCheck v-if="calibrationStatus.calibrated" /><Warning v-else /></el-icon>
+          </span>
+          <div class="overview-calibration-copy">
+            <h3>{{ t.vddSettings.calibrationTitle }}</h3>
+            <p>{{ calibrationStatusDescription }}</p>
+          </div>
+          <el-button @click="activeSection = 'calibration'">
+            {{ t.vddSettings.calibrationTitle }}
+          </el-button>
+        </div>
       </section>
 
-      <el-form :model="settings" label-position="top" size="default" class="vdd-form">
-        <div class="form-layout">
-          <div class="form-main">
+      <section
+        v-show="activeSection === 'calibration'"
+        id="vdd-panel-calibration"
+        role="tabpanel"
+        aria-labelledby="vdd-tab-calibration"
+        class="section-card calibration-card"
+      >
+        <div class="section-header calibration-header">
+          <div>
+            <h3 id="vdd-calibration-title">{{ t.vddSettings.calibrationTitle }}</h3>
+            <p>{{ t.vddSettings.calibrationHint }}</p>
+          </div>
+          <el-button :loading="isRefreshingCalibration" @click="loadCalibrationContext">
+            <el-icon><Refresh /></el-icon>
+            {{ t.vddSettings.calibrationRefresh }}
+          </el-button>
+        </div>
+
+        <div
+          :class="['calibration-status', calibrationStatusTone]"
+          role="status"
+          aria-live="polite"
+        >
+          <span class="calibration-status-icon" aria-hidden="true">
+            <el-icon><CircleCheck v-if="calibrationStatus.calibrated" /><Warning v-else /></el-icon>
+          </span>
+          <div class="calibration-status-copy">
+            <strong>{{ calibrationStatusTitle }}</strong>
+            <span>{{ calibrationStatusDescription }}</span>
+            <span v-if="calibrationStatus.profileName" class="calibration-profile-name">
+              {{ calibrationStatus.profileName }}
+            </span>
+          </div>
+        </div>
+
+        <div v-if="calibrationStatus.calibrated" class="calibration-values">
+          <div>
+            <span>{{ t.vddSettings.calibrationPeak }}</span>
+            <strong>{{ formatCalibrationNits(calibrationStatus.maxNits) }}</strong>
+          </div>
+          <div>
+            <span>{{ t.vddSettings.calibrationMinimum }}</span>
+            <strong>{{ formatCalibrationNits(calibrationStatus.minNits) }}</strong>
+          </div>
+          <div>
+            <span>{{ t.vddSettings.calibrationFullFrame }}</span>
+            <strong>{{ formatCalibrationNits(calibrationStatus.maxFullFrameNits) }}</strong>
+          </div>
+        </div>
+
+        <div class="calibration-workflow">
+          <div class="calibration-client-row">
+            <div class="calibration-client-copy">
+              <strong>{{ t.vddSettings.calibrationClient }}</strong>
+              <span>{{ t.vddSettings.calibrationClientHint }}</span>
+            </div>
+            <div :class="['calibration-client-value', { empty: !activeCalibrationClient }]">
+              <el-icon><Monitor /></el-icon>
+              <span>{{ activeCalibrationClient?.name || t.vddSettings.calibrationNoActiveClient }}</span>
+            </div>
+          </div>
+
+          <ol class="calibration-steps">
+            <li :class="{ complete: hasActiveHdrClient }">
+              <span>1</span><div><strong>{{ t.vddSettings.calibrationStepStream }}</strong><small>{{ t.vddSettings.calibrationStepStreamHint }}</small></div>
+            </li>
+            <li :class="{ complete: calibrationStatus.vddActive && calibrationStatus.hdrEnabled }">
+              <span>2</span><div><strong>{{ t.vddSettings.calibrationStepVdd }}</strong><small>{{ t.vddSettings.calibrationStepVddHint }}</small></div>
+            </li>
+            <li :class="{ complete: calibrationStatus.calibrated }">
+              <span>3</span><div><strong>{{ t.vddSettings.calibrationStepRun }}</strong><small>{{ t.vddSettings.calibrationStepRunHint }}</small></div>
+            </li>
+          </ol>
+
+          <div v-if="vddReuseEnabled" class="calibration-warning">
+            <el-icon><Warning /></el-icon>
+            <span>{{ t.vddSettings.calibrationSharedWarning }}</span>
+          </div>
+
+          <div class="calibration-actions">
+            <el-button
+              type="primary"
+              :disabled="!canLaunchCalibration"
+              :loading="isLaunchingCalibration"
+              @click="launchHdrCalibration"
+            >
+              <el-icon><VideoPlay /></el-icon>
+              {{ calibrationStatus.calibrated ? t.vddSettings.calibrationRunAgain : t.vddSettings.calibrationLaunch }}
+            </el-button>
+            <el-button @click="openHdrCalibrationStore">
+              <el-icon><Download /></el-icon>
+              {{ t.vddSettings.calibrationInstall }}
+            </el-button>
+          </div>
+
+          <div class="physical-calibration-panel">
+            <div class="physical-calibration-copy">
+              <strong>{{ t.vddSettings.physicalCalibrationTitle }}</strong>
+              <span>{{ t.vddSettings.physicalCalibrationHint }}</span>
+            </div>
+            <el-button :loading="isLaunchingPhysicalCalibration" @click="launchPhysicalHdrCalibration">
+              <el-icon><Sunny /></el-icon>
+              {{ t.vddSettings.physicalCalibrationLaunch }}
+            </el-button>
+          </div>
+        </div>
+      </section>
+
+      <el-form
+        v-show="activeSection === 'display' || activeSection === 'driver'"
+        :id="`vdd-panel-${activeSection}`"
+        role="tabpanel"
+        :aria-labelledby="`vdd-tab-${activeSection}`"
+        :model="settings"
+        label-position="top"
+        size="default"
+        class="vdd-form"
+      >
+        <div :class="['form-layout', `is-${activeSection}`]">
+          <div v-show="activeSection === 'display'" class="form-main">
             <div class="section-card">
               <div class="section-header">
                 <h3>{{ t.vddSettings.displaySection }}</h3>
@@ -356,7 +503,7 @@
             </div>
           </div>
 
-          <div class="form-side">
+          <div v-show="activeSection === 'driver'" class="form-side">
             <div class="section-card utility-card">
               <div class="section-header">
                 <h3>{{ t.vddSettings.driverTools }}</h3>
@@ -519,7 +666,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Monitor,
@@ -532,12 +679,17 @@ import {
   VideoPlay,
   VideoPause,
   FolderOpened,
+  CircleCheck,
+  Warning,
+  DataAnalysis,
+  Sunny,
+  Tools,
 } from '@element-plus/icons-vue'
 import { useEditableOptionField } from '../composables/useEditableOptionField.js'
 import { useVddEdid } from '../composables/useVddEdid.js'
 import { useVddStatusLabel } from '../composables/useVddStatusLabel.js'
 import { installVddWithRecovery } from '../composables/vddInstallRecovery.js'
-import { vdd } from '../tauri-adapter.js'
+import { openExternalUrl, sunshine, vdd } from '../tauri-adapter.js'
 import { useI18n } from '../desktop/i18n/index.js'
 
 const { t } = useI18n()
@@ -618,7 +770,6 @@ const syncGpuOptions = (options = []) => {
 const settings = reactive(createInitialSettings())
 const gpuFriendlyName = ref('')
 const gpuOptions = ref([])
-const configFilePath = ref('')
 const traceStatus = ref({
   running: false,
   directory: '',
@@ -647,8 +798,27 @@ const isDeletingEdid = ref(false)
 const isStartingTrace = ref(false)
 const isStoppingTrace = ref(false)
 const isOpeningTraceFolder = ref(false)
+const isRefreshingCalibration = ref(false)
+const isLaunchingCalibration = ref(false)
+const isLaunchingPhysicalCalibration = ref(false)
+const activeSection = ref('overview')
 const hasLoadedSnapshot = ref(false)
 const lastSavedSnapshot = ref('')
+const activeHdrClients = ref([])
+const vddReuseEnabled = ref(false)
+const calibrationStatus = reactive({
+  supported: true,
+  vddActive: false,
+  hdrEnabled: false,
+  calibrated: false,
+  profileName: null,
+  maxNits: null,
+  minNits: null,
+  maxFullFrameNits: null,
+  statusText: '',
+})
+let calibrationContextPollTimer = null
+let isCalibrationContextLoading = false
 
 const {
   edidFileExists,
@@ -762,28 +932,18 @@ const colorDepthProfile = computed({
     settings.colour.HDRPlus = value === COLOR_DEPTH_HDR12
   },
 })
-const currentEdidModeLabel = computed(() => {
-  if (!settings.edid.CustomEdid) {
-    return t.value.vddSettings.builtInMode
-  }
-
-  return edidFileExists.value
-    ? t.value.vddSettings.customModeReady
-    : t.value.vddSettings.customModeMissing
-})
-const currentEdidModeHint = computed(() => {
-  if (!settings.edid.CustomEdid) {
-    return t.value.vddSettings.builtInModeDesc
-  }
-
-  return t.value.vddSettings.customModeDesc
-})
+const currentVddModeLabel = computed(() => vddReuseEnabled.value
+  ? t.value.vddSettings.sharedVddMode
+  : t.value.vddSettings.dedicatedVddMode)
+const currentVddModeHint = computed(() => vddReuseEnabled.value
+  ? t.value.vddSettings.sharedVddModeDesc
+  : t.value.vddSettings.dedicatedVddModeDesc)
 const overviewCards = computed(() => [
   {
     key: 'mode',
     label: t.value.vddSettings.overviewMode,
-    value: currentEdidModeLabel.value,
-    hint: currentEdidModeHint.value,
+    value: currentVddModeLabel.value,
+    hint: currentVddModeHint.value,
   },
   {
     key: 'presets',
@@ -796,6 +956,26 @@ const overviewCards = computed(() => [
     value: gpuSummary.value,
   },
 ])
+const sectionTabs = computed(() => [
+  { key: 'overview', label: t.value.vddSettings.tabOverview, icon: DataAnalysis },
+  { key: 'display', label: t.value.vddSettings.tabDisplay, icon: Monitor },
+  { key: 'calibration', label: t.value.vddSettings.tabCalibration, icon: Sunny },
+  { key: 'driver', label: t.value.vddSettings.tabDriver, icon: Tools },
+])
+
+const focusSectionByIndex = async (index) => {
+  const tabs = sectionTabs.value
+  if (!tabs.length) return
+  const normalizedIndex = (index + tabs.length) % tabs.length
+  activeSection.value = tabs[normalizedIndex].key
+  await nextTick()
+  document.getElementById(`vdd-tab-${activeSection.value}`)?.focus()
+}
+
+const focusAdjacentSection = (key, offset) => {
+  const currentIndex = sectionTabs.value.findIndex((tab) => tab.key === key)
+  if (currentIndex >= 0) focusSectionByIndex(currentIndex + offset)
+}
 const heroActions = computed(() => [
   {
     key: 'reload',
@@ -811,8 +991,8 @@ const heroActions = computed(() => [
     label: t.value.vddSettings.saveAndApply,
     icon: UploadFilled,
     loading: isSaving.value,
-    plain: false,
-    type: 'primary',
+    plain: !hasUnsavedChanges.value,
+    type: hasUnsavedChanges.value ? 'primary' : undefined,
     onClick: saveSettings,
   },
 ])
@@ -849,6 +1029,153 @@ const driverDetectionDescription = computed(() => driverCheckPhase.value === 'sy
   : t.value.vddSettings.driverDetectionDesc)
 const vddCanInstall = computed(() => !['unsupported', 'payload_missing'].includes(vddStatus.state))
 const vddStatusLabel = useVddStatusLabel(t, vddStatus)
+const activeCalibrationClient = computed(() => activeHdrClients.value[0] || null)
+const hasActiveHdrClient = computed(() => Boolean(activeCalibrationClient.value))
+const canLaunchCalibration = computed(() =>
+  hasActiveHdrClient.value &&
+  calibrationStatus.supported &&
+  calibrationStatus.vddActive &&
+  calibrationStatus.hdrEnabled &&
+  !vddReuseEnabled.value
+)
+const calibrationStatusTone = computed(() => {
+  if (calibrationStatus.calibrated) return 'success'
+  if (!calibrationStatus.supported) return 'danger'
+  if (!calibrationStatus.vddActive || !calibrationStatus.hdrEnabled) return 'warning'
+  return 'ready'
+})
+const calibrationStatusTitle = computed(() => {
+  if (calibrationStatus.calibrated) return t.value.vddSettings.calibrationDetected
+  if (!calibrationStatus.supported) return t.value.vddSettings.calibrationUnsupported
+  if (!calibrationStatus.vddActive) return t.value.vddSettings.calibrationWaitingVdd
+  if (!calibrationStatus.hdrEnabled) return t.value.vddSettings.calibrationWaitingHdr
+  return t.value.vddSettings.calibrationReady
+})
+const calibrationStatusDescription = computed(() => {
+  if (calibrationStatus.statusText) return calibrationStatus.statusText
+  if (calibrationStatus.calibrated) return t.value.vddSettings.calibrationDetectedHint
+  if (!calibrationStatus.vddActive) return t.value.vddSettings.calibrationWaitingStream
+  if (!calibrationStatus.hdrEnabled) return t.value.vddSettings.calibrationWaitingHdrHint
+  return t.value.vddSettings.calibrationWaitingStream
+})
+
+const formatCalibrationNits = (value) => {
+  if (!Number.isFinite(value)) return '—'
+  return `${value < 1 ? value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '') : Math.round(value)} nits`
+}
+
+const stopCalibrationContextPolling = () => {
+  if (calibrationContextPollTimer) {
+    clearInterval(calibrationContextPollTimer)
+    calibrationContextPollTimer = null
+  }
+}
+
+const loadCalibrationContext = async ({ silent = false } = {}) => {
+  if (isCalibrationContextLoading) return
+  isCalibrationContextLoading = true
+  if (!silent) isRefreshingCalibration.value = true
+  try {
+    const proxyUrl = await sunshine.getProxyUrl()
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 2000)
+    let response
+    try {
+      response = await fetch(`${proxyUrl}/api/runtime/hdr-calibration`, { signal: controller.signal })
+    } finally {
+      clearTimeout(timeout)
+    }
+    if (!response.ok) throw new Error(`Sunshine API request failed (${response.status})`)
+    const context = await response.json()
+    if (!context.success) throw new Error(context.status_message || t.value.vddSettings.calibrationRefreshFailed)
+
+    Object.assign(calibrationStatus, context, { statusText: '' })
+    activeHdrClients.value = Array.isArray(context.activeClients) ? context.activeClients : []
+    vddReuseEnabled.value = Boolean(context.sharedVdd)
+  } catch (error) {
+    console.error('Failed to load VDD calibration context:', error)
+    activeHdrClients.value = []
+    vddReuseEnabled.value = false
+    Object.assign(calibrationStatus, {
+      vddActive: false,
+      hdrEnabled: false,
+      calibrated: false,
+      profileName: null,
+      maxNits: null,
+      minNits: null,
+      maxFullFrameNits: null,
+      statusText: getErrorMessage(error, t.value.vddSettings.calibrationRefreshFailed),
+    })
+  } finally {
+    isCalibrationContextLoading = false
+    if (!silent) isRefreshingCalibration.value = false
+  }
+}
+
+const startCalibrationContextPolling = () => {
+  stopCalibrationContextPolling()
+  if (activeSection.value !== 'calibration' || !vddReady.value) return
+  loadCalibrationContext({ silent: true })
+  calibrationContextPollTimer = setInterval(() => loadCalibrationContext({ silent: true }), 2500)
+}
+
+const launchHdrCalibration = async () => {
+  try {
+    await ElMessageBox.confirm(
+      t.value.vddSettings.calibrationLaunchConfirm,
+      t.value.vddSettings.calibrationLaunchTitle,
+      {
+        confirmButtonText: t.value.vddSettings.calibrationLaunch,
+        cancelButtonText: t.value.vddSettings.cancel,
+        type: 'info',
+      }
+    )
+    isLaunchingCalibration.value = true
+    const result = await vdd.launchHdrCalibration()
+    if (!result?.success) {
+      throw new Error(result?.message || t.value.vddSettings.calibrationLaunchFailed)
+    }
+    ElMessage.success(t.value.vddSettings.calibrationLaunched)
+    startCalibrationContextPolling()
+  } catch (error) {
+    if (error !== 'cancel') {
+      ElMessage.error(getErrorMessage(error, t.value.vddSettings.calibrationLaunchFailed))
+    }
+  } finally {
+    isLaunchingCalibration.value = false
+  }
+}
+
+const launchPhysicalHdrCalibration = async () => {
+  try {
+    await ElMessageBox.confirm(
+      t.value.vddSettings.physicalCalibrationConfirm,
+      t.value.vddSettings.physicalCalibrationTitle,
+      {
+        confirmButtonText: t.value.vddSettings.physicalCalibrationLaunch,
+        cancelButtonText: t.value.vddSettings.cancel,
+        type: 'info',
+      }
+    )
+    isLaunchingPhysicalCalibration.value = true
+    const result = await vdd.launchHdrCalibration()
+    if (!result?.success) {
+      throw new Error(result?.message || t.value.vddSettings.calibrationLaunchFailed)
+    }
+    ElMessage.success(t.value.vddSettings.physicalCalibrationLaunched)
+  } catch (error) {
+    if (error !== 'cancel') {
+      ElMessage.error(getErrorMessage(error, t.value.vddSettings.calibrationLaunchFailed))
+    }
+  } finally {
+    isLaunchingPhysicalCalibration.value = false
+  }
+}
+
+const openHdrCalibrationStore = async () => {
+  const opened = await openExternalUrl('ms-windows-store://pdp/?ProductId=9N7F2SM5D1LR')
+  if (!opened) ElMessage.error(t.value.vddSettings.calibrationStoreFailed)
+}
 
 const markSettingsClean = () => {
   lastSavedSnapshot.value = takeSnapshot()
@@ -916,16 +1243,8 @@ const syncVddState = async ({ silentLoad = false } = {}) => Promise.all([
   loadSettings({ silent: silentLoad }),
   loadGPUs(),
   checkEdidFile(),
-  loadSettingsPath(),
   refreshTraceStatus(),
 ])
-
-const loadSettingsPath = async () => {
-  const result = await vdd.getSettingsFilePath()
-  if (result?.success) {
-    configFilePath.value = result.data
-  }
-}
 
 const loadSettings = async ({ silent = false } = {}) => {
   isLoading.value = true
@@ -1168,6 +1487,13 @@ const removeEdidFile = async () => {
 
 onMounted(async () => {
   await recheckDriver()
+  if (vddReady.value) await loadCalibrationContext()
+})
+
+watch(activeSection, startCalibrationContextPolling)
+
+onUnmounted(() => {
+  stopCalibrationContextPolling()
 })
 </script>
 

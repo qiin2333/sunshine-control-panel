@@ -33,8 +33,6 @@
     "core:webview:allow-create-webview",
     "core:webview:default",
     "core:event:default",
-    "shell:allow-open",
-    "shell:default",
     "fs:allow-read-dir",
     "fs:allow-read-file",
     "fs:default",

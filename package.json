@@ -38,7 +38,6 @@
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.2",
     "@tauri-apps/plugin-fs": "^2.5.1",
-    "@tauri-apps/plugin-shell": "^2.3.5",
     "element-plus": "^2.14.2",
     "markdown-it": "^14.2.0",
     "pixi.js": "^8.19.0",

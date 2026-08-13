@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop-local-path",
+  "description": "Allows only the bundled desktop window to open an existing local directory.",
+  "windows": ["desktop"],
+  "local": true,
+  "permissions": [
+    "allow-open-local-path"
+  ]
+}

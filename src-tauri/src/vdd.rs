@@ -1031,12 +1031,6 @@ fn build_vdd_trace_status() -> VddTraceStatus {
     }
 }
 
-/// 获取 VDD 设置文件路径（暴露给前端）
-#[tauri::command]
-pub fn get_vdd_settings_file_path() -> String {
-    get_vdd_settings_path().to_string_lossy().to_string()
-}
-
 /// 获取 VDD 工具目录路径（暴露给前端）
 #[tauri::command]
 pub fn get_vdd_tools_dir_path() -> String {

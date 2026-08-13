@@ -6,7 +6,7 @@
         <h1>{{ t.dualSense.title }}</h1>
         <p>{{ t.dualSense.intro }}</p>
       </div>
-      <el-button text circle :aria-label="t.dualSense.refresh" :loading="loading" @click="refresh">
+      <el-button text circle :aria-label="t.dualSense.refresh" :loading="loading" @click="refresh()">
         <el-icon><Refresh /></el-icon>
       </el-button>
     </header>
@@ -92,7 +92,7 @@
           :disabled="status.in_use || !status.composite_profile || !status.usbip_available"
           @click="test('composite')"
         >{{ t.dualSense.testComposite }}</el-button>
-        <el-button type="danger" plain :disabled="status.in_use" @click="uninstall">
+        <el-button type="danger" plain :loading="operation === 'uninstall'" :disabled="status.in_use" @click="uninstall">
           {{ t.dualSense.uninstall }}
         </el-button>
       </template>
@@ -155,6 +155,18 @@ const showError = (message) => ElMessage.error(
   t.value.dualSense.operationFailed.replace('{error}', String(message || 'Unknown error')),
 )
 
+const ensureAdmin = async () => {
+  if (await dualsense.isAdmin()) return true
+  try {
+    await ElMessageBox.confirm(t.value.dualSense.adminRequired, t.value.dualSense.adminTitle, {
+      type: 'warning', confirmButtonText: t.value.dualSense.restartAdmin,
+    })
+  } catch { return false }
+  const result = await dualsense.restartAsAdmin()
+  if (!result.success) showError(result.message)
+  return false
+}
+
 const refresh = async (quiet = false) => {
   if (!quiet) loading.value = true
   const result = await dualsense.getStatus()
@@ -169,6 +181,7 @@ const refresh = async (quiet = false) => {
 }
 
 const install = async () => {
+  if (!await ensureAdmin()) return
   try {
     await ElMessageBox.confirm(t.value.dualSense.installConfirm, t.value.dualSense.installTitle, {
       type: 'warning', confirmButtonText: t.value.dualSense.install,
@@ -197,6 +210,7 @@ const saveSettings = async () => {
 }
 
 const test = async (profile) => {
+  if (!await ensureAdmin()) return
   operation.value = profile
   const result = await dualsense.selfTest(profile)
   operation.value = ''
@@ -206,6 +220,7 @@ const test = async (profile) => {
 }
 
 const uninstall = async () => {
+  if (!await ensureAdmin()) return
   try {
     await ElMessageBox.confirm(t.value.dualSense.uninstallConfirm, t.value.dualSense.uninstallTitle, {
       type: 'warning', confirmButtonText: t.value.dualSense.uninstall,
@@ -230,7 +245,10 @@ onMounted(async () => {
     // Browser-only renderer previews do not provide the Tauri event bridge.
   }
   await refresh()
-  pollTimer = window.setInterval(() => refresh(true), 5000)
+  pollTimer = window.setInterval(() => {
+    if (operation.value || saving.value) return
+    refresh(true)
+  }, 30000)
 })
 onUnmounted(() => {
   window.clearInterval(pollTimer)

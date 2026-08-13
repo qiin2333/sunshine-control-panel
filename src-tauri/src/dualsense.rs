@@ -67,11 +67,9 @@ fn emit_progress(app: &tauri::AppHandle, stage: &str, progress: u32) {
 }
 
 fn component_root() -> PathBuf {
-    dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("Sunshine")
-        .join("components")
-        .join("dualsense")
+    PathBuf::from(crate::sunshine::get_sunshine_install_path())
+        .join("tools")
+        .join("sunshine-ds5-component")
 }
 
 fn active_dir() -> PathBuf {
@@ -373,6 +371,12 @@ pub async fn dualsense_install(app: tauri::AppHandle) -> Result<DualSenseStatus,
         "DS5-RUN-002: another DualSense component operation is still running".to_string()
     })?;
     ensure_no_active_session().await?;
+    if !crate::bat_runner::is_elevated() {
+        return Err(
+            "DS5-PKG-004: restart Sunshine Control Panel as administrator to install the protected component"
+                .to_string(),
+        );
+    }
     let previous_enabled = config_bool("ds5_enabled", false);
     let previous_audio_haptics = config_bool("ds5_audio_haptics", true);
     emit_progress(&app, "preparing", 1);
@@ -432,7 +436,10 @@ pub async fn dualsense_install(app: tauri::AppHandle) -> Result<DualSenseStatus,
             .map_err(|error| error.to_string())??;
         copy_runtime_files(&source, &staging)?;
         emit_progress(&app, "probing", 88);
-        run_probe(&staging.join(SIDECAR_EXE))?;
+        let probe_executable = staging.join(SIDECAR_EXE);
+        tokio::task::spawn_blocking(move || run_probe(&probe_executable))
+            .await
+            .map_err(|error| format!("DS5-PKG-003: sidecar probe task failed: {error}"))??;
         fs::write(
             staging.join("component.json"),
             serde_json::to_vec_pretty(&serde_json::json!({
@@ -491,7 +498,10 @@ pub async fn dualsense_set_config(
     })?;
     ensure_no_active_session().await?;
     if enabled {
-        run_probe(&sidecar_path())?;
+        let executable = sidecar_path();
+        tokio::task::spawn_blocking(move || run_probe(&executable))
+            .await
+            .map_err(|error| format!("DS5-PKG-003: sidecar probe task failed: {error}"))??;
     }
     apply_config(enabled, audio_haptics, Some(&sidecar_path())).await?;
     dualsense_get_status().await
@@ -506,35 +516,44 @@ pub async fn dualsense_self_test(profile: String) -> Result<serde_json::Value, S
     if profile != "standard" && profile != "composite" {
         return Err("DS5-PKG-003: invalid self-test profile".to_string());
     }
+    if !crate::bat_runner::is_elevated() {
+        return Err(
+            "DS5-PKG-004: restart Sunshine Control Panel as administrator to test the protected component"
+                .to_string(),
+        );
+    }
     let result_path = component_root().join(format!("self-test-{}.json", std::process::id()));
     #[cfg(target_os = "windows")]
-    let status = {
-        let wrapper_path = component_root().join(format!("self-test-{}.bat", std::process::id()));
+    {
         let executable = sidecar_path();
-        fs::write(
-            &wrapper_path,
-            format!(
-                "@echo off\r\n\"{}\" --self-test \"{}\" --result \"{}\"\r\nexit /b %ERRORLEVEL%\r\n",
-                executable.display(),
-                profile,
-                result_path.display()
-            ),
-        )
-        .map_err(|error| format!("DS5-PKG-003: unable to prepare component test: {error}"))?;
-        let outcome = crate::bat_runner::run_elevated(&wrapper_path, "ds5-self-test", &[]);
-        let _ = fs::remove_file(&wrapper_path);
-        outcome?;
-        true
+        let test_profile = profile.clone();
+        let test_result = result_path.clone();
+        tokio::task::spawn_blocking(move || {
+            Command::new(&executable)
+                .args(["--self-test", &test_profile, "--result"])
+                .arg(&test_result)
+                .current_dir(executable.parent().unwrap_or_else(|| Path::new(".")))
+                .status()
+                .map_err(|error| format!("DS5-PKG-003: unable to start component test: {error}"))
+                .and_then(|status| {
+                    status.success().then_some(()).ok_or_else(|| {
+                        format!(
+                            "DS5-PKG-003: component test process failed with exit code {}",
+                            status.code().unwrap_or(-1)
+                        )
+                    })
+                })
+        })
+        .await
+        .map_err(|error| format!("DS5-PKG-003: component test task failed: {error}"))??;
     };
     #[cfg(not(target_os = "windows"))]
-    let status = false;
-    let result = fs::read_to_string(&result_path).unwrap_or_default();
+    return Err("DS5-PKG-003: component tests are only supported on Windows".to_string());
+    let result = fs::read_to_string(&result_path)
+        .map_err(|error| format!("DS5-PKG-003: component test produced no result: {error}"))?;
     let _ = fs::remove_file(&result_path);
-    let json =
-        serde_json::from_str(&result).unwrap_or_else(|_| serde_json::json!({ "detail": result }));
-    if !status {
-        return Err(format!("DS5-PKG-003: component test failed: {json}"));
-    }
+    let json: serde_json::Value = serde_json::from_str(&result)
+        .map_err(|error| format!("DS5-PKG-003: invalid component test result: {error}"))?;
     Ok(json)
 }
 
@@ -544,6 +563,12 @@ pub async fn dualsense_uninstall() -> Result<DualSenseStatus, String> {
         "DS5-RUN-002: another DualSense component operation is still running".to_string()
     })?;
     ensure_no_active_session().await?;
+    if !crate::bat_runner::is_elevated() {
+        return Err(
+            "DS5-PKG-004: restart Sunshine Control Panel as administrator to uninstall the protected component"
+                .to_string(),
+        );
+    }
     apply_config(false, true, None).await?;
     let root = component_root();
     if root.exists() {

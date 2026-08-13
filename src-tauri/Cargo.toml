@@ -44,6 +44,8 @@ raw-window-handle = "0.6"
 xcap = "0.7"
 clipboard-rs = "0.3"
 image = { version = "0.25", default-features = false, features = ["png"] }
+sha2 = "0.10"
+zip = { version = "4", default-features = false, features = ["deflate"] }
 
 [features]
 # by default Tauri runs in production mode

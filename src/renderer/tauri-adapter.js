@@ -101,6 +101,17 @@ export const vigem = {
   uninstall: () => wrapResult('uninstall_vigem_driver'),
 }
 
+export const dualsense = {
+  getStatus: () => wrapResult('dualsense_get_status'),
+  install: () => wrapResult('dualsense_install'),
+  uninstall: () => wrapResult('dualsense_uninstall'),
+  setConfig: (enabled, audioHaptics) => wrapResult('dualsense_set_config', {
+    enabled: !!enabled,
+    audioHaptics: !!audioHaptics,
+  }),
+  selfTest: (profile) => wrapResult('dualsense_self_test', { profile }),
+}
+
 // ─── Sunshine 配置 ───────────────────────────────────────
 
 export const sunshine = {
@@ -178,6 +189,7 @@ export default {
   vdd,
   vmouse,
   vigem,
+  dualsense,
   sunshine,
   tools,
   fileMapping,

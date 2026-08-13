@@ -31,6 +31,7 @@ import {
   Download,
   Connection,
   MagicStick,
+  Aim,
 } from '@element-plus/icons-vue'
 import IconLang from '../desktop/icons/IconLang.vue'
 import { ROUTES } from './useRouter.js'
@@ -78,6 +79,13 @@ export function createManagementTools(ctx) {
       action: ctx.openWebStream,
       isActive: () => ctx.router.isRoute(ROUTES.WEB_STREAM),
       visible: import.meta.env.DEV,
+    },
+    {
+      id: 'dualsense',
+      icon: Aim,
+      label: ctx.t.value.sidebar.dualSense,
+      action: ctx.openDualSense,
+      isActive: () => ctx.router.isRoute(ROUTES.DUALSENSE),
     },
     {
       id: 'ai-assistant',

@@ -8,6 +8,7 @@ mod clipboard;
 mod commands;
 mod controllermeta;
 mod desktop_settings;
+mod dualsense;
 mod file_mapping;
 mod file_transfer;
 mod fs_utils;
@@ -188,6 +189,11 @@ fn main() {
             vigem::get_vigem_status,
             vigem::install_vigem_driver,
             vigem::uninstall_vigem_driver,
+            dualsense::dualsense_get_status,
+            dualsense::dualsense_install,
+            dualsense::dualsense_uninstall,
+            dualsense::dualsense_set_config,
+            dualsense::dualsense_self_test,
             fs_utils::get_icc_file_list,
             fs_utils::read_directory,
             fs_utils::read_image_as_data_url,

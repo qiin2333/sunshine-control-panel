@@ -9,6 +9,7 @@ export const ROUTES = {
   WELCOME: 'welcome',
   WEB_STREAM: 'web-stream',
   AI_ASSISTANT: 'ai-assistant',
+  DUALSENSE: 'dualsense',
 }
 
 /**
@@ -39,6 +40,11 @@ const routeConfig = {
     name: ROUTES.AI_ASSISTANT,
     component: 'AiAssistant',
     title: '米塔',
+  },
+  [ROUTES.DUALSENSE]: {
+    name: ROUTES.DUALSENSE,
+    component: 'DualSenseSettings',
+    title: 'DualSense',
   },
 }
 
@@ -116,4 +122,3 @@ export function useRouter() {
     ROUTES,
   }
 }
-

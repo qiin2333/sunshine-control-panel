@@ -361,6 +361,10 @@ fn validate_requested_profile(
     }
 }
 
+fn effective_usbip_available(sidecar_available: bool, installed_version: Option<&str>) -> bool {
+    sidecar_available && installed_version == Some(USBIP_VERSION)
+}
+
 #[tauri::command]
 pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
     let executable = sidecar_path();
@@ -393,7 +397,8 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
         None => (false, ProbeResult::default(), String::new(), String::new()),
     };
     let usbip_version = installed_usbip_version().unwrap_or_default();
-    let usbip_available = result.usbip_available && usbip_version == USBIP_VERSION;
+    let usbip_available =
+        effective_usbip_available(result.usbip_available, Some(usbip_version.as_str()));
     let state = component_state(installed, verified, usbip_available, in_use);
 
     Ok(DualSenseStatus {
@@ -580,17 +585,33 @@ async fn ensure_pinned_usbip(
             ));
         }
 
-        emit_progress(app, "transport_installing", 8);
+        emit_progress(app, "transport_installing", 10);
         let executable = installer_path.clone();
-        let status = tokio::task::spawn_blocking(move || {
-            Command::new(executable)
-                .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"])
-                .status()
+        let output = tokio::task::spawn_blocking(move || {
+            let mut command = Command::new(executable);
+            command.args([
+                "/VERYSILENT",
+                "/SUPPRESSMSGBOXES",
+                "/NORESTART",
+                "/RESTARTEXITCODE=3010",
+                "/SP-",
+            ]);
+            run_with_timeout(
+                &mut command,
+                std::time::Duration::from_secs(600),
+                "DS5-DRV-001: USB/IP installer timed out",
+            )
         })
         .await
         .map_err(|error| format!("DS5-DRV-001: USB/IP installer task failed: {error}"))?
-        .map_err(|error| format!("DS5-DRV-001: unable to start USB/IP installer: {error}"))?;
-        match status.code() {
+        .map_err(|error| {
+            if error.starts_with("DS5-DRV-") {
+                error
+            } else {
+                format!("DS5-DRV-001: USB/IP installer failed: {error}")
+            }
+        })?;
+        match output.status.code() {
             Some(0) => {}
             Some(3010) => {
                 return Err(
@@ -660,13 +681,25 @@ async fn apply_config(
         apply_gamepad_selection(&mut config, enabled);
     }
     crate::sunshine::post_sunshine_config(&config).await?;
-    crate::sunshine::post_tray_restart_action()
+    let restart = crate::sunshine::post_tray_restart_action()
         .await
         .map_err(|error| {
             format!(
                 "DS5-CFG-002: configuration was saved, but Sunshine could not be restarted: {error}"
             )
         })?;
+    if let Some(response) = restart.filter(|response| !response.status) {
+        let error = if !response.error.trim().is_empty() {
+            response.error
+        } else if !response.message.trim().is_empty() {
+            response.message
+        } else {
+            "Sunshine rejected the restart request".to_string()
+        };
+        return Err(format!(
+            "DS5-CFG-002: configuration was saved, but Sunshine could not be restarted: {error}"
+        ));
+    }
     Ok(())
 }
 
@@ -714,7 +747,7 @@ pub async fn dualsense_install(app: tauri::AppHandle) -> Result<DualSenseStatus,
             .map_err(|error| format!("DS5-PKG-001: download failed: {error}"))?
             .error_for_status()
             .map_err(|error| format!("DS5-PKG-001: download failed: {error}"))?;
-        emit_progress(&app, "downloading", 3);
+        emit_progress(&app, "downloading", 12);
         let total_size = response.content_length();
         if total_size.is_some_and(|size| size > MAX_ARCHIVE_BYTES) {
             return Err("DS5-PKG-002: release archive exceeds the download limit".to_string());
@@ -732,8 +765,8 @@ pub async fn dualsense_install(app: tauri::AppHandle) -> Result<DualSenseStatus,
                 .write_all(&chunk)
                 .map_err(|error| error.to_string())?;
             if let Some(total) = total_size.filter(|total| *total != 0) {
-                let download_progress = (downloaded * 70 / total).min(70) as u32;
-                emit_progress(&app, "downloading", 3 + download_progress);
+                let download_progress = (downloaded * 60 / total).min(60) as u32;
+                emit_progress(&app, "downloading", 12 + download_progress);
             }
         }
         drop(output);
@@ -846,7 +879,12 @@ pub async fn dualsense_set_config(
         let probe = tokio::task::spawn_blocking(move || run_probe(&executable))
             .await
             .map_err(|error| format!("DS5-PKG-003: sidecar probe task failed: {error}"))??;
-        validate_requested_profile(enabled, audio_haptics, probe.usbip_available)?;
+        let usbip_version = installed_usbip_version();
+        validate_requested_profile(
+            enabled,
+            audio_haptics,
+            effective_usbip_available(probe.usbip_available, usbip_version.as_deref()),
+        )?;
     }
     apply_config(enabled, audio_haptics, Some(&sidecar_path()), true).await?;
     dualsense_get_status().await
@@ -874,12 +912,13 @@ pub async fn dualsense_self_test(profile: String) -> Result<serde_json::Value, S
         let test_profile = profile.clone();
         let test_result = result_path.clone();
         tokio::task::spawn_blocking(move || {
+            let _ = fs::remove_file(&test_result);
             let mut command = Command::new(&executable);
             command
                 .args(["--self-test", &test_profile, "--result"])
                 .arg(&test_result)
                 .current_dir(executable.parent().unwrap_or_else(|| Path::new(".")));
-            run_with_timeout(
+            let outcome = run_with_timeout(
                 &mut command,
                 std::time::Duration::from_secs(60),
                 "DS5-PKG-003: component self-test timed out",
@@ -890,16 +929,21 @@ pub async fn dualsense_self_test(profile: String) -> Result<serde_json::Value, S
                     .success()
                     .then_some(())
                     .ok_or_else(|| component_test_failure(&output, &test_result))
-            })
+            });
+            if outcome.is_err() {
+                let _ = fs::remove_file(&test_result);
+            }
+            outcome
         })
         .await
         .map_err(|error| format!("DS5-PKG-003: component test task failed: {error}"))??;
     };
     #[cfg(not(target_os = "windows"))]
     return Err("DS5-PKG-003: component tests are only supported on Windows".to_string());
-    let result = fs::read_to_string(&result_path)
-        .map_err(|error| format!("DS5-PKG-003: component test produced no result: {error}"))?;
+    let result = fs::read_to_string(&result_path);
     let _ = fs::remove_file(&result_path);
+    let result = result
+        .map_err(|error| format!("DS5-PKG-003: component test produced no result: {error}"))?;
     let json: serde_json::Value = serde_json::from_str(&result)
         .map_err(|error| format!("DS5-PKG-003: invalid component test result: {error}"))?;
     Ok(json)
@@ -930,7 +974,7 @@ pub async fn dualsense_uninstall() -> Result<DualSenseStatus, String> {
 mod tests {
     use super::{
         apply_gamepad_selection, component_state, component_test_failure,
-        validate_requested_profile,
+        effective_usbip_available, validate_requested_profile,
     };
     use std::process::Command;
 
@@ -982,6 +1026,14 @@ mod tests {
             explicit_config.get("gamepad"),
             Some(&serde_json::json!("x360"))
         );
+    }
+
+    #[test]
+    fn usbip_requires_the_pinned_installed_version() {
+        assert!(effective_usbip_available(true, Some("0.9.7.7")));
+        assert!(!effective_usbip_available(true, Some("0.9.7.3")));
+        assert!(!effective_usbip_available(true, None));
+        assert!(!effective_usbip_available(false, Some("0.9.7.7")));
     }
 
     #[test]

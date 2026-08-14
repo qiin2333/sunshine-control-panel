@@ -288,7 +288,10 @@ const install = async () => {
   operationProgress.value = 0
   const result = await dualsense.install()
   operation.value = ''
-  if (!result.success) return showError(result.message)
+  if (!result.success) {
+    await refresh(true)
+    return showError(result.message)
+  }
   ElMessage.success(t.value.dualSense.installSuccess)
   await refresh()
 }
@@ -298,8 +301,12 @@ const saveSettings = async () => {
   const result = await dualsense.setConfig(enabled.value, audioHaptics.value)
   saving.value = false
   if (!result.success) {
-    enabled.value = status.value.enabled
-    audioHaptics.value = status.value.audio_haptics && status.value.usbip_available
+    if (String(result.message || '').includes('DS5-CFG-002')) {
+      await refresh(true)
+    } else {
+      enabled.value = status.value.enabled
+      audioHaptics.value = status.value.audio_haptics && status.value.usbip_available
+    }
     return showError(result.message)
   }
   status.value = result.data

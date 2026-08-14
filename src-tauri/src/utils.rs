@@ -231,14 +231,52 @@ pub async fn open_external_url(url: String) -> Result<bool, String> {
     Ok(true)
 }
 
-/// Open an existing local directory from a bundled local window only.
+/// Open a configured application's existing local working directory.
 #[tauri::command]
-pub fn open_local_path(path: String) -> Result<bool, String> {
-    let path = std::path::PathBuf::from(path.trim().trim_matches('"'));
+pub fn open_local_path(path: String, app_name: String) -> Result<bool, String> {
+    let raw_path = path.trim().trim_matches('"');
+    if app_name.trim().is_empty() {
+        return Err("Application identity is required".to_string());
+    }
+    #[cfg(target_os = "windows")]
+    if raw_path.starts_with(r"\\") || raw_path.starts_with(r"\\?\") || raw_path.starts_with(r"\\.\")
+    {
+        return Err("Network and device paths are not allowed".to_string());
+    }
+    let path = std::path::PathBuf::from(raw_path)
+        .canonicalize()
+        .map_err(|error| format!("Unable to resolve directory: {error}"))?;
     if !path.is_dir() {
         return Err(format!("Directory does not exist: {}", path.display()));
     }
 
+    let apps_path = sunshine::config_dir().join("apps.json");
+    let apps: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&apps_path)
+            .map_err(|error| format!("Unable to read configured applications: {error}"))?,
+    )
+    .map_err(|error| format!("Unable to parse configured applications: {error}"))?;
+    let allowed = apps
+        .get("apps")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|entries| {
+            entries.iter().any(|entry| {
+                let matches_name = entry.get("name").and_then(serde_json::Value::as_str)
+                    == Some(app_name.as_str());
+                let configured = entry
+                    .get("working-dir")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .map(|value| value.trim_matches('"'))
+                    .and_then(|value| std::path::PathBuf::from(value).canonicalize().ok());
+                matches_name && configured.as_ref() == Some(&path)
+            })
+        });
+    if !allowed {
+        return Err(
+            "Directory is not a configured working directory for this application".to_string(),
+        );
+    }
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;

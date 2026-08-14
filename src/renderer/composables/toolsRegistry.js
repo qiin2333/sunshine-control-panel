@@ -33,6 +33,7 @@ import {
   MagicStick,
 } from '@element-plus/icons-vue'
 import IconLang from '../desktop/icons/IconLang.vue'
+import IconGamepad from '../desktop/icons/IconGamepad.vue'
 import { ROUTES } from './useRouter.js'
 
 // ───────────────────────────────────────────────
@@ -78,6 +79,13 @@ export function createManagementTools(ctx) {
       action: ctx.openWebStream,
       isActive: () => ctx.router.isRoute(ROUTES.WEB_STREAM),
       visible: import.meta.env.DEV,
+    },
+    {
+      id: 'controllers',
+      icon: IconGamepad,
+      label: ctx.t.value.sidebar.controllers,
+      action: ctx.openControllers,
+      isActive: () => ctx.router.isRoute(ROUTES.CONTROLLERS) || ctx.router.isRoute(ROUTES.DUALSENSE),
     },
     {
       id: 'ai-assistant',

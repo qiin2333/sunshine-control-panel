@@ -81,11 +81,11 @@ export function createManagementTools(ctx) {
       visible: import.meta.env.DEV,
     },
     {
-      id: 'dualsense',
+      id: 'controllers',
       icon: Aim,
-      label: ctx.t.value.sidebar.dualSense,
-      action: ctx.openDualSense,
-      isActive: () => ctx.router.isRoute(ROUTES.DUALSENSE),
+      label: ctx.t.value.sidebar.controllers,
+      action: ctx.openControllers,
+      isActive: () => ctx.router.isRoute(ROUTES.CONTROLLERS) || ctx.router.isRoute(ROUTES.DUALSENSE),
     },
     {
       id: 'ai-assistant',

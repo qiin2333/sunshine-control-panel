@@ -284,7 +284,7 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
     let installed = executable.is_file();
     let in_use = has_active_session().await;
     let enabled = config_bool("ds5_enabled", false);
-    let audio_haptics = config_bool("ds5_audio_haptics", true);
+    let audio_haptics = config_bool("ds5_audio_haptics", false);
     let probe = if installed {
         let probe_executable = executable.clone();
         Some(
@@ -486,7 +486,7 @@ pub async fn dualsense_install(app: tauri::AppHandle) -> Result<DualSenseStatus,
         );
     }
     let previous_enabled = config_bool("ds5_enabled", false);
-    let previous_audio_haptics = config_bool("ds5_audio_haptics", true);
+    let previous_audio_haptics = config_bool("ds5_audio_haptics", false);
     emit_progress(&app, "preparing", 1);
     let source = sidecar_source_dir()?;
     let root = component_root();

@@ -104,7 +104,8 @@ export function useSidebarState() {
   const openWelcome = () => router.navigate(ROUTES.WELCOME)
   const openWebStream = () => router.navigate(ROUTES.WEB_STREAM)
   const openAiAssistant = () => router.navigate(ROUTES.AI_ASSISTANT)
-  const openDualSense = () => router.navigate(ROUTES.DUALSENSE)
+  const openControllers = () => router.navigate(ROUTES.CONTROLLERS)
+  const openDualSense = openControllers
   const goHome = () => router.goHome()
 
   /**
@@ -312,6 +313,7 @@ export function useSidebarState() {
     openWelcome,
     openWebStream,
     openAiAssistant,
+    openControllers,
     openDualSense,
     goHome,
     skipVersion,

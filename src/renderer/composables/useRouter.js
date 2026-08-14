@@ -9,6 +9,8 @@ export const ROUTES = {
   WELCOME: 'welcome',
   WEB_STREAM: 'web-stream',
   AI_ASSISTANT: 'ai-assistant',
+  CONTROLLERS: 'controllers',
+  // Compatibility alias for callers that still navigate to the original page id.
   DUALSENSE: 'dualsense',
 }
 
@@ -41,10 +43,15 @@ const routeConfig = {
     component: 'AiAssistant',
     title: '米塔',
   },
+  [ROUTES.CONTROLLERS]: {
+    name: ROUTES.CONTROLLERS,
+    component: 'DualSenseSettings',
+    title: '控制器',
+  },
   [ROUTES.DUALSENSE]: {
     name: ROUTES.DUALSENSE,
     component: 'DualSenseSettings',
-    title: 'DualSense',
+    title: '控制器',
   },
 }
 

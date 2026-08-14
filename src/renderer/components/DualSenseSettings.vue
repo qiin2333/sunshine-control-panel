@@ -189,7 +189,7 @@ const testCompleted = ref(false)
 const expandedSections = ref([])
 const status = ref({
   state: 'loading', installed: false, verified: false, enabled: false,
-  audio_haptics: false, driver_installed: false, usbip_available: false,
+  audio_haptics: false, driver_installed: false, usbip_available: false, usbip_version: '',
   standard_profile: false, composite_profile: false, in_use: false,
   error_code: '', detail: '',
 })
@@ -234,7 +234,9 @@ const healthRows = computed(() => [
   {
     label: t.value.dualSense.usbTransport,
     state: status.value.usbip_available ? t.value.dualSense.available : t.value.dualSense.unavailable,
-    detail: status.value.usbip_available ? t.value.dualSense.nativeModeShort : t.value.dualSense.standardStillAvailable,
+    detail: status.value.usbip_version
+      ? `USB/IP ${status.value.usbip_version}${status.value.usbip_available ? '' : ' → 0.9.7.7'}`
+      : t.value.dualSense.standardStillAvailable,
     tone: status.value.usbip_available ? 'ok' : 'warn',
   },
   {

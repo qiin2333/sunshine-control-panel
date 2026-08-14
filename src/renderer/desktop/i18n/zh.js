@@ -975,6 +975,8 @@ export const zh = {
     },
     stages: {
       preparing: '正在准备组件安装',
+      transport_downloading: '正在下载固定版本 USB/IP 0.9.7.7',
+      transport_installing: '正在安装 USB/IP 0.9.7.7 传输驱动',
       downloading: '正在下载已固定的 HIDMaestro 发布包',
       verifying: '正在校验并安全解压发布包',
       probing: '正在检查 Sidecar 协议与 profile',
@@ -1016,7 +1018,7 @@ export const zh = {
     adminRequired: 'DualSense 运行时将安装到受保护的 Sunshine 目录。是否以管理员身份重启控制面板后继续？',
     restartAdmin: '以管理员身份重启',
     installTitle: '安装第三方 DualSense 运行时？',
-    installConfirm: '将从官方 GitHub Release 下载 HIDMaestro v1.6.1（118.9 MB）。Sunshine 激活前会校验 SHA-256 00145c23…61b53c34；后续驱动安装可能请求管理员授权。',
+    installConfirm: '将从官方 GitHub Release 下载 HIDMaestro v1.6.1（118.9 MB）和固定版本 USB/IP 0.9.7.7（31.7 MB）。Sunshine 安装前会校验两者的 SHA-256；更新传输驱动时 USB 设备可能短暂重连。',
     uninstallTitle: '卸载 DualSense 组件？',
     uninstallConfirm: '这会关闭 DualSense 模拟并删除受保护的可选组件文件，不会删除共用的 USB 传输驱动。',
     installSuccess: 'DualSense 组件已安装并通过验证',
@@ -1028,7 +1030,7 @@ export const zh = {
     uninstallSuccess: 'DualSense 组件已移除',
     configSuccess: 'DualSense 设置已保存，将在下次串流生效',
     operationFailed: '操作失败：{error}',
-    source: '第三方来源：hifihedgehog/HIDMaestro v1.6.1 · 下载包固定 SHA-256 校验 · 许可证保留在组件目录。',
+    source: '第三方来源：hifihedgehog/HIDMaestro v1.6.1 · vadimgrn/usbip-win2 0.9.7.7 · 固定 SHA-256 校验。',
     limitation: '首个版本每个 Sunshine 进程支持一个虚拟 DualSense；HD Haptics 需要复合 profile 和兼容的 Moonlight 客户端。',
   },
 

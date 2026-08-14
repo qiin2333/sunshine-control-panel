@@ -21,7 +21,12 @@ const HIDMAESTRO_VERSION: &str = "v1.6.1";
 const HIDMAESTRO_URL: &str =
     "https://github.com/hifihedgehog/HIDMaestro/releases/download/v1.6.1/HIDMaestro-v1.6.1.zip";
 const HIDMAESTRO_SHA256: &str = "00145c23d9838be6089389ce58b3fd2b6766fa9bc0f1f3c60a3c885361b53c34";
+const USBIP_VERSION: &str = "0.9.7.7";
+const USBIP_URL: &str =
+    "https://github.com/vadimgrn/usbip-win2/releases/download/v.0.9.7.7/USBip-0.9.7.7-x64.exe";
+const USBIP_SHA256: &str = "51620fa5f9f8be5932bc9d786deee557ce06d5407a99cab490dcfac71f185fea";
 const MAX_ARCHIVE_BYTES: u64 = 160 * 1024 * 1024;
+const MAX_USBIP_INSTALLER_BYTES: u64 = 48 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES: u64 = 200 * 1024 * 1024;
 const MAX_ARCHIVE_FILES: usize = 256;
 const SIDECAR_EXE: &str = "Sunshine.Ds5Sidecar.exe";
@@ -41,11 +46,48 @@ pub struct DualSenseStatus {
     pub sidecar_path: String,
     pub driver_installed: bool,
     pub usbip_available: bool,
+    pub usbip_version: String,
     pub standard_profile: bool,
     pub composite_profile: bool,
     pub in_use: bool,
     pub error_code: String,
     pub detail: String,
+}
+
+#[cfg(target_os = "windows")]
+fn installed_usbip_version() -> Option<String> {
+    use winreg::RegKey;
+    use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY};
+
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let uninstall = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
+    for view in [KEY_READ | KEY_WOW64_64KEY, KEY_READ | KEY_WOW64_32KEY] {
+        let Ok(root) = hklm.open_subkey_with_flags(uninstall, view) else {
+            continue;
+        };
+        for name in root.enum_keys().flatten() {
+            let Ok(key) = root.open_subkey_with_flags(&name, view) else {
+                continue;
+            };
+            let display_name = key
+                .get_value::<String, _>("DisplayName")
+                .unwrap_or_default();
+            if display_name.starts_with("USBip version ") {
+                if let Ok(version) = key.get_value::<String, _>("DisplayVersion") {
+                    return Some(version);
+                }
+                return display_name
+                    .strip_prefix("USBip version ")
+                    .map(str::to_string);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(not(target_os = "windows"))]
+fn installed_usbip_version() -> Option<String> {
+    None
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -242,6 +284,28 @@ fn run_probe(executable: &Path) -> Result<ProbeResult, String> {
     Ok(result)
 }
 
+fn component_test_failure(output: &std::process::Output, result_path: &Path) -> String {
+    if let Ok(contents) = fs::read_to_string(result_path) {
+        if let Ok(result) = serde_json::from_str::<serde_json::Value>(&contents) {
+            if let Some(error) = result.get("error").and_then(serde_json::Value::as_str) {
+                if let Some(summary) = error.lines().find(|line| !line.trim().is_empty()) {
+                    return format!("DS5-PKG-003: component test failed: {}", summary.trim());
+                }
+            }
+        }
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.trim().is_empty() {
+        return format!("DS5-PKG-003: component test failed: {}", stderr.trim());
+    }
+
+    format!(
+        "DS5-PKG-003: component test process failed with exit code {}",
+        output.status.code().unwrap_or(-1)
+    )
+}
+
 async fn has_active_session() -> bool {
     crate::sunshine::get_active_sessions()
         .await
@@ -328,7 +392,9 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
         }
         None => (false, ProbeResult::default(), String::new(), String::new()),
     };
-    let state = component_state(installed, verified, result.usbip_available, in_use);
+    let usbip_version = installed_usbip_version().unwrap_or_default();
+    let usbip_available = result.usbip_available && usbip_version == USBIP_VERSION;
+    let state = component_state(installed, verified, usbip_available, in_use);
 
     Ok(DualSenseStatus {
         state: state.to_string(),
@@ -344,7 +410,8 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
         install_path: active_dir().to_string_lossy().to_string(),
         sidecar_path: executable.to_string_lossy().to_string(),
         driver_installed: result.driver_installed,
-        usbip_available: result.usbip_available,
+        usbip_available,
+        usbip_version,
         standard_profile: result.standard,
         composite_profile: result.composite,
         in_use,
@@ -461,6 +528,104 @@ fn extract_verified_package(archive_path: &Path, staging: &Path) -> Result<(), S
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
+async fn ensure_pinned_usbip(
+    app: &tauri::AppHandle,
+    client: &reqwest::Client,
+    component_root: &Path,
+) -> Result<(), String> {
+    if installed_usbip_version().as_deref() == Some(USBIP_VERSION) {
+        return Ok(());
+    }
+
+    emit_progress(app, "transport_downloading", 3);
+    let installer_path = component_root.join(format!("USBip-{USBIP_VERSION}-x64.partial.exe"));
+    let download_result: Result<(), String> = async {
+        let response = client
+            .get(USBIP_URL)
+            .send()
+            .await
+            .map_err(|error| format!("DS5-DRV-001: USB/IP download failed: {error}"))?
+            .error_for_status()
+            .map_err(|error| format!("DS5-DRV-001: USB/IP download failed: {error}"))?;
+        if response
+            .content_length()
+            .is_some_and(|size| size > MAX_USBIP_INSTALLER_BYTES)
+        {
+            return Err("DS5-DRV-001: USB/IP installer exceeds the download limit".to_string());
+        }
+
+        let mut output = File::create(&installer_path).map_err(|error| error.to_string())?;
+        let mut downloaded = 0u64;
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk
+                .map_err(|error| format!("DS5-DRV-001: USB/IP download failed: {error}"))?;
+            downloaded = downloaded.saturating_add(chunk.len() as u64);
+            if downloaded > MAX_USBIP_INSTALLER_BYTES {
+                return Err(
+                    "DS5-DRV-001: USB/IP installer exceeds the download limit".to_string(),
+                );
+            }
+            output
+                .write_all(&chunk)
+                .map_err(|error| error.to_string())?;
+        }
+        drop(output);
+
+        let actual = sha256_file(&installer_path)?;
+        if actual != USBIP_SHA256 {
+            return Err(format!(
+                "DS5-DRV-001: expected USB/IP SHA-256 {USBIP_SHA256}, got {actual}"
+            ));
+        }
+
+        emit_progress(app, "transport_installing", 8);
+        let executable = installer_path.clone();
+        let status = tokio::task::spawn_blocking(move || {
+            Command::new(executable)
+                .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"])
+                .status()
+        })
+        .await
+        .map_err(|error| format!("DS5-DRV-001: USB/IP installer task failed: {error}"))?
+        .map_err(|error| format!("DS5-DRV-001: unable to start USB/IP installer: {error}"))?;
+        match status.code() {
+            Some(0) => {}
+            Some(3010) => {
+                return Err(
+                    "DS5-DRV-003: USB/IP 0.9.7.7 was installed and Windows must restart"
+                        .to_string(),
+                );
+            }
+            code => {
+                return Err(format!(
+                    "DS5-DRV-001: USB/IP installer failed with exit code {}",
+                    code.unwrap_or(-1)
+                ));
+            }
+        }
+        if installed_usbip_version().as_deref() != Some(USBIP_VERSION) {
+            return Err(format!(
+                "DS5-DRV-001: USB/IP installer completed but version {USBIP_VERSION} is not registered"
+            ));
+        }
+        Ok(())
+    }
+    .await;
+    let _ = fs::remove_file(&installer_path);
+    download_result
+}
+
+#[cfg(not(target_os = "windows"))]
+async fn ensure_pinned_usbip(
+    _app: &tauri::AppHandle,
+    _client: &reqwest::Client,
+    _component_root: &Path,
+) -> Result<(), String> {
+    Ok(())
+}
+
 async fn apply_config(
     enabled: bool,
     audio_haptics: bool,
@@ -494,7 +659,15 @@ async fn apply_config(
     if sync_gamepad_selection {
         apply_gamepad_selection(&mut config, enabled);
     }
-    crate::sunshine::post_sunshine_config(&config).await
+    crate::sunshine::post_sunshine_config(&config).await?;
+    crate::sunshine::post_tray_restart_action()
+        .await
+        .map_err(|error| {
+            format!(
+                "DS5-CFG-002: configuration was saved, but Sunshine could not be restarted: {error}"
+            )
+        })?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -525,14 +698,16 @@ pub async fn dualsense_install(app: tauri::AppHandle) -> Result<DualSenseStatus,
     let active = active_dir();
     let backup = root.join("previous");
     let had_previous = active.exists();
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(600))
+        .user_agent("foundation-sunshine-dualsense-component")
+        .build()
+        .map_err(|error| error.to_string())?;
 
     let install_result: Result<(), String> = async {
-        let response = reqwest::Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_secs(600))
-            .user_agent("foundation-sunshine-dualsense-component")
-            .build()
-            .map_err(|error| error.to_string())?
+        ensure_pinned_usbip(&app, &client, &root).await?;
+        let response = client
             .get(HIDMAESTRO_URL)
             .send()
             .await
@@ -623,6 +798,12 @@ pub async fn dualsense_install(app: tauri::AppHandle) -> Result<DualSenseStatus,
     )
     .await
     {
+        // The component and configuration are already valid when only the
+        // runtime restart failed. Keep them so a manual restart can finish the
+        // activation instead of rolling back to a missing or older component.
+        if config_error.starts_with("DS5-CFG-002:") {
+            return Err(config_error);
+        }
         let rollback_result = (|| -> Result<(), String> {
             if active.exists() {
                 fs::remove_dir_all(&active).map_err(|error| {
@@ -704,12 +885,11 @@ pub async fn dualsense_self_test(profile: String) -> Result<serde_json::Value, S
                 "DS5-PKG-003: component self-test timed out",
             )
             .and_then(|output| {
-                output.status.success().then_some(()).ok_or_else(|| {
-                    format!(
-                        "DS5-PKG-003: component test process failed with exit code {}",
-                        output.status.code().unwrap_or(-1)
-                    )
-                })
+                output
+                    .status
+                    .success()
+                    .then_some(())
+                    .ok_or_else(|| component_test_failure(&output, &test_result))
             })
         })
         .await
@@ -748,7 +928,11 @@ pub async fn dualsense_uninstall() -> Result<DualSenseStatus, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_gamepad_selection, component_state, validate_requested_profile};
+    use super::{
+        apply_gamepad_selection, component_state, component_test_failure,
+        validate_requested_profile,
+    };
+    use std::process::Command;
 
     #[test]
     fn composite_profile_requires_usbip() {
@@ -797,6 +981,31 @@ mod tests {
         assert_eq!(
             explicit_config.get("gamepad"),
             Some(&serde_json::json!("x360"))
+        );
+    }
+
+    #[test]
+    fn component_test_failure_preserves_sidecar_diagnostic() {
+        let result_path = std::env::temp_dir().join(format!(
+            "sunshine-ds5-test-failure-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&result_path, r#"{"error":"usbip-win2 attach failed"}"#).unwrap();
+        let output = if cfg!(windows) {
+            Command::new("cmd")
+                .args(["/c", "exit", "1"])
+                .output()
+                .unwrap()
+        } else {
+            Command::new("sh").args(["-c", "exit 1"]).output().unwrap()
+        };
+
+        let error = component_test_failure(&output, &result_path);
+        let _ = std::fs::remove_file(result_path);
+
+        assert_eq!(
+            error,
+            "DS5-PKG-003: component test failed: usbip-win2 attach failed"
         );
     }
 }

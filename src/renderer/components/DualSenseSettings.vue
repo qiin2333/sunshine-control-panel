@@ -82,38 +82,30 @@
 
       <section v-if="status.verified" class="profile-section" :aria-label="t.dualSense.profileTitle">
         <span class="section-label">{{ t.dualSense.profileTitle }}</span>
-        <div class="profile-options" role="radiogroup">
-          <button
-            type="button"
-            class="profile-option"
-            :class="{ 'is-selected': !audioHaptics }"
-            role="radio"
-            :aria-checked="!audioHaptics"
-            :disabled="status.in_use || saving"
-            @click="selectProfile(false)"
-          >
+        <div class="profile-options" role="group">
+          <div class="profile-option is-selected is-static">
             <span class="selection-cursor" aria-hidden="true">▶</span>
             <span class="option-copy">
               <strong>{{ t.dualSense.standardModeShort }}</strong>
               <small>{{ t.dualSense.standardModeTip }}</small>
             </span>
-            <kbd>Enter</kbd>
-          </button>
+            <kbd>{{ t.dualSense.included }}</kbd>
+          </div>
           <button
             type="button"
             class="profile-option"
             :class="{ 'is-selected': audioHaptics }"
-            role="radio"
+            role="checkbox"
             :aria-checked="audioHaptics"
-            :disabled="status.in_use || saving || !status.usbip_available"
-            @click="selectProfile(true)"
+            :disabled="status.in_use || saving || (!status.usbip_available && !audioHaptics)"
+            @click="setAudioHaptics(!audioHaptics)"
           >
             <span class="selection-cursor" aria-hidden="true">▶</span>
             <span class="option-copy">
               <strong>{{ t.dualSense.nativeModeShort }}</strong>
               <small>{{ status.usbip_available ? t.dualSense.nativeModeTip : t.dualSense.nativeUnavailable }}</small>
             </span>
-            <kbd>Enter</kbd>
+            <kbd>{{ audioHaptics ? t.dualSense.enabledLabel : t.dualSense.disabledLabel }}</kbd>
           </button>
         </div>
       </section>
@@ -126,10 +118,16 @@
         <div class="test-actions">
           <el-button
             text
-            :loading="operation === selectedTestProfile"
-            :disabled="status.in_use || !canTestSelectedProfile"
-            @click="test(selectedTestProfile)"
-          >[ {{ selectedTestLabel }} ]</el-button>
+            :loading="operation === 'standard'"
+            :disabled="status.in_use || !!operation || !status.standard_profile"
+            @click="test('standard')"
+          >[ {{ t.dualSense.testStandard }} ]</el-button>
+          <el-button
+            text
+            :loading="operation === 'composite'"
+            :disabled="status.in_use || !!operation || !canTestAudioHaptics"
+            @click="test('composite')"
+          >[ {{ t.dualSense.testComposite }} ]</el-button>
           <el-button v-if="testCompleted" text type="success" @click="emit('open-controller-meta')">
             [ {{ t.dualSense.openControllerMeta }} ]
           </el-button>
@@ -173,6 +171,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { dualsense } from '../tauri-adapter.js'
+import { friendlyDualSenseError } from '../composables/dualsenseErrors.js'
 import { useI18n } from '../desktop/i18n/index.js'
 
 const { t } = useI18n()
@@ -189,7 +188,8 @@ const testCompleted = ref(false)
 const expandedSections = ref([])
 const status = ref({
   state: 'loading', installed: false, verified: false, enabled: false,
-  audio_haptics: false, driver_installed: false, usbip_available: false,
+  audio_haptics: false, driver_installed: false, usbip_available: false, usbip_version: '',
+  usbip_version_valid: false,
   standard_profile: false, composite_profile: false, in_use: false,
   error_code: '', detail: '',
 })
@@ -206,11 +206,13 @@ const nextAction = computed(() => ({
 }[status.value.state] || t.value.dualSense.nextRepair))
 
 const overallVersion = computed(() => status.value.component_version || status.value.runtime_version || status.value.error_code)
-const selectedTestProfile = computed(() => audioHaptics.value ? 'composite' : 'standard')
-const selectedTestLabel = computed(() => audioHaptics.value ? t.value.dualSense.testComposite : t.value.dualSense.testStandard)
-const canTestSelectedProfile = computed(() => audioHaptics.value
-  ? status.value.composite_profile && status.value.usbip_available
-  : status.value.standard_profile)
+const canTestAudioHaptics = computed(() => status.value.composite_profile && status.value.usbip_available)
+const usbTransportDetail = computed(() => {
+  if (!status.value.usbip_version_valid) return t.value.dualSense.pinnedTransportRequired
+  if (status.value.usbip_available) return `USB/IP ${status.value.usbip_version}`
+  if (!status.value.installed) return t.value.dualSense.transportCheckPending
+  return t.value.dualSense.transportProbeFailed
+})
 const showNotice = computed(() => ['not_installed', 'repair_required', 'transport_missing', 'in_use'].includes(status.value.state))
 const healthRows = computed(() => [
   {
@@ -234,7 +236,7 @@ const healthRows = computed(() => [
   {
     label: t.value.dualSense.usbTransport,
     state: status.value.usbip_available ? t.value.dualSense.available : t.value.dualSense.unavailable,
-    detail: status.value.usbip_available ? t.value.dualSense.nativeModeShort : t.value.dualSense.standardStillAvailable,
+    detail: usbTransportDetail.value,
     tone: status.value.usbip_available ? 'ok' : 'warn',
   },
   {
@@ -245,21 +247,9 @@ const healthRows = computed(() => [
   },
 ])
 
-const showError = (message) => ElMessage.error(
-  t.value.dualSense.operationFailed.replace('{error}', String(message || 'Unknown error')),
+const showError = (message, context = 'generic') => ElMessage.error(
+  friendlyDualSenseError(message, t.value.dualSense.errors, context),
 )
-
-const ensureAdmin = async () => {
-  if (await dualsense.isAdmin()) return true
-  try {
-    await ElMessageBox.confirm(t.value.dualSense.adminRequired, t.value.dualSense.adminTitle, {
-      type: 'warning', confirmButtonText: t.value.dualSense.restartAdmin,
-    })
-  } catch { return false }
-  const result = await dualsense.restartAsAdmin()
-  if (!result.success) showError(result.message)
-  return false
-}
 
 const refresh = async (quiet = false) => {
   if (!quiet) loading.value = true
@@ -268,15 +258,14 @@ const refresh = async (quiet = false) => {
     status.value = result.data
     statusKnown.value = true
     enabled.value = result.data.enabled
-    audioHaptics.value = result.data.audio_haptics && result.data.usbip_available
+    audioHaptics.value = result.data.audio_haptics
   } else if (!quiet) {
-    showError(result.message)
+    showError(result.message, 'status')
   }
   loading.value = false
 }
 
 const install = async () => {
-  if (!await ensureAdmin()) return
   try {
     await ElMessageBox.confirm(t.value.dualSense.installConfirm, t.value.dualSense.installTitle, {
       type: 'warning', confirmButtonText: t.value.dualSense.install,
@@ -285,8 +274,12 @@ const install = async () => {
   operation.value = 'install'
   operationProgress.value = 0
   const result = await dualsense.install()
+  if (!result.success) {
+    await refresh(true)
+    operation.value = ''
+    return showError(result.message, 'install')
+  }
   operation.value = ''
-  if (!result.success) return showError(result.message)
   ElMessage.success(t.value.dualSense.installSuccess)
   await refresh()
 }
@@ -294,36 +287,39 @@ const install = async () => {
 const saveSettings = async () => {
   saving.value = true
   const result = await dualsense.setConfig(enabled.value, audioHaptics.value)
-  saving.value = false
   if (!result.success) {
-    enabled.value = status.value.enabled
-    audioHaptics.value = status.value.audio_haptics && status.value.usbip_available
-    return showError(result.message)
+    if (String(result.message || '').includes('DS5-CFG-002')) {
+      await refresh(true)
+    } else {
+      enabled.value = status.value.enabled
+      audioHaptics.value = status.value.audio_haptics
+    }
+    saving.value = false
+    return showError(result.message, 'config')
   }
+  saving.value = false
   status.value = result.data
   ElMessage.success(t.value.dualSense.configSuccess)
 }
 
-const selectProfile = async (nativeHaptics) => {
-  if (audioHaptics.value === nativeHaptics) return
-  audioHaptics.value = nativeHaptics
+const setAudioHaptics = async (enabled) => {
+  if (audioHaptics.value === enabled) return
+  audioHaptics.value = enabled
   testCompleted.value = false
   await saveSettings()
 }
 
 const test = async (profile) => {
-  if (!await ensureAdmin()) return
   operation.value = profile
   const result = await dualsense.selfTest(profile)
   operation.value = ''
-  if (!result.success) return showError(result.message)
+  if (!result.success) return showError(result.message, 'test')
   testCompleted.value = true
   ElMessage.success(t.value.dualSense.testSuccess)
   await refresh()
 }
 
 const uninstall = async () => {
-  if (!await ensureAdmin()) return
   try {
     await ElMessageBox.confirm(t.value.dualSense.uninstallConfirm, t.value.dualSense.uninstallTitle, {
       type: 'warning', confirmButtonText: t.value.dualSense.uninstall,
@@ -332,7 +328,7 @@ const uninstall = async () => {
   operation.value = 'uninstall'
   const result = await dualsense.uninstall()
   operation.value = ''
-  if (!result.success) return showError(result.message)
+  if (!result.success) return showError(result.message, 'uninstall')
   ElMessage.success(t.value.dualSense.uninstallSuccess)
   await refresh()
 }
@@ -435,6 +431,7 @@ onUnmounted(() => {
   font: inherit;
   text-align: left;
   cursor: pointer;
+  &.is-static { cursor: default; }
   &:disabled { cursor: not-allowed; opacity: .55; }
   &.is-selected { color: var(--el-text-color-primary); background: var(--el-color-primary-light-9); box-shadow: inset 4px 0 0 var(--el-color-primary); }
   kbd { min-width: 42px; padding: 2px 5px; border: 1px solid var(--el-border-color); color: var(--el-text-color-secondary); background: transparent; font-family: 'PixelMplus12', 'Courier New', monospace; font-size: 11px; text-align: center; }

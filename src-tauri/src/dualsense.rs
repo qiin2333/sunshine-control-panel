@@ -21,14 +21,77 @@ const HIDMAESTRO_VERSION: &str = "v1.6.1";
 const HIDMAESTRO_URL: &str =
     "https://github.com/hifihedgehog/HIDMaestro/releases/download/v1.6.1/HIDMaestro-v1.6.1.zip";
 const HIDMAESTRO_SHA256: &str = "00145c23d9838be6089389ce58b3fd2b6766fa9bc0f1f3c60a3c885361b53c34";
+const USBIP_VERSION: &str = "0.9.7.7";
+const USBIP_URL: &str =
+    "https://github.com/vadimgrn/usbip-win2/releases/download/v.0.9.7.7/USBip-0.9.7.7-x64.exe";
+const USBIP_SHA256: &str = "51620fa5f9f8be5932bc9d786deee557ce06d5407a99cab490dcfac71f185fea";
 const MAX_ARCHIVE_BYTES: u64 = 160 * 1024 * 1024;
+const MAX_USBIP_INSTALLER_BYTES: u64 = 48 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES: u64 = 200 * 1024 * 1024;
 const MAX_ARCHIVE_FILES: usize = 256;
 const SIDECAR_EXE: &str = "Sunshine.Ds5Sidecar.exe";
+#[cfg(target_os = "windows")]
+const ELEVATED_DS5_ARG: &str = "--elevated-dualsense";
+#[cfg(target_os = "windows")]
+const MAX_ELEVATED_MESSAGE_BYTES: usize = 64 * 1024;
+#[cfg(target_os = "windows")]
+const ELEVATION_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 static COMPONENT_OPERATION: Lazy<tokio::sync::Mutex<()>> =
     Lazy::new(|| tokio::sync::Mutex::new(()));
 
-#[derive(Debug, Serialize, Clone)]
+type ProgressReporter<'a> = dyn Fn(&str, u32) + Send + Sync + 'a;
+
+#[cfg(target_os = "windows")]
+#[derive(Clone, Copy)]
+enum ElevatedOperation {
+    Install,
+    TestStandard,
+    TestComposite,
+    Uninstall,
+}
+
+#[cfg(target_os = "windows")]
+impl ElevatedOperation {
+    fn as_arg(self) -> &'static str {
+        match self {
+            Self::Install => "install",
+            Self::TestStandard => "test-standard",
+            Self::TestComposite => "test-composite",
+            Self::Uninstall => "uninstall",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "install" => Some(Self::Install),
+            "test-standard" => Some(Self::TestStandard),
+            "test-composite" => Some(Self::TestComposite),
+            "uninstall" => Some(Self::Uninstall),
+            _ => None,
+        }
+    }
+
+    fn timeout(self) -> std::time::Duration {
+        match self {
+            // Installation can include two downloads and a driver installer,
+            // each with its own ten-minute timeout.
+            Self::Install => std::time::Duration::from_secs(35 * 60),
+            Self::TestStandard | Self::TestComposite => std::time::Duration::from_secs(90),
+            Self::Uninstall => std::time::Duration::from_secs(120),
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ElevatedMessage {
+    Progress { stage: String, progress: u32 },
+    Complete { data: serde_json::Value },
+    Error { message: String },
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct DualSenseStatus {
     pub state: String,
     pub installed: bool,
@@ -41,11 +104,49 @@ pub struct DualSenseStatus {
     pub sidecar_path: String,
     pub driver_installed: bool,
     pub usbip_available: bool,
+    pub usbip_version: String,
+    pub usbip_version_valid: bool,
     pub standard_profile: bool,
     pub composite_profile: bool,
     pub in_use: bool,
     pub error_code: String,
     pub detail: String,
+}
+
+#[cfg(target_os = "windows")]
+fn installed_usbip_version() -> Option<String> {
+    use winreg::RegKey;
+    use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY};
+
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let uninstall = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
+    for view in [KEY_READ | KEY_WOW64_64KEY, KEY_READ | KEY_WOW64_32KEY] {
+        let Ok(root) = hklm.open_subkey_with_flags(uninstall, view) else {
+            continue;
+        };
+        for name in root.enum_keys().flatten() {
+            let Ok(key) = root.open_subkey_with_flags(&name, view) else {
+                continue;
+            };
+            let display_name = key
+                .get_value::<String, _>("DisplayName")
+                .unwrap_or_default();
+            if display_name.starts_with("USBip version ") {
+                if let Ok(version) = key.get_value::<String, _>("DisplayVersion") {
+                    return Some(version);
+                }
+                return display_name
+                    .strip_prefix("USBip version ")
+                    .map(str::to_string);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(not(target_os = "windows"))]
+fn installed_usbip_version() -> Option<String> {
+    None
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -64,6 +165,10 @@ fn emit_progress(app: &tauri::AppHandle, stage: &str, progress: u32) {
         "dualsense-operation-progress",
         serde_json::json!({ "stage": stage, "progress": progress.min(100) }),
     );
+}
+
+fn report_progress(progress: &ProgressReporter<'_>, stage: &str, value: u32) {
+    progress(stage, value.min(100));
 }
 
 fn component_root() -> PathBuf {
@@ -132,6 +237,13 @@ fn run_with_timeout(
     timeout_error: &str,
 ) -> Result<std::process::Output, String> {
     const MAX_CAPTURED_OUTPUT: usize = 1024 * 1024;
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
 
     fn drain_pipe<R: Read + Send + 'static>(mut pipe: R) -> std::thread::JoinHandle<Vec<u8>> {
         std::thread::spawn(move || {
@@ -242,6 +354,28 @@ fn run_probe(executable: &Path) -> Result<ProbeResult, String> {
     Ok(result)
 }
 
+fn component_test_failure(output: &std::process::Output, result_path: &Path) -> String {
+    if let Ok(contents) = fs::read_to_string(result_path) {
+        if let Ok(result) = serde_json::from_str::<serde_json::Value>(&contents) {
+            if let Some(error) = result.get("error").and_then(serde_json::Value::as_str) {
+                if let Some(summary) = error.lines().find(|line| !line.trim().is_empty()) {
+                    return format!("DS5-PKG-003: component test failed: {}", summary.trim());
+                }
+            }
+        }
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.trim().is_empty() {
+        return format!("DS5-PKG-003: component test failed: {}", stderr.trim());
+    }
+
+    format!(
+        "DS5-PKG-003: component test process failed with exit code {}",
+        output.status.code().unwrap_or(-1)
+    )
+}
+
 async fn has_active_session() -> bool {
     crate::sunshine::get_active_sessions()
         .await
@@ -297,6 +431,10 @@ fn validate_requested_profile(
     }
 }
 
+fn pinned_usbip_installed(installed_version: Option<&str>) -> bool {
+    installed_version == Some(USBIP_VERSION)
+}
+
 #[tauri::command]
 pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
     let executable = sidecar_path();
@@ -328,7 +466,10 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
         }
         None => (false, ProbeResult::default(), String::new(), String::new()),
     };
-    let state = component_state(installed, verified, result.usbip_available, in_use);
+    let usbip_version = installed_usbip_version().unwrap_or_default();
+    let usbip_version_valid = pinned_usbip_installed(Some(usbip_version.as_str()));
+    let usbip_available = result.usbip_available && usbip_version_valid;
+    let state = component_state(installed, verified, usbip_available, in_use);
 
     Ok(DualSenseStatus {
         state: state.to_string(),
@@ -344,7 +485,9 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
         install_path: active_dir().to_string_lossy().to_string(),
         sidecar_path: executable.to_string_lossy().to_string(),
         driver_installed: result.driver_installed,
-        usbip_available: result.usbip_available,
+        usbip_available,
+        usbip_version,
+        usbip_version_valid,
         standard_profile: result.standard,
         composite_profile: result.composite,
         in_use,
@@ -461,6 +604,120 @@ fn extract_verified_package(archive_path: &Path, staging: &Path) -> Result<(), S
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
+async fn ensure_pinned_usbip(
+    progress: &ProgressReporter<'_>,
+    client: &reqwest::Client,
+    component_root: &Path,
+) -> Result<(), String> {
+    if installed_usbip_version().as_deref() == Some(USBIP_VERSION) {
+        return Ok(());
+    }
+
+    report_progress(progress, "transport_downloading", 3);
+    let installer_path = component_root.join(format!("USBip-{USBIP_VERSION}-x64.partial.exe"));
+    let download_result: Result<(), String> = async {
+        let response = client
+            .get(USBIP_URL)
+            .send()
+            .await
+            .map_err(|error| format!("DS5-DRV-001: USB/IP download failed: {error}"))?
+            .error_for_status()
+            .map_err(|error| format!("DS5-DRV-001: USB/IP download failed: {error}"))?;
+        if response
+            .content_length()
+            .is_some_and(|size| size > MAX_USBIP_INSTALLER_BYTES)
+        {
+            return Err("DS5-DRV-001: USB/IP installer exceeds the download limit".to_string());
+        }
+
+        let mut output = File::create(&installer_path).map_err(|error| error.to_string())?;
+        let mut downloaded = 0u64;
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk
+                .map_err(|error| format!("DS5-DRV-001: USB/IP download failed: {error}"))?;
+            downloaded = downloaded.saturating_add(chunk.len() as u64);
+            if downloaded > MAX_USBIP_INSTALLER_BYTES {
+                return Err(
+                    "DS5-DRV-001: USB/IP installer exceeds the download limit".to_string(),
+                );
+            }
+            output
+                .write_all(&chunk)
+                .map_err(|error| error.to_string())?;
+        }
+        drop(output);
+
+        let actual = sha256_file(&installer_path)?;
+        if actual != USBIP_SHA256 {
+            return Err(format!(
+                "DS5-DRV-001: expected USB/IP SHA-256 {USBIP_SHA256}, got {actual}"
+            ));
+        }
+
+        report_progress(progress, "transport_installing", 10);
+        let executable = installer_path.clone();
+        let output = tokio::task::spawn_blocking(move || {
+            let mut command = Command::new(executable);
+            command.args([
+                "/VERYSILENT",
+                "/SUPPRESSMSGBOXES",
+                "/NORESTART",
+                "/RESTARTEXITCODE=3010",
+                "/SP-",
+            ]);
+            run_with_timeout(
+                &mut command,
+                std::time::Duration::from_secs(600),
+                "DS5-DRV-001: USB/IP installer timed out",
+            )
+        })
+        .await
+        .map_err(|error| format!("DS5-DRV-001: USB/IP installer task failed: {error}"))?
+        .map_err(|error| {
+            if error.starts_with("DS5-DRV-") {
+                error
+            } else {
+                format!("DS5-DRV-001: USB/IP installer failed: {error}")
+            }
+        })?;
+        match output.status.code() {
+            Some(0) => {}
+            Some(3010) => {
+                return Err(
+                    "DS5-DRV-003: USB/IP 0.9.7.7 was installed and Windows must restart"
+                        .to_string(),
+                );
+            }
+            code => {
+                return Err(format!(
+                    "DS5-DRV-001: USB/IP installer failed with exit code {}",
+                    code.unwrap_or(-1)
+                ));
+            }
+        }
+        if installed_usbip_version().as_deref() != Some(USBIP_VERSION) {
+            return Err(format!(
+                "DS5-DRV-001: USB/IP installer completed but version {USBIP_VERSION} is not registered"
+            ));
+        }
+        Ok(())
+    }
+    .await;
+    let _ = fs::remove_file(&installer_path);
+    download_result
+}
+
+#[cfg(not(target_os = "windows"))]
+async fn ensure_pinned_usbip(
+    _progress: &ProgressReporter<'_>,
+    _client: &reqwest::Client,
+    _component_root: &Path,
+) -> Result<(), String> {
+    Ok(())
+}
+
 async fn apply_config(
     enabled: bool,
     audio_haptics: bool,
@@ -494,24 +751,35 @@ async fn apply_config(
     if sync_gamepad_selection {
         apply_gamepad_selection(&mut config, enabled);
     }
-    crate::sunshine::post_sunshine_config(&config).await
+    crate::sunshine::post_sunshine_config(&config).await?;
+    let restart = crate::sunshine::post_tray_restart_action()
+        .await
+        .map_err(|error| {
+            format!(
+                "DS5-CFG-002: configuration was saved, but Sunshine could not be restarted: {error}"
+            )
+        })?;
+    if let Some(response) = restart.filter(|response| !response.status) {
+        let error = if !response.error.trim().is_empty() {
+            response.error
+        } else if !response.message.trim().is_empty() {
+            response.message
+        } else {
+            "Sunshine rejected the restart request".to_string()
+        };
+        return Err(format!(
+            "DS5-CFG-002: configuration was saved, but Sunshine could not be restarted: {error}"
+        ));
+    }
+    Ok(())
 }
 
-#[tauri::command]
-pub async fn dualsense_install(app: tauri::AppHandle) -> Result<DualSenseStatus, String> {
-    let _operation = COMPONENT_OPERATION.try_lock().map_err(|_| {
-        "DS5-RUN-002: another DualSense component operation is still running".to_string()
-    })?;
-    ensure_no_active_session().await?;
-    if !crate::bat_runner::is_elevated() {
-        return Err(
-            "DS5-PKG-004: restart Sunshine Control Panel as administrator to install the protected component"
-                .to_string(),
-        );
-    }
+async fn dualsense_install_impl(
+    progress: &ProgressReporter<'_>,
+) -> Result<DualSenseStatus, String> {
     let previous_enabled = config_bool("ds5_enabled", false);
     let previous_audio_haptics = config_bool("ds5_audio_haptics", false);
-    emit_progress(&app, "preparing", 1);
+    report_progress(progress, "preparing", 1);
     let source = sidecar_source_dir()?;
     let root = component_root();
     fs::create_dir_all(&root).map_err(|error| error.to_string())?;
@@ -525,21 +793,23 @@ pub async fn dualsense_install(app: tauri::AppHandle) -> Result<DualSenseStatus,
     let active = active_dir();
     let backup = root.join("previous");
     let had_previous = active.exists();
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(600))
+        .user_agent("foundation-sunshine-dualsense-component")
+        .build()
+        .map_err(|error| error.to_string())?;
 
     let install_result: Result<(), String> = async {
-        let response = reqwest::Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_secs(600))
-            .user_agent("foundation-sunshine-dualsense-component")
-            .build()
-            .map_err(|error| error.to_string())?
+        ensure_pinned_usbip(progress, &client, &root).await?;
+        let response = client
             .get(HIDMAESTRO_URL)
             .send()
             .await
             .map_err(|error| format!("DS5-PKG-001: download failed: {error}"))?
             .error_for_status()
             .map_err(|error| format!("DS5-PKG-001: download failed: {error}"))?;
-        emit_progress(&app, "downloading", 3);
+        report_progress(progress, "downloading", 12);
         let total_size = response.content_length();
         if total_size.is_some_and(|size| size > MAX_ARCHIVE_BYTES) {
             return Err("DS5-PKG-002: release archive exceeds the download limit".to_string());
@@ -557,20 +827,20 @@ pub async fn dualsense_install(app: tauri::AppHandle) -> Result<DualSenseStatus,
                 .write_all(&chunk)
                 .map_err(|error| error.to_string())?;
             if let Some(total) = total_size.filter(|total| *total != 0) {
-                let download_progress = (downloaded * 70 / total).min(70) as u32;
-                emit_progress(&app, "downloading", 3 + download_progress);
+                let download_progress = (downloaded * 60 / total).min(60) as u32;
+                report_progress(progress, "downloading", 12 + download_progress);
             }
         }
         drop(output);
 
-        emit_progress(&app, "verifying", 76);
+        report_progress(progress, "verifying", 76);
         let archive = archive_path.clone();
         let destination = staging.clone();
         tokio::task::spawn_blocking(move || extract_verified_package(&archive, &destination))
             .await
             .map_err(|error| error.to_string())??;
         copy_runtime_files(&source, &staging)?;
-        emit_progress(&app, "probing", 88);
+        report_progress(progress, "probing", 88);
         let probe_executable = staging.join(SIDECAR_EXE);
         let probe_path = probe_executable.clone();
         tokio::task::spawn_blocking(move || run_probe(&probe_path))
@@ -606,7 +876,7 @@ pub async fn dualsense_install(app: tauri::AppHandle) -> Result<DualSenseStatus,
                 "DS5-PKG-002: unable to activate component: {error}"
             ));
         }
-        emit_progress(&app, "activating", 96);
+        report_progress(progress, "activating", 96);
         Ok(())
     }
     .await;
@@ -623,6 +893,12 @@ pub async fn dualsense_install(app: tauri::AppHandle) -> Result<DualSenseStatus,
     )
     .await
     {
+        // The component and configuration are already valid when only the
+        // runtime restart failed. Keep them so a manual restart can finish the
+        // activation instead of rolling back to a missing or older component.
+        if config_error.starts_with("DS5-CFG-002:") {
+            return Err(config_error);
+        }
         let rollback_result = (|| -> Result<(), String> {
             if active.exists() {
                 fs::remove_dir_all(&active).map_err(|error| {
@@ -647,8 +923,308 @@ pub async fn dualsense_install(app: tauri::AppHandle) -> Result<DualSenseStatus,
             )),
         };
     }
-    emit_progress(&app, "complete", 100);
+    report_progress(progress, "complete", 100);
     dualsense_get_status().await
+}
+
+#[cfg(target_os = "windows")]
+fn elevated_pipe_name(token: uuid::Uuid) -> String {
+    format!(r"\\.\pipe\sunshine-dualsense-{token}")
+}
+
+#[cfg(target_os = "windows")]
+async fn connect_elevated_pipe(
+    token: uuid::Uuid,
+) -> Result<tokio::net::windows::named_pipe::NamedPipeClient, String> {
+    use tokio::net::windows::named_pipe::ClientOptions;
+
+    let pipe_name = elevated_pipe_name(token);
+    for _ in 0..100 {
+        match ClientOptions::new().read(true).write(true).open(&pipe_name) {
+            Ok(client) => return Ok(client),
+            Err(error) if matches!(error.raw_os_error(), Some(2 | 231)) => {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            Err(error) => {
+                return Err(format!(
+                    "DS5-PKG-004: unable to connect to the administrator operation: {error}"
+                ));
+            }
+        }
+    }
+    Err("DS5-PKG-004: administrator operation pipe was unavailable".to_string())
+}
+
+#[cfg(target_os = "windows")]
+async fn run_elevated_helper(operation: ElevatedOperation, token: uuid::Uuid) -> i32 {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let Ok(pipe) = connect_elevated_pipe(token).await else {
+        return 3;
+    };
+    let (mut pipe_reader, mut pipe_writer) = tokio::io::split(pipe);
+    // The parent never sends application data. EOF means that it timed out or
+    // failed, so terminate this elevated helper instead of leaving an orphaned
+    // operation running at high integrity.
+    let disconnect_watcher = tokio::spawn(async move {
+        let mut control = [0u8; 1];
+        let _ = pipe_reader.read(&mut control).await;
+        std::process::exit(5);
+    });
+    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<ElevatedMessage>();
+    let writer = tokio::spawn(async move {
+        while let Some(message) = receiver.recv().await {
+            let mut encoded = serde_json::to_vec(&message).map_err(|error| error.to_string())?;
+            encoded.push(b'\n');
+            pipe_writer
+                .write_all(&encoded)
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        pipe_writer
+            .shutdown()
+            .await
+            .map_err(|error| error.to_string())
+    });
+
+    let progress_sender = sender.clone();
+    let progress = move |stage: &str, value: u32| {
+        let _ = progress_sender.send(ElevatedMessage::Progress {
+            stage: stage.to_string(),
+            progress: value.min(100),
+        });
+    };
+    let outcome: Result<serde_json::Value, String> = async {
+        if !crate::bat_runner::is_elevated() {
+            return Err("DS5-PKG-004: administrator authorization was not granted".to_string());
+        }
+        ensure_no_active_session().await?;
+        match operation {
+            ElevatedOperation::Install => {
+                serde_json::to_value(dualsense_install_impl(&progress).await?)
+                    .map_err(|error| error.to_string())
+            }
+            ElevatedOperation::TestStandard => {
+                dualsense_self_test_impl("standard".to_string()).await
+            }
+            ElevatedOperation::TestComposite => {
+                dualsense_self_test_impl("composite".to_string()).await
+            }
+            ElevatedOperation::Uninstall => serde_json::to_value(dualsense_uninstall_impl().await?)
+                .map_err(|error| error.to_string()),
+        }
+    }
+    .await;
+
+    let succeeded = outcome.is_ok();
+    let final_message = match outcome {
+        Ok(data) => ElevatedMessage::Complete { data },
+        Err(message) => ElevatedMessage::Error { message },
+    };
+    let _ = sender.send(final_message);
+    drop(progress);
+    drop(sender);
+    let writer_result = writer.await;
+    disconnect_watcher.abort();
+    let _ = disconnect_watcher.await;
+    match writer_result {
+        Ok(Ok(())) => {}
+        Ok(Err(_)) | Err(_) => return 4,
+    }
+    if succeeded { 0 } else { 1 }
+}
+
+/// Handle a narrowly allowlisted elevated DualSense operation before Tauri or
+/// WebView startup. No caller-provided paths or commands are accepted.
+#[cfg(target_os = "windows")]
+pub(crate) fn try_handle_elevated_command() -> Option<i32> {
+    let mut args = std::env::args().skip(1);
+    if args.next()?.as_str() != ELEVATED_DS5_ARG {
+        return None;
+    }
+    let operation = match args.next().as_deref().and_then(ElevatedOperation::parse) {
+        Some(operation) => operation,
+        None => return Some(2),
+    };
+    let token = match args
+        .next()
+        .and_then(|value| uuid::Uuid::parse_str(&value).ok())
+    {
+        Some(token) if args.next().is_none() => token,
+        _ => return Some(2),
+    };
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(_) => return Some(3),
+    };
+    Some(runtime.block_on(run_elevated_helper(operation, token)))
+}
+
+#[cfg(target_os = "windows")]
+async fn read_limited_elevated_line<R: tokio::io::AsyncBufRead + Unpin>(
+    reader: &mut R,
+) -> Result<Option<String>, String> {
+    use tokio::io::AsyncBufReadExt;
+
+    let mut bytes = Vec::with_capacity(1024);
+    loop {
+        let available = reader
+            .fill_buf()
+            .await
+            .map_err(|error| format!("DS5-PKG-004: administrator IPC read failed: {error}"))?;
+        if available.is_empty() {
+            if bytes.is_empty() {
+                return Ok(None);
+            }
+            break;
+        }
+        let newline = available.iter().position(|byte| *byte == b'\n');
+        let take = newline.map_or(available.len(), |index| index);
+        if bytes.len().saturating_add(take) > MAX_ELEVATED_MESSAGE_BYTES {
+            return Err(format!(
+                "DS5-PKG-004: administrator IPC message exceeds {MAX_ELEVATED_MESSAGE_BYTES} bytes"
+            ));
+        }
+        bytes.extend_from_slice(&available[..take]);
+        reader.consume(take + usize::from(newline.is_some()));
+        if newline.is_some() {
+            break;
+        }
+    }
+    if bytes.last() == Some(&b'\r') {
+        bytes.pop();
+    }
+    String::from_utf8(bytes)
+        .map(Some)
+        .map_err(|error| format!("DS5-PKG-004: administrator IPC was not UTF-8: {error}"))
+}
+
+#[cfg(target_os = "windows")]
+async fn run_elevated_operation(
+    app: Option<&tauri::AppHandle>,
+    operation: ElevatedOperation,
+) -> Result<serde_json::Value, String> {
+    use tokio::io::BufReader;
+    use tokio::net::windows::named_pipe::ServerOptions;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    let token = uuid::Uuid::new_v4();
+    let pipe_name = elevated_pipe_name(token);
+    let server = ServerOptions::new()
+        .access_inbound(true)
+        .access_outbound(true)
+        .first_pipe_instance(true)
+        .reject_remote_clients(true)
+        .create(&pipe_name)
+        .map_err(|error| format!("DS5-PKG-004: unable to create administrator IPC: {error}"))?;
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("DS5-PKG-004: unable to locate Control Panel: {error}"))?;
+    let executable = executable.to_string_lossy().replace('\'', "''");
+    let ps_script = format!(
+        "$ErrorActionPreference = 'Stop'; try {{ $p = Start-Process -FilePath '{executable}' -ArgumentList '{ELEVATED_DS5_ARG}','{}','{token}' -Verb RunAs -WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode }} catch {{ [Console]::Error.WriteLine($_.Exception.Message); exit 1223 }}",
+        operation.as_arg()
+    );
+    let mut launcher = tokio::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &ps_script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map_err(|error| {
+            format!("DS5-PKG-004: unable to request administrator authorization: {error}")
+        })?;
+
+    tokio::select! {
+        connected = server.connect() => connected.map_err(|error| {
+            format!("DS5-PKG-004: administrator IPC connection failed: {error}")
+        })?,
+        status = launcher.wait() => {
+            let status = status.map_err(|error| error.to_string())?;
+            return Err(format!(
+                "DS5-PKG-004: administrator authorization was canceled or the helper exited early ({})",
+                status.code().unwrap_or(-1)
+            ));
+        },
+        _ = tokio::time::sleep(ELEVATION_CONNECT_TIMEOUT) => {
+            let _ = launcher.start_kill();
+            let _ = launcher.wait().await;
+            return Err("DS5-PKG-004: administrator authorization timed out".to_string());
+        },
+    }
+
+    let receive = async move {
+        let mut reader = BufReader::new(server);
+        let mut final_result = None;
+        while let Some(line) = read_limited_elevated_line(&mut reader).await? {
+            let message: ElevatedMessage = serde_json::from_str(&line).map_err(|error| {
+                format!("DS5-PKG-004: invalid administrator IPC response: {error}")
+            })?;
+            match message {
+                ElevatedMessage::Progress { stage, progress } => {
+                    if let Some(app) = app {
+                        emit_progress(app, &stage, progress);
+                    }
+                }
+                ElevatedMessage::Complete { data } => final_result = Some(Ok(data)),
+                ElevatedMessage::Error { message } => final_result = Some(Err(message)),
+            }
+        }
+        Ok::<_, String>(final_result)
+    };
+    let final_result = match tokio::time::timeout(operation.timeout(), receive).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(error)) => {
+            // Dropping the pipe wakes the elevated helper's disconnect watcher.
+            if tokio::time::timeout(std::time::Duration::from_secs(5), launcher.wait())
+                .await
+                .is_err()
+            {
+                let _ = launcher.start_kill();
+                let _ = launcher.wait().await;
+            }
+            return Err(error);
+        }
+        Err(_) => {
+            // Dropping the timed-out receive future closes the pipe and causes
+            // the helper to terminate itself even though this process cannot
+            // directly kill a high-integrity child.
+            if tokio::time::timeout(std::time::Duration::from_secs(5), launcher.wait())
+                .await
+                .is_err()
+            {
+                let _ = launcher.start_kill();
+                let _ = launcher.wait().await;
+            }
+            return Err("DS5-PKG-004: administrator operation timed out".to_string());
+        }
+    };
+    let status = launcher.wait().await.map_err(|error| error.to_string())?;
+    match final_result {
+        Some(Ok(data)) if status.success() => Ok(data),
+        Some(Err(error)) => Err(error),
+        _ => Err(format!(
+            "DS5-PKG-004: administrator helper failed with exit code {}",
+            status.code().unwrap_or(-1)
+        )),
+    }
+}
+
+#[tauri::command]
+pub async fn dualsense_install(app: tauri::AppHandle) -> Result<DualSenseStatus, String> {
+    let _operation = COMPONENT_OPERATION.try_lock().map_err(|_| {
+        "DS5-RUN-002: another DualSense component operation is still running".to_string()
+    })?;
+    ensure_no_active_session().await?;
+    #[cfg(target_os = "windows")]
+    if !crate::bat_runner::is_elevated() {
+        let data = run_elevated_operation(Some(&app), ElevatedOperation::Install).await?;
+        return serde_json::from_value(data)
+            .map_err(|error| format!("DS5-PKG-003: invalid administrator result: {error}"));
+    }
+    let progress = |stage: &str, value: u32| emit_progress(&app, stage, value);
+    dualsense_install_impl(&progress).await
 }
 
 #[tauri::command]
@@ -665,10 +1241,61 @@ pub async fn dualsense_set_config(
         let probe = tokio::task::spawn_blocking(move || run_probe(&executable))
             .await
             .map_err(|error| format!("DS5-PKG-003: sidecar probe task failed: {error}"))??;
-        validate_requested_profile(enabled, audio_haptics, probe.usbip_available)?;
+        let usbip_version = installed_usbip_version();
+        let usbip_available =
+            probe.usbip_available && pinned_usbip_installed(usbip_version.as_deref());
+        validate_requested_profile(enabled, audio_haptics, usbip_available)?;
     }
     apply_config(enabled, audio_haptics, Some(&sidecar_path()), true).await?;
     dualsense_get_status().await
+}
+
+async fn dualsense_self_test_impl(profile: String) -> Result<serde_json::Value, String> {
+    if profile != "standard" && profile != "composite" {
+        return Err("DS5-PKG-003: invalid self-test profile".to_string());
+    }
+    let result_path = component_root().join(format!("self-test-{}.json", std::process::id()));
+    #[cfg(target_os = "windows")]
+    {
+        let executable = sidecar_path();
+        let test_profile = profile.clone();
+        let test_result = result_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let _ = fs::remove_file(&test_result);
+            let mut command = Command::new(&executable);
+            command
+                .args(["--self-test", &test_profile, "--result"])
+                .arg(&test_result)
+                .current_dir(executable.parent().unwrap_or_else(|| Path::new(".")));
+            let outcome = run_with_timeout(
+                &mut command,
+                std::time::Duration::from_secs(60),
+                "DS5-PKG-003: component self-test timed out",
+            )
+            .and_then(|output| {
+                output
+                    .status
+                    .success()
+                    .then_some(())
+                    .ok_or_else(|| component_test_failure(&output, &test_result))
+            });
+            if outcome.is_err() {
+                let _ = fs::remove_file(&test_result);
+            }
+            outcome
+        })
+        .await
+        .map_err(|error| format!("DS5-PKG-003: component test task failed: {error}"))??;
+    };
+    #[cfg(not(target_os = "windows"))]
+    return Err("DS5-PKG-003: component tests are only supported on Windows".to_string());
+    let result = fs::read_to_string(&result_path);
+    let _ = fs::remove_file(&result_path);
+    let result = result
+        .map_err(|error| format!("DS5-PKG-003: component test produced no result: {error}"))?;
+    let json: serde_json::Value = serde_json::from_str(&result)
+        .map_err(|error| format!("DS5-PKG-003: invalid component test result: {error}"))?;
+    Ok(json)
 }
 
 #[tauri::command]
@@ -680,63 +1307,19 @@ pub async fn dualsense_self_test(profile: String) -> Result<serde_json::Value, S
     if profile != "standard" && profile != "composite" {
         return Err("DS5-PKG-003: invalid self-test profile".to_string());
     }
-    if !crate::bat_runner::is_elevated() {
-        return Err(
-            "DS5-PKG-004: restart Sunshine Control Panel as administrator to test the protected component"
-                .to_string(),
-        );
-    }
-    let result_path = component_root().join(format!("self-test-{}.json", std::process::id()));
     #[cfg(target_os = "windows")]
-    {
-        let executable = sidecar_path();
-        let test_profile = profile.clone();
-        let test_result = result_path.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut command = Command::new(&executable);
-            command
-                .args(["--self-test", &test_profile, "--result"])
-                .arg(&test_result)
-                .current_dir(executable.parent().unwrap_or_else(|| Path::new(".")));
-            run_with_timeout(
-                &mut command,
-                std::time::Duration::from_secs(60),
-                "DS5-PKG-003: component self-test timed out",
-            )
-            .and_then(|output| {
-                output.status.success().then_some(()).ok_or_else(|| {
-                    format!(
-                        "DS5-PKG-003: component test process failed with exit code {}",
-                        output.status.code().unwrap_or(-1)
-                    )
-                })
-            })
-        })
-        .await
-        .map_err(|error| format!("DS5-PKG-003: component test task failed: {error}"))??;
-    };
-    #[cfg(not(target_os = "windows"))]
-    return Err("DS5-PKG-003: component tests are only supported on Windows".to_string());
-    let result = fs::read_to_string(&result_path)
-        .map_err(|error| format!("DS5-PKG-003: component test produced no result: {error}"))?;
-    let _ = fs::remove_file(&result_path);
-    let json: serde_json::Value = serde_json::from_str(&result)
-        .map_err(|error| format!("DS5-PKG-003: invalid component test result: {error}"))?;
-    Ok(json)
+    if !crate::bat_runner::is_elevated() {
+        let operation = if profile == "composite" {
+            ElevatedOperation::TestComposite
+        } else {
+            ElevatedOperation::TestStandard
+        };
+        return run_elevated_operation(None, operation).await;
+    }
+    dualsense_self_test_impl(profile).await
 }
 
-#[tauri::command]
-pub async fn dualsense_uninstall() -> Result<DualSenseStatus, String> {
-    let _operation = COMPONENT_OPERATION.try_lock().map_err(|_| {
-        "DS5-RUN-002: another DualSense component operation is still running".to_string()
-    })?;
-    ensure_no_active_session().await?;
-    if !crate::bat_runner::is_elevated() {
-        return Err(
-            "DS5-PKG-004: restart Sunshine Control Panel as administrator to uninstall the protected component"
-                .to_string(),
-        );
-    }
+async fn dualsense_uninstall_impl() -> Result<DualSenseStatus, String> {
     apply_config(false, true, None, true).await?;
     let root = component_root();
     if root.exists() {
@@ -746,9 +1329,33 @@ pub async fn dualsense_uninstall() -> Result<DualSenseStatus, String> {
     dualsense_get_status().await
 }
 
+#[tauri::command]
+pub async fn dualsense_uninstall() -> Result<DualSenseStatus, String> {
+    let _operation = COMPONENT_OPERATION.try_lock().map_err(|_| {
+        "DS5-RUN-002: another DualSense component operation is still running".to_string()
+    })?;
+    ensure_no_active_session().await?;
+    #[cfg(target_os = "windows")]
+    if !crate::bat_runner::is_elevated() {
+        let data = run_elevated_operation(None, ElevatedOperation::Uninstall).await?;
+        return serde_json::from_value(data)
+            .map_err(|error| format!("DS5-PKG-003: invalid administrator result: {error}"));
+    }
+    dualsense_uninstall_impl().await
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{apply_gamepad_selection, component_state, validate_requested_profile};
+    #[cfg(target_os = "windows")]
+    use super::{
+        ElevatedMessage, ElevatedOperation, MAX_ELEVATED_MESSAGE_BYTES, elevated_pipe_name,
+        read_limited_elevated_line,
+    };
+    use super::{
+        apply_gamepad_selection, component_state, component_test_failure, pinned_usbip_installed,
+        validate_requested_profile,
+    };
+    use std::process::Command;
 
     #[test]
     fn composite_profile_requires_usbip() {
@@ -797,6 +1404,95 @@ mod tests {
         assert_eq!(
             explicit_config.get("gamepad"),
             Some(&serde_json::json!("x360"))
+        );
+    }
+
+    #[test]
+    fn usbip_requires_the_exact_pinned_version() {
+        assert!(pinned_usbip_installed(Some("0.9.7.7")));
+        assert!(!pinned_usbip_installed(Some("0.9.7.3")));
+        assert!(!pinned_usbip_installed(None));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn elevated_operations_are_strictly_allowlisted() {
+        assert!(matches!(
+            ElevatedOperation::parse("install"),
+            Some(ElevatedOperation::Install)
+        ));
+        assert!(matches!(
+            ElevatedOperation::parse("test-standard"),
+            Some(ElevatedOperation::TestStandard)
+        ));
+        assert!(ElevatedOperation::parse("test-custom").is_none());
+        assert!(ElevatedOperation::parse("install C:\\Windows").is_none());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn elevated_ipc_uses_a_random_local_pipe_and_typed_messages() {
+        let token = uuid::Uuid::parse_str("55d1fc2d-b474-4a86-a867-c6c514c077ef").unwrap();
+        assert_eq!(
+            elevated_pipe_name(token),
+            r"\\.\pipe\sunshine-dualsense-55d1fc2d-b474-4a86-a867-c6c514c077ef"
+        );
+        let encoded = serde_json::to_string(&ElevatedMessage::Progress {
+            stage: "probing".to_string(),
+            progress: 88,
+        })
+        .unwrap();
+        let decoded: ElevatedMessage = serde_json::from_str(&encoded).unwrap();
+        assert!(matches!(
+            decoded,
+            ElevatedMessage::Progress {
+                ref stage,
+                progress: 88
+            } if stage == "probing"
+        ));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    async fn elevated_ipc_rejects_oversized_messages_without_waiting_for_eof() {
+        use tokio::io::{AsyncWriteExt, BufReader};
+
+        let (reader, mut writer) = tokio::io::duplex(MAX_ELEVATED_MESSAGE_BYTES + 2);
+        let write = tokio::spawn(async move {
+            writer
+                .write_all(&vec![b'x'; MAX_ELEVATED_MESSAGE_BYTES + 1])
+                .await
+                .unwrap();
+        });
+        let error = read_limited_elevated_line(&mut BufReader::new(reader))
+            .await
+            .unwrap_err();
+        write.await.unwrap();
+        assert!(error.contains("exceeds 65536 bytes"));
+    }
+
+    #[test]
+    fn component_test_failure_preserves_sidecar_diagnostic() {
+        let result_path = std::env::temp_dir().join(format!(
+            "sunshine-ds5-test-failure-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&result_path, r#"{"error":"usbip-win2 attach failed"}"#).unwrap();
+        let output = if cfg!(windows) {
+            Command::new("cmd")
+                .args(["/c", "exit", "1"])
+                .output()
+                .unwrap()
+        } else {
+            Command::new("sh").args(["-c", "exit 1"]).output().unwrap()
+        };
+
+        let error = component_test_failure(&output, &result_path);
+        let _ = std::fs::remove_file(result_path);
+
+        assert_eq!(
+            error,
+            "DS5-PKG-003: component test failed: usbip-win2 attach failed"
         );
     }
 }

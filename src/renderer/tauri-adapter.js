@@ -102,8 +102,6 @@ export const vigem = {
 }
 
 export const dualsense = {
-  isAdmin: () => wrapDefault('is_running_as_admin', false),
-  restartAsAdmin: () => wrapResult('restart_as_admin'),
   getStatus: () => wrapResult('dualsense_get_status'),
   install: () => wrapResult('dualsense_install'),
   uninstall: () => wrapResult('dualsense_uninstall'),

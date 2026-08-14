@@ -191,6 +191,7 @@ const expandedSections = ref([])
 const status = ref({
   state: 'loading', installed: false, verified: false, enabled: false,
   audio_haptics: false, driver_installed: false, usbip_available: false, usbip_version: '',
+  usbip_version_valid: false,
   standard_profile: false, composite_profile: false, in_use: false,
   error_code: '', detail: '',
 })
@@ -212,6 +213,12 @@ const selectedTestLabel = computed(() => audioHaptics.value ? t.value.dualSense.
 const canTestSelectedProfile = computed(() => audioHaptics.value
   ? status.value.composite_profile && status.value.usbip_available
   : status.value.standard_profile)
+const usbTransportDetail = computed(() => {
+  if (!status.value.usbip_version_valid) return t.value.dualSense.pinnedTransportRequired
+  if (status.value.usbip_available) return `USB/IP ${status.value.usbip_version}`
+  if (!status.value.installed) return t.value.dualSense.transportCheckPending
+  return t.value.dualSense.transportProbeFailed
+})
 const showNotice = computed(() => ['not_installed', 'repair_required', 'transport_missing', 'in_use'].includes(status.value.state))
 const healthRows = computed(() => [
   {
@@ -235,9 +242,7 @@ const healthRows = computed(() => [
   {
     label: t.value.dualSense.usbTransport,
     state: status.value.usbip_available ? t.value.dualSense.available : t.value.dualSense.unavailable,
-    detail: status.value.usbip_version
-      ? (status.value.usbip_available ? 'USB/IP 0.9.7.7' : t.value.dualSense.pinnedTransportRequired)
-      : t.value.dualSense.pinnedTransportRequired,
+    detail: usbTransportDetail.value,
     tone: status.value.usbip_available ? 'ok' : 'warn',
   },
   {
@@ -288,11 +293,12 @@ const install = async () => {
   operation.value = 'install'
   operationProgress.value = 0
   const result = await dualsense.install()
-  operation.value = ''
   if (!result.success) {
     await refresh(true)
+    operation.value = ''
     return showError(result.message, 'install')
   }
+  operation.value = ''
   ElMessage.success(t.value.dualSense.installSuccess)
   await refresh()
 }
@@ -300,7 +306,6 @@ const install = async () => {
 const saveSettings = async () => {
   saving.value = true
   const result = await dualsense.setConfig(enabled.value, audioHaptics.value)
-  saving.value = false
   if (!result.success) {
     if (String(result.message || '').includes('DS5-CFG-002')) {
       await refresh(true)
@@ -308,8 +313,10 @@ const saveSettings = async () => {
       enabled.value = status.value.enabled
       audioHaptics.value = status.value.audio_haptics && status.value.usbip_available
     }
+    saving.value = false
     return showError(result.message, 'config')
   }
+  saving.value = false
   status.value = result.data
   ElMessage.success(t.value.dualSense.configSuccess)
 }

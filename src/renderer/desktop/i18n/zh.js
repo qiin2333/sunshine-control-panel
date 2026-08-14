@@ -1007,6 +1007,8 @@ export const zh = {
     nativeModeTip: '额外提供游戏生成第 3/4 声道 authored haptics 所需的四声道音频 profile。',
     nativeUnavailable: '安装并检测到 USB 传输后可用。',
     pinnedTransportRequired: '需要安装指定的 USB/IP 0.9.7.7',
+    transportCheckPending: 'USB/IP 0.9.7.7 已安装；安装 DualSense 组件后验证传输',
+    transportProbeFailed: 'USB/IP 0.9.7.7 已安装，但传输自检未通过；请修复组件',
     install: '安装组件',
     repair: '修复组件',
     testStandard: '测试普通控制',

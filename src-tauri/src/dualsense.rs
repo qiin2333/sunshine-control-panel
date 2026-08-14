@@ -47,6 +47,7 @@ pub struct DualSenseStatus {
     pub driver_installed: bool,
     pub usbip_available: bool,
     pub usbip_version: String,
+    pub usbip_version_valid: bool,
     pub standard_profile: bool,
     pub composite_profile: bool,
     pub in_use: bool,
@@ -397,8 +398,8 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
         None => (false, ProbeResult::default(), String::new(), String::new()),
     };
     let usbip_version = installed_usbip_version().unwrap_or_default();
-    let usbip_available =
-        result.usbip_available && pinned_usbip_installed(Some(usbip_version.as_str()));
+    let usbip_version_valid = pinned_usbip_installed(Some(usbip_version.as_str()));
+    let usbip_available = result.usbip_available && usbip_version_valid;
     let state = component_state(installed, verified, usbip_available, in_use);
 
     Ok(DualSenseStatus {
@@ -417,6 +418,7 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
         driver_installed: result.driver_installed,
         usbip_available,
         usbip_version,
+        usbip_version_valid,
         standard_profile: result.standard,
         composite_profile: result.composite,
         in_use,

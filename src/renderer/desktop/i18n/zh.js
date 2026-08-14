@@ -759,6 +759,7 @@ export const zh = {
     calibrationWaitingHdr: '客户端 VDD 已启动，但 HDR 尚未开启',
     calibrationWaitingHdrHint: '请从客户端串流中启用 HDR，保持会话连接，然后刷新状态。',
     calibrationReady: '可以校准当前客户端 VDD',
+    calibrationReadyHint: '请启动 Windows HDR 校准，为当前客户端创建并保存校准配置。',
     calibrationWaitingStream: '请先通过专属 VDD 启动 HDR 串流，然后刷新状态。',
     calibrationPeak: '峰值亮度',
     calibrationMinimum: '最低亮度',

@@ -294,17 +294,19 @@
       </section>
 
       <el-form
-        v-show="activeSection === 'display' || activeSection === 'driver'"
-        :id="`vdd-panel-${activeSection}`"
-        role="tabpanel"
-        :aria-labelledby="`vdd-tab-${activeSection}`"
+        v-if="activeSection === 'display' || activeSection === 'driver'"
         :model="settings"
         label-position="top"
         size="default"
         class="vdd-form"
       >
-        <div :class="['form-layout', `is-${activeSection}`]">
-          <div v-show="activeSection === 'display'" class="form-main">
+        <div
+          :id="`vdd-panel-${activeSection}`"
+          role="tabpanel"
+          :aria-labelledby="`vdd-tab-${activeSection}`"
+          :class="['form-layout', `is-${activeSection}`]"
+        >
+          <div v-if="activeSection === 'display'" class="form-main">
             <div class="section-card">
               <div class="section-header">
                 <h3>{{ t.vddSettings.displaySection }}</h3>
@@ -503,7 +505,7 @@
             </div>
           </div>
 
-          <div v-show="activeSection === 'driver'" class="form-side">
+          <div v-if="activeSection === 'driver'" class="form-side">
             <div class="section-card utility-card">
               <div class="section-header">
                 <h3>{{ t.vddSettings.driverTools }}</h3>
@@ -1056,7 +1058,7 @@ const calibrationStatusDescription = computed(() => {
   if (calibrationStatus.calibrated) return t.value.vddSettings.calibrationDetectedHint
   if (!calibrationStatus.vddActive) return t.value.vddSettings.calibrationWaitingStream
   if (!calibrationStatus.hdrEnabled) return t.value.vddSettings.calibrationWaitingHdrHint
-  return t.value.vddSettings.calibrationWaitingStream
+  return t.value.vddSettings.calibrationReadyHint
 })
 
 const formatCalibrationNits = (value) => {
@@ -1173,8 +1175,13 @@ const launchPhysicalHdrCalibration = async () => {
 }
 
 const openHdrCalibrationStore = async () => {
-  const opened = await openExternalUrl('ms-windows-store://pdp/?ProductId=9N7F2SM5D1LR')
-  if (!opened) ElMessage.error(t.value.vddSettings.calibrationStoreFailed)
+  try {
+    const opened = await openExternalUrl('ms-windows-store://pdp/?ProductId=9N7F2SM5D1LR')
+    if (!opened) ElMessage.error(t.value.vddSettings.calibrationStoreFailed)
+  } catch (error) {
+    console.error('Failed to open HDR calibration store page:', error)
+    ElMessage.error(t.value.vddSettings.calibrationStoreFailed)
+  }
 }
 
 const markSettingsClean = () => {

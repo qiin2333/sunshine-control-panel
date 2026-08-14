@@ -8,10 +8,10 @@ const HDR_CALIBRATION_AUMID: &str =
 pub fn launch_windows_hdr_calibration() -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        use windows::Win32::Foundation::HWND;
-        use windows::Win32::UI::Shell::ShellExecuteW;
-        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-        use windows::core::PCWSTR;
+        use ::windows::Win32::Foundation::HWND;
+        use ::windows::Win32::UI::Shell::ShellExecuteW;
+        use ::windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        use ::windows::core::PCWSTR;
 
         let to_wide = |value: &str| {
             value

@@ -109,15 +109,67 @@ fn config_bool(key: &str, default_value: bool) -> bool {
         .unwrap_or(default_value)
 }
 
+fn sha256_file(path: &Path) -> Result<String, String> {
+    let mut input = File::open(path)
+        .map_err(|error| format!("DS5-PKG-002: unable to open component file: {error}"))?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let count = input
+            .read(&mut buffer)
+            .map_err(|error| format!("DS5-PKG-002: unable to hash component file: {error}"))?;
+        if count == 0 {
+            break;
+        }
+        digest.update(&buffer[..count]);
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
+fn run_with_timeout(
+    command: &mut Command,
+    timeout: std::time::Duration,
+    timeout_error: &str,
+) -> Result<std::process::Output, String> {
+    command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("DS5-PKG-003: unable to start sidecar: {error}"))?;
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if child
+            .try_wait()
+            .map_err(|error| format!("DS5-PKG-003: unable to wait for sidecar: {error}"))?
+            .is_some()
+        {
+            return child.wait_with_output().map_err(|error| {
+                format!("DS5-PKG-003: unable to collect sidecar output: {error}")
+            });
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(timeout_error.to_string());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+}
+
 fn run_probe(executable: &Path) -> Result<ProbeResult, String> {
     if !executable.is_file() {
         return Err("DS5-PKG-003: Sunshine DualSense sidecar is missing".to_string());
     }
-    let output = Command::new(executable)
+    let mut command = Command::new(executable);
+    command
         .arg("--probe")
-        .current_dir(executable.parent().unwrap_or_else(|| Path::new(".")))
-        .output()
-        .map_err(|error| format!("DS5-PKG-003: unable to start sidecar probe: {error}"))?;
+        .current_dir(executable.parent().unwrap_or_else(|| Path::new(".")));
+    let output = run_with_timeout(
+        &mut command,
+        std::time::Duration::from_secs(15),
+        "DS5-PKG-003: sidecar probe timed out",
+    )?;
     if !output.status.success() {
         return Err(format!(
             "DS5-PKG-003: sidecar probe failed: {}",
@@ -162,7 +214,7 @@ async fn ensure_no_active_session() -> Result<(), String> {
 fn component_state(
     installed: bool,
     verified: bool,
-    driver_installed: bool,
+    transport_available: bool,
     in_use: bool,
 ) -> &'static str {
     if in_use && installed {
@@ -171,7 +223,7 @@ fn component_state(
         "not_installed"
     } else if !verified {
         "repair_required"
-    } else if !driver_installed {
+    } else if !transport_available {
         "transport_missing"
     } else {
         "ready"
@@ -223,7 +275,7 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
         }
         None => (false, ProbeResult::default(), String::new(), String::new()),
     };
-    let state = component_state(installed, verified, result.driver_installed, in_use);
+    let state = component_state(installed, verified, result.usbip_available, in_use);
 
     Ok(DualSenseStatus {
         state: state.to_string(),
@@ -361,6 +413,12 @@ async fn apply_config(
     audio_haptics: bool,
     executable: Option<&Path>,
 ) -> Result<(), String> {
+    if !config_path().is_file() {
+        return Err(
+            "DS5-CFG-001: Sunshine configuration file is missing; refusing to create a partial replacement"
+                .to_string(),
+        );
+    }
     let mut config = crate::vdd::read_full_sunshine_config()
         .await
         .map_err(|error| {
@@ -407,6 +465,9 @@ pub async fn dualsense_install(app: tauri::AppHandle) -> Result<DualSenseStatus,
     }
     fs::create_dir(&staging).map_err(|error| error.to_string())?;
     let archive_path = root.join(format!("{operation}.partial"));
+    let active = active_dir();
+    let backup = root.join("previous");
+    let had_previous = active.exists();
 
     let install_result: Result<(), String> = async {
         let response = reqwest::Client::builder()
@@ -454,9 +515,11 @@ pub async fn dualsense_install(app: tauri::AppHandle) -> Result<DualSenseStatus,
         copy_runtime_files(&source, &staging)?;
         emit_progress(&app, "probing", 88);
         let probe_executable = staging.join(SIDECAR_EXE);
-        tokio::task::spawn_blocking(move || run_probe(&probe_executable))
+        let probe_path = probe_executable.clone();
+        tokio::task::spawn_blocking(move || run_probe(&probe_path))
             .await
             .map_err(|error| format!("DS5-PKG-003: sidecar probe task failed: {error}"))??;
+        let sidecar_sha256 = sha256_file(&probe_executable)?;
         fs::write(
             staging.join("component.json"),
             serde_json::to_vec_pretty(&serde_json::json!({
@@ -464,14 +527,14 @@ pub async fn dualsense_install(app: tauri::AppHandle) -> Result<DualSenseStatus,
                 "hidmaestro_version": HIDMAESTRO_VERSION,
                 "source": HIDMAESTRO_URL,
                 "sha256": HIDMAESTRO_SHA256,
-                "protocol": PROTOCOL_VERSION
+                "protocol": PROTOCOL_VERSION,
+                "sidecar_file": SIDECAR_EXE,
+                "sidecar_sha256": sidecar_sha256
             }))
             .map_err(|error| error.to_string())?,
         )
         .map_err(|error| error.to_string())?;
 
-        let active = active_dir();
-        let backup = root.join("previous");
         if backup.exists() {
             fs::remove_dir_all(&backup).map_err(|error| error.to_string())?;
         }
@@ -495,12 +558,37 @@ pub async fn dualsense_install(app: tauri::AppHandle) -> Result<DualSenseStatus,
         let _ = fs::remove_dir_all(&staging);
     }
     install_result?;
-    apply_config(
+    if let Err(config_error) = apply_config(
         previous_enabled,
         previous_audio_haptics,
         Some(&sidecar_path()),
     )
-    .await?;
+    .await
+    {
+        let rollback_result = (|| -> Result<(), String> {
+            if active.exists() {
+                fs::remove_dir_all(&active).map_err(|error| {
+                    format!("unable to remove failed active component: {error}")
+                })?;
+            }
+            if had_previous {
+                if !backup.exists() {
+                    return Err("previous component backup is missing".to_string());
+                }
+                fs::rename(&backup, &active)
+                    .map_err(|error| format!("unable to restore previous component: {error}"))?;
+            }
+            Ok(())
+        })();
+        return match rollback_result {
+            Ok(()) => Err(format!(
+                "{config_error}; activated component was rolled back"
+            )),
+            Err(rollback_error) => Err(format!(
+                "{config_error}; component rollback also failed: {rollback_error}"
+            )),
+        };
+    }
     emit_progress(&app, "complete", 100);
     dualsense_get_status().await
 }
@@ -547,20 +635,24 @@ pub async fn dualsense_self_test(profile: String) -> Result<serde_json::Value, S
         let test_profile = profile.clone();
         let test_result = result_path.clone();
         tokio::task::spawn_blocking(move || {
-            Command::new(&executable)
+            let mut command = Command::new(&executable);
+            command
                 .args(["--self-test", &test_profile, "--result"])
                 .arg(&test_result)
-                .current_dir(executable.parent().unwrap_or_else(|| Path::new(".")))
-                .status()
-                .map_err(|error| format!("DS5-PKG-003: unable to start component test: {error}"))
-                .and_then(|status| {
-                    status.success().then_some(()).ok_or_else(|| {
-                        format!(
-                            "DS5-PKG-003: component test process failed with exit code {}",
-                            status.code().unwrap_or(-1)
-                        )
-                    })
+                .current_dir(executable.parent().unwrap_or_else(|| Path::new(".")));
+            run_with_timeout(
+                &mut command,
+                std::time::Duration::from_secs(60),
+                "DS5-PKG-003: component self-test timed out",
+            )
+            .and_then(|output| {
+                output.status.success().then_some(()).ok_or_else(|| {
+                    format!(
+                        "DS5-PKG-003: component test process failed with exit code {}",
+                        output.status.code().unwrap_or(-1)
+                    )
                 })
+            })
         })
         .await
         .map_err(|error| format!("DS5-PKG-003: component test task failed: {error}"))??;

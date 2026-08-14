@@ -43,6 +43,7 @@ pub struct DesktopSettings {
     pub update_notify: bool,
     pub dev_mode: bool,
     pub log_level: String,
+    pub toolbar_shortcut_enabled: bool,
 }
 
 impl Default for DesktopSettings {
@@ -57,6 +58,7 @@ impl Default for DesktopSettings {
             update_notify: true,
             dev_mode: false,
             log_level: "info".to_string(),
+            toolbar_shortcut_enabled: true,
         }
     }
 }
@@ -73,6 +75,13 @@ pub struct DesktopSettingsStatus {
 pub struct DesktopSettingsResponse {
     pub settings: DesktopSettings,
     pub status: DesktopSettingsStatus,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolbarShortcutStatus {
+    pub enabled: bool,
+    pub registered: bool,
 }
 
 fn settings_dir() -> Result<PathBuf, String> {
@@ -361,6 +370,8 @@ pub async fn save_desktop_settings(
     app: AppHandle,
     mut settings: DesktopSettings,
 ) -> Result<DesktopSettingsResponse, String> {
+    // 桌宠快捷键只由桌宠设置页的独立命令修改，避免普通设置页保存旧快照时覆盖它。
+    settings.toolbar_shortcut_enabled = load_desktop_settings_from_disk().toolbar_shortcut_enabled;
     normalize(&mut settings);
     save_desktop_settings_to_disk(&settings)?;
     apply_auto_start(&settings)?;
@@ -376,6 +387,45 @@ pub async fn save_desktop_settings(
         settings,
         status: status(),
     })
+}
+
+fn toolbar_shortcut_status(app: &AppHandle, enabled: bool) -> ToolbarShortcutStatus {
+    ToolbarShortcutStatus {
+        enabled,
+        registered: crate::app::toolbar_shortcut_is_registered(app),
+    }
+}
+
+/// 读取桌宠快捷键状态；若用户已启用，会顺便重试之前因冲突而失败的注册。
+#[tauri::command]
+pub fn load_toolbar_shortcut_status(app: AppHandle) -> ToolbarShortcutStatus {
+    let settings = load_desktop_settings_from_disk();
+    if let Err(error) = crate::app::sync_toolbar_shortcut(&app, settings.toolbar_shortcut_enabled) {
+        log::warn!("Failed to synchronize toolbar shortcut while loading settings: {error}");
+    }
+    toolbar_shortcut_status(&app, settings.toolbar_shortcut_enabled)
+}
+
+#[tauri::command]
+pub fn set_toolbar_shortcut_enabled(
+    app: AppHandle,
+    enabled: bool,
+) -> Result<ToolbarShortcutStatus, String> {
+    let previous = load_desktop_settings_from_disk();
+    crate::app::sync_toolbar_shortcut(&app, enabled)?;
+
+    let mut settings = previous.clone();
+    settings.toolbar_shortcut_enabled = enabled;
+    if let Err(error) = save_desktop_settings_to_disk(&settings) {
+        if let Err(rollback_error) =
+            crate::app::sync_toolbar_shortcut(&app, previous.toolbar_shortcut_enabled)
+        {
+            log::warn!("Failed to restore toolbar shortcut after save failure: {rollback_error}");
+        }
+        return Err(error);
+    }
+
+    Ok(toolbar_shortcut_status(&app, enabled))
 }
 
 pub fn apply_startup_settings(app: &AppHandle, settings: &DesktopSettings) {
@@ -494,6 +544,24 @@ mod tests {
         assert!(settings.notifications);
         assert!(settings.connection_notify);
         assert!(settings.update_notify);
+    }
+
+    #[test]
+    fn toolbar_shortcut_is_enabled_by_default_and_for_legacy_settings() {
+        assert!(DesktopSettings::default().toolbar_shortcut_enabled);
+
+        let settings: DesktopSettings = serde_json::from_str(r#"{"autoStart":false}"#)
+            .expect("legacy desktop settings should deserialize");
+        assert!(settings.toolbar_shortcut_enabled);
+    }
+
+    #[test]
+    fn toolbar_shortcut_can_be_disabled_explicitly() {
+        let settings: DesktopSettings =
+            serde_json::from_str(r#"{"toolbarShortcutEnabled":false}"#)
+                .expect("toolbar shortcut setting should deserialize");
+
+        assert!(!settings.toolbar_shortcut_enabled);
     }
 
     #[test]

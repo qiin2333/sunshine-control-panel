@@ -504,8 +504,13 @@ export const en = {
     tabs: {
       speech: 'Speech',
       animation: 'Animation',
+      shortcuts: 'Shortcuts',
     },
     animationMore: 'More animation options coming soon…',
+    toolbarShortcut: 'Enable desktop pet shortcut',
+    toolbarShortcutDesc: 'Ctrl + Shift + Alt + T shows or hides the desktop pet toolbar. When disabled, the foreground application receives the shortcut instead.',
+    toolbarShortcutUnavailable: 'This shortcut may already be used by another application and is currently unavailable. Open this page again after the other application releases it to retry registration.',
+    toolbarShortcutStateError: 'Could not update the shortcut state. Please try again.',
     master: 'Pet Speech (Master)',
     masterDesc: 'When off, the pet stays silent and the options below have no effect',
     random: 'Random Talk',

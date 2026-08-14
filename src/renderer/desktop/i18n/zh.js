@@ -504,8 +504,13 @@ export const zh = {
     tabs: {
       speech: '对话',
       animation: '动画',
+      shortcuts: '快捷键',
     },
     animationMore: '更多动画选项后续加入…',
+    toolbarShortcut: '启用桌宠快捷键',
+    toolbarShortcutDesc: 'Ctrl + Shift + Alt + T 用于显示或隐藏桌宠工具栏。关闭后，该组合键将交给当前软件处理。',
+    toolbarShortcutUnavailable: '该组合键当前可能已被其他程序占用，暂未生效。关闭占用程序后重新打开此设置页即可再次尝试注册。',
+    toolbarShortcutStateError: '快捷键状态更新失败，请稍后重试。',
     master: '桌宠对话总开关',
     masterDesc: '关闭后桌宠不会说话，下面选项均不生效',
     random: '随机对话',

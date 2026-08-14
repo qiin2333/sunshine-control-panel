@@ -7,6 +7,8 @@ use crate::windows;
 use log::{debug, error, info, warn};
 use tauri::{App, AppHandle, Manager};
 
+const TOOLBAR_SHORTCUT: &str = "CmdOrCtrl+Shift+Alt+T";
+
 /// 应用程序状态
 pub struct AppState {
     #[allow(dead_code)]
@@ -71,7 +73,7 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
             warn!("install file mapping context menu failed: {}", e);
         }
     }
-    register_global_shortcuts(app)?;
+    register_global_shortcuts(app, desktop_settings.toolbar_shortcut_enabled)?;
     setup_menu_event_handler(app);
 
     // 剪贴板同步：用户会话 agent 默认随面板启动；服务端如果禁用了则 SSE 自然失败，
@@ -123,33 +125,72 @@ pub fn shutdown_application() {
 }
 
 /// 注册全局快捷键
-fn register_global_shortcuts(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
-    use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+fn register_global_shortcuts(
+    app: &mut App,
+    toolbar_shortcut_enabled: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !toolbar_shortcut_enabled {
+        info!("Desktop pet shortcut is disabled; skipping registration");
+        return Ok(());
+    }
 
-    let app_handle = app.handle().clone();
-
-    match app.handle().global_shortcut().on_shortcut(
-        "CmdOrCtrl+Shift+Alt+T",
-        move |_app, _shortcut, event| {
-            if event.state == ShortcutState::Pressed {
-                debug!("⌨️ 全局快捷键触发: CTRL+SHIFT+ALT+T");
-                toggle_toolbar_window(&app_handle);
-            }
-        },
-    ) {
-        Ok(_) => {
-            info!("⌨️ 全局快捷键已注册: CTRL+SHIFT+ALT+T");
-        }
-        Err(e) => {
-            log::warn!(
-                "⚠️  全局快捷键 CTRL+SHIFT+ALT+T 注册失败（可能已被其他程序占用）: {}",
-                e
-            );
-            log::warn!("⚠️  工具栏快捷键不可用，但应用程序将继续正常运行");
-        }
+    let registered = sync_toolbar_shortcut(app.handle(), true).map_err(std::io::Error::other)?;
+    if !registered {
+        warn!("Desktop pet shortcut is currently unavailable; the application will continue normally");
     }
 
     Ok(())
+}
+
+/// 返回桌宠快捷键是否已由当前 GUI 注册。
+pub fn toolbar_shortcut_is_registered(app_handle: &AppHandle) -> bool {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+
+    app_handle.global_shortcut().is_registered(TOOLBAR_SHORTCUT)
+}
+
+/// 按用户设置注册或注销桌宠快捷键。
+///
+/// 启用时若组合键被其他程序占用，会保留用户的启用意图并返回 `Ok(false)`，
+/// 让后续打开设置页或重启 GUI 时可以再次尝试注册。
+pub fn sync_toolbar_shortcut(app_handle: &AppHandle, enabled: bool) -> Result<bool, String> {
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
+    let shortcut_manager = app_handle.global_shortcut();
+    if !enabled {
+        if !shortcut_manager.is_registered(TOOLBAR_SHORTCUT) {
+            return Ok(false);
+        }
+
+        shortcut_manager
+            .unregister(TOOLBAR_SHORTCUT)
+            .map_err(|error| format!("failed to unregister toolbar shortcut: {error}"))?;
+        info!("Desktop pet shortcut unregistered: CTRL+SHIFT+ALT+T");
+        return Ok(false);
+    }
+
+    if shortcut_manager.is_registered(TOOLBAR_SHORTCUT) {
+        return Ok(true);
+    }
+
+    let app_handle = app_handle.clone();
+    match shortcut_manager.on_shortcut(TOOLBAR_SHORTCUT, move |_app, _shortcut, event| {
+        if event.state == ShortcutState::Pressed {
+            debug!("Global shortcut triggered: CTRL+SHIFT+ALT+T");
+            toggle_toolbar_window(&app_handle);
+        }
+    }) {
+        Ok(_) => {
+            info!("Desktop pet shortcut registered: CTRL+SHIFT+ALT+T");
+            Ok(true)
+        }
+        Err(error) => {
+            warn!(
+                "Desktop pet shortcut registration failed; it may be used by another application: {error}"
+            );
+            Ok(false)
+        }
+    }
 }
 
 /// 切换工具栏窗口显示/隐藏

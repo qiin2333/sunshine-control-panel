@@ -277,7 +277,6 @@ pub fn open_local_path(path: String, app_name: String) -> Result<bool, String> {
             "Directory is not a configured working directory for this application".to_string(),
         );
     }
-
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;

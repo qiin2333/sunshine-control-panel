@@ -60,7 +60,7 @@
         </div>
         <el-switch
           v-model="audioHaptics"
-          :disabled="!status.verified || status.in_use || saving"
+          :disabled="!status.verified || status.in_use || saving || (!status.usbip_available && !audioHaptics)"
           @change="saveSettings"
         />
       </div>

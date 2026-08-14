@@ -178,6 +178,21 @@ fn component_state(
     }
 }
 
+fn validate_requested_profile(
+    enabled: bool,
+    audio_haptics: bool,
+    usbip_available: bool,
+) -> Result<(), String> {
+    if enabled && audio_haptics && !usbip_available {
+        Err(
+            "DS5-RUN-003: four-channel haptics requires the USB/IP transport; disable audio haptics or repair the transport"
+                .to_string(),
+        )
+    } else {
+        Ok(())
+    }
+}
+
 #[tauri::command]
 pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
     let executable = sidecar_path();
@@ -348,7 +363,9 @@ async fn apply_config(
 ) -> Result<(), String> {
     let mut config = crate::vdd::read_full_sunshine_config()
         .await
-        .unwrap_or_default();
+        .map_err(|error| {
+            format!("DS5-CFG-001: unable to read the complete Sunshine configuration: {error}")
+        })?;
     config.insert("ds5_enabled".to_string(), serde_json::json!(enabled));
     config.insert(
         "ds5_audio_haptics".to_string(),
@@ -499,9 +516,10 @@ pub async fn dualsense_set_config(
     ensure_no_active_session().await?;
     if enabled {
         let executable = sidecar_path();
-        tokio::task::spawn_blocking(move || run_probe(&executable))
+        let probe = tokio::task::spawn_blocking(move || run_probe(&executable))
             .await
             .map_err(|error| format!("DS5-PKG-003: sidecar probe task failed: {error}"))??;
+        validate_requested_profile(enabled, audio_haptics, probe.usbip_available)?;
     }
     apply_config(enabled, audio_haptics, Some(&sidecar_path())).await?;
     dualsense_get_status().await
@@ -580,7 +598,19 @@ pub async fn dualsense_uninstall() -> Result<DualSenseStatus, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::component_state;
+    use super::{component_state, validate_requested_profile};
+
+    #[test]
+    fn composite_profile_requires_usbip() {
+        let error = validate_requested_profile(true, true, false).unwrap_err();
+        assert!(error.starts_with("DS5-RUN-003:"));
+    }
+
+    #[test]
+    fn hid_only_profile_remains_available_without_usbip() {
+        assert!(validate_requested_profile(true, false, false).is_ok());
+        assert!(validate_requested_profile(false, true, false).is_ok());
+    }
 
     #[test]
     fn component_state_prioritizes_stream_ownership_and_recovery() {

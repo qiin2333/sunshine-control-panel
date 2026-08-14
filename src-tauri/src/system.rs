@@ -285,6 +285,9 @@ pub async fn set_desktop_dpi(dpi: u32) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         use crate::sunshine;
+        use std::os::windows::process::CommandExt;
+
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
 
         // 从 Sunshine 安装目录获取路径
         let setdpi_path = sunshine::install_dir().join("tools").join("SetDpi.exe");
@@ -294,6 +297,7 @@ pub async fn set_desktop_dpi(dpi: u32) -> Result<(), String> {
         if setdpi_path.exists() {
             match std::process::Command::new(setdpi_path)
                 .arg(dpi.to_string())
+                .creation_flags(CREATE_NO_WINDOW)
                 .spawn()
             {
                 Ok(_) => {

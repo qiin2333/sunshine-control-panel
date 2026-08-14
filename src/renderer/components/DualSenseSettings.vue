@@ -82,38 +82,30 @@
 
       <section v-if="status.verified" class="profile-section" :aria-label="t.dualSense.profileTitle">
         <span class="section-label">{{ t.dualSense.profileTitle }}</span>
-        <div class="profile-options" role="radiogroup">
-          <button
-            type="button"
-            class="profile-option"
-            :class="{ 'is-selected': !audioHaptics }"
-            role="radio"
-            :aria-checked="!audioHaptics"
-            :disabled="status.in_use || saving"
-            @click="selectProfile(false)"
-          >
+        <div class="profile-options" role="group">
+          <div class="profile-option is-selected is-static">
             <span class="selection-cursor" aria-hidden="true">▶</span>
             <span class="option-copy">
               <strong>{{ t.dualSense.standardModeShort }}</strong>
               <small>{{ t.dualSense.standardModeTip }}</small>
             </span>
-            <kbd>Enter</kbd>
-          </button>
+            <kbd>{{ t.dualSense.included }}</kbd>
+          </div>
           <button
             type="button"
             class="profile-option"
             :class="{ 'is-selected': audioHaptics }"
-            role="radio"
+            role="checkbox"
             :aria-checked="audioHaptics"
-            :disabled="status.in_use || saving || !status.usbip_available"
-            @click="selectProfile(true)"
+            :disabled="status.in_use || saving || (!status.usbip_available && !audioHaptics)"
+            @click="setAudioHaptics(!audioHaptics)"
           >
             <span class="selection-cursor" aria-hidden="true">▶</span>
             <span class="option-copy">
               <strong>{{ t.dualSense.nativeModeShort }}</strong>
               <small>{{ status.usbip_available ? t.dualSense.nativeModeTip : t.dualSense.nativeUnavailable }}</small>
             </span>
-            <kbd>Enter</kbd>
+            <kbd>{{ audioHaptics ? t.dualSense.enabledLabel : t.dualSense.disabledLabel }}</kbd>
           </button>
         </div>
       </section>
@@ -126,10 +118,16 @@
         <div class="test-actions">
           <el-button
             text
-            :loading="operation === selectedTestProfile"
-            :disabled="status.in_use || !canTestSelectedProfile"
-            @click="test(selectedTestProfile)"
-          >[ {{ selectedTestLabel }} ]</el-button>
+            :loading="operation === 'standard'"
+            :disabled="status.in_use || !!operation || !status.standard_profile"
+            @click="test('standard')"
+          >[ {{ t.dualSense.testStandard }} ]</el-button>
+          <el-button
+            text
+            :loading="operation === 'composite'"
+            :disabled="status.in_use || !!operation || !canTestAudioHaptics"
+            @click="test('composite')"
+          >[ {{ t.dualSense.testComposite }} ]</el-button>
           <el-button v-if="testCompleted" text type="success" @click="emit('open-controller-meta')">
             [ {{ t.dualSense.openControllerMeta }} ]
           </el-button>
@@ -208,11 +206,7 @@ const nextAction = computed(() => ({
 }[status.value.state] || t.value.dualSense.nextRepair))
 
 const overallVersion = computed(() => status.value.component_version || status.value.runtime_version || status.value.error_code)
-const selectedTestProfile = computed(() => audioHaptics.value ? 'composite' : 'standard')
-const selectedTestLabel = computed(() => audioHaptics.value ? t.value.dualSense.testComposite : t.value.dualSense.testStandard)
-const canTestSelectedProfile = computed(() => audioHaptics.value
-  ? status.value.composite_profile && status.value.usbip_available
-  : status.value.standard_profile)
+const canTestAudioHaptics = computed(() => status.value.composite_profile && status.value.usbip_available)
 const usbTransportDetail = computed(() => {
   if (!status.value.usbip_version_valid) return t.value.dualSense.pinnedTransportRequired
   if (status.value.usbip_available) return `USB/IP ${status.value.usbip_version}`
@@ -264,7 +258,7 @@ const refresh = async (quiet = false) => {
     status.value = result.data
     statusKnown.value = true
     enabled.value = result.data.enabled
-    audioHaptics.value = result.data.audio_haptics && result.data.usbip_available
+    audioHaptics.value = result.data.audio_haptics
   } else if (!quiet) {
     showError(result.message, 'status')
   }
@@ -298,7 +292,7 @@ const saveSettings = async () => {
       await refresh(true)
     } else {
       enabled.value = status.value.enabled
-      audioHaptics.value = status.value.audio_haptics && status.value.usbip_available
+      audioHaptics.value = status.value.audio_haptics
     }
     saving.value = false
     return showError(result.message, 'config')
@@ -308,9 +302,9 @@ const saveSettings = async () => {
   ElMessage.success(t.value.dualSense.configSuccess)
 }
 
-const selectProfile = async (nativeHaptics) => {
-  if (audioHaptics.value === nativeHaptics) return
-  audioHaptics.value = nativeHaptics
+const setAudioHaptics = async (enabled) => {
+  if (audioHaptics.value === enabled) return
+  audioHaptics.value = enabled
   testCompleted.value = false
   await saveSettings()
 }
@@ -437,6 +431,7 @@ onUnmounted(() => {
   font: inherit;
   text-align: left;
   cursor: pointer;
+  &.is-static { cursor: default; }
   &:disabled { cursor: not-allowed; opacity: .55; }
   &.is-selected { color: var(--el-text-color-primary); background: var(--el-color-primary-light-9); box-shadow: inset 4px 0 0 var(--el-color-primary); }
   kbd { min-width: 42px; padding: 2px 5px; border: 1px solid var(--el-border-color); color: var(--el-text-color-secondary); background: transparent; font-family: 'PixelMplus12', 'Courier New', monospace; font-size: 11px; text-align: center; }

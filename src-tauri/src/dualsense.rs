@@ -32,6 +32,10 @@ const MAX_ARCHIVE_FILES: usize = 256;
 const SIDECAR_EXE: &str = "Sunshine.Ds5Sidecar.exe";
 #[cfg(target_os = "windows")]
 const ELEVATED_DS5_ARG: &str = "--elevated-dualsense";
+#[cfg(target_os = "windows")]
+const MAX_ELEVATED_MESSAGE_BYTES: usize = 64 * 1024;
+#[cfg(target_os = "windows")]
+const ELEVATION_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 static COMPONENT_OPERATION: Lazy<tokio::sync::Mutex<()>> =
     Lazy::new(|| tokio::sync::Mutex::new(()));
 
@@ -64,6 +68,16 @@ impl ElevatedOperation {
             "test-composite" => Some(Self::TestComposite),
             "uninstall" => Some(Self::Uninstall),
             _ => None,
+        }
+    }
+
+    fn timeout(self) -> std::time::Duration {
+        match self {
+            // Installation can include two downloads and a driver installer,
+            // each with its own ten-minute timeout.
+            Self::Install => std::time::Duration::from_secs(35 * 60),
+            Self::TestStandard | Self::TestComposite => std::time::Duration::from_secs(90),
+            Self::Uninstall => std::time::Duration::from_secs(120),
         }
     }
 }
@@ -223,6 +237,13 @@ fn run_with_timeout(
     timeout_error: &str,
 ) -> Result<std::process::Output, String> {
     const MAX_CAPTURED_OUTPUT: usize = 1024 * 1024;
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
 
     fn drain_pipe<R: Read + Send + 'static>(mut pipe: R) -> std::thread::JoinHandle<Vec<u8>> {
         std::thread::spawn(move || {
@@ -919,11 +940,7 @@ async fn connect_elevated_pipe(
 
     let pipe_name = elevated_pipe_name(token);
     for _ in 0..100 {
-        match ClientOptions::new()
-            .read(false)
-            .write(true)
-            .open(&pipe_name)
-        {
+        match ClientOptions::new().read(true).write(true).open(&pipe_name) {
             Ok(client) => return Ok(client),
             Err(error) if matches!(error.raw_os_error(), Some(2 | 231)) => {
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -940,21 +957,34 @@ async fn connect_elevated_pipe(
 
 #[cfg(target_os = "windows")]
 async fn run_elevated_helper(operation: ElevatedOperation, token: uuid::Uuid) -> i32 {
-    use tokio::io::AsyncWriteExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    let Ok(mut pipe) = connect_elevated_pipe(token).await else {
+    let Ok(pipe) = connect_elevated_pipe(token).await else {
         return 3;
     };
+    let (mut pipe_reader, mut pipe_writer) = tokio::io::split(pipe);
+    // The parent never sends application data. EOF means that it timed out or
+    // failed, so terminate this elevated helper instead of leaving an orphaned
+    // operation running at high integrity.
+    let disconnect_watcher = tokio::spawn(async move {
+        let mut control = [0u8; 1];
+        let _ = pipe_reader.read(&mut control).await;
+        std::process::exit(5);
+    });
     let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<ElevatedMessage>();
     let writer = tokio::spawn(async move {
         while let Some(message) = receiver.recv().await {
             let mut encoded = serde_json::to_vec(&message).map_err(|error| error.to_string())?;
             encoded.push(b'\n');
-            pipe.write_all(&encoded)
+            pipe_writer
+                .write_all(&encoded)
                 .await
                 .map_err(|error| error.to_string())?;
         }
-        pipe.shutdown().await.map_err(|error| error.to_string())
+        pipe_writer
+            .shutdown()
+            .await
+            .map_err(|error| error.to_string())
     });
 
     let progress_sender = sender.clone();
@@ -994,7 +1024,10 @@ async fn run_elevated_helper(operation: ElevatedOperation, token: uuid::Uuid) ->
     let _ = sender.send(final_message);
     drop(progress);
     drop(sender);
-    match writer.await {
+    let writer_result = writer.await;
+    disconnect_watcher.abort();
+    let _ = disconnect_watcher.await;
+    match writer_result {
         Ok(Ok(())) => {}
         Ok(Err(_)) | Err(_) => return 4,
     }
@@ -1032,11 +1065,50 @@ pub(crate) fn try_handle_elevated_command() -> Option<i32> {
 }
 
 #[cfg(target_os = "windows")]
+async fn read_limited_elevated_line<R: tokio::io::AsyncBufRead + Unpin>(
+    reader: &mut R,
+) -> Result<Option<String>, String> {
+    use tokio::io::AsyncBufReadExt;
+
+    let mut bytes = Vec::with_capacity(1024);
+    loop {
+        let available = reader
+            .fill_buf()
+            .await
+            .map_err(|error| format!("DS5-PKG-004: administrator IPC read failed: {error}"))?;
+        if available.is_empty() {
+            if bytes.is_empty() {
+                return Ok(None);
+            }
+            break;
+        }
+        let newline = available.iter().position(|byte| *byte == b'\n');
+        let take = newline.map_or(available.len(), |index| index);
+        if bytes.len().saturating_add(take) > MAX_ELEVATED_MESSAGE_BYTES {
+            return Err(format!(
+                "DS5-PKG-004: administrator IPC message exceeds {MAX_ELEVATED_MESSAGE_BYTES} bytes"
+            ));
+        }
+        bytes.extend_from_slice(&available[..take]);
+        reader.consume(take + usize::from(newline.is_some()));
+        if newline.is_some() {
+            break;
+        }
+    }
+    if bytes.last() == Some(&b'\r') {
+        bytes.pop();
+    }
+    String::from_utf8(bytes)
+        .map(Some)
+        .map_err(|error| format!("DS5-PKG-004: administrator IPC was not UTF-8: {error}"))
+}
+
+#[cfg(target_os = "windows")]
 async fn run_elevated_operation(
     app: Option<&tauri::AppHandle>,
     operation: ElevatedOperation,
 ) -> Result<serde_json::Value, String> {
-    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::io::BufReader;
     use tokio::net::windows::named_pipe::ServerOptions;
 
     const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -1044,7 +1116,7 @@ async fn run_elevated_operation(
     let pipe_name = elevated_pipe_name(token);
     let server = ServerOptions::new()
         .access_inbound(true)
-        .access_outbound(false)
+        .access_outbound(true)
         .first_pipe_instance(true)
         .reject_remote_clients(true)
         .create(&pipe_name)
@@ -1074,28 +1146,60 @@ async fn run_elevated_operation(
                 "DS5-PKG-004: administrator authorization was canceled or the helper exited early ({})",
                 status.code().unwrap_or(-1)
             ));
-        }
+        },
+        _ = tokio::time::sleep(ELEVATION_CONNECT_TIMEOUT) => {
+            let _ = launcher.start_kill();
+            let _ = launcher.wait().await;
+            return Err("DS5-PKG-004: administrator authorization timed out".to_string());
+        },
     }
 
-    let mut lines = BufReader::new(server).lines();
-    let mut final_result = None;
-    while let Some(line) = lines
-        .next_line()
-        .await
-        .map_err(|error| format!("DS5-PKG-004: administrator IPC read failed: {error}"))?
-    {
-        let message: ElevatedMessage = serde_json::from_str(&line)
-            .map_err(|error| format!("DS5-PKG-004: invalid administrator IPC response: {error}"))?;
-        match message {
-            ElevatedMessage::Progress { stage, progress } => {
-                if let Some(app) = app {
-                    emit_progress(app, &stage, progress);
+    let receive = async move {
+        let mut reader = BufReader::new(server);
+        let mut final_result = None;
+        while let Some(line) = read_limited_elevated_line(&mut reader).await? {
+            let message: ElevatedMessage = serde_json::from_str(&line).map_err(|error| {
+                format!("DS5-PKG-004: invalid administrator IPC response: {error}")
+            })?;
+            match message {
+                ElevatedMessage::Progress { stage, progress } => {
+                    if let Some(app) = app {
+                        emit_progress(app, &stage, progress);
+                    }
                 }
+                ElevatedMessage::Complete { data } => final_result = Some(Ok(data)),
+                ElevatedMessage::Error { message } => final_result = Some(Err(message)),
             }
-            ElevatedMessage::Complete { data } => final_result = Some(Ok(data)),
-            ElevatedMessage::Error { message } => final_result = Some(Err(message)),
         }
-    }
+        Ok::<_, String>(final_result)
+    };
+    let final_result = match tokio::time::timeout(operation.timeout(), receive).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(error)) => {
+            // Dropping the pipe wakes the elevated helper's disconnect watcher.
+            if tokio::time::timeout(std::time::Duration::from_secs(5), launcher.wait())
+                .await
+                .is_err()
+            {
+                let _ = launcher.start_kill();
+                let _ = launcher.wait().await;
+            }
+            return Err(error);
+        }
+        Err(_) => {
+            // Dropping the timed-out receive future closes the pipe and causes
+            // the helper to terminate itself even though this process cannot
+            // directly kill a high-integrity child.
+            if tokio::time::timeout(std::time::Duration::from_secs(5), launcher.wait())
+                .await
+                .is_err()
+            {
+                let _ = launcher.start_kill();
+                let _ = launcher.wait().await;
+            }
+            return Err("DS5-PKG-004: administrator operation timed out".to_string());
+        }
+    };
     let status = launcher.wait().await.map_err(|error| error.to_string())?;
     match final_result {
         Some(Ok(data)) if status.success() => Ok(data),
@@ -1243,7 +1347,10 @@ pub async fn dualsense_uninstall() -> Result<DualSenseStatus, String> {
 #[cfg(test)]
 mod tests {
     #[cfg(target_os = "windows")]
-    use super::{ElevatedMessage, ElevatedOperation, elevated_pipe_name};
+    use super::{
+        ElevatedMessage, ElevatedOperation, MAX_ELEVATED_MESSAGE_BYTES, elevated_pipe_name,
+        read_limited_elevated_line,
+    };
     use super::{
         apply_gamepad_selection, component_state, component_test_failure, pinned_usbip_installed,
         validate_requested_profile,
@@ -1343,6 +1450,25 @@ mod tests {
                 progress: 88
             } if stage == "probing"
         ));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    async fn elevated_ipc_rejects_oversized_messages_without_waiting_for_eof() {
+        use tokio::io::{AsyncWriteExt, BufReader};
+
+        let (reader, mut writer) = tokio::io::duplex(MAX_ELEVATED_MESSAGE_BYTES + 2);
+        let write = tokio::spawn(async move {
+            writer
+                .write_all(&vec![b'x'; MAX_ELEVATED_MESSAGE_BYTES + 1])
+                .await
+                .unwrap();
+        });
+        let error = read_limited_elevated_line(&mut BufReader::new(reader))
+            .await
+            .unwrap_err();
+        write.await.unwrap();
+        assert!(error.contains("exceeds 65536 bytes"));
     }
 
     #[test]

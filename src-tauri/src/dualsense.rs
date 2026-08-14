@@ -151,6 +151,13 @@ fn run_with_timeout(
         })
     }
 
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
     command
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -187,6 +194,18 @@ fn run_with_timeout(
             return Err(timeout_error.to_string());
         }
         std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+}
+
+fn apply_gamepad_selection(config: &mut serde_json::Map<String, serde_json::Value>, enabled: bool) {
+    if enabled {
+        config.insert("gamepad".to_string(), serde_json::json!("ds5"));
+    } else if config
+        .get("gamepad")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|gamepad| gamepad.eq_ignore_ascii_case("ds5"))
+    {
+        config.insert("gamepad".to_string(), serde_json::json!("auto"));
     }
 }
 
@@ -445,6 +464,7 @@ async fn apply_config(
     enabled: bool,
     audio_haptics: bool,
     executable: Option<&Path>,
+    sync_gamepad_selection: bool,
 ) -> Result<(), String> {
     if !config_path().is_file() {
         return Err(
@@ -470,6 +490,9 @@ async fn apply_config(
                 .unwrap_or_default()
         ),
     );
+    if sync_gamepad_selection {
+        apply_gamepad_selection(&mut config, enabled);
+    }
     crate::sunshine::post_sunshine_config(&config).await
 }
 
@@ -595,6 +618,7 @@ pub async fn dualsense_install(app: tauri::AppHandle) -> Result<DualSenseStatus,
         previous_enabled,
         previous_audio_haptics,
         Some(&sidecar_path()),
+        false,
     )
     .await
     {
@@ -642,7 +666,7 @@ pub async fn dualsense_set_config(
             .map_err(|error| format!("DS5-PKG-003: sidecar probe task failed: {error}"))??;
         validate_requested_profile(enabled, audio_haptics, probe.usbip_available)?;
     }
-    apply_config(enabled, audio_haptics, Some(&sidecar_path())).await?;
+    apply_config(enabled, audio_haptics, Some(&sidecar_path()), true).await?;
     dualsense_get_status().await
 }
 
@@ -712,7 +736,7 @@ pub async fn dualsense_uninstall() -> Result<DualSenseStatus, String> {
                 .to_string(),
         );
     }
-    apply_config(false, true, None).await?;
+    apply_config(false, true, None, true).await?;
     let root = component_root();
     if root.exists() {
         fs::remove_dir_all(&root)
@@ -723,7 +747,7 @@ pub async fn dualsense_uninstall() -> Result<DualSenseStatus, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{component_state, validate_requested_profile};
+    use super::{apply_gamepad_selection, component_state, validate_requested_profile};
 
     #[test]
     fn composite_profile_requires_usbip() {
@@ -747,5 +771,31 @@ mod tests {
             "transport_missing"
         );
         assert_eq!(component_state(true, true, true, false), "ready");
+    }
+
+    #[test]
+    fn enabling_dualsense_selects_the_ds5_gamepad_backend() {
+        let mut config = serde_json::Map::new();
+        config.insert("gamepad".to_string(), serde_json::json!("auto"));
+
+        apply_gamepad_selection(&mut config, true);
+
+        assert_eq!(config.get("gamepad"), Some(&serde_json::json!("ds5")));
+    }
+
+    #[test]
+    fn disabling_dualsense_restores_auto_only_when_ds5_is_selected() {
+        let mut ds5_config = serde_json::Map::new();
+        ds5_config.insert("gamepad".to_string(), serde_json::json!("ds5"));
+        apply_gamepad_selection(&mut ds5_config, false);
+        assert_eq!(ds5_config.get("gamepad"), Some(&serde_json::json!("auto")));
+
+        let mut explicit_config = serde_json::Map::new();
+        explicit_config.insert("gamepad".to_string(), serde_json::json!("x360"));
+        apply_gamepad_selection(&mut explicit_config, false);
+        assert_eq!(
+            explicit_config.get("gamepad"),
+            Some(&serde_json::json!("x360"))
+        );
     }
 }

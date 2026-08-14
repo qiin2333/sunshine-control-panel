@@ -257,18 +257,6 @@ const showError = (message, context = 'generic') => ElMessage.error(
   friendlyDualSenseError(message, t.value.dualSense.errors, context),
 )
 
-const ensureAdmin = async () => {
-  if (await dualsense.isAdmin()) return true
-  try {
-    await ElMessageBox.confirm(t.value.dualSense.adminRequired, t.value.dualSense.adminTitle, {
-      type: 'warning', confirmButtonText: t.value.dualSense.restartAdmin,
-    })
-  } catch { return false }
-  const result = await dualsense.restartAsAdmin()
-  if (!result.success) showError(result.message, 'admin')
-  return false
-}
-
 const refresh = async (quiet = false) => {
   if (!quiet) loading.value = true
   const result = await dualsense.getStatus()
@@ -284,7 +272,6 @@ const refresh = async (quiet = false) => {
 }
 
 const install = async () => {
-  if (!await ensureAdmin()) return
   try {
     await ElMessageBox.confirm(t.value.dualSense.installConfirm, t.value.dualSense.installTitle, {
       type: 'warning', confirmButtonText: t.value.dualSense.install,
@@ -329,7 +316,6 @@ const selectProfile = async (nativeHaptics) => {
 }
 
 const test = async (profile) => {
-  if (!await ensureAdmin()) return
   operation.value = profile
   const result = await dualsense.selfTest(profile)
   operation.value = ''
@@ -340,7 +326,6 @@ const test = async (profile) => {
 }
 
 const uninstall = async () => {
-  if (!await ensureAdmin()) return
   try {
     await ElMessageBox.confirm(t.value.dualSense.uninstallConfirm, t.value.dualSense.uninstallTitle, {
       type: 'warning', confirmButtonText: t.value.dualSense.uninstall,

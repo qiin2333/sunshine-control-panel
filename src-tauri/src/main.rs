@@ -56,6 +56,11 @@ fn configure_async_runtime() {
 
 fn main() {
     #[cfg(target_os = "windows")]
+    if let Some(exit_code) = dualsense::try_handle_elevated_command() {
+        std::process::exit(exit_code);
+    }
+
+    #[cfg(target_os = "windows")]
     if let Some(exit_code) = vdd::try_handle_elevated_ioctl_command() {
         std::process::exit(exit_code);
     }

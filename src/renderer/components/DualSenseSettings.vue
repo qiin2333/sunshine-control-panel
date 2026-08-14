@@ -173,6 +173,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { dualsense } from '../tauri-adapter.js'
+import { friendlyDualSenseError } from '../composables/dualsenseErrors.js'
 import { useI18n } from '../desktop/i18n/index.js'
 
 const { t } = useI18n()
@@ -235,8 +236,8 @@ const healthRows = computed(() => [
     label: t.value.dualSense.usbTransport,
     state: status.value.usbip_available ? t.value.dualSense.available : t.value.dualSense.unavailable,
     detail: status.value.usbip_version
-      ? `USB/IP ${status.value.usbip_version}${status.value.usbip_available ? '' : ' → 0.9.7.7'}`
-      : t.value.dualSense.standardStillAvailable,
+      ? (status.value.usbip_available ? 'USB/IP 0.9.7.7' : t.value.dualSense.pinnedTransportRequired)
+      : t.value.dualSense.pinnedTransportRequired,
     tone: status.value.usbip_available ? 'ok' : 'warn',
   },
   {
@@ -247,8 +248,8 @@ const healthRows = computed(() => [
   },
 ])
 
-const showError = (message) => ElMessage.error(
-  t.value.dualSense.operationFailed.replace('{error}', String(message || 'Unknown error')),
+const showError = (message, context = 'generic') => ElMessage.error(
+  friendlyDualSenseError(message, t.value.dualSense.errors, context),
 )
 
 const ensureAdmin = async () => {
@@ -259,7 +260,7 @@ const ensureAdmin = async () => {
     })
   } catch { return false }
   const result = await dualsense.restartAsAdmin()
-  if (!result.success) showError(result.message)
+  if (!result.success) showError(result.message, 'admin')
   return false
 }
 
@@ -272,7 +273,7 @@ const refresh = async (quiet = false) => {
     enabled.value = result.data.enabled
     audioHaptics.value = result.data.audio_haptics && result.data.usbip_available
   } else if (!quiet) {
-    showError(result.message)
+    showError(result.message, 'status')
   }
   loading.value = false
 }
@@ -290,7 +291,7 @@ const install = async () => {
   operation.value = ''
   if (!result.success) {
     await refresh(true)
-    return showError(result.message)
+    return showError(result.message, 'install')
   }
   ElMessage.success(t.value.dualSense.installSuccess)
   await refresh()
@@ -307,7 +308,7 @@ const saveSettings = async () => {
       enabled.value = status.value.enabled
       audioHaptics.value = status.value.audio_haptics && status.value.usbip_available
     }
-    return showError(result.message)
+    return showError(result.message, 'config')
   }
   status.value = result.data
   ElMessage.success(t.value.dualSense.configSuccess)
@@ -325,7 +326,7 @@ const test = async (profile) => {
   operation.value = profile
   const result = await dualsense.selfTest(profile)
   operation.value = ''
-  if (!result.success) return showError(result.message)
+  if (!result.success) return showError(result.message, 'test')
   testCompleted.value = true
   ElMessage.success(t.value.dualSense.testSuccess)
   await refresh()
@@ -341,7 +342,7 @@ const uninstall = async () => {
   operation.value = 'uninstall'
   const result = await dualsense.uninstall()
   operation.value = ''
-  if (!result.success) return showError(result.message)
+  if (!result.success) return showError(result.message, 'uninstall')
   ElMessage.success(t.value.dualSense.uninstallSuccess)
   await refresh()
 }

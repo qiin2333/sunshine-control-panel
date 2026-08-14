@@ -361,8 +361,8 @@ fn validate_requested_profile(
     }
 }
 
-fn effective_usbip_available(sidecar_available: bool, installed_version: Option<&str>) -> bool {
-    sidecar_available && installed_version == Some(USBIP_VERSION)
+fn pinned_usbip_installed(installed_version: Option<&str>) -> bool {
+    installed_version == Some(USBIP_VERSION)
 }
 
 #[tauri::command]
@@ -398,7 +398,7 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
     };
     let usbip_version = installed_usbip_version().unwrap_or_default();
     let usbip_available =
-        effective_usbip_available(result.usbip_available, Some(usbip_version.as_str()));
+        result.usbip_available && pinned_usbip_installed(Some(usbip_version.as_str()));
     let state = component_state(installed, verified, usbip_available, in_use);
 
     Ok(DualSenseStatus {
@@ -880,11 +880,9 @@ pub async fn dualsense_set_config(
             .await
             .map_err(|error| format!("DS5-PKG-003: sidecar probe task failed: {error}"))??;
         let usbip_version = installed_usbip_version();
-        validate_requested_profile(
-            enabled,
-            audio_haptics,
-            effective_usbip_available(probe.usbip_available, usbip_version.as_deref()),
-        )?;
+        let usbip_available =
+            probe.usbip_available && pinned_usbip_installed(usbip_version.as_deref());
+        validate_requested_profile(enabled, audio_haptics, usbip_available)?;
     }
     apply_config(enabled, audio_haptics, Some(&sidecar_path()), true).await?;
     dualsense_get_status().await
@@ -973,8 +971,8 @@ pub async fn dualsense_uninstall() -> Result<DualSenseStatus, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_gamepad_selection, component_state, component_test_failure,
-        effective_usbip_available, validate_requested_profile,
+        apply_gamepad_selection, component_state, component_test_failure, pinned_usbip_installed,
+        validate_requested_profile,
     };
     use std::process::Command;
 
@@ -1029,11 +1027,10 @@ mod tests {
     }
 
     #[test]
-    fn usbip_requires_the_pinned_installed_version() {
-        assert!(effective_usbip_available(true, Some("0.9.7.7")));
-        assert!(!effective_usbip_available(true, Some("0.9.7.3")));
-        assert!(!effective_usbip_available(true, None));
-        assert!(!effective_usbip_available(false, Some("0.9.7.7")));
+    fn usbip_requires_the_exact_pinned_version() {
+        assert!(pinned_usbip_installed(Some("0.9.7.7")));
+        assert!(!pinned_usbip_installed(Some("0.9.7.3")));
+        assert!(!pinned_usbip_installed(None));
     }
 
     #[test]

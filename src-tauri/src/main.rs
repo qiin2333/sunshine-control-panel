@@ -138,6 +138,8 @@ fn main() {
             commands::capture_screenshot,
             desktop_settings::get_desktop_settings,
             desktop_settings::save_desktop_settings,
+            desktop_settings::load_toolbar_shortcut_status,
+            desktop_settings::set_toolbar_shortcut_enabled,
             vdd::get_vdd_status,
             vdd::install_vdd_driver,
             vdd::set_vdd_keep_enabled,

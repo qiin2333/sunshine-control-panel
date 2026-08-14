@@ -251,6 +251,33 @@
         <div v-else-if="activeTab === 'animation'" class="panel-content">
           <div class="empty-hint">{{ t.petTool.animationMore }}</div>
         </div>
+
+        <div v-else-if="activeTab === 'shortcuts'" class="panel-content">
+          <div class="row row-master">
+            <div class="row-info">
+              <div class="row-name">{{ t.petTool.toolbarShortcut }}</div>
+              <div class="row-desc">{{ t.petTool.toolbarShortcutDesc }}</div>
+              <div v-if="toolbarShortcutUnavailable" class="row-desc warn">
+                {{ t.petTool.toolbarShortcutUnavailable }}
+              </div>
+              <div v-else-if="toolbarShortcutStateError" class="row-desc warn">
+                {{ t.petTool.toolbarShortcutStateError }}
+              </div>
+            </div>
+            <div class="row-control">
+              <label class="switch">
+                <input
+                  type="checkbox"
+                  :checked="toolbarShortcutEnabled"
+                  :aria-label="t.petTool.toolbarShortcut"
+                  :disabled="toolbarShortcutPending"
+                  @change="onToolbarShortcutToggle"
+                />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
       </section>
     </div>
 
@@ -309,6 +336,10 @@ const TABS = Object.freeze([
     id: 'animation',
     icon: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/></svg>',
   },
+  {
+    id: 'shortcuts',
+    icon: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-8 14H7v-2h4v2zm6-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>',
+  },
 ])
 
 const INTERVAL_PRESETS = Object.freeze([15, 30, 60, 120, 300])
@@ -326,8 +357,51 @@ const aiConfigVersion = ref(0)
 const serverAiConfig = ref(null)
 const visionConfirmPending = ref(false)
 const visionConfirmOpen = ref(false)
+const toolbarShortcutEnabled = ref(true)
+const toolbarShortcutRegistered = ref(false)
+const toolbarShortcutPending = ref(true)
+const toolbarShortcutStateError = ref(false)
 let tabTouchStart = null
 let aiConfigRefreshGeneration = 0
+
+const toolbarShortcutUnavailable = computed(
+  () => !toolbarShortcutPending.value
+    && !toolbarShortcutStateError.value
+    && toolbarShortcutEnabled.value
+    && !toolbarShortcutRegistered.value,
+)
+
+async function loadToolbarShortcutStatus() {
+  toolbarShortcutPending.value = true
+  toolbarShortcutStateError.value = false
+  try {
+    const status = await invoke('load_toolbar_shortcut_status')
+    toolbarShortcutEnabled.value = Boolean(status.enabled)
+    toolbarShortcutRegistered.value = Boolean(status.registered)
+  } catch (error) {
+    console.warn('[桌宠设置] 加载快捷键状态失败:', error)
+    toolbarShortcutStateError.value = true
+  } finally {
+    toolbarShortcutPending.value = false
+  }
+}
+
+async function onToolbarShortcutToggle(event) {
+  const enabled = event.currentTarget.checked
+  toolbarShortcutPending.value = true
+  toolbarShortcutStateError.value = false
+  try {
+    const status = await invoke('set_toolbar_shortcut_enabled', { enabled })
+    toolbarShortcutEnabled.value = Boolean(status.enabled)
+    toolbarShortcutRegistered.value = Boolean(status.registered)
+  } catch (error) {
+    console.warn('[桌宠设置] 保存快捷键状态失败:', error)
+    event.currentTarget.checked = toolbarShortcutEnabled.value
+    toolbarShortcutStateError.value = true
+  } finally {
+    toolbarShortcutPending.value = false
+  }
+}
 
 function hasUsableApiKey(key) {
   return typeof key === 'string' && Boolean(key.trim()) && !key.includes('****')
@@ -640,6 +714,7 @@ function syncSettingFromStorage(event) {
 
 onMounted(() => {
   window.addEventListener('storage', syncSettingFromStorage)
+  void loadToolbarShortcutStatus()
   void refreshAiConfigStatus().then((applied) => {
     if (applied) correctVisionEnabled()
   })

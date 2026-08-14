@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 use tauri::AppHandle;
 #[cfg(debug_assertions)]
 use tauri::Manager;
@@ -8,6 +9,11 @@ use tauri::Manager;
 const SETTINGS_FILE: &str = "desktop-settings.json";
 const RUN_VALUE_NAME: &str = "Sunshine GUI Desktop";
 const REMOVE_AUTO_START_ARG: &str = "--remove-autostart";
+static DESKTOP_SETTINGS_LOCK: Mutex<()> = Mutex::new(());
+
+fn lock_desktop_settings() -> MutexGuard<'static, ()> {
+    DESKTOP_SETTINGS_LOCK.lock().unwrap()
+}
 
 pub fn try_remove_auto_start_from_args() -> bool {
     if !std::env::args().any(|arg| arg == REMOVE_AUTO_START_ARG) {
@@ -43,6 +49,7 @@ pub struct DesktopSettings {
     pub update_notify: bool,
     pub dev_mode: bool,
     pub log_level: String,
+    pub toolbar_shortcut_enabled: bool,
 }
 
 impl Default for DesktopSettings {
@@ -57,6 +64,7 @@ impl Default for DesktopSettings {
             update_notify: true,
             dev_mode: false,
             log_level: "info".to_string(),
+            toolbar_shortcut_enabled: true,
         }
     }
 }
@@ -73,6 +81,13 @@ pub struct DesktopSettingsStatus {
 pub struct DesktopSettingsResponse {
     pub settings: DesktopSettings,
     pub status: DesktopSettingsStatus,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolbarShortcutStatus {
+    pub enabled: bool,
+    pub registered: bool,
 }
 
 fn settings_dir() -> Result<PathBuf, String> {
@@ -113,6 +128,7 @@ fn save_desktop_settings_to_disk(settings: &DesktopSettings) -> Result<(), Strin
 }
 
 pub fn set_file_mapping_menu_enabled(enabled: bool) -> Result<(), String> {
+    let _settings_guard = lock_desktop_settings();
     let mut settings = load_desktop_settings_from_disk();
     settings.file_mapping_menu_enabled = enabled;
     save_desktop_settings_to_disk(&settings)
@@ -297,7 +313,7 @@ fn configure_sunshine_service_start(mode: ServiceStartMode) -> Result<(), String
 }
 
 pub fn set_combined_auto_start_enabled(enabled: bool) -> Result<(), String> {
-    let previous = load_desktop_settings_from_disk();
+    let mut previous = load_desktop_settings_from_disk();
     let mut settings = previous.clone();
     settings.auto_start = enabled;
     settings.auto_start_sunshine = enabled;
@@ -318,6 +334,11 @@ pub fn set_combined_auto_start_enabled(enabled: bool) -> Result<(), String> {
             service_changed = true;
         }
     }
+
+    let _settings_guard = lock_desktop_settings();
+    let toolbar_shortcut_enabled = load_desktop_settings_from_disk().toolbar_shortcut_enabled;
+    settings.toolbar_shortcut_enabled = toolbar_shortcut_enabled;
+    previous.toolbar_shortcut_enabled = toolbar_shortcut_enabled;
 
     if let Err(error) = save_desktop_settings_to_disk(&settings) {
         #[cfg(target_os = "windows")]
@@ -361,8 +382,13 @@ pub async fn save_desktop_settings(
     app: AppHandle,
     mut settings: DesktopSettings,
 ) -> Result<DesktopSettingsResponse, String> {
-    normalize(&mut settings);
-    save_desktop_settings_to_disk(&settings)?;
+    {
+        let _settings_guard = lock_desktop_settings();
+        // 桌宠快捷键只由桌宠设置页的独立命令修改，避免普通设置页保存旧快照时覆盖它。
+        settings.toolbar_shortcut_enabled = load_desktop_settings_from_disk().toolbar_shortcut_enabled;
+        normalize(&mut settings);
+        save_desktop_settings_to_disk(&settings)?;
+    }
     apply_auto_start(&settings)?;
     crate::tray::refresh_menu(&app);
     crate::logger::set_log_level(&settings.log_level);
@@ -376,6 +402,47 @@ pub async fn save_desktop_settings(
         settings,
         status: status(),
     })
+}
+
+fn toolbar_shortcut_status(app: &AppHandle, enabled: bool) -> ToolbarShortcutStatus {
+    ToolbarShortcutStatus {
+        enabled,
+        registered: crate::app::toolbar_shortcut_is_registered(app),
+    }
+}
+
+/// 读取桌宠快捷键状态；若用户已启用，会顺便重试之前因冲突而失败的注册。
+#[tauri::command]
+pub fn load_toolbar_shortcut_status(app: AppHandle) -> ToolbarShortcutStatus {
+    let _settings_guard = lock_desktop_settings();
+    let settings = load_desktop_settings_from_disk();
+    if let Err(error) = crate::app::sync_toolbar_shortcut(&app, settings.toolbar_shortcut_enabled) {
+        log::warn!("Failed to synchronize toolbar shortcut while loading settings: {error}");
+    }
+    toolbar_shortcut_status(&app, settings.toolbar_shortcut_enabled)
+}
+
+#[tauri::command]
+pub fn set_toolbar_shortcut_enabled(
+    app: AppHandle,
+    enabled: bool,
+) -> Result<ToolbarShortcutStatus, String> {
+    let _settings_guard = lock_desktop_settings();
+    let previous = load_desktop_settings_from_disk();
+    crate::app::sync_toolbar_shortcut(&app, enabled)?;
+
+    let mut settings = previous.clone();
+    settings.toolbar_shortcut_enabled = enabled;
+    if let Err(error) = save_desktop_settings_to_disk(&settings) {
+        if let Err(rollback_error) =
+            crate::app::sync_toolbar_shortcut(&app, previous.toolbar_shortcut_enabled)
+        {
+            log::warn!("Failed to restore toolbar shortcut after save failure: {rollback_error}");
+        }
+        return Err(error);
+    }
+
+    Ok(toolbar_shortcut_status(&app, enabled))
 }
 
 pub fn apply_startup_settings(app: &AppHandle, settings: &DesktopSettings) {
@@ -494,6 +561,24 @@ mod tests {
         assert!(settings.notifications);
         assert!(settings.connection_notify);
         assert!(settings.update_notify);
+    }
+
+    #[test]
+    fn toolbar_shortcut_is_enabled_by_default_and_for_legacy_settings() {
+        assert!(DesktopSettings::default().toolbar_shortcut_enabled);
+
+        let settings: DesktopSettings = serde_json::from_str(r#"{"autoStart":false}"#)
+            .expect("legacy desktop settings should deserialize");
+        assert!(settings.toolbar_shortcut_enabled);
+    }
+
+    #[test]
+    fn toolbar_shortcut_can_be_disabled_explicitly() {
+        let settings: DesktopSettings =
+            serde_json::from_str(r#"{"toolbarShortcutEnabled":false}"#)
+                .expect("toolbar shortcut setting should deserialize");
+
+        assert!(!settings.toolbar_shortcut_enabled);
     }
 
     #[test]

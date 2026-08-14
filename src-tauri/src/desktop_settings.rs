@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 use tauri::AppHandle;
 #[cfg(debug_assertions)]
 use tauri::Manager;
@@ -8,6 +9,11 @@ use tauri::Manager;
 const SETTINGS_FILE: &str = "desktop-settings.json";
 const RUN_VALUE_NAME: &str = "Sunshine GUI Desktop";
 const REMOVE_AUTO_START_ARG: &str = "--remove-autostart";
+static DESKTOP_SETTINGS_LOCK: Mutex<()> = Mutex::new(());
+
+fn lock_desktop_settings() -> MutexGuard<'static, ()> {
+    DESKTOP_SETTINGS_LOCK.lock().unwrap()
+}
 
 pub fn try_remove_auto_start_from_args() -> bool {
     if !std::env::args().any(|arg| arg == REMOVE_AUTO_START_ARG) {
@@ -122,6 +128,7 @@ fn save_desktop_settings_to_disk(settings: &DesktopSettings) -> Result<(), Strin
 }
 
 pub fn set_file_mapping_menu_enabled(enabled: bool) -> Result<(), String> {
+    let _settings_guard = lock_desktop_settings();
     let mut settings = load_desktop_settings_from_disk();
     settings.file_mapping_menu_enabled = enabled;
     save_desktop_settings_to_disk(&settings)
@@ -306,7 +313,7 @@ fn configure_sunshine_service_start(mode: ServiceStartMode) -> Result<(), String
 }
 
 pub fn set_combined_auto_start_enabled(enabled: bool) -> Result<(), String> {
-    let previous = load_desktop_settings_from_disk();
+    let mut previous = load_desktop_settings_from_disk();
     let mut settings = previous.clone();
     settings.auto_start = enabled;
     settings.auto_start_sunshine = enabled;
@@ -327,6 +334,11 @@ pub fn set_combined_auto_start_enabled(enabled: bool) -> Result<(), String> {
             service_changed = true;
         }
     }
+
+    let _settings_guard = lock_desktop_settings();
+    let toolbar_shortcut_enabled = load_desktop_settings_from_disk().toolbar_shortcut_enabled;
+    settings.toolbar_shortcut_enabled = toolbar_shortcut_enabled;
+    previous.toolbar_shortcut_enabled = toolbar_shortcut_enabled;
 
     if let Err(error) = save_desktop_settings_to_disk(&settings) {
         #[cfg(target_os = "windows")]
@@ -370,10 +382,13 @@ pub async fn save_desktop_settings(
     app: AppHandle,
     mut settings: DesktopSettings,
 ) -> Result<DesktopSettingsResponse, String> {
-    // 桌宠快捷键只由桌宠设置页的独立命令修改，避免普通设置页保存旧快照时覆盖它。
-    settings.toolbar_shortcut_enabled = load_desktop_settings_from_disk().toolbar_shortcut_enabled;
-    normalize(&mut settings);
-    save_desktop_settings_to_disk(&settings)?;
+    {
+        let _settings_guard = lock_desktop_settings();
+        // 桌宠快捷键只由桌宠设置页的独立命令修改，避免普通设置页保存旧快照时覆盖它。
+        settings.toolbar_shortcut_enabled = load_desktop_settings_from_disk().toolbar_shortcut_enabled;
+        normalize(&mut settings);
+        save_desktop_settings_to_disk(&settings)?;
+    }
     apply_auto_start(&settings)?;
     crate::tray::refresh_menu(&app);
     crate::logger::set_log_level(&settings.log_level);
@@ -399,6 +414,7 @@ fn toolbar_shortcut_status(app: &AppHandle, enabled: bool) -> ToolbarShortcutSta
 /// 读取桌宠快捷键状态；若用户已启用，会顺便重试之前因冲突而失败的注册。
 #[tauri::command]
 pub fn load_toolbar_shortcut_status(app: AppHandle) -> ToolbarShortcutStatus {
+    let _settings_guard = lock_desktop_settings();
     let settings = load_desktop_settings_from_disk();
     if let Err(error) = crate::app::sync_toolbar_shortcut(&app, settings.toolbar_shortcut_enabled) {
         log::warn!("Failed to synchronize toolbar shortcut while loading settings: {error}");
@@ -411,6 +427,7 @@ pub fn set_toolbar_shortcut_enabled(
     app: AppHandle,
     enabled: bool,
 ) -> Result<ToolbarShortcutStatus, String> {
+    let _settings_guard = lock_desktop_settings();
     let previous = load_desktop_settings_from_disk();
     crate::app::sync_toolbar_shortcut(&app, enabled)?;
 

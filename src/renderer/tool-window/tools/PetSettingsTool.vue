@@ -269,6 +269,7 @@
                 <input
                   type="checkbox"
                   :checked="toolbarShortcutEnabled"
+                  :aria-label="t.petTool.toolbarShortcut"
                   :disabled="toolbarShortcutPending"
                   @change="onToolbarShortcutToggle"
                 />

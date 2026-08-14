@@ -508,7 +508,7 @@ export const en = {
     },
     animationMore: 'More animation options coming soon…',
     toolbarShortcut: 'Enable desktop pet shortcut',
-    toolbarShortcutDesc: 'Ctrl + Shift + Alt + T shows or hides the desktop pet toolbar. When disabled, the foreground application receives the shortcut instead.',
+    toolbarShortcutDesc: 'Ctrl + Shift + Alt + T shows or hides the desktop pet toolbar. When disabled, Sunshine GUI stops registering the shortcut and other applications may use it when permitted by the operating system.',
     toolbarShortcutUnavailable: 'This shortcut may already be used by another application and is currently unavailable. Open this page again after the other application releases it to retry registration.',
     toolbarShortcutStateError: 'Could not update the shortcut state. Please try again.',
     master: 'Pet Speech (Master)',

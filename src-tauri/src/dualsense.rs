@@ -131,26 +131,59 @@ fn run_with_timeout(
     timeout: std::time::Duration,
     timeout_error: &str,
 ) -> Result<std::process::Output, String> {
+    const MAX_CAPTURED_OUTPUT: usize = 1024 * 1024;
+
+    fn drain_pipe<R: Read + Send + 'static>(mut pipe: R) -> std::thread::JoinHandle<Vec<u8>> {
+        std::thread::spawn(move || {
+            let mut captured = Vec::new();
+            let mut buffer = [0u8; 8192];
+            loop {
+                let Ok(count) = pipe.read(&mut buffer) else {
+                    break;
+                };
+                if count == 0 {
+                    break;
+                }
+                let remaining = MAX_CAPTURED_OUTPUT.saturating_sub(captured.len());
+                captured.extend_from_slice(&buffer[..count.min(remaining)]);
+            }
+            captured
+        })
+    }
+
     command
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     let mut child = command
         .spawn()
         .map_err(|error| format!("DS5-PKG-003: unable to start sidecar: {error}"))?;
+    let stdout_reader = child
+        .stdout
+        .take()
+        .map(drain_pipe)
+        .ok_or_else(|| "DS5-PKG-003: unable to capture sidecar stdout".to_string())?;
+    let stderr_reader = child
+        .stderr
+        .take()
+        .map(drain_pipe)
+        .ok_or_else(|| "DS5-PKG-003: unable to capture sidecar stderr".to_string())?;
     let deadline = std::time::Instant::now() + timeout;
     loop {
-        if child
+        if let Some(status) = child
             .try_wait()
             .map_err(|error| format!("DS5-PKG-003: unable to wait for sidecar: {error}"))?
-            .is_some()
         {
-            return child.wait_with_output().map_err(|error| {
-                format!("DS5-PKG-003: unable to collect sidecar output: {error}")
+            return Ok(std::process::Output {
+                status,
+                stdout: stdout_reader.join().unwrap_or_default(),
+                stderr: stderr_reader.join().unwrap_or_default(),
             });
         }
         if std::time::Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
+            let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
             return Err(timeout_error.to_string());
         }
         std::thread::sleep(std::time::Duration::from_millis(25));

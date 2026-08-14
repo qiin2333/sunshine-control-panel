@@ -2,143 +2,152 @@
   <section class="ds5-page">
     <header class="page-header">
       <div class="page-title-group">
-        <span class="page-title-icon" aria-hidden="true"><el-icon><Aim /></el-icon></span>
-        <div>
-          <h1>{{ t.controllers.title }}</h1>
-          <p>{{ t.controllers.intro }}</p>
-        </div>
+        <p class="eyebrow">{{ t.controllers.eyebrow }}</p>
+        <h1>{{ t.controllers.title }}</h1>
+        <p>{{ t.controllers.intro }}</p>
       </div>
-      <el-tag round effect="light">{{ t.dualSense.experimental }}</el-tag>
+      <el-tag class="pixel-tag" effect="plain">{{ t.dualSense.experimental }}</el-tag>
     </header>
 
-    <article class="component-panel">
-      <div class="component-heading">
+    <article class="component-panel" :class="`state-${status.state}`">
+      <section class="title-row">
         <div>
           <h2>{{ t.dualSense.title }}</h2>
           <p>{{ t.dualSense.intro }}</p>
         </div>
-      </div>
-
-      <section class="status-box" :class="`state-${status.state}`" aria-live="polite">
-        <div class="status-top">
-          <div class="status-heading">
-            <span class="status-dot" aria-hidden="true"></span>
-            <strong>{{ stateLabel }}</strong>
-            <span v-if="overallVersion" class="status-version">{{ overallVersion }}</span>
-          </div>
-          <div class="status-actions">
-            <el-button
-              v-if="!status.installed"
-              type="primary"
-              :loading="operation === 'install'"
-              :disabled="status.in_use"
-              @click="install"
-            >{{ t.dualSense.install }}</el-button>
-            <el-button
-              v-else-if="!status.verified"
-              type="warning"
-              :loading="operation === 'install'"
-              :disabled="status.in_use"
-              @click="install"
-            >{{ t.dualSense.repair }}</el-button>
-            <el-button
-              v-else
-              type="primary"
-              :loading="operation === selectedTestProfile"
-              :disabled="status.in_use || !canTestSelectedProfile"
-              @click="test(selectedTestProfile)"
-            >{{ selectedTestLabel }}</el-button>
-            <el-button :loading="loading" :disabled="!!operation" @click="refresh()">
-              <el-icon><Refresh /></el-icon>
-              {{ t.dualSense.refresh }}
-            </el-button>
-          </div>
-        </div>
-        <article v-if="operation === 'install'" class="operation-card" aria-live="polite">
-          <div>
-            <strong>{{ operationStage }}</strong>
-            <span>{{ operationProgress }}%</span>
-          </div>
-          <el-progress :percentage="operationProgress" :show-text="false" />
-        </article>
+        <el-checkbox
+          v-model="enabled"
+          class="enable-control"
+          :disabled="!status.verified || status.in_use || saving"
+          @change="saveSettings"
+        >{{ t.dualSense.enableShort }}</el-checkbox>
       </section>
 
-      <div class="section-title"><span>{{ t.dualSense.componentHealth }}</span></div>
-      <div class="health-list">
-        <div v-for="item in healthRows" :key="item.label" class="health-row">
-          <span>{{ item.label }}</span>
-          <strong class="health-state"><i :class="item.tone" aria-hidden="true"></i>{{ item.state }}</strong>
-          <span class="health-detail">{{ item.detail }}</span>
+      <section class="status-row" aria-live="polite">
+        <div class="status-heading">
+          <span class="status-dot" aria-hidden="true"></span>
+          <strong>{{ stateLabel }}</strong>
+          <span v-if="overallVersion" class="status-version">{{ overallVersion }}</span>
         </div>
-      </div>
-
-      <template v-if="status.verified">
-        <div class="section-title"><span>{{ t.dualSense.profileTitle }}</span></div>
-        <div class="settings-list">
-          <div class="setting-row">
-            <div>
-              <strong>{{ t.dualSense.enable }}</strong>
-              <p>{{ t.dualSense.enableTip }}</p>
-            </div>
-            <el-switch
-              v-model="enabled"
-              :disabled="status.in_use || saving"
-              @change="saveSettings"
-            />
-          </div>
-          <div class="setting-row profile-row">
-            <div>
-              <strong>{{ t.dualSense.profileTitle }}</strong>
-              <p>{{ selectedProfileDescription }}</p>
-            </div>
-            <el-radio-group
-              :model-value="audioHaptics ? 'native' : 'standard'"
-              :disabled="status.in_use || saving"
-              @change="selectProfile($event === 'native')"
-            >
-              <el-radio-button value="standard">{{ t.dualSense.standardModeShort }}</el-radio-button>
-              <el-radio-button value="native" :disabled="!status.usbip_available">
-                {{ t.dualSense.nativeModeShort }}
-              </el-radio-button>
-            </el-radio-group>
-          </div>
+        <div class="status-actions">
+          <el-button
+            v-if="!status.installed"
+            type="primary"
+            :loading="operation === 'install'"
+            :disabled="status.in_use"
+            @click="install"
+          >{{ t.dualSense.install }}</el-button>
+          <el-button
+            v-else-if="!status.verified"
+            type="warning"
+            :loading="operation === 'install'"
+            :disabled="status.in_use"
+            @click="install"
+          >{{ t.dualSense.repair }}</el-button>
+          <el-button text :loading="loading" :disabled="!!operation" @click="refresh()">
+            <el-icon><Refresh /></el-icon>{{ t.dualSense.refresh }}
+          </el-button>
         </div>
-      </template>
+      </section>
 
-      <div v-if="showNotice" class="notice" role="status">
-        <el-icon><Warning /></el-icon>
-        <span>{{ nextAction }}</span>
-      </div>
-
-      <article v-if="testCompleted" class="validation-card" aria-live="polite">
-        <div>
-          <strong>{{ t.dualSense.validationTitle }}</strong>
-          <p>{{ t.dualSense.validationTip }}</p>
-        </div>
-        <el-button type="primary" plain @click="emit('open-controller-meta')">
-          {{ t.dualSense.openControllerMeta }}
-        </el-button>
+      <article v-if="operation === 'install'" class="operation-card" aria-live="polite">
+        <div><strong>{{ operationStage }}</strong><span>{{ operationProgress }}%</span></div>
+        <el-progress :percentage="operationProgress" :show-text="false" />
       </article>
 
-      <footer class="panel-footer">
-        <span v-if="status.install_path">{{ t.dualSense.installLocation }}：{{ status.install_path }}</span>
-        <span>{{ t.dualSense.source }}</span>
-        <div class="footer-actions">
-          <details v-if="status.detail">
-            <summary>{{ status.error_code || t.dualSense.technicalDetails }}</summary>
-            <pre>{{ status.detail }}</pre>
-          </details>
-          <el-button
-            v-if="status.installed"
-            link
-            type="danger"
-            :loading="operation === 'uninstall'"
-            :disabled="status.in_use"
-            @click="uninstall"
-          >{{ t.dualSense.uninstall }}</el-button>
+      <el-alert
+        v-if="showNotice"
+        class="notice"
+        type="warning"
+        :title="nextAction"
+        :closable="false"
+        show-icon
+      />
+
+      <section v-if="status.verified" class="profile-section" :aria-label="t.dualSense.profileTitle">
+        <span class="section-label">{{ t.dualSense.profileTitle }}</span>
+        <div class="profile-options" role="radiogroup">
+          <button
+            type="button"
+            class="profile-option"
+            :class="{ 'is-selected': !audioHaptics }"
+            role="radio"
+            :aria-checked="!audioHaptics"
+            :disabled="status.in_use || saving"
+            @click="selectProfile(false)"
+          >
+            <span class="selection-cursor" aria-hidden="true">▶</span>
+            <span class="option-copy">
+              <strong>{{ t.dualSense.standardModeShort }}</strong>
+              <small>{{ t.dualSense.standardModeTip }}</small>
+            </span>
+            <kbd>Enter</kbd>
+          </button>
+          <button
+            type="button"
+            class="profile-option"
+            :class="{ 'is-selected': audioHaptics }"
+            role="radio"
+            :aria-checked="audioHaptics"
+            :disabled="status.in_use || saving || !status.usbip_available"
+            @click="selectProfile(true)"
+          >
+            <span class="selection-cursor" aria-hidden="true">▶</span>
+            <span class="option-copy">
+              <strong>{{ t.dualSense.nativeModeShort }}</strong>
+              <small>{{ status.usbip_available ? t.dualSense.nativeModeTip : t.dualSense.nativeUnavailable }}</small>
+            </span>
+            <kbd>Enter</kbd>
+          </button>
         </div>
-      </footer>
-      <p class="limitation">{{ t.dualSense.limitation }}</p>
+      </section>
+
+      <section v-if="status.verified" class="test-section">
+        <div>
+          <strong>{{ t.dualSense.validateMode }}</strong>
+          <p>{{ testCompleted ? t.dualSense.validationTip : t.dualSense.validateModeTip }}</p>
+        </div>
+        <div class="test-actions">
+          <el-button
+            text
+            :loading="operation === selectedTestProfile"
+            :disabled="status.in_use || !canTestSelectedProfile"
+            @click="test(selectedTestProfile)"
+          >[ {{ selectedTestLabel }} ]</el-button>
+          <el-button v-if="testCompleted" text type="success" @click="emit('open-controller-meta')">
+            [ {{ t.dualSense.openControllerMeta }} ]
+          </el-button>
+        </div>
+      </section>
+
+      <el-collapse v-model="expandedSections" class="details-collapse">
+        <el-collapse-item name="health" :title="t.dualSense.componentHealth">
+          <div class="health-list">
+            <div v-for="item in healthRows" :key="item.label" class="health-row">
+              <span>{{ item.label }}</span>
+              <strong class="health-state"><i :class="item.tone" aria-hidden="true"></i>{{ item.state }}</strong>
+              <span class="health-detail">{{ item.detail }}</span>
+            </div>
+          </div>
+          <footer class="panel-footer">
+            <span v-if="status.install_path">{{ t.dualSense.installLocation }}：{{ status.install_path }}</span>
+            <span>{{ t.dualSense.source }}</span>
+            <details v-if="status.detail">
+              <summary>{{ status.error_code || t.dualSense.technicalDetails }}</summary>
+              <pre>{{ status.detail }}</pre>
+            </details>
+            <el-button
+              v-if="status.installed"
+              link
+              type="danger"
+              :loading="operation === 'uninstall'"
+              :disabled="status.in_use"
+              @click="uninstall"
+            >{{ t.dualSense.uninstall }}</el-button>
+            <p>{{ t.dualSense.limitation }}</p>
+          </footer>
+        </el-collapse-item>
+      </el-collapse>
     </article>
   </section>
 </template>
@@ -146,7 +155,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Aim, Refresh, Warning } from '@element-plus/icons-vue'
+import { Refresh } from '@element-plus/icons-vue'
 import { dualsense } from '../tauri-adapter.js'
 import { useI18n } from '../desktop/i18n/index.js'
 
@@ -160,6 +169,7 @@ const operationStageKey = ref('preparing')
 const enabled = ref(false)
 const audioHaptics = ref(false)
 const testCompleted = ref(false)
+const expandedSections = ref([])
 const status = ref({
   state: 'loading', installed: false, verified: false, enabled: false,
   audio_haptics: false, driver_installed: false, usbip_available: false,
@@ -175,18 +185,12 @@ const nextAction = computed(() => ({
   not_installed: t.value.dualSense.nextNotInstalled,
   repair_required: t.value.dualSense.nextRepair,
   transport_missing: t.value.dualSense.nextTransport,
-  ready: t.value.dualSense.nextReady,
   in_use: t.value.dualSense.nextInUse,
-  loading: t.value.dualSense.states.loading,
 }[status.value.state] || t.value.dualSense.nextRepair))
 
 const overallVersion = computed(() => status.value.component_version || status.value.runtime_version || status.value.error_code)
 const selectedTestProfile = computed(() => audioHaptics.value ? 'composite' : 'standard')
 const selectedTestLabel = computed(() => audioHaptics.value ? t.value.dualSense.testComposite : t.value.dualSense.testStandard)
-const selectedProfileDescription = computed(() => {
-  if (!audioHaptics.value) return t.value.dualSense.standardModeTip
-  return status.value.usbip_available ? t.value.dualSense.nativeModeTip : t.value.dualSense.nativeUnavailable
-})
 const canTestSelectedProfile = computed(() => audioHaptics.value
   ? status.value.composite_profile && status.value.usbip_available
   : status.value.standard_profile)
@@ -338,34 +342,78 @@ onUnmounted(() => {
 </script>
 
 <style scoped lang="less">
-.ds5-page { max-width: 960px; margin: 0 auto; padding: 26px 28px 42px; color: var(--el-text-color-primary); }
-.page-header { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; margin-bottom: 18px; }
-.page-title-group { display: flex; gap: 12px; align-items: flex-start; h1 { margin: 0 0 6px; font-size: 24px; font-weight: 600; } p { margin: 0; max-width: 700px; color: var(--el-text-color-secondary); line-height: 1.5; } }
-.page-title-icon { display: grid; place-items: center; width: 34px; height: 34px; flex: 0 0 auto; border-radius: 10px; color: var(--el-color-primary); background: var(--el-color-primary-light-9); font-size: 18px; }
-.component-panel { max-width: 780px; margin: 0 auto; padding: 24px; border: 1px solid var(--el-border-color); border-radius: 15px; background: var(--el-bg-color-overlay); box-shadow: var(--el-box-shadow-light); }
-.component-heading { h2 { margin: 0 0 8px; font-size: 20px; font-weight: 600; } p { margin: 0 0 18px; color: var(--el-text-color-secondary); line-height: 1.55; } }
-.status-box { padding: 16px; border: 1px solid var(--el-border-color-lighter); border-radius: 12px; background: var(--el-fill-color-lighter); }
-.status-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.status-heading { display: flex; gap: 10px; align-items: center; }
-.status-version { color: var(--el-text-color-secondary); font-size: 13px; }
-.status-dot { width: 10px; height: 10px; flex: 0 0 auto; border-radius: 50%; background: var(--el-text-color-placeholder); }
-.state-ready .status-dot { background: var(--el-color-success); box-shadow: 0 0 0 4px var(--el-color-success-light-8); }
-.state-transport_missing .status-dot, .state-in_use .status-dot { background: var(--el-color-warning); box-shadow: 0 0 0 4px var(--el-color-warning-light-8); }
-.state-repair_required .status-dot { background: var(--el-color-danger); box-shadow: 0 0 0 4px var(--el-color-danger-light-8); }
-.status-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.operation-card { margin-top: 14px; div { display: flex; justify-content: space-between; margin-bottom: 7px; color: var(--el-text-color-secondary); font-size: 12px; } }
-.section-title { display: flex; align-items: center; gap: 10px; margin: 22px 0 9px; color: var(--el-text-color-regular); font-weight: 600; &::after { content: ''; flex: 1; height: 1px; background: var(--el-border-color-lighter); } }
-.health-list { display: grid; }
-.health-row { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(110px, auto) minmax(0, 1fr); gap: 16px; align-items: center; min-height: 44px; border-bottom: 1px solid var(--el-border-color-extra-light); &:last-child { border-bottom: 0; } }
-.health-state { display: flex; align-items: center; gap: 7px; font-weight: 500; i { width: 7px; height: 7px; border-radius: 50%; background: var(--el-text-color-placeholder); } i.ok { background: var(--el-color-success); } i.busy { background: var(--el-color-primary); } i.warn { background: var(--el-color-warning); } i.bad { background: var(--el-color-danger); } }
-.health-detail { min-width: 0; color: var(--el-text-color-secondary); font-size: 12px; text-align: right; overflow-wrap: anywhere; }
-.settings-list { border: 1px solid var(--el-border-color-lighter); border-radius: 12px; padding: 0 16px; }
-.setting-row { display: flex; justify-content: space-between; align-items: center; gap: 24px; min-height: 64px; padding: 12px 0; & + & { border-top: 1px solid var(--el-border-color-extra-light); } p { margin: 5px 0 0; color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.45; } }
-.notice { display: flex; gap: 9px; align-items: flex-start; margin-top: 16px; padding: 12px; border-radius: 10px; color: var(--el-color-warning-dark-2); background: var(--el-color-warning-light-9); }
-.validation-card { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 16px; margin-top: 16px; border: 1px solid var(--el-color-success-light-5); border-radius: 12px; background: var(--el-color-success-light-9); p { margin: 5px 0 0; color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.45; } }
-.panel-footer { display: grid; gap: 8px; margin-top: 19px; padding-top: 14px; border-top: 1px solid var(--el-border-color-lighter); color: var(--el-text-color-secondary); font-size: 12px; overflow-wrap: anywhere; }
-.footer-actions { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; details { min-width: 0; summary { cursor: pointer; } pre { white-space: pre-wrap; overflow-wrap: anywhere; } } }
-.limitation { margin: 12px 0 0; color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.5; }
+.ds5-page {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 26px 28px 42px;
+  color: var(--el-text-color-primary);
+  font-family: 'PixelMplus12', 'Courier New', monospace;
+}
+.page-header { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; margin-bottom: 34px; }
+.page-title-group {
+  h1 { margin: 0 0 7px; font-size: 24px; font-weight: 500; }
+  > p:last-child { margin: 0; color: var(--el-text-color-secondary); line-height: 1.5; }
+}
+.eyebrow, .section-label { color: var(--el-text-color-secondary); font-size: 11px; letter-spacing: .12em; }
+.eyebrow { margin: 0 0 7px; }
+.pixel-tag { border: 0; border-radius: 0; color: var(--el-color-primary); background: transparent; letter-spacing: .05em; }
+.component-panel { max-width: 820px; margin: 0 auto; padding: 8px; }
+.title-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 32px; margin-bottom: 24px; }
+.title-row {
+  h2 { margin: 0 0 7px; font-size: 22px; font-weight: 500; }
+  p { margin: 0; max-width: 560px; color: var(--el-text-color-secondary); line-height: 1.5; }
+}
+.enable-control { font-weight: 500; }
+.status-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 32px; margin-bottom: 30px; }
+.status-heading, .status-actions, .test-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.status-version { color: var(--el-text-color-secondary); font-size: 12px; }
+.status-dot { width: 8px; height: 8px; flex: 0 0 auto; background: var(--el-text-color-placeholder); }
+.state-ready .status-dot { background: var(--el-color-success); box-shadow: 0 0 0 3px var(--el-color-success-light-8); }
+.state-transport_missing .status-dot, .state-in_use .status-dot { background: var(--el-color-warning); box-shadow: 0 0 0 3px var(--el-color-warning-light-8); }
+.state-repair_required .status-dot { background: var(--el-color-danger); box-shadow: 0 0 0 3px var(--el-color-danger-light-8); }
+.operation-card { padding: 0 0 20px; div { display: flex; justify-content: space-between; margin-bottom: 7px; color: var(--el-text-color-secondary); font-size: 12px; } }
+.notice { margin: 0 0 20px; padding-inline: 0; border-radius: 0; background: transparent; }
+.profile-section { margin-top: 4px; }
+.section-label { display: block; margin-bottom: 10px; }
+.profile-options { display: grid; gap: 4px; }
+.profile-option {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  min-height: 58px;
+  padding: 8px 12px;
+  border: 0;
+  color: var(--el-text-color-secondary);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  &:disabled { cursor: not-allowed; opacity: .55; }
+  &.is-selected { color: var(--el-text-color-primary); background: var(--el-color-primary-light-9); box-shadow: inset 4px 0 0 var(--el-color-primary); }
+  kbd { min-width: 42px; padding: 2px 5px; border: 1px solid var(--el-border-color); color: var(--el-text-color-secondary); background: transparent; font: inherit; font-size: 11px; text-align: center; }
+}
+.selection-cursor { visibility: hidden; color: var(--el-color-primary); }
+.profile-option.is-selected .selection-cursor { visibility: visible; }
+.option-copy {
+  min-width: 0;
+  strong, small { display: block; }
+  strong { font-weight: 500; }
+  small { margin-top: 4px; color: var(--el-text-color-secondary); font-size: 11px; line-height: 1.45; }
+}
+.test-section { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 32px; margin-top: 26px; p { margin: 5px 0 0; color: var(--el-text-color-secondary); font-size: 11px; line-height: 1.45; } }
+.details-collapse { margin-top: 24px; border: 0; :deep(.el-collapse-item__header) { border: 0; color: var(--el-text-color-secondary); background: transparent; font-family: inherit; } :deep(.el-collapse-item__wrap) { border: 0; background: transparent; } :deep(.el-collapse-item__content) { padding-bottom: 0; color: inherit; font-family: inherit; } }
+.health-list { display: grid; padding: 0 8px 10px 20px; }
+.health-row { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(110px, auto) minmax(0, 1fr); gap: 16px; align-items: center; min-height: 40px; }
+.health-state { display: flex; align-items: center; gap: 7px; font-weight: 500; i { width: 7px; height: 7px; background: var(--el-text-color-placeholder); } i.ok { background: var(--el-color-success); } i.busy { background: var(--el-color-primary); } i.warn { background: var(--el-color-warning); } i.bad { background: var(--el-color-danger); } }
+.health-detail { min-width: 0; color: var(--el-text-color-secondary); font-size: 11px; text-align: right; overflow-wrap: anywhere; }
+.panel-footer { display: grid; gap: 8px; padding: 14px 8px 14px 20px; color: var(--el-text-color-secondary); font-size: 11px; overflow-wrap: anywhere; details summary { cursor: pointer; } pre { white-space: pre-wrap; overflow-wrap: anywhere; } p { margin: 0; line-height: 1.5; } }
+.ds5-page :deep(.el-button),
+.ds5-page :deep(.el-checkbox__inner),
+.ds5-page :deep(.el-progress-bar__outer),
+.ds5-page :deep(.el-progress-bar__inner) { border-radius: 0; }
+.ds5-page :deep(.el-button.is-text) { padding-inline: 4px; }
 :global([data-bs-theme='dark']) .ds5-page {
   --el-bg-color-overlay: rgba(61, 50, 53, .72);
   --el-fill-color-blank: rgba(255, 255, 255, .055);
@@ -387,15 +435,17 @@ onUnmounted(() => {
   --el-color-warning-dark-2: #f0bd70;
   --el-color-danger-light-8: rgba(245, 108, 108, .19);
   color: var(--el-text-color-primary);
-  .page-title-icon { color: #d8a0a0; border: 1px solid rgba(216, 160, 160, .24); background: rgba(216, 160, 160, .12); }
-  .component-panel { box-shadow: 0 10px 30px rgba(0, 0, 0, .2); }
 }
 @media (max-width: 760px) {
   .ds5-page { padding: 20px 16px 34px; }
-  .component-panel { padding: 18px; }
   .health-row { grid-template-columns: minmax(0, 1fr) minmax(0, auto); gap: 8px; padding: 10px 0; }
   .health-detail { grid-column: 1 / -1; text-align: left; }
-  .profile-row { align-items: flex-start; flex-direction: column; }
-  .validation-card { align-items: flex-start; flex-direction: column; }
+}
+@media (max-width: 600px) {
+  .page-header { align-items: flex-start; flex-direction: column; }
+  .title-row, .status-row, .test-section { grid-template-columns: 1fr; gap: 12px; }
+  .enable-control { justify-self: stretch; }
+  .status-actions, .test-actions { justify-content: flex-start; }
+  .profile-option { grid-template-columns: 16px minmax(0, 1fr) auto; padding-inline: 6px; }
 }
 </style>

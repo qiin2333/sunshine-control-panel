@@ -15,6 +15,12 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  SCCACHE_GHA_ENABLED: 'true'
+  RUSTC_WRAPPER: sccache
+
+concurrency:
+  group: gui-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build-windows:
@@ -29,29 +35,21 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
 
-      # Only cache Cargo registry/git (download deps), NOT src-tauri/target.
-      # Caching the build target dir caused a Tauri proc-macro fingerprint
-      # corruption that silently dropped some `generate_handler!` entries
-      # (install_vmouse_driver / uninstall_vmouse_driver) from the IPC dispatch
-      # table while leaving sibling commands intact. Always rebuild the crate
-      # from scratch; deps stay cached so CI cost is bounded.
-      - name: Cache Cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-registry-
+      # Cache compiler outputs without restoring Cargo's target directory. This
+      # avoids the stale Tauri proc-macro fingerprints previously seen with a
+      # target-directory cache while still reusing unchanged dependency builds.
+      - name: Setup Rust compiler cache
+        uses: mozilla-actions/sccache-action@v0.0.11
 
       - name: Install npm dependencies
-        run: npm install
+        run: npm ci
 
       - name: Inject version from tag
         shell: bash
@@ -91,20 +89,24 @@ jobs:
         run: npm run test:renderer
 
       - name: Test Tauri backend
-        run: cargo test --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
+        run: cargo test --release --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
 
       - name: Build Tauri (release)
+        if: github.event_name != 'pull_request'
         run: cargo build --manifest-path src-tauri/Cargo.toml --release --target x86_64-pc-windows-msvc
 
       - name: Install NSIS
+        if: github.event_name != 'pull_request'
         shell: pwsh
         run: choco install nsis -y --no-progress
 
       - name: Build GUI component installer
+        if: github.event_name != 'pull_request'
         shell: pwsh
         run: ./scripts/build-gui-component-installer.ps1 -SkipBuild
 
       - name: Prepare artifacts
+        if: github.event_name != 'pull_request'
         shell: pwsh
         run: |
           $outDir = "artifacts"
@@ -132,6 +134,7 @@ jobs:
           }
 
       - name: Upload artifacts
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: sunshine-gui-windows-x64

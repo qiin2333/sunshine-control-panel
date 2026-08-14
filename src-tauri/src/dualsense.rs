@@ -302,7 +302,9 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
     let executable = sidecar_path();
     let installed = executable.is_file();
     let in_use = has_active_session().await;
-    let enabled = config_bool("ds5_enabled", false);
+    let enabled = config_bool("ds5_enabled", false)
+        && read_config_value("gamepad")
+            .is_some_and(|gamepad| gamepad.eq_ignore_ascii_case("ds5"));
     let audio_haptics = config_bool("ds5_audio_haptics", false);
     let probe = if installed {
         let probe_executable = executable.clone();

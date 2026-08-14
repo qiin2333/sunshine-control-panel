@@ -31,9 +31,9 @@ import {
   Download,
   Connection,
   MagicStick,
-  Aim,
 } from '@element-plus/icons-vue'
 import IconLang from '../desktop/icons/IconLang.vue'
+import IconGamepad from '../desktop/icons/IconGamepad.vue'
 import { ROUTES } from './useRouter.js'
 
 // ───────────────────────────────────────────────
@@ -82,7 +82,7 @@ export function createManagementTools(ctx) {
     },
     {
       id: 'controllers',
-      icon: Aim,
+      icon: IconGamepad,
       label: ctx.t.value.sidebar.controllers,
       action: ctx.openControllers,
       isActive: () => ctx.router.isRoute(ROUTES.CONTROLLERS) || ctx.router.isRoute(ROUTES.DUALSENSE),

@@ -31,20 +31,36 @@
         </div>
         <div class="status-actions">
           <el-button
-            v-if="!status.installed"
-            type="primary"
+            v-if="statusKnown && !status.installed"
+            text
+            class="menu-action menu-action-primary"
             :loading="operation === 'install'"
-            :disabled="status.in_use"
+            :disabled="loading || status.in_use"
             @click="install"
-          >{{ t.dualSense.install }}</el-button>
+          >
+            <span class="action-bracket" aria-hidden="true">[</span>
+            <span>{{ t.dualSense.install }}</span>
+            <span class="action-bracket" aria-hidden="true">]</span>
+          </el-button>
           <el-button
-            v-else-if="!status.verified"
-            type="warning"
+            v-else-if="statusKnown && !status.verified"
+            text
+            class="menu-action menu-action-warning"
             :loading="operation === 'install'"
-            :disabled="status.in_use"
+            :disabled="loading || status.in_use"
             @click="install"
-          >{{ t.dualSense.repair }}</el-button>
-          <el-button text :loading="loading" :disabled="!!operation" @click="refresh()">
+          >
+            <span class="action-bracket" aria-hidden="true">[</span>
+            <span>{{ t.dualSense.repair }}</span>
+            <span class="action-bracket" aria-hidden="true">]</span>
+          </el-button>
+          <el-button
+            text
+            class="menu-action menu-action-secondary"
+            :loading="loading"
+            :disabled="!!operation"
+            @click="refresh()"
+          >
             <el-icon><Refresh /></el-icon>{{ t.dualSense.refresh }}
           </el-button>
         </div>
@@ -162,6 +178,7 @@ import { useI18n } from '../desktop/i18n/index.js'
 const { t } = useI18n()
 const emit = defineEmits(['open-controller-meta'])
 const loading = ref(true)
+const statusKnown = ref(false)
 const saving = ref(false)
 const operation = ref('')
 const operationProgress = ref(0)
@@ -249,6 +266,7 @@ const refresh = async (quiet = false) => {
   const result = await dualsense.getStatus()
   if (result.success) {
     status.value = result.data
+    statusKnown.value = true
     enabled.value = result.data.enabled
     audioHaptics.value = result.data.audio_haptics && result.data.usbip_available
   } else if (!quiet) {
@@ -347,7 +365,7 @@ onUnmounted(() => {
   margin: 0 auto;
   padding: 26px 28px 42px;
   color: var(--el-text-color-primary);
-  font-family: inherit;
+  font-family: 'DengXian', 'Microsoft YaHei UI', 'Noto Sans SC', sans-serif;
 }
 .page-header { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; margin-bottom: 34px; }
 .page-title-group {
@@ -367,6 +385,32 @@ onUnmounted(() => {
 .enable-control { font-weight: 500; }
 .status-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 32px; margin-bottom: 30px; }
 .status-heading, .status-actions, .test-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.status-actions { gap: 18px; }
+.status-actions :deep(.el-button.menu-action) {
+  min-height: 30px;
+  margin: 0;
+  padding: 3px 2px;
+  border: 0;
+  border-radius: 0 !important;
+  color: var(--el-text-color-regular);
+  background: transparent;
+  font: inherit;
+  font-weight: 500;
+  box-shadow: none;
+  transition: color .12s ease, transform .12s ease;
+}
+.status-actions :deep(.el-button.menu-action:hover),
+.status-actions :deep(.el-button.menu-action:focus-visible) {
+  color: var(--el-color-primary);
+  background: transparent;
+  transform: translateY(-1px);
+}
+.status-actions :deep(.el-button.menu-action:focus-visible) { outline: 1px dashed currentColor; outline-offset: 3px; }
+.status-actions :deep(.el-button.menu-action.is-disabled) { background: transparent; transform: none; }
+.status-actions :deep(.el-button.menu-action-primary) { color: var(--el-color-primary); }
+.status-actions :deep(.el-button.menu-action-warning) { color: var(--el-color-warning); }
+.status-actions :deep(.el-button.menu-action-secondary) { color: var(--el-text-color-secondary); font-weight: 400; }
+.action-bracket { font-family: 'PixelMplus12', 'Courier New', monospace; opacity: .8; }
 .status-version { color: var(--el-text-color-secondary); font-size: 12px; }
 .status-dot { width: 8px; height: 8px; flex: 0 0 auto; background: var(--el-text-color-placeholder); }
 .state-ready .status-dot { background: var(--el-color-success); box-shadow: 0 0 0 3px var(--el-color-success-light-8); }

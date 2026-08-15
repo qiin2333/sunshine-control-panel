@@ -1,8 +1,145 @@
 use crate::sunshine;
-use log::{debug, error, info};
+use log::{error, info};
 use std::env;
 use std::process::Command;
-use tauri::Manager;
+
+#[cfg(target_os = "windows")]
+const ELEVATED_RESTART_ARG: &str = "--elevated-gui-restart";
+
+#[cfg(target_os = "windows")]
+pub(crate) struct ElevatedProcess {
+    handle: std::os::windows::io::OwnedHandle,
+}
+
+#[cfg(target_os = "windows")]
+impl ElevatedProcess {
+    pub(crate) fn exit_code(&self) -> Result<Option<i32>, String> {
+        use std::os::windows::io::AsRawHandle;
+        use windows::Win32::Foundation::STILL_ACTIVE;
+        use windows::Win32::System::Threading::GetExitCodeProcess;
+
+        unsafe {
+            let handle = windows::Win32::Foundation::HANDLE(self.handle.as_raw_handle());
+            let mut exit_code = 0;
+            GetExitCodeProcess(handle, &mut exit_code)
+                .map_err(|error| format!("could not read elevated process exit code: {error}"))?;
+            Ok((exit_code != STILL_ACTIVE.0 as u32).then_some(exit_code as i32))
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn quote_windows_argument(value: &str) -> Result<String, String> {
+    if value.contains('\0') {
+        return Err("elevated process argument contains a NUL byte".to_string());
+    }
+
+    let mut quoted = String::with_capacity(value.len() + 2);
+    quoted.push('"');
+    let mut backslashes = 0;
+    for character in value.chars() {
+        match character {
+            '\\' => backslashes += 1,
+            '"' => {
+                quoted.extend(std::iter::repeat_n('\\', backslashes * 2 + 1));
+                quoted.push('"');
+                backslashes = 0;
+            }
+            _ => {
+                quoted.extend(std::iter::repeat_n('\\', backslashes));
+                quoted.push(character);
+                backslashes = 0;
+            }
+        }
+    }
+    quoted.extend(std::iter::repeat_n('\\', backslashes * 2));
+    quoted.push('"');
+    Ok(quoted)
+}
+
+/// Start the current executable with the Windows `runas` verb.
+///
+/// Callers pass fixed, internally validated arguments only. `ShellExecuteExW`
+/// waits for UAC approval before it returns, so a caller can retain its current
+/// process when elevation is canceled.
+#[cfg(target_os = "windows")]
+pub(crate) fn launch_current_executable_elevated(
+    arguments: &[&str],
+    show_window: i32,
+) -> Result<ElevatedProcess, String> {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::Shell::{SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW};
+    use windows::core::PCWSTR;
+
+    fn to_wide(value: &str) -> Vec<u16> {
+        value.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    let executable = env::current_exe()
+        .map_err(|error| format!("could not resolve current executable: {error}"))?;
+    let executable = executable.to_string_lossy();
+    let parameters = arguments
+        .iter()
+        .map(|argument| quote_windows_argument(argument))
+        .collect::<Result<Vec<_>, _>>()?
+        .join(" ");
+    let verb = to_wide("runas");
+    let executable = to_wide(&executable);
+    let parameters = to_wide(&parameters);
+    let mut execute_info = SHELLEXECUTEINFOW::default();
+    execute_info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+    execute_info.fMask = SEE_MASK_NOCLOSEPROCESS;
+    execute_info.hwnd = HWND(std::ptr::null_mut());
+    execute_info.lpVerb = PCWSTR(verb.as_ptr());
+    execute_info.lpFile = PCWSTR(executable.as_ptr());
+    execute_info.lpParameters = PCWSTR(parameters.as_ptr());
+    execute_info.nShow = show_window;
+
+    unsafe {
+        ShellExecuteExW(&mut execute_info)
+            .map_err(|error| format!("Windows could not start the elevated process: {error}"))?;
+    }
+    if execute_info.hProcess.0.is_null() {
+        return Err("Windows did not return an elevated process handle".to_string());
+    }
+    use std::os::windows::io::FromRawHandle;
+    Ok(ElevatedProcess {
+        handle: unsafe {
+            std::os::windows::io::OwnedHandle::from_raw_handle(execute_info.hProcess.0)
+        },
+    })
+}
+
+/// Wait for the unelevated GUI to exit before creating the elevated GUI's
+/// single-instance lock.
+#[cfg(target_os = "windows")]
+pub(crate) fn wait_for_elevated_restart_handoff() {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{
+        OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+    };
+
+    let mut arguments = env::args();
+    let _executable = arguments.next();
+    if arguments.next().as_deref() != Some(ELEVATED_RESTART_ARG) {
+        return;
+    }
+    let Some(parent_process_id) = arguments.next().and_then(|value| value.parse::<u32>().ok())
+    else {
+        return;
+    };
+    if arguments.next().is_some() || parent_process_id == std::process::id() {
+        return;
+    }
+
+    unsafe {
+        let Ok(parent) = OpenProcess(PROCESS_SYNCHRONIZE, false, parent_process_id) else {
+            return;
+        };
+        let _ = WaitForSingleObject(parent, 10_000);
+        let _ = CloseHandle(parent);
+    }
+}
 
 #[tauri::command]
 pub async fn restart_graphics_driver() -> Result<String, String> {
@@ -45,41 +182,17 @@ pub async fn restart_graphics_driver() -> Result<String, String> {
 pub async fn restart_as_admin(app_handle: tauri::AppHandle) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::process::CommandExt;
-
-        let current_exe = env::current_exe()
-            .map_err(|e| format!("Failed to resolve current executable: {}", e))?;
-
         info!("Preparing to restart GUI as administrator");
-        debug!("Current executable: {:?}", current_exe);
+        let parent_process_id = std::process::id().to_string();
+        let _elevated_process = launch_current_executable_elevated(
+            &[ELEVATED_RESTART_ARG, &parent_process_id],
+            windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL.0,
+        )
+        .map_err(|error| format!("Failed to start elevated instance: {error}"))?;
 
-        let exe_path = current_exe.to_string_lossy().to_string();
-        let ps_command = format!(
-            "Start-Sleep -Milliseconds 500; Start-Process -FilePath '{}' -Verb RunAs",
-            exe_path.replace("'", "''")
-        );
-
-        debug!("PowerShell command: {}", ps_command);
-
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-        Command::new("powershell")
-            .args(&["-NoProfile", "-Command", &ps_command])
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn()
-            .map_err(|e| format!("Failed to start elevated instance: {}", e))?;
-
-        info!("Requested elevated GUI restart after 500ms");
+        info!("Elevated GUI launch was accepted by Windows");
 
         tokio::spawn(async move {
-            info!("Preparing to exit current GUI instance");
-
-            if let Some(window) = app_handle.get_webview_window("main") {
-                let _ = window.close();
-                debug!("Closed main window");
-            }
-
-            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
             info!("Exiting current GUI instance");
             app_handle.exit(0);
         });
@@ -320,4 +433,26 @@ pub fn execute_powershell_command(command: &str, error_context: &str) -> Result<
         })?;
 
     Ok(())
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod tests {
+    use super::quote_windows_argument;
+
+    #[test]
+    fn elevated_process_arguments_are_windows_quoted() {
+        assert_eq!(
+            quote_windows_argument("--elevated-dualsense").unwrap(),
+            "\"--elevated-dualsense\""
+        );
+        assert_eq!(
+            quote_windows_argument("contains spaces").unwrap(),
+            "\"contains spaces\""
+        );
+    }
+
+    #[test]
+    fn elevated_process_arguments_reject_nul_bytes() {
+        assert!(quote_windows_argument("invalid\0argument").is_err());
+    }
 }

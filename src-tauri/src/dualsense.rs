@@ -35,7 +35,7 @@ const ELEVATED_DS5_ARG: &str = "--elevated-dualsense";
 #[cfg(target_os = "windows")]
 const MAX_ELEVATED_MESSAGE_BYTES: usize = 64 * 1024;
 #[cfg(target_os = "windows")]
-const ELEVATION_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+const ELEVATION_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 static COMPONENT_OPERATION: Lazy<tokio::sync::Mutex<()>> =
     Lazy::new(|| tokio::sync::Mutex::new(()));
 
@@ -1104,6 +1104,26 @@ async fn read_limited_elevated_line<R: tokio::io::AsyncBufRead + Unpin>(
 }
 
 #[cfg(target_os = "windows")]
+async fn wait_for_elevated_process_exit(
+    process: &crate::utils::ElevatedProcess,
+    timeout: std::time::Duration,
+) -> Result<Option<i32>, String> {
+    let wait = async {
+        loop {
+            if let Some(exit_code) = process.exit_code()? {
+                return Ok::<_, String>(exit_code);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    };
+
+    match tokio::time::timeout(timeout, wait).await {
+        Ok(result) => result.map(Some),
+        Err(_) => Ok(None),
+    }
+}
+
+#[cfg(target_os = "windows")]
 async fn run_elevated_operation(
     app: Option<&tauri::AppHandle>,
     operation: ElevatedOperation,
@@ -1111,7 +1131,6 @@ async fn run_elevated_operation(
     use tokio::io::BufReader;
     use tokio::net::windows::named_pipe::ServerOptions;
 
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
     let token = uuid::Uuid::new_v4();
     let pipe_name = elevated_pipe_name(token);
     let server = ServerOptions::new()
@@ -1121,38 +1140,37 @@ async fn run_elevated_operation(
         .reject_remote_clients(true)
         .create(&pipe_name)
         .map_err(|error| format!("DS5-PKG-004: unable to create administrator IPC: {error}"))?;
-    let executable = std::env::current_exe()
-        .map_err(|error| format!("DS5-PKG-004: unable to locate Control Panel: {error}"))?;
-    let executable = executable.to_string_lossy().replace('\'', "''");
-    let ps_script = format!(
-        "$ErrorActionPreference = 'Stop'; try {{ $p = Start-Process -FilePath '{executable}' -ArgumentList '{ELEVATED_DS5_ARG}','{}','{token}' -Verb RunAs -WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode }} catch {{ [Console]::Error.WriteLine($_.Exception.Message); exit 1223 }}",
-        operation.as_arg()
-    );
-    let mut launcher = tokio::process::Command::new("powershell")
-        .args(["-NoProfile", "-Command", &ps_script])
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
-        .map_err(|error| {
-            format!("DS5-PKG-004: unable to request administrator authorization: {error}")
-        })?;
+    let operation_arg = operation.as_arg();
+    let token_arg = token.to_string();
+    let elevated_process = crate::utils::launch_current_executable_elevated(
+        &[ELEVATED_DS5_ARG, operation_arg, &token_arg],
+        windows::Win32::UI::WindowsAndMessaging::SW_HIDE.0,
+    )
+    .map_err(|error| {
+        format!("DS5-PKG-004: unable to request administrator authorization: {error}")
+    })?;
+    let mut helper_exit = Box::pin(wait_for_elevated_process_exit(
+        &elevated_process,
+        ELEVATION_CONNECT_TIMEOUT,
+    ));
 
     tokio::select! {
         connected = server.connect() => connected.map_err(|error| {
             format!("DS5-PKG-004: administrator IPC connection failed: {error}")
         })?,
-        status = launcher.wait() => {
-            let status = status.map_err(|error| error.to_string())?;
+        status = &mut helper_exit => {
+            let status = status
+                .map_err(|error| format!("DS5-PKG-004: administrator helper wait failed: {error}"))?;
+            let Some(status) = status else {
+                return Err("DS5-PKG-004: administrator authorization timed out".to_string());
+            };
             return Err(format!(
                 "DS5-PKG-004: administrator authorization was canceled or the helper exited early ({})",
-                status.code().unwrap_or(-1)
+                status
             ));
         },
-        _ = tokio::time::sleep(ELEVATION_CONNECT_TIMEOUT) => {
-            let _ = launcher.start_kill();
-            let _ = launcher.wait().await;
-            return Err("DS5-PKG-004: administrator authorization timed out".to_string());
-        },
     }
+    drop(helper_exit);
 
     let receive = async move {
         let mut reader = BufReader::new(server);
@@ -1177,36 +1195,36 @@ async fn run_elevated_operation(
         Ok(Ok(result)) => result,
         Ok(Err(error)) => {
             // Dropping the pipe wakes the elevated helper's disconnect watcher.
-            if tokio::time::timeout(std::time::Duration::from_secs(5), launcher.wait())
-                .await
-                .is_err()
-            {
-                let _ = launcher.start_kill();
-                let _ = launcher.wait().await;
-            }
+            let _ = wait_for_elevated_process_exit(
+                &elevated_process,
+                std::time::Duration::from_secs(5),
+            )
+            .await;
             return Err(error);
         }
         Err(_) => {
             // Dropping the timed-out receive future closes the pipe and causes
             // the helper to terminate itself even though this process cannot
             // directly kill a high-integrity child.
-            if tokio::time::timeout(std::time::Duration::from_secs(5), launcher.wait())
-                .await
-                .is_err()
-            {
-                let _ = launcher.start_kill();
-                let _ = launcher.wait().await;
-            }
+            let _ = wait_for_elevated_process_exit(
+                &elevated_process,
+                std::time::Duration::from_secs(5),
+            )
+            .await;
             return Err("DS5-PKG-004: administrator operation timed out".to_string());
         }
     };
-    let status = launcher.wait().await.map_err(|error| error.to_string())?;
+    let status =
+        wait_for_elevated_process_exit(&elevated_process, std::time::Duration::from_secs(5))
+            .await
+            .map_err(|error| format!("DS5-PKG-004: administrator helper wait failed: {error}"))?
+            .ok_or_else(|| "DS5-PKG-004: administrator helper did not exit".to_string())?;
     match final_result {
-        Some(Ok(data)) if status.success() => Ok(data),
+        Some(Ok(data)) if status == 0 => Ok(data),
         Some(Err(error)) => Err(error),
         _ => Err(format!(
             "DS5-PKG-004: administrator helper failed with exit code {}",
-            status.code().unwrap_or(-1)
+            status
         )),
     }
 }

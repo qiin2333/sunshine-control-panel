@@ -748,13 +748,15 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
         }
         None => (false, ProbeResult::default(), String::new(), String::new()),
     };
-    if !installed && let Some(error) = manifest_error {
-        error_code = error
-            .split(':')
-            .next()
-            .unwrap_or("DS5-MANIFEST-001")
-            .to_string();
-        detail = error;
+    if !installed {
+        if let Some(error) = manifest_error {
+            error_code = error
+                .split(':')
+                .next()
+                .unwrap_or("DS5-MANIFEST-001")
+                .to_string();
+            detail = error;
+        }
     }
     let usbip_version = installed_usbip_version().unwrap_or_default();
     let usbip_version_valid = pinned_usbip_installed(Some(usbip_version.as_str()));

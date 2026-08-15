@@ -35,7 +35,7 @@
             text
             class="menu-action menu-action-primary"
             :loading="operation === 'install'"
-            :disabled="loading || status.in_use"
+            :disabled="loading || status.in_use || manifestError"
             @click="install"
           >
             <span class="action-bracket" aria-hidden="true">[</span>
@@ -47,7 +47,7 @@
             text
             class="menu-action menu-action-warning"
             :loading="operation === 'install'"
-            :disabled="loading || status.in_use"
+            :disabled="loading || status.in_use || manifestError"
             @click="install"
           >
             <span class="action-bracket" aria-hidden="true">[</span>
@@ -75,7 +75,7 @@
         v-if="showNotice"
         class="notice"
         type="warning"
-        :title="nextAction"
+        :title="noticeTitle"
         :closable="false"
         show-icon
       />
@@ -191,6 +191,8 @@ const status = ref({
   audio_haptics: false, driver_installed: false, usbip_available: false, usbip_version: '',
   usbip_version_valid: false,
   standard_profile: false, composite_profile: false, in_use: false,
+  manifest_available: false, manifest_version: '', download_required: false, download_bytes: 0,
+  source: '',
   error_code: '', detail: '',
 })
 let pollTimer
@@ -206,6 +208,17 @@ const nextAction = computed(() => ({
 }[status.value.state] || t.value.dualSense.nextRepair))
 
 const overallVersion = computed(() => status.value.component_version || status.value.runtime_version || status.value.error_code)
+const formattedSidecarDownloadSize = computed(() => {
+  const bytes = Number(status.value.download_bytes || 0)
+  return bytes ? `${(bytes / 1_000_000).toFixed(1)} MB` : ''
+})
+const manifestError = computed(() => (
+  !status.value.installed && /^DS5-MANIFEST-\d{3}$/.test(status.value.error_code || '')
+))
+const installConfirmation = computed(() => {
+  if (!status.value.manifest_available) return t.value.dualSense.installConfirmLegacy
+  return t.value.dualSense.installConfirmManifest.replace('{sidecarSize}', formattedSidecarDownloadSize.value)
+})
 const canTestAudioHaptics = computed(() => status.value.composite_profile && status.value.usbip_available)
 const usbTransportDetail = computed(() => {
   if (!status.value.usbip_version_valid) return t.value.dualSense.pinnedTransportRequired
@@ -213,7 +226,12 @@ const usbTransportDetail = computed(() => {
   if (!status.value.installed) return t.value.dualSense.transportCheckPending
   return t.value.dualSense.transportProbeFailed
 })
-const showNotice = computed(() => ['not_installed', 'repair_required', 'transport_missing', 'in_use'].includes(status.value.state))
+const noticeTitle = computed(() => (
+  manifestError.value
+    ? friendlyDualSenseError(status.value.detail || status.value.error_code, t.value.dualSense.errors, 'status')
+    : nextAction.value
+))
+const showNotice = computed(() => manifestError.value || ['not_installed', 'repair_required', 'transport_missing', 'in_use'].includes(status.value.state))
 const healthRows = computed(() => [
   {
     label: t.value.dualSense.component,
@@ -267,7 +285,7 @@ const refresh = async (quiet = false) => {
 
 const install = async () => {
   try {
-    await ElMessageBox.confirm(t.value.dualSense.installConfirm, t.value.dualSense.installTitle, {
+    await ElMessageBox.confirm(installConfirmation.value, t.value.dualSense.installTitle, {
       type: 'warning', confirmButtonText: t.value.dualSense.install,
     })
   } catch { return }

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::Emitter;
@@ -23,6 +23,7 @@ const HIDMAESTRO_VERSION: &str = "v1.6.1";
 const HIDMAESTRO_URL: &str =
     "https://github.com/hifihedgehog/HIDMaestro/releases/download/v1.6.1/HIDMaestro-v1.6.1.zip";
 const HIDMAESTRO_SHA256: &str = "00145c23d9838be6089389ce58b3fd2b6766fa9bc0f1f3c60a3c885361b53c34";
+const HIDMAESTRO_DOWNLOAD_BYTES: u64 = 118_879_222;
 const USBIP_VERSION: &str = "0.9.7.7";
 const USBIP_URL: &str =
     "https://github.com/vadimgrn/usbip-win2/releases/download/v.0.9.7.7/USBip-0.9.7.7-x64.exe";
@@ -32,6 +33,7 @@ const MAX_USBIP_INSTALLER_BYTES: u64 = 48 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES: u64 = 200 * 1024 * 1024;
 const MAX_ARCHIVE_FILES: usize = 256;
 const MAX_SIDECAR_PAYLOAD_MANIFEST_BYTES: u64 = 1024 * 1024;
+const MAX_COMPONENT_REDIRECTS: usize = 5;
 const SIDECAR_EXE: &str = "Sunshine.Ds5Sidecar.exe";
 const SIDECAR_PAYLOAD_MANIFEST: &str = "payload-manifest.json";
 const COMPONENT_MANIFEST_SCHEMA: u32 = 1;
@@ -287,24 +289,46 @@ fn valid_sha256(value: &str) -> bool {
         && value == value.to_ascii_lowercase()
 }
 
+fn valid_release_tag(value: &str) -> bool {
+    !value.is_empty()
+        && value != "latest"
+        && value != "."
+        && value != ".."
+        && !value.chars().any(|character| {
+            character.is_control() || matches!(character, '/' | '\\' | '?' | '#' | '%')
+        })
+}
+
+fn github_release_download_prefix(repository: &str, release_tag: &str) -> Option<String> {
+    let mut url = Url::parse("https://github.com/").ok()?;
+    {
+        let mut segments = url.path_segments_mut().ok()?;
+        segments.extend(repository.split('/'));
+        segments.push("releases");
+        segments.push("download");
+        segments.push(release_tag);
+    }
+    Some(format!("{}/", url.path()))
+}
+
 fn is_pinned_github_release_url(value: &str, repository: &str, release_tag: &str) -> bool {
+    if !valid_release_tag(release_tag) {
+        return false;
+    }
     let Ok(url) = Url::parse(value) else {
         return false;
     };
-    let Ok(expected_release) = Url::parse(&format!(
-        "https://github.com/{repository}/releases/download/{release_tag}/"
-    )) else {
+    let Some(expected_release_path) = github_release_download_prefix(repository, release_tag)
+    else {
         return false;
     };
-    let Some(asset) = url.path().strip_prefix(expected_release.path()) else {
+    let Some(asset) = url.path().strip_prefix(&expected_release_path) else {
         return false;
     };
     url.scheme() == "https"
         && url.host_str() == Some("github.com")
         && url.query().is_none()
         && url.fragment().is_none()
-        && release_tag != "latest"
-        && !release_tag.is_empty()
         && !asset.contains('/')
         && asset.starts_with("Sunshine.Ds5Sidecar.")
         && asset.ends_with(".win-x64.zip")
@@ -321,7 +345,7 @@ fn validate_hidmaestro_release(release: &HidmaestroRelease) -> Result<(), String
     if release.version != HIDMAESTRO_VERSION
         || release.url != HIDMAESTRO_URL
         || release.sha256 != HIDMAESTRO_SHA256
-        || release.download_size != 118_879_222
+        || release.download_size != HIDMAESTRO_DOWNLOAD_BYTES
         || actual_files != expected_files
         || actual_files.len() != release.allow_files.len()
     {
@@ -338,7 +362,7 @@ fn pinned_hidmaestro_release() -> HidmaestroRelease {
         version: HIDMAESTRO_VERSION.to_string(),
         url: HIDMAESTRO_URL.to_string(),
         sha256: HIDMAESTRO_SHA256.to_string(),
-        download_size: 118_879_222,
+        download_size: HIDMAESTRO_DOWNLOAD_BYTES,
         allow_files: vec![
             "HIDMaestro.Core.dll".to_string(),
             "LICENSE".to_string(),
@@ -382,16 +406,25 @@ fn validate_component_manifest(manifest: ComponentManifest) -> Result<ComponentM
     Ok(manifest)
 }
 
-fn load_component_manifest() -> Result<Option<ComponentManifest>, String> {
-    let path = component_manifest_path();
+fn load_component_manifest_from_path(path: &Path) -> Result<Option<ComponentManifest>, String> {
     if !path.is_file() {
         return Ok(None);
+    }
+    let size = fs::metadata(path)
+        .map_err(|error| format!("DS5-MANIFEST-001: unable to read component manifest: {error}"))?
+        .len();
+    if size > MAX_SIDECAR_PAYLOAD_MANIFEST_BYTES {
+        return Err("DS5-MANIFEST-001: component manifest exceeds the size limit".to_string());
     }
     let text = fs::read_to_string(&path)
         .map_err(|error| format!("DS5-MANIFEST-001: unable to read component manifest: {error}"))?;
     let manifest = serde_json::from_str::<ComponentManifest>(&text)
         .map_err(|error| format!("DS5-MANIFEST-001: component manifest is invalid: {error}"))?;
     validate_component_manifest(manifest).map(Some)
+}
+
+fn load_component_manifest() -> Result<Option<ComponentManifest>, String> {
+    load_component_manifest_from_path(&component_manifest_path())
 }
 
 fn active_component_receipt() -> Option<serde_json::Value> {
@@ -835,17 +868,26 @@ fn github_redirect_allowed(url: &Url) -> bool {
     ) && url.scheme() == "https"
 }
 
+fn validate_component_redirect(url: &Url, previous_count: usize) -> Result<(), &'static str> {
+    if previous_count > MAX_COMPONENT_REDIRECTS {
+        return Err("component download exceeded the redirect limit");
+    }
+    if !github_redirect_allowed(url) {
+        return Err("component download redirected to an untrusted host");
+    }
+    Ok(())
+}
+
 fn component_download_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(10))
         .timeout(std::time::Duration::from_secs(600))
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if github_redirect_allowed(attempt.url()) {
-                attempt.follow()
-            } else {
-                attempt.stop()
-            }
-        }))
+        .redirect(reqwest::redirect::Policy::custom(
+            |attempt| match validate_component_redirect(attempt.url(), attempt.previous().len()) {
+                Ok(()) => attempt.follow(),
+                Err(message) => attempt.error(std::io::Error::other(message)),
+            },
+        ))
         .user_agent("foundation-sunshine-dualsense-component")
         .build()
         .map_err(|error| format!("DS5-DL-001: unable to create component downloader: {error}"))
@@ -862,6 +904,8 @@ async fn download_verified_archive(
     progress_start: u32,
     progress_span: u32,
 ) -> Result<(), String> {
+    use tokio::io::AsyncWriteExt;
+
     let response = client
         .get(url)
         .send()
@@ -876,7 +920,8 @@ async fn download_verified_archive(
         return Err("DS5-DL-002: component download exceeds the manifest size".to_string());
     }
 
-    let mut output = File::create(destination)
+    let mut output = tokio::fs::File::create(destination)
+        .await
         .map_err(|error| format!("DS5-DL-001: unable to create component download: {error}"))?;
     let mut downloaded = 0u64;
     let mut stream = response.bytes_stream();
@@ -889,24 +934,36 @@ async fn download_verified_archive(
         }
         output
             .write_all(&chunk)
+            .await
             .map_err(|error| format!("DS5-DL-001: unable to save component download: {error}"))?;
         let progress_value = progress_start.saturating_add(
             (downloaded.saturating_mul(progress_span as u64) / expected_size) as u32,
         );
         report_progress(progress, progress_stage, progress_value);
     }
+    output
+        .flush()
+        .await
+        .map_err(|error| format!("DS5-DL-001: unable to save component download: {error}"))?;
     drop(output);
 
     if downloaded != expected_size {
         return Err("DS5-DL-002: component download size does not match the manifest".to_string());
     }
-    let actual = sha256_file(destination)?;
+    let path = destination.to_owned();
+    let actual = tokio::task::spawn_blocking(move || sha256_file(&path))
+        .await
+        .map_err(|error| format!("DS5-PKG-002: component hash task failed: {error}"))??;
     if actual != expected_sha256 {
         return Err(
             "DS5-PKG-001: component download digest does not match the manifest".to_string(),
         );
     }
     Ok(())
+}
+
+fn canonical_payload_file_name(value: &str) -> String {
+    value.to_lowercase()
 }
 
 fn flat_payload_path(value: &str) -> bool {
@@ -961,12 +1018,13 @@ fn extract_verified_sidecar_package(
     let mut declared_bytes = 0u64;
     for file in payload.files {
         let file_size = file.size;
+        let canonical_name = canonical_payload_file_name(&file.path);
         if !flat_payload_path(&file.path)
             || file.path == SIDECAR_PAYLOAD_MANIFEST
             || file.path.eq_ignore_ascii_case("HIDMaestro.Core.dll")
             || !valid_sha256(&file.sha256)
             || file.size == 0
-            || expected_files.insert(file.path.clone(), file).is_some()
+            || expected_files.insert(canonical_name, file).is_some()
         {
             return Err("DS5-PKG-002: Sidecar payload file list is invalid".to_string());
         }
@@ -994,7 +1052,9 @@ fn extract_verified_sidecar_package(
             .ok_or_else(|| {
                 "DS5-PKG-002: Sidecar archive contains an unsafe file name".to_string()
             })?;
-        if name == SIDECAR_PAYLOAD_MANIFEST {
+        let canonical_name = canonical_payload_file_name(name);
+        let is_payload_manifest = name.eq_ignore_ascii_case(SIDECAR_PAYLOAD_MANIFEST);
+        if is_payload_manifest {
             if has_payload_manifest {
                 return Err(
                     "DS5-PKG-002: Sidecar archive contains duplicate payload manifests".to_string(),
@@ -1002,10 +1062,10 @@ fn extract_verified_sidecar_package(
             }
             has_payload_manifest = true;
         } else {
-            let expected = expected_files.get(name).ok_or_else(|| {
+            let expected = expected_files.get(&canonical_name).ok_or_else(|| {
                 "DS5-PKG-002: Sidecar archive contains an unexpected file".to_string()
             })?;
-            if item.size() != expected.size || !seen_files.insert(name.to_string()) {
+            if item.size() != expected.size || !seen_files.insert(canonical_name.clone()) {
                 return Err(
                     "DS5-PKG-002: Sidecar archive file list does not match the payload manifest"
                         .to_string(),
@@ -1022,9 +1082,9 @@ fn extract_verified_sidecar_package(
         std::io::copy(&mut item, &mut output)
             .map_err(|error| format!("DS5-PKG-002: unable to extract Sidecar file: {error}"))?;
         drop(output);
-        if name != SIDECAR_PAYLOAD_MANIFEST {
+        if !is_payload_manifest {
             let expected = expected_files
-                .get(name)
+                .get(&canonical_name)
                 .ok_or_else(|| "DS5-PKG-002: Sidecar archive file list is invalid".to_string())?;
             if sha256_file(&output_path)? != expected.sha256 {
                 return Err("DS5-PKG-002: extracted Sidecar file digest mismatch".to_string());
@@ -1110,6 +1170,8 @@ async fn ensure_pinned_usbip(
     client: &reqwest::Client,
     component_root: &Path,
 ) -> Result<(), String> {
+    use tokio::io::AsyncWriteExt;
+
     if installed_usbip_version().as_deref() == Some(USBIP_VERSION) {
         return Ok(());
     }
@@ -1131,7 +1193,9 @@ async fn ensure_pinned_usbip(
             return Err("DS5-DRV-001: USB/IP installer exceeds the download limit".to_string());
         }
 
-        let mut output = File::create(&installer_path).map_err(|error| error.to_string())?;
+        let mut output = tokio::fs::File::create(&installer_path)
+            .await
+            .map_err(|error| error.to_string())?;
         let mut downloaded = 0u64;
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
@@ -1145,11 +1209,17 @@ async fn ensure_pinned_usbip(
             }
             output
                 .write_all(&chunk)
+                .await
                 .map_err(|error| error.to_string())?;
         }
+        output.flush().await.map_err(|error| error.to_string())?;
         drop(output);
 
-        let actual = sha256_file(&installer_path)?;
+        let hash_path = installer_path.clone();
+        let actual = tokio::task::spawn_blocking(move || sha256_file(&hash_path))
+            .await
+            .map_err(|error| format!("DS5-DRV-001: USB/IP hash task failed: {error}"))?
+            .map_err(|error| format!("DS5-DRV-001: unable to hash USB/IP installer: {error}"))?;
         if actual != USBIP_SHA256 {
             return Err(format!(
                 "DS5-DRV-001: expected USB/IP SHA-256 {USBIP_SHA256}, got {actual}"
@@ -1360,7 +1430,10 @@ async fn dualsense_install_impl(
         tokio::task::spawn_blocking(move || run_probe(&probe_path))
             .await
             .map_err(|error| format!("DS5-PKG-003: sidecar probe task failed: {error}"))??;
-        let sidecar_sha256 = sha256_file(&probe_executable)?;
+        let sidecar_for_hash = probe_executable.clone();
+        let sidecar_sha256 = tokio::task::spawn_blocking(move || sha256_file(&sidecar_for_hash))
+            .await
+            .map_err(|error| format!("DS5-PKG-002: component hash task failed: {error}"))??;
         fs::write(
             staging.join("component.json"),
             serde_json::to_vec_pretty(&serde_json::json!({
@@ -1873,15 +1946,25 @@ pub async fn dualsense_uninstall() -> Result<DualSenseStatus, String> {
 mod tests {
     use super::{
         ComponentManifest, SidecarRelease, apply_gamepad_selection, component_state,
-        component_test_failure, flat_payload_path, pinned_hidmaestro_release,
-        pinned_usbip_installed, validate_component_manifest, validate_requested_profile,
+        component_test_failure, extract_verified_sidecar_package, flat_payload_path,
+        load_component_manifest_from_path, pinned_hidmaestro_release, pinned_usbip_installed,
+        valid_release_tag, validate_component_manifest, validate_component_redirect,
+        validate_requested_profile,
     };
     #[cfg(target_os = "windows")]
     use super::{
         ElevatedMessage, ElevatedOperation, MAX_ELEVATED_MESSAGE_BYTES, elevated_pipe_name,
         read_limited_elevated_line,
     };
-    use std::process::Command;
+    use sha2::{Digest, Sha256};
+    use std::{
+        fs::{self, File},
+        io::Write,
+        path::{Path, PathBuf},
+        process::Command,
+    };
+    use url::Url;
+    use zip::{ZipWriter, write::SimpleFileOptions};
 
     #[test]
     fn composite_profile_requires_usbip() {
@@ -1960,6 +2043,68 @@ mod tests {
         }
     }
 
+    fn temporary_test_directory(label: &str) -> PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("sunshine-ds5-{label}-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn sha256_bytes(bytes: &[u8]) -> String {
+        let mut digest = Sha256::new();
+        digest.update(bytes);
+        format!("{:x}", digest.finalize())
+    }
+
+    fn write_test_sidecar_archive(
+        path: &Path,
+        declared_files: &[(&str, &[u8])],
+        archive_files: &[(&str, &[u8])],
+    ) -> ComponentManifest {
+        let payload = serde_json::json!({
+            "schema": 1,
+            "component_version": "1.0.0+test",
+            "protocol": 1,
+            "rid": "win-x64",
+            "self_contained": true,
+            "entrypoint": "Sunshine.Ds5Sidecar.exe",
+            "files": declared_files.iter().map(|(path, bytes)| serde_json::json!({
+                "path": path,
+                "sha256": sha256_bytes(bytes),
+                "size": bytes.len(),
+            })).collect::<Vec<_>>(),
+        });
+        let mut writer = ZipWriter::new(File::create(path).unwrap());
+        let options = SimpleFileOptions::default();
+        writer.start_file("payload-manifest.json", options).unwrap();
+        writer.write_all(payload.to_string().as_bytes()).unwrap();
+        for (name, bytes) in archive_files {
+            writer.start_file(*name, options).unwrap();
+            writer.write_all(bytes).unwrap();
+        }
+        writer.finish().unwrap();
+
+        let mut manifest = valid_component_manifest();
+        manifest.sidecar.max_files = archive_files.len() + 1;
+        manifest.sidecar.expanded_size = 1024 * 1024;
+        manifest
+    }
+
+    fn extract_test_sidecar_archive(
+        label: &str,
+        declared_files: &[(&str, &[u8])],
+        archive_files: &[(&str, &[u8])],
+    ) -> Result<(), String> {
+        let root = temporary_test_directory(label);
+        let archive = root.join("sidecar.zip");
+        let staging = root.join("staging");
+        fs::create_dir(&staging).unwrap();
+        let manifest = write_test_sidecar_archive(&archive, declared_files, archive_files);
+        let result = extract_verified_sidecar_package(&archive, &staging, &manifest);
+        let _ = fs::remove_dir_all(root);
+        result
+    }
+
     #[test]
     fn component_manifest_requires_the_local_release_tag_and_asset_pattern() {
         assert!(validate_component_manifest(valid_component_manifest()).is_ok());
@@ -1971,6 +2116,114 @@ mod tests {
         let mut manifest = valid_component_manifest();
         manifest.sidecar.url = "https://github.com/AlkaidLab/foundation-sunshine/releases/download/v2026.0815.0/Sunshine.exe".to_string();
         assert!(validate_component_manifest(manifest).is_err());
+
+        let mut manifest = valid_component_manifest();
+        manifest.sunshine_version = "../../other/repo/releases/download/v1".to_string();
+        assert!(validate_component_manifest(manifest).is_err());
+
+        let mut manifest = valid_component_manifest();
+        manifest.sunshine_version = "v2026.0815.0.杂鱼".to_string();
+        manifest.sidecar.url = "https://github.com/AlkaidLab/foundation-sunshine/releases/download/v2026.0815.0.%E6%9D%82%E9%B1%BC/Sunshine.Ds5Sidecar.v2026.0815.0.win-x64.zip".to_string();
+        assert!(validate_component_manifest(manifest).is_ok());
+
+        assert!(!valid_release_tag("%2f"));
+        assert!(!valid_release_tag(".."));
+    }
+
+    #[test]
+    fn component_redirects_are_bounded_and_restricted_to_github_delivery_hosts() {
+        let github = Url::parse("https://github.com/AlkaidLab/foundation-sunshine").unwrap();
+        let untrusted = Url::parse("https://example.invalid/component.zip").unwrap();
+        assert!(validate_component_redirect(&github, 5).is_ok());
+        assert!(validate_component_redirect(&github, 6).is_err());
+        assert!(validate_component_redirect(&untrusted, 0).is_err());
+    }
+
+    #[test]
+    fn component_manifest_read_has_a_size_limit() {
+        let root = temporary_test_directory("manifest-limit");
+        let path = root.join("dualsense.json");
+        fs::write(
+            &path,
+            vec![b' '; super::MAX_SIDECAR_PAYLOAD_MANIFEST_BYTES as usize + 1],
+        )
+        .unwrap();
+        let error = load_component_manifest_from_path(&path).unwrap_err();
+        let _ = fs::remove_dir_all(root);
+        assert!(error.contains("exceeds the size limit"));
+    }
+
+    #[test]
+    fn sidecar_archive_extracts_a_complete_verified_payload() {
+        let root = temporary_test_directory("valid-archive");
+        let archive = root.join("sidecar.zip");
+        let staging = root.join("staging");
+        fs::create_dir(&staging).unwrap();
+        let files = [
+            ("Sunshine.Ds5Sidecar.exe", b"sidecar".as_slice()),
+            ("hostfxr.dll", b"runtime".as_slice()),
+        ];
+        let manifest = write_test_sidecar_archive(&archive, &files, &files);
+        extract_verified_sidecar_package(&archive, &staging, &manifest).unwrap();
+        assert_eq!(
+            fs::read(staging.join("Sunshine.Ds5Sidecar.exe")).unwrap(),
+            b"sidecar"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sidecar_archive_rejects_missing_and_unexpected_files() {
+        let declared = [
+            ("Sunshine.Ds5Sidecar.exe", b"sidecar".as_slice()),
+            ("hostfxr.dll", b"runtime".as_slice()),
+        ];
+        let missing = [("Sunshine.Ds5Sidecar.exe", b"sidecar".as_slice())];
+        assert!(
+            extract_test_sidecar_archive("missing-file", &declared, &missing)
+                .unwrap_err()
+                .contains("missing required files")
+        );
+
+        let declared = [("Sunshine.Ds5Sidecar.exe", b"sidecar".as_slice())];
+        let extra = [
+            ("Sunshine.Ds5Sidecar.exe", b"sidecar".as_slice()),
+            ("unexpected.dll", b"extra".as_slice()),
+        ];
+        assert!(
+            extract_test_sidecar_archive("unexpected-file", &declared, &extra)
+                .unwrap_err()
+                .contains("unexpected file")
+        );
+    }
+
+    #[test]
+    fn sidecar_archive_rejects_size_digest_and_case_collisions() {
+        let declared = [("Sunshine.Ds5Sidecar.exe", b"abcdef".as_slice())];
+        let size_mismatch = [("Sunshine.Ds5Sidecar.exe", b"short".as_slice())];
+        assert!(
+            extract_test_sidecar_archive("size-mismatch", &declared, &size_mismatch)
+                .unwrap_err()
+                .contains("file list does not match")
+        );
+
+        let digest_mismatch = [("Sunshine.Ds5Sidecar.exe", b"ghijkl".as_slice())];
+        assert!(
+            extract_test_sidecar_archive("digest-mismatch", &declared, &digest_mismatch)
+                .unwrap_err()
+                .contains("digest mismatch")
+        );
+
+        let declared = [("Sunshine.Ds5Sidecar.exe", b"sidecar".as_slice())];
+        let collision = [
+            ("Sunshine.Ds5Sidecar.exe", b"sidecar".as_slice()),
+            ("sunshine.ds5sidecar.exe", b"runtime".as_slice()),
+        ];
+        assert!(
+            extract_test_sidecar_archive("case-collision", &declared, &collision)
+                .unwrap_err()
+                .contains("file list does not match")
+        );
     }
 
     #[test]

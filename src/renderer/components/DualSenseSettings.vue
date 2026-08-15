@@ -35,7 +35,7 @@
             text
             class="menu-action menu-action-primary"
             :loading="operation === 'install'"
-            :disabled="loading || status.in_use"
+            :disabled="loading || status.in_use || manifestError"
             @click="install"
           >
             <span class="action-bracket" aria-hidden="true">[</span>
@@ -47,7 +47,7 @@
             text
             class="menu-action menu-action-warning"
             :loading="operation === 'install'"
-            :disabled="loading || status.in_use"
+            :disabled="loading || status.in_use || manifestError"
             @click="install"
           >
             <span class="action-bracket" aria-hidden="true">[</span>
@@ -75,7 +75,7 @@
         v-if="showNotice"
         class="notice"
         type="warning"
-        :title="nextAction"
+        :title="noticeTitle"
         :closable="false"
         show-icon
       />
@@ -210,8 +210,11 @@ const nextAction = computed(() => ({
 const overallVersion = computed(() => status.value.component_version || status.value.runtime_version || status.value.error_code)
 const formattedSidecarDownloadSize = computed(() => {
   const bytes = Number(status.value.download_bytes || 0)
-  return bytes ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : ''
+  return bytes ? `${(bytes / 1_000_000).toFixed(1)} MB` : ''
 })
+const manifestError = computed(() => (
+  !status.value.installed && /^DS5-MANIFEST-\d{3}$/.test(status.value.error_code || '')
+))
 const installConfirmation = computed(() => {
   if (!status.value.manifest_available) return t.value.dualSense.installConfirmLegacy
   return t.value.dualSense.installConfirmManifest.replace('{sidecarSize}', formattedSidecarDownloadSize.value)
@@ -223,7 +226,12 @@ const usbTransportDetail = computed(() => {
   if (!status.value.installed) return t.value.dualSense.transportCheckPending
   return t.value.dualSense.transportProbeFailed
 })
-const showNotice = computed(() => ['not_installed', 'repair_required', 'transport_missing', 'in_use'].includes(status.value.state))
+const noticeTitle = computed(() => (
+  manifestError.value
+    ? friendlyDualSenseError(status.value.detail || status.value.error_code, t.value.dualSense.errors, 'status')
+    : nextAction.value
+))
+const showNotice = computed(() => manifestError.value || ['not_installed', 'repair_required', 'transport_missing', 'in_use'].includes(status.value.state))
 const healthRows = computed(() => [
   {
     label: t.value.dualSense.component,

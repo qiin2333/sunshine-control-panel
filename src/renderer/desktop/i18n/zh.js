@@ -984,7 +984,6 @@ export const zh = {
       preparing: '正在准备组件安装',
       transport_downloading: '正在下载固定版本 USB/IP 0.9.7.7',
       transport_installing: '正在安装 USB/IP 0.9.7.7 传输驱动',
-      downloading: '正在下载已固定的 HIDMaestro 发布包',
       verifying: '正在校验并安全解压发布包',
       probing: '正在检查 Sidecar 协议与 profile',
       activating: '正在激活已验证组件',

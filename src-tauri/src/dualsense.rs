@@ -9,11 +9,13 @@ use futures_util::StreamExt;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::Emitter;
+use url::Url;
 
 const COMPONENT_VERSION: &str = "1.0.0";
 const PROTOCOL_VERSION: u32 = 1;
@@ -25,11 +27,16 @@ const USBIP_VERSION: &str = "0.9.7.7";
 const USBIP_URL: &str =
     "https://github.com/vadimgrn/usbip-win2/releases/download/v.0.9.7.7/USBip-0.9.7.7-x64.exe";
 const USBIP_SHA256: &str = "51620fa5f9f8be5932bc9d786deee557ce06d5407a99cab490dcfac71f185fea";
-const MAX_ARCHIVE_BYTES: u64 = 160 * 1024 * 1024;
+const MAX_SIDECAR_ARCHIVE_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_USBIP_INSTALLER_BYTES: u64 = 48 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES: u64 = 200 * 1024 * 1024;
 const MAX_ARCHIVE_FILES: usize = 256;
+const MAX_SIDECAR_PAYLOAD_MANIFEST_BYTES: u64 = 1024 * 1024;
 const SIDECAR_EXE: &str = "Sunshine.Ds5Sidecar.exe";
+const SIDECAR_PAYLOAD_MANIFEST: &str = "payload-manifest.json";
+const COMPONENT_MANIFEST_SCHEMA: u32 = 1;
+const COMPONENT_MANIFEST_NAME: &str = "sunshine-dualsense";
+const COMPONENT_MANIFEST_PATH: &str = "components/dualsense.json";
 #[cfg(target_os = "windows")]
 const ELEVATED_DS5_ARG: &str = "--elevated-dualsense";
 #[cfg(target_os = "windows")]
@@ -40,6 +47,86 @@ static COMPONENT_OPERATION: Lazy<tokio::sync::Mutex<()>> =
     Lazy::new(|| tokio::sync::Mutex::new(()));
 
 type ProgressReporter<'a> = dyn Fn(&str, u32) + Send + Sync + 'a;
+
+#[derive(Debug, Deserialize, Clone)]
+struct ComponentManifest {
+    schema: u32,
+    component: String,
+    component_version: String,
+    architecture: String,
+    sidecar_protocol: u32,
+    sunshine_version: String,
+    sidecar: SidecarRelease,
+    hidmaestro: HidmaestroRelease,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct SidecarRelease {
+    url: String,
+    sha256: String,
+    download_size: u64,
+    expanded_size: u64,
+    max_files: usize,
+    entrypoint: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct HidmaestroRelease {
+    version: String,
+    url: String,
+    sha256: String,
+    download_size: u64,
+    allow_files: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SidecarPayloadManifest {
+    schema: u32,
+    component_version: String,
+    protocol: u32,
+    rid: String,
+    self_contained: bool,
+    entrypoint: String,
+    files: Vec<SidecarPayloadFile>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SidecarPayloadFile {
+    path: String,
+    sha256: String,
+    size: u64,
+}
+
+#[derive(Debug)]
+enum SidecarSource {
+    Development(PathBuf),
+    Bundled(PathBuf),
+    Release(ComponentManifest),
+}
+
+impl SidecarSource {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Development(_) => "development-override",
+            Self::Bundled(_) => "bundled-legacy",
+            Self::Release(_) => "release-manifest",
+        }
+    }
+
+    fn component_version(&self) -> &str {
+        match self {
+            Self::Release(manifest) => &manifest.component_version,
+            Self::Development(_) | Self::Bundled(_) => COMPONENT_VERSION,
+        }
+    }
+
+    fn download_size(&self) -> u64 {
+        match self {
+            Self::Release(manifest) => manifest.sidecar.download_size,
+            Self::Development(_) | Self::Bundled(_) => 0,
+        }
+    }
+}
 
 #[cfg(target_os = "windows")]
 #[derive(Clone, Copy)]
@@ -109,6 +196,11 @@ pub struct DualSenseStatus {
     pub standard_profile: bool,
     pub composite_profile: bool,
     pub in_use: bool,
+    pub manifest_available: bool,
+    pub manifest_version: String,
+    pub download_required: bool,
+    pub download_bytes: u64,
+    pub source: String,
     pub error_code: String,
     pub detail: String,
 }
@@ -183,6 +275,152 @@ fn active_dir() -> PathBuf {
 
 fn sidecar_path() -> PathBuf {
     active_dir().join(SIDECAR_EXE)
+}
+
+fn component_manifest_path() -> PathBuf {
+    crate::sunshine::assets_dir().join(COMPONENT_MANIFEST_PATH)
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+        && value == value.to_ascii_lowercase()
+}
+
+fn is_pinned_github_release_url(value: &str, repository: &str, release_tag: &str) -> bool {
+    let Ok(url) = Url::parse(value) else {
+        return false;
+    };
+    let Ok(expected_release) = Url::parse(&format!(
+        "https://github.com/{repository}/releases/download/{release_tag}/"
+    )) else {
+        return false;
+    };
+    let Some(asset) = url.path().strip_prefix(expected_release.path()) else {
+        return false;
+    };
+    url.scheme() == "https"
+        && url.host_str() == Some("github.com")
+        && url.query().is_none()
+        && url.fragment().is_none()
+        && release_tag != "latest"
+        && !release_tag.is_empty()
+        && !asset.contains('/')
+        && asset.starts_with("Sunshine.Ds5Sidecar.")
+        && asset.ends_with(".win-x64.zip")
+}
+
+fn validate_hidmaestro_release(release: &HidmaestroRelease) -> Result<(), String> {
+    let expected_files = BTreeSet::from([
+        "HIDMaestro.Core.dll".to_string(),
+        "LICENSE".to_string(),
+        "README.md".to_string(),
+        "THIRD-PARTY-NOTICES.txt".to_string(),
+    ]);
+    let actual_files = release.allow_files.iter().cloned().collect::<BTreeSet<_>>();
+    if release.version != HIDMAESTRO_VERSION
+        || release.url != HIDMAESTRO_URL
+        || release.sha256 != HIDMAESTRO_SHA256
+        || release.download_size != 118_879_222
+        || actual_files != expected_files
+        || actual_files.len() != release.allow_files.len()
+    {
+        return Err(
+            "DS5-MANIFEST-002: HIDMaestro release does not match the pinned component contract"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn pinned_hidmaestro_release() -> HidmaestroRelease {
+    HidmaestroRelease {
+        version: HIDMAESTRO_VERSION.to_string(),
+        url: HIDMAESTRO_URL.to_string(),
+        sha256: HIDMAESTRO_SHA256.to_string(),
+        download_size: 118_879_222,
+        allow_files: vec![
+            "HIDMaestro.Core.dll".to_string(),
+            "LICENSE".to_string(),
+            "README.md".to_string(),
+            "THIRD-PARTY-NOTICES.txt".to_string(),
+        ],
+    }
+}
+
+fn validate_component_manifest(manifest: ComponentManifest) -> Result<ComponentManifest, String> {
+    if manifest.schema != COMPONENT_MANIFEST_SCHEMA
+        || manifest.component != COMPONENT_MANIFEST_NAME
+        || manifest.architecture != "x86_64"
+        || manifest.sidecar_protocol != PROTOCOL_VERSION
+        || manifest.component_version.trim().is_empty()
+        || manifest.sunshine_version.trim().is_empty()
+    {
+        return Err(
+            "DS5-MANIFEST-002: component manifest is incompatible with this Control Panel"
+                .to_string(),
+        );
+    }
+
+    let sidecar = &manifest.sidecar;
+    if !is_pinned_github_release_url(
+        &sidecar.url,
+        "AlkaidLab/foundation-sunshine",
+        &manifest.sunshine_version,
+    ) || !valid_sha256(&sidecar.sha256)
+        || sidecar.download_size == 0
+        || sidecar.download_size > MAX_SIDECAR_ARCHIVE_BYTES
+        || sidecar.expanded_size == 0
+        || sidecar.expanded_size > MAX_EXTRACTED_BYTES
+        || sidecar.max_files == 0
+        || sidecar.max_files > MAX_ARCHIVE_FILES
+        || sidecar.entrypoint != SIDECAR_EXE
+    {
+        return Err("DS5-MANIFEST-002: sidecar release metadata is invalid".to_string());
+    }
+    validate_hidmaestro_release(&manifest.hidmaestro)?;
+    Ok(manifest)
+}
+
+fn load_component_manifest() -> Result<Option<ComponentManifest>, String> {
+    let path = component_manifest_path();
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(&path)
+        .map_err(|error| format!("DS5-MANIFEST-001: unable to read component manifest: {error}"))?;
+    let manifest = serde_json::from_str::<ComponentManifest>(&text)
+        .map_err(|error| format!("DS5-MANIFEST-001: component manifest is invalid: {error}"))?;
+    validate_component_manifest(manifest).map(Some)
+}
+
+fn active_component_receipt() -> Option<serde_json::Value> {
+    let receipt = active_dir().join("component.json");
+    fs::read_to_string(receipt)
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+}
+
+fn active_component_source() -> String {
+    active_component_receipt()
+        .and_then(|value| value.get("source_kind")?.as_str().map(str::to_string))
+        .unwrap_or_else(|| "bundled-legacy".to_string())
+}
+
+fn active_component_version() -> String {
+    active_component_receipt()
+        .and_then(|value| value.get("component_version")?.as_str().map(str::to_string))
+        .unwrap_or_else(|| COMPONENT_VERSION.to_string())
+}
+
+#[cfg(debug_assertions)]
+fn development_sidecar_override() -> Option<PathBuf> {
+    std::env::var_os("SUNSHINE_DS5_SIDECAR_DIR").map(PathBuf::from)
+}
+
+#[cfg(not(debug_assertions))]
+fn development_sidecar_override() -> Option<PathBuf> {
+    None
 }
 
 fn config_path() -> PathBuf {
@@ -437,6 +675,17 @@ fn pinned_usbip_installed(installed_version: Option<&str>) -> bool {
 
 #[tauri::command]
 pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
+    let manifest = load_component_manifest();
+    let (manifest_available, manifest_version, download_bytes, manifest_error) = match manifest {
+        Ok(Some(manifest)) => (
+            true,
+            manifest.component_version.clone(),
+            manifest.sidecar.download_size,
+            None,
+        ),
+        Ok(None) => (false, String::new(), 0, None),
+        Err(error) => (false, String::new(), 0, Some(error)),
+    };
     let executable = sidecar_path();
     let installed = executable.is_file();
     let in_use = has_active_session().await;
@@ -454,7 +703,7 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
     } else {
         None
     };
-    let (verified, result, error_code, detail) = match probe {
+    let (verified, result, mut error_code, mut detail) = match probe {
         Some(Ok(result)) => (true, result, String::new(), String::new()),
         Some(Err(detail)) => {
             let code = detail
@@ -466,6 +715,14 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
         }
         None => (false, ProbeResult::default(), String::new(), String::new()),
     };
+    if !installed && let Some(error) = manifest_error {
+        error_code = error
+            .split(':')
+            .next()
+            .unwrap_or("DS5-MANIFEST-001")
+            .to_string();
+        detail = error;
+    }
     let usbip_version = installed_usbip_version().unwrap_or_default();
     let usbip_version_valid = pinned_usbip_installed(Some(usbip_version.as_str()));
     let usbip_available = result.usbip_available && usbip_version_valid;
@@ -477,10 +734,7 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
         verified,
         enabled,
         audio_haptics,
-        component_version: installed
-            .then_some(COMPONENT_VERSION)
-            .unwrap_or_default()
-            .to_string(),
+        component_version: installed.then(active_component_version).unwrap_or_default(),
         runtime_version: result.runtime_version,
         install_path: active_dir().to_string_lossy().to_string(),
         sidecar_path: executable.to_string_lossy().to_string(),
@@ -491,19 +745,43 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
         standard_profile: result.standard,
         composite_profile: result.composite,
         in_use,
+        manifest_available,
+        manifest_version,
+        download_required: !installed && manifest_available,
+        download_bytes,
+        source: if installed {
+            active_component_source()
+        } else if development_sidecar_override().is_some() {
+            "development-override".to_string()
+        } else if manifest_available {
+            "release-manifest".to_string()
+        } else {
+            "bundled-legacy".to_string()
+        },
         error_code,
         detail,
     })
 }
 
-fn sidecar_source_dir() -> Result<PathBuf, String> {
-    if let Some(override_dir) = std::env::var_os("SUNSHINE_DS5_SIDECAR_DIR") {
-        let path = PathBuf::from(override_dir);
+fn sidecar_source() -> Result<SidecarSource, String> {
+    if let Some(path) = development_sidecar_override() {
         if path.join(SIDECAR_EXE).is_file() {
-            return Ok(path);
+            return Ok(SidecarSource::Development(path));
         }
+        return Err(
+            "DS5-PKG-002: the development Sidecar override does not contain its entrypoint"
+                .to_string(),
+        );
     }
 
+    if let Some(manifest) = load_component_manifest()? {
+        return Ok(SidecarSource::Release(manifest));
+    }
+
+    bundled_sidecar_source_dir().map(SidecarSource::Bundled)
+}
+
+fn bundled_sidecar_source_dir() -> Result<PathBuf, String> {
     let sunshine_root = PathBuf::from(crate::sunshine::get_sunshine_install_path());
     let candidates = [
         sunshine_root.join("tools").join("sunshine-ds5-sidecar"),
@@ -518,7 +796,7 @@ fn sidecar_source_dir() -> Result<PathBuf, String> {
         .into_iter()
         .find(|path| path.join(SIDECAR_EXE).is_file())
         .ok_or_else(|| {
-            "DS5-PKG-002: this Sunshine build does not contain the DualSense sidecar runtime"
+            "DS5-MANIFEST-001: this Sunshine build has no component manifest or bundled DualSense sidecar runtime"
                 .to_string()
         })
 }
@@ -545,7 +823,228 @@ fn copy_runtime_files(source: &Path, destination: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn extract_verified_package(archive_path: &Path, staging: &Path) -> Result<(), String> {
+fn github_redirect_allowed(url: &Url) -> bool {
+    matches!(
+        url.host_str(),
+        Some(
+            "github.com"
+                | "objects.githubusercontent.com"
+                | "release-assets.githubusercontent.com"
+                | "github-releases.githubusercontent.com"
+        )
+    ) && url.scheme() == "https"
+}
+
+fn component_download_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(600))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if github_redirect_allowed(attempt.url()) {
+                attempt.follow()
+            } else {
+                attempt.stop()
+            }
+        }))
+        .user_agent("foundation-sunshine-dualsense-component")
+        .build()
+        .map_err(|error| format!("DS5-DL-001: unable to create component downloader: {error}"))
+}
+
+async fn download_verified_archive(
+    client: &reqwest::Client,
+    url: &str,
+    expected_size: u64,
+    expected_sha256: &str,
+    destination: &Path,
+    progress: &ProgressReporter<'_>,
+    progress_stage: &str,
+    progress_start: u32,
+    progress_span: u32,
+) -> Result<(), String> {
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| format!("DS5-DL-001: component download failed: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("DS5-DL-001: component download failed: {error}"))?;
+    if response
+        .content_length()
+        .is_some_and(|size| size > expected_size)
+    {
+        return Err("DS5-DL-002: component download exceeds the manifest size".to_string());
+    }
+
+    let mut output = File::create(destination)
+        .map_err(|error| format!("DS5-DL-001: unable to create component download: {error}"))?;
+    let mut downloaded = 0u64;
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk =
+            chunk.map_err(|error| format!("DS5-DL-001: component download failed: {error}"))?;
+        downloaded = downloaded.saturating_add(chunk.len() as u64);
+        if downloaded > expected_size {
+            return Err("DS5-DL-002: component download exceeds the manifest size".to_string());
+        }
+        output
+            .write_all(&chunk)
+            .map_err(|error| format!("DS5-DL-001: unable to save component download: {error}"))?;
+        let progress_value = progress_start.saturating_add(
+            (downloaded.saturating_mul(progress_span as u64) / expected_size) as u32,
+        );
+        report_progress(progress, progress_stage, progress_value);
+    }
+    drop(output);
+
+    if downloaded != expected_size {
+        return Err("DS5-DL-002: component download size does not match the manifest".to_string());
+    }
+    let actual = sha256_file(destination)?;
+    if actual != expected_sha256 {
+        return Err(
+            "DS5-PKG-001: component download digest does not match the manifest".to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn flat_payload_path(value: &str) -> bool {
+    let path = Path::new(value);
+    !value.is_empty()
+        && !value.contains('/')
+        && !value.contains('\\')
+        && !value.contains(':')
+        && path.components().count() == 1
+        && path.file_name().and_then(|name| name.to_str()) == Some(value)
+        && value != "."
+        && value != ".."
+}
+
+fn extract_verified_sidecar_package(
+    archive_path: &Path,
+    staging: &Path,
+    release: &ComponentManifest,
+) -> Result<(), String> {
+    let mut archive =
+        zip::ZipArchive::new(File::open(archive_path).map_err(|error| error.to_string())?)
+            .map_err(|error| format!("DS5-PKG-002: invalid Sidecar archive: {error}"))?;
+    if archive.len() > release.sidecar.max_files {
+        return Err("DS5-PKG-002: Sidecar archive contains too many files".to_string());
+    }
+
+    let payload = {
+        let mut file = archive
+            .by_name(SIDECAR_PAYLOAD_MANIFEST)
+            .map_err(|_| "DS5-PKG-002: Sidecar payload manifest is missing".to_string())?;
+        if file.size() > MAX_SIDECAR_PAYLOAD_MANIFEST_BYTES {
+            return Err("DS5-PKG-002: Sidecar payload manifest exceeds the size limit".to_string());
+        }
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).map_err(|error| {
+            format!("DS5-PKG-002: unable to read Sidecar payload manifest: {error}")
+        })?;
+        serde_json::from_slice::<SidecarPayloadManifest>(&bytes)
+            .map_err(|error| format!("DS5-PKG-002: Sidecar payload manifest is invalid: {error}"))?
+    };
+    if payload.schema != COMPONENT_MANIFEST_SCHEMA
+        || payload.component_version != release.component_version
+        || payload.protocol != PROTOCOL_VERSION
+        || payload.rid != "win-x64"
+        || !payload.self_contained
+        || payload.entrypoint != release.sidecar.entrypoint
+    {
+        return Err("DS5-PKG-002: Sidecar payload manifest is incompatible".to_string());
+    }
+
+    let mut expected_files = BTreeMap::new();
+    let mut declared_bytes = 0u64;
+    for file in payload.files {
+        let file_size = file.size;
+        if !flat_payload_path(&file.path)
+            || file.path == SIDECAR_PAYLOAD_MANIFEST
+            || file.path.eq_ignore_ascii_case("HIDMaestro.Core.dll")
+            || !valid_sha256(&file.sha256)
+            || file.size == 0
+            || expected_files.insert(file.path.clone(), file).is_some()
+        {
+            return Err("DS5-PKG-002: Sidecar payload file list is invalid".to_string());
+        }
+        declared_bytes = declared_bytes.saturating_add(file_size);
+    }
+    if expected_files.is_empty() || declared_bytes > release.sidecar.expanded_size {
+        return Err("DS5-PKG-002: Sidecar payload exceeds the manifest limit".to_string());
+    }
+
+    let mut seen_files = BTreeSet::new();
+    let mut extracted_bytes = 0u64;
+    let mut has_payload_manifest = false;
+    for index in 0..archive.len() {
+        let mut item = archive.by_index(index).map_err(|error| error.to_string())?;
+        let Some(relative) = item.enclosed_name() else {
+            return Err("DS5-PKG-002: Sidecar archive contains an unsafe path".to_string());
+        };
+        if item.is_dir() || relative.components().count() != 1 {
+            return Err("DS5-PKG-002: Sidecar archive must contain only root files".to_string());
+        }
+        let name = relative
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| flat_payload_path(name))
+            .ok_or_else(|| {
+                "DS5-PKG-002: Sidecar archive contains an unsafe file name".to_string()
+            })?;
+        if name == SIDECAR_PAYLOAD_MANIFEST {
+            if has_payload_manifest {
+                return Err(
+                    "DS5-PKG-002: Sidecar archive contains duplicate payload manifests".to_string(),
+                );
+            }
+            has_payload_manifest = true;
+        } else {
+            let expected = expected_files.get(name).ok_or_else(|| {
+                "DS5-PKG-002: Sidecar archive contains an unexpected file".to_string()
+            })?;
+            if item.size() != expected.size || !seen_files.insert(name.to_string()) {
+                return Err(
+                    "DS5-PKG-002: Sidecar archive file list does not match the payload manifest"
+                        .to_string(),
+                );
+            }
+        }
+        extracted_bytes = extracted_bytes.saturating_add(item.size());
+        if extracted_bytes > release.sidecar.expanded_size {
+            return Err("DS5-PKG-002: Sidecar archive exceeds the extraction limit".to_string());
+        }
+        let output_path = staging.join(name);
+        let mut output = File::create(&output_path)
+            .map_err(|error| format!("DS5-PKG-002: unable to extract Sidecar file: {error}"))?;
+        std::io::copy(&mut item, &mut output)
+            .map_err(|error| format!("DS5-PKG-002: unable to extract Sidecar file: {error}"))?;
+        drop(output);
+        if name != SIDECAR_PAYLOAD_MANIFEST {
+            let expected = expected_files
+                .get(name)
+                .ok_or_else(|| "DS5-PKG-002: Sidecar archive file list is invalid".to_string())?;
+            if sha256_file(&output_path)? != expected.sha256 {
+                return Err("DS5-PKG-002: extracted Sidecar file digest mismatch".to_string());
+            }
+        }
+    }
+    if !has_payload_manifest
+        || seen_files.len() != expected_files.len()
+        || !staging.join(SIDECAR_EXE).is_file()
+    {
+        return Err("DS5-PKG-002: Sidecar archive is missing required files".to_string());
+    }
+    Ok(())
+}
+
+fn extract_verified_hidmaestro_package(
+    archive_path: &Path,
+    staging: &Path,
+    release: &HidmaestroRelease,
+) -> Result<(), String> {
     let mut archive_file = File::open(archive_path).map_err(|error| error.to_string())?;
     let mut digest = Sha256::new();
     let mut buffer = [0u8; 64 * 1024];
@@ -559,9 +1058,10 @@ fn extract_verified_package(archive_path: &Path, staging: &Path) -> Result<(), S
         digest.update(&buffer[..count]);
     }
     let actual = format!("{:x}", digest.finalize());
-    if actual != HIDMAESTRO_SHA256 {
+    if actual != release.sha256 {
         return Err(format!(
-            "DS5-PKG-001: expected {HIDMAESTRO_SHA256}, got {actual}"
+            "DS5-PKG-001: expected HIDMaestro digest {}, got {actual}",
+            release.sha256
         ));
     }
 
@@ -780,66 +1280,80 @@ async fn dualsense_install_impl(
     let previous_enabled = config_bool("ds5_enabled", false);
     let previous_audio_haptics = config_bool("ds5_audio_haptics", false);
     report_progress(progress, "preparing", 1);
-    let source = sidecar_source_dir()?;
+    let source = sidecar_source()?;
     let root = component_root();
     fs::create_dir_all(&root).map_err(|error| error.to_string())?;
-    let operation = format!("staging-{}", std::process::id());
+    let operation = format!("staging-{}", uuid::Uuid::new_v4());
     let staging = root.join(&operation);
     if staging.exists() {
         fs::remove_dir_all(&staging).map_err(|error| error.to_string())?;
     }
     fs::create_dir(&staging).map_err(|error| error.to_string())?;
-    let archive_path = root.join(format!("{operation}.partial"));
+    let hidmaestro_archive = root.join(format!("{operation}.hidmaestro.partial"));
+    let sidecar_archive = root.join(format!("{operation}.sidecar.partial"));
     let active = active_dir();
     let backup = root.join("previous");
     let had_previous = active.exists();
-    let client = reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .timeout(std::time::Duration::from_secs(600))
-        .user_agent("foundation-sunshine-dualsense-component")
-        .build()
-        .map_err(|error| error.to_string())?;
+    let client = component_download_client()?;
+    let hidmaestro = match &source {
+        SidecarSource::Release(manifest) => manifest.hidmaestro.clone(),
+        SidecarSource::Development(_) | SidecarSource::Bundled(_) => pinned_hidmaestro_release(),
+    };
 
     let install_result: Result<(), String> = async {
         ensure_pinned_usbip(progress, &client, &root).await?;
-        let response = client
-            .get(HIDMAESTRO_URL)
-            .send()
-            .await
-            .map_err(|error| format!("DS5-PKG-001: download failed: {error}"))?
-            .error_for_status()
-            .map_err(|error| format!("DS5-PKG-001: download failed: {error}"))?;
-        report_progress(progress, "downloading", 12);
-        let total_size = response.content_length();
-        if total_size.is_some_and(|size| size > MAX_ARCHIVE_BYTES) {
-            return Err("DS5-PKG-002: release archive exceeds the download limit".to_string());
-        }
-        let mut output = File::create(&archive_path).map_err(|error| error.to_string())?;
-        let mut downloaded = 0u64;
-        let mut stream = response.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|error| format!("DS5-PKG-001: download failed: {error}"))?;
-            downloaded = downloaded.saturating_add(chunk.len() as u64);
-            if downloaded > MAX_ARCHIVE_BYTES {
-                return Err("DS5-PKG-002: release archive exceeds the download limit".to_string());
+        match &source {
+            SidecarSource::Development(path) | SidecarSource::Bundled(path) => {
+                copy_runtime_files(path, &staging)?;
             }
-            output
-                .write_all(&chunk)
-                .map_err(|error| error.to_string())?;
-            if let Some(total) = total_size.filter(|total| *total != 0) {
-                let download_progress = (downloaded * 60 / total).min(60) as u32;
-                report_progress(progress, "downloading", 12 + download_progress);
+            SidecarSource::Release(manifest) => {
+                report_progress(progress, "downloading_sidecar", 12);
+                download_verified_archive(
+                    &client,
+                    &manifest.sidecar.url,
+                    manifest.sidecar.download_size,
+                    &manifest.sidecar.sha256,
+                    &sidecar_archive,
+                    progress,
+                    "downloading_sidecar",
+                    12,
+                    31,
+                )
+                .await?;
+                report_progress(progress, "verifying", 44);
+                let archive = sidecar_archive.clone();
+                let destination = staging.clone();
+                let manifest = manifest.clone();
+                tokio::task::spawn_blocking(move || {
+                    extract_verified_sidecar_package(&archive, &destination, &manifest)
+                })
+                .await
+                .map_err(|error| error.to_string())??;
             }
         }
-        drop(output);
 
-        report_progress(progress, "verifying", 76);
-        let archive = archive_path.clone();
+        report_progress(progress, "downloading_hidmaestro", 45);
+        download_verified_archive(
+            &client,
+            &hidmaestro.url,
+            hidmaestro.download_size,
+            &hidmaestro.sha256,
+            &hidmaestro_archive,
+            progress,
+            "downloading_hidmaestro",
+            45,
+            31,
+        )
+        .await?;
+        report_progress(progress, "verifying", 77);
+        let archive = hidmaestro_archive.clone();
         let destination = staging.clone();
-        tokio::task::spawn_blocking(move || extract_verified_package(&archive, &destination))
-            .await
-            .map_err(|error| error.to_string())??;
-        copy_runtime_files(&source, &staging)?;
+        let hidmaestro_for_extract = hidmaestro.clone();
+        tokio::task::spawn_blocking(move || {
+            extract_verified_hidmaestro_package(&archive, &destination, &hidmaestro_for_extract)
+        })
+        .await
+        .map_err(|error| error.to_string())??;
         report_progress(progress, "probing", 88);
         let probe_executable = staging.join(SIDECAR_EXE);
         let probe_path = probe_executable.clone();
@@ -850,13 +1364,23 @@ async fn dualsense_install_impl(
         fs::write(
             staging.join("component.json"),
             serde_json::to_vec_pretty(&serde_json::json!({
-                "component_version": COMPONENT_VERSION,
-                "hidmaestro_version": HIDMAESTRO_VERSION,
-                "source": HIDMAESTRO_URL,
-                "sha256": HIDMAESTRO_SHA256,
+                "component_version": source.component_version(),
+                "source_kind": source.label(),
+                "sidecar_source": match &source {
+                    SidecarSource::Release(manifest) => manifest.sidecar.url.as_str(),
+                    SidecarSource::Development(_) | SidecarSource::Bundled(_) => "bundled",
+                },
+                "hidmaestro_version": hidmaestro.version,
+                "hidmaestro_source": hidmaestro.url,
+                "hidmaestro_sha256": hidmaestro.sha256,
                 "protocol": PROTOCOL_VERSION,
                 "sidecar_file": SIDECAR_EXE,
-                "sidecar_sha256": sidecar_sha256
+                "sidecar_sha256": sidecar_sha256,
+                "sidecar_archive_sha256": match &source {
+                    SidecarSource::Release(manifest) => manifest.sidecar.sha256.as_str(),
+                    SidecarSource::Development(_) | SidecarSource::Bundled(_) => "",
+                },
+                "sidecar_download_size": source.download_size()
             }))
             .map_err(|error| error.to_string())?,
         )
@@ -880,7 +1404,8 @@ async fn dualsense_install_impl(
         Ok(())
     }
     .await;
-    let _ = fs::remove_file(&archive_path);
+    let _ = fs::remove_file(&hidmaestro_archive);
+    let _ = fs::remove_file(&sidecar_archive);
     if install_result.is_err() {
         let _ = fs::remove_dir_all(&staging);
     }
@@ -1346,14 +1871,15 @@ pub async fn dualsense_uninstall() -> Result<DualSenseStatus, String> {
 
 #[cfg(test)]
 mod tests {
+    use super::{
+        ComponentManifest, SidecarRelease, apply_gamepad_selection, component_state,
+        component_test_failure, flat_payload_path, pinned_hidmaestro_release,
+        pinned_usbip_installed, validate_component_manifest, validate_requested_profile,
+    };
     #[cfg(target_os = "windows")]
     use super::{
         ElevatedMessage, ElevatedOperation, MAX_ELEVATED_MESSAGE_BYTES, elevated_pipe_name,
         read_limited_elevated_line,
-    };
-    use super::{
-        apply_gamepad_selection, component_state, component_test_failure, pinned_usbip_installed,
-        validate_requested_profile,
     };
     use std::process::Command;
 
@@ -1412,6 +1938,47 @@ mod tests {
         assert!(pinned_usbip_installed(Some("0.9.7.7")));
         assert!(!pinned_usbip_installed(Some("0.9.7.3")));
         assert!(!pinned_usbip_installed(None));
+    }
+
+    fn valid_component_manifest() -> ComponentManifest {
+        ComponentManifest {
+            schema: 1,
+            component: "sunshine-dualsense".to_string(),
+            component_version: "1.0.0+test".to_string(),
+            architecture: "x86_64".to_string(),
+            sidecar_protocol: 1,
+            sunshine_version: "v2026.0815.0".to_string(),
+            sidecar: SidecarRelease {
+                url: "https://github.com/AlkaidLab/foundation-sunshine/releases/download/v2026.0815.0/Sunshine.Ds5Sidecar.1.0.0%2Btest.win-x64.zip".to_string(),
+                sha256: "a".repeat(64),
+                download_size: 1,
+                expanded_size: 1,
+                max_files: 1,
+                entrypoint: "Sunshine.Ds5Sidecar.exe".to_string(),
+            },
+            hidmaestro: pinned_hidmaestro_release(),
+        }
+    }
+
+    #[test]
+    fn component_manifest_requires_the_local_release_tag_and_asset_pattern() {
+        assert!(validate_component_manifest(valid_component_manifest()).is_ok());
+
+        let mut manifest = valid_component_manifest();
+        manifest.sidecar.url = "https://github.com/AlkaidLab/foundation-sunshine/releases/download/latest/Sunshine.Ds5Sidecar.1.0.0.win-x64.zip".to_string();
+        assert!(validate_component_manifest(manifest).is_err());
+
+        let mut manifest = valid_component_manifest();
+        manifest.sidecar.url = "https://github.com/AlkaidLab/foundation-sunshine/releases/download/v2026.0815.0/Sunshine.exe".to_string();
+        assert!(validate_component_manifest(manifest).is_err());
+    }
+
+    #[test]
+    fn component_payload_paths_must_be_single_file_names() {
+        assert!(flat_payload_path("Sunshine.Ds5Sidecar.exe"));
+        assert!(!flat_payload_path("runtime/hostfxr.dll"));
+        assert!(!flat_payload_path("..\\Sunshine.Ds5Sidecar.exe"));
+        assert!(!flat_payload_path("C:\\component.dll"));
     }
 
     #[cfg(target_os = "windows")]

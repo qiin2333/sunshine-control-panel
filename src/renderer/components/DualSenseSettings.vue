@@ -191,6 +191,8 @@ const status = ref({
   audio_haptics: false, driver_installed: false, usbip_available: false, usbip_version: '',
   usbip_version_valid: false,
   standard_profile: false, composite_profile: false, in_use: false,
+  manifest_available: false, manifest_version: '', download_required: false, download_bytes: 0,
+  source: '',
   error_code: '', detail: '',
 })
 let pollTimer
@@ -206,6 +208,14 @@ const nextAction = computed(() => ({
 }[status.value.state] || t.value.dualSense.nextRepair))
 
 const overallVersion = computed(() => status.value.component_version || status.value.runtime_version || status.value.error_code)
+const formattedSidecarDownloadSize = computed(() => {
+  const bytes = Number(status.value.download_bytes || 0)
+  return bytes ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : ''
+})
+const installConfirmation = computed(() => {
+  if (!status.value.manifest_available) return t.value.dualSense.installConfirmLegacy
+  return t.value.dualSense.installConfirmManifest.replace('{sidecarSize}', formattedSidecarDownloadSize.value)
+})
 const canTestAudioHaptics = computed(() => status.value.composite_profile && status.value.usbip_available)
 const usbTransportDetail = computed(() => {
   if (!status.value.usbip_version_valid) return t.value.dualSense.pinnedTransportRequired
@@ -267,7 +277,7 @@ const refresh = async (quiet = false) => {
 
 const install = async () => {
   try {
-    await ElMessageBox.confirm(t.value.dualSense.installConfirm, t.value.dualSense.installTitle, {
+    await ElMessageBox.confirm(installConfirmation.value, t.value.dualSense.installTitle, {
       type: 'warning', confirmButtonText: t.value.dualSense.install,
     })
   } catch { return }

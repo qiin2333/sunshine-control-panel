@@ -15,15 +15,25 @@ pub(crate) struct ElevatedProcess {
 impl ElevatedProcess {
     pub(crate) fn exit_code(&self) -> Result<Option<i32>, String> {
         use std::os::windows::io::AsRawHandle;
-        use windows::Win32::Foundation::STILL_ACTIVE;
-        use windows::Win32::System::Threading::GetExitCodeProcess;
+        use windows::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
+        use windows::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject};
 
         unsafe {
             let handle = windows::Win32::Foundation::HANDLE(self.handle.as_raw_handle());
+            match WaitForSingleObject(handle, 0) {
+                WAIT_TIMEOUT => return Ok(None),
+                WAIT_OBJECT_0 => {}
+                status => {
+                    return Err(format!(
+                        "could not wait for elevated process exit: {:?}",
+                        status
+                    ));
+                }
+            }
             let mut exit_code = 0;
             GetExitCodeProcess(handle, &mut exit_code)
                 .map_err(|error| format!("could not read elevated process exit code: {error}"))?;
-            Ok((exit_code != STILL_ACTIVE.0 as u32).then_some(exit_code as i32))
+            Ok(Some(exit_code as i32))
         }
     }
 }
@@ -67,6 +77,7 @@ pub(crate) fn launch_current_executable_elevated(
     arguments: &[&str],
     show_window: i32,
 ) -> Result<ElevatedProcess, String> {
+    use std::os::windows::ffi::OsStrExt;
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::Shell::{SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW};
     use windows::core::PCWSTR;
@@ -75,16 +86,19 @@ pub(crate) fn launch_current_executable_elevated(
         value.encode_utf16().chain(std::iter::once(0)).collect()
     }
 
+    fn os_to_wide(value: &std::ffi::OsStr) -> Vec<u16> {
+        value.encode_wide().chain(std::iter::once(0)).collect()
+    }
+
     let executable = env::current_exe()
         .map_err(|error| format!("could not resolve current executable: {error}"))?;
-    let executable = executable.to_string_lossy();
     let parameters = arguments
         .iter()
         .map(|argument| quote_windows_argument(argument))
         .collect::<Result<Vec<_>, _>>()?
         .join(" ");
     let verb = to_wide("runas");
-    let executable = to_wide(&executable);
+    let executable = os_to_wide(executable.as_os_str());
     let parameters = to_wide(&parameters);
     let mut execute_info = SHELLEXECUTEINFOW::default();
     execute_info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
@@ -184,10 +198,14 @@ pub async fn restart_as_admin(app_handle: tauri::AppHandle) -> Result<String, St
     {
         info!("Preparing to restart GUI as administrator");
         let parent_process_id = std::process::id().to_string();
-        let _elevated_process = launch_current_executable_elevated(
-            &[ELEVATED_RESTART_ARG, &parent_process_id],
-            windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL.0,
-        )
+        let _elevated_process = tokio::task::spawn_blocking(move || {
+            launch_current_executable_elevated(
+                &[ELEVATED_RESTART_ARG, &parent_process_id],
+                windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL.0,
+            )
+        })
+        .await
+        .map_err(|error| format!("Failed to join elevated GUI launch task: {error}"))?
         .map_err(|error| format!("Failed to start elevated instance: {error}"))?;
 
         info!("Elevated GUI launch was accepted by Windows");
@@ -454,5 +472,14 @@ mod tests {
     #[test]
     fn elevated_process_arguments_reject_nul_bytes() {
         assert!(quote_windows_argument("invalid\0argument").is_err());
+    }
+
+    #[test]
+    fn elevated_process_arguments_escape_backslashes_and_quotes() {
+        assert_eq!(quote_windows_argument(r#"a\"b"#).unwrap(), r#""a\\\"b""#);
+        assert_eq!(
+            quote_windows_argument(r#"C:\path\"#).unwrap(),
+            r#""C:\path\\""#
+        );
     }
 }

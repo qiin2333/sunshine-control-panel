@@ -1024,9 +1024,12 @@ async fn run_elevated_helper(operation: ElevatedOperation, token: uuid::Uuid) ->
     let _ = sender.send(final_message);
     drop(progress);
     drop(sender);
-    let writer_result = writer.await;
+    // The parent closes its pipe end after receiving the final message. Stop
+    // treating that expected EOF as cancellation before allowing the writer
+    // to finish and close its half of the connection.
     disconnect_watcher.abort();
     let _ = disconnect_watcher.await;
+    let writer_result = writer.await;
     match writer_result {
         Ok(Ok(())) => {}
         Ok(Err(_)) | Err(_) => return 4,
@@ -1124,6 +1127,33 @@ async fn wait_for_elevated_process_exit(
 }
 
 #[cfg(target_os = "windows")]
+async fn wait_for_elevated_pipe_connection<Connect, HelperExit>(
+    connect: Connect,
+    helper_exit: HelperExit,
+) -> Result<(), String>
+where
+    Connect: std::future::Future<Output = std::io::Result<()>>,
+    HelperExit: std::future::Future<Output = Result<Option<i32>, String>>,
+{
+    tokio::select! {
+        biased;
+        connected = connect => connected.map_err(|error| {
+            format!("DS5-PKG-004: administrator IPC connection failed: {error}")
+        }),
+        status = helper_exit => {
+            let status = status
+                .map_err(|error| format!("DS5-PKG-004: administrator helper wait failed: {error}"))?;
+            let Some(status) = status else {
+                return Err("DS5-PKG-004: administrator authorization timed out".to_string());
+            };
+            Err(format!(
+                "DS5-PKG-004: administrator authorization was canceled or the helper exited early ({status})"
+            ))
+        },
+    }
+}
+
+#[cfg(target_os = "windows")]
 async fn run_elevated_operation(
     app: Option<&tauri::AppHandle>,
     operation: ElevatedOperation,
@@ -1142,10 +1172,14 @@ async fn run_elevated_operation(
         .map_err(|error| format!("DS5-PKG-004: unable to create administrator IPC: {error}"))?;
     let operation_arg = operation.as_arg();
     let token_arg = token.to_string();
-    let elevated_process = crate::utils::launch_current_executable_elevated(
-        &[ELEVATED_DS5_ARG, operation_arg, &token_arg],
-        windows::Win32::UI::WindowsAndMessaging::SW_HIDE.0,
-    )
+    let elevated_process = tokio::task::spawn_blocking(move || {
+        crate::utils::launch_current_executable_elevated(
+            &[ELEVATED_DS5_ARG, operation_arg, &token_arg],
+            windows::Win32::UI::WindowsAndMessaging::SW_HIDE.0,
+        )
+    })
+    .await
+    .map_err(|error| format!("DS5-PKG-004: administrator launch task failed: {error}"))?
     .map_err(|error| {
         format!("DS5-PKG-004: unable to request administrator authorization: {error}")
     })?;
@@ -1154,22 +1188,7 @@ async fn run_elevated_operation(
         ELEVATION_CONNECT_TIMEOUT,
     ));
 
-    tokio::select! {
-        connected = server.connect() => connected.map_err(|error| {
-            format!("DS5-PKG-004: administrator IPC connection failed: {error}")
-        })?,
-        status = &mut helper_exit => {
-            let status = status
-                .map_err(|error| format!("DS5-PKG-004: administrator helper wait failed: {error}"))?;
-            let Some(status) = status else {
-                return Err("DS5-PKG-004: administrator authorization timed out".to_string());
-            };
-            return Err(format!(
-                "DS5-PKG-004: administrator authorization was canceled or the helper exited early ({})",
-                status
-            ));
-        },
-    }
+    wait_for_elevated_pipe_connection(server.connect(), &mut helper_exit).await?;
     drop(helper_exit);
 
     let receive = async move {
@@ -1367,7 +1386,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     use super::{
         ElevatedMessage, ElevatedOperation, MAX_ELEVATED_MESSAGE_BYTES, elevated_pipe_name,
-        read_limited_elevated_line,
+        read_limited_elevated_line, wait_for_elevated_pipe_connection,
     };
     use super::{
         apply_gamepad_selection, component_state, component_test_failure, pinned_usbip_installed,
@@ -1487,6 +1506,18 @@ mod tests {
             .unwrap_err();
         write.await.unwrap();
         assert!(error.contains("exceeds 65536 bytes"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    async fn elevated_ipc_prefers_a_ready_pipe_over_a_ready_helper_exit() {
+        let result = wait_for_elevated_pipe_connection(
+            std::future::ready(Ok(())),
+            std::future::ready(Ok(Some(0))),
+        )
+        .await;
+
+        assert!(result.is_ok());
     }
 
     #[test]

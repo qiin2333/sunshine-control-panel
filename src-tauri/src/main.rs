@@ -56,6 +56,9 @@ fn configure_async_runtime() {
 
 fn main() {
     #[cfg(target_os = "windows")]
+    utils::wait_for_elevated_restart_handoff();
+
+    #[cfg(target_os = "windows")]
     if let Some(exit_code) = dualsense::try_handle_elevated_command() {
         std::process::exit(exit_code);
     }

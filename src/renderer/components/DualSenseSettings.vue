@@ -144,8 +144,6 @@
             </div>
           </div>
           <footer class="panel-footer">
-            <span v-if="status.install_path">{{ t.dualSense.installLocation }}：{{ status.install_path }}</span>
-            <span>{{ t.dualSense.source }}</span>
             <details v-if="status.detail">
               <summary>{{ status.error_code || t.dualSense.technicalDetails }}</summary>
               <pre>{{ status.detail }}</pre>
@@ -158,7 +156,6 @@
               :disabled="status.in_use"
               @click="uninstall"
             >{{ t.dualSense.uninstall }}</el-button>
-            <p>{{ t.dualSense.limitation }}</p>
           </footer>
         </el-collapse-item>
       </el-collapse>
@@ -186,10 +183,11 @@ const enabled = ref(false)
 const audioHaptics = ref(false)
 const testCompleted = ref(false)
 const expandedSections = ref([])
+const rebootRecommended = ref(false)
 const status = ref({
   state: 'loading', installed: false, verified: false, enabled: false,
   audio_haptics: false, driver_installed: false, usbip_available: false, usbip_version: '',
-  usbip_version_valid: false,
+  usbip_version_valid: false, reboot_recommended: false,
   standard_profile: false, composite_profile: false, in_use: false,
   error_code: '', detail: '',
 })
@@ -198,12 +196,19 @@ let unlistenProgress
 
 const stateLabel = computed(() => t.value.dualSense.states[status.value.state] || status.value.state)
 const operationStage = computed(() => t.value.dualSense.stages[operationStageKey.value] || operationStageKey.value)
-const nextAction = computed(() => ({
-  not_installed: t.value.dualSense.nextNotInstalled,
-  repair_required: t.value.dualSense.nextRepair,
-  transport_missing: t.value.dualSense.nextTransport,
-  in_use: t.value.dualSense.nextInUse,
-}[status.value.state] || t.value.dualSense.nextRepair))
+const nextAction = computed(() => {
+  if (rebootRecommended.value) {
+    return status.value.usbip_available
+      ? t.value.dualSense.restartSuggestedAvailable
+      : t.value.dualSense.restartSuggestedUnavailable
+  }
+  return {
+    not_installed: t.value.dualSense.nextNotInstalled,
+    repair_required: t.value.dualSense.nextRepair,
+    transport_missing: t.value.dualSense.nextTransport,
+    in_use: t.value.dualSense.nextInUse,
+  }[status.value.state] || t.value.dualSense.nextRepair
+})
 
 const overallVersion = computed(() => status.value.component_version || status.value.runtime_version || status.value.error_code)
 const canTestAudioHaptics = computed(() => status.value.composite_profile && status.value.usbip_available)
@@ -213,7 +218,7 @@ const usbTransportDetail = computed(() => {
   if (!status.value.installed) return t.value.dualSense.transportCheckPending
   return t.value.dualSense.transportProbeFailed
 })
-const showNotice = computed(() => ['not_installed', 'repair_required', 'transport_missing', 'in_use'].includes(status.value.state))
+const showNotice = computed(() => rebootRecommended.value || ['not_installed', 'repair_required', 'transport_missing', 'in_use'].includes(status.value.state))
 const healthRows = computed(() => [
   {
     label: t.value.dualSense.component,
@@ -280,8 +285,17 @@ const install = async () => {
     return showError(result.message, 'install')
   }
   operation.value = ''
+  status.value = result.data
+  statusKnown.value = true
+  enabled.value = result.data.enabled
+  audioHaptics.value = result.data.audio_haptics
+  rebootRecommended.value = result.data.reboot_recommended
   ElMessage.success(t.value.dualSense.installSuccess)
-  await refresh()
+  if (result.data.reboot_recommended) {
+    ElMessage.warning(status.value.usbip_available
+      ? t.value.dualSense.restartSuggestedAvailable
+      : t.value.dualSense.restartSuggestedUnavailable)
+  }
 }
 
 const saveSettings = async () => {
@@ -329,6 +343,7 @@ const uninstall = async () => {
   const result = await dualsense.uninstall()
   operation.value = ''
   if (!result.success) return showError(result.message, 'uninstall')
+  rebootRecommended.value = false
   ElMessage.success(t.value.dualSense.uninstallSuccess)
   await refresh()
 }
@@ -361,24 +376,28 @@ onUnmounted(() => {
   margin: 0 auto;
   padding: 26px 28px 42px;
   color: var(--el-text-color-primary);
-  font-family: 'DengXian', 'Microsoft YaHei UI', 'Noto Sans SC', sans-serif;
+  font-family: 'Microsoft YaHei UI', 'Noto Sans SC', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
 }
 .page-header { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; margin-bottom: 34px; }
 .page-title-group {
   h1 { margin: 0 0 7px; font-size: 24px; font-weight: 500; }
-  > p:last-child { margin: 0; color: var(--el-text-color-secondary); line-height: 1.5; }
+  > p:last-child { margin: 0; color: var(--el-text-color-secondary); font-size: 15px; line-height: 1.6; }
 }
 .eyebrow { font-family: 'PixelMplus12', 'Courier New', monospace; }
-.eyebrow, .section-label { color: var(--el-text-color-secondary); font-size: 11px; letter-spacing: .12em; }
+.eyebrow, .section-label { color: var(--el-text-color-secondary); letter-spacing: .1em; }
+.eyebrow { font-size: 12px; }
+.section-label { font-size: 13px; }
 .eyebrow { margin: 0 0 7px; }
-.pixel-tag { border: 0; border-radius: 0; color: var(--el-color-primary); background: transparent; letter-spacing: .05em; }
+.pixel-tag { border: 0; border-radius: 0; color: var(--el-color-primary); background: transparent; font-size: 13px; letter-spacing: .05em; }
 .component-panel { max-width: 820px; margin: 0 auto; padding: 8px; }
 .title-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 32px; margin-bottom: 24px; }
 .title-row {
   h2 { margin: 0 0 7px; font-size: 22px; font-weight: 500; }
   p { margin: 0; max-width: 560px; color: var(--el-text-color-secondary); line-height: 1.5; }
 }
-.enable-control { font-weight: 500; }
+.enable-control { font-size: 14px; font-weight: 500; }
 .status-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 32px; margin-bottom: 30px; }
 .status-heading, .status-actions, .test-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .status-actions { gap: 18px; }
@@ -407,12 +426,12 @@ onUnmounted(() => {
 .status-actions :deep(.el-button.menu-action-warning) { color: var(--el-color-warning); }
 .status-actions :deep(.el-button.menu-action-secondary) { color: var(--el-text-color-secondary); font-weight: 400; }
 .action-bracket { font-family: 'PixelMplus12', 'Courier New', monospace; opacity: .8; }
-.status-version { color: var(--el-text-color-secondary); font-size: 12px; }
+.status-version { color: var(--el-text-color-secondary); font-size: 13px; }
 .status-dot { width: 8px; height: 8px; flex: 0 0 auto; background: var(--el-text-color-placeholder); }
 .state-ready .status-dot { background: var(--el-color-success); box-shadow: 0 0 0 3px var(--el-color-success-light-8); }
 .state-transport_missing .status-dot, .state-in_use .status-dot { background: var(--el-color-warning); box-shadow: 0 0 0 3px var(--el-color-warning-light-8); }
 .state-repair_required .status-dot { background: var(--el-color-danger); box-shadow: 0 0 0 3px var(--el-color-danger-light-8); }
-.operation-card { padding: 0 0 20px; div { display: flex; justify-content: space-between; margin-bottom: 7px; color: var(--el-text-color-secondary); font-size: 12px; } }
+.operation-card { padding: 0 0 20px; div { display: flex; justify-content: space-between; margin-bottom: 7px; color: var(--el-text-color-secondary); font-size: 13px; } }
 .notice { margin: 0 0 20px; padding-inline: 0; border-radius: 0; background: transparent; }
 .profile-section { margin-top: 4px; }
 .section-label { display: block; margin-bottom: 10px; }
@@ -434,7 +453,7 @@ onUnmounted(() => {
   &.is-static { cursor: default; }
   &:disabled { cursor: not-allowed; opacity: .55; }
   &.is-selected { color: var(--el-text-color-primary); background: var(--el-color-primary-light-9); box-shadow: inset 4px 0 0 var(--el-color-primary); }
-  kbd { min-width: 42px; padding: 2px 5px; border: 1px solid var(--el-border-color); color: var(--el-text-color-secondary); background: transparent; font-family: 'PixelMplus12', 'Courier New', monospace; font-size: 11px; text-align: center; }
+  kbd { min-width: 48px; padding: 3px 6px; border: 1px solid var(--el-border-color); color: var(--el-text-color-secondary); background: transparent; font: inherit; font-size: 13px; text-align: center; }
 }
 .selection-cursor { visibility: hidden; color: var(--el-color-primary); font-family: 'PixelMplus12', 'Courier New', monospace; }
 .profile-option.is-selected .selection-cursor { visibility: visible; }
@@ -442,15 +461,15 @@ onUnmounted(() => {
   min-width: 0;
   strong, small { display: block; }
   strong { font-weight: 500; }
-  small { margin-top: 4px; color: var(--el-text-color-secondary); font-size: 11px; line-height: 1.45; }
+  small { margin-top: 4px; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.55; }
 }
-.test-section { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 32px; margin-top: 26px; p { margin: 5px 0 0; color: var(--el-text-color-secondary); font-size: 11px; line-height: 1.45; } }
-.details-collapse { margin-top: 24px; border: 0; :deep(.el-collapse-item__header) { border: 0; color: var(--el-text-color-secondary); background: transparent; font-family: inherit; } :deep(.el-collapse-item__wrap) { border: 0; background: transparent; } :deep(.el-collapse-item__content) { padding-bottom: 0; color: inherit; font-family: inherit; } }
+.test-section { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 32px; margin-top: 26px; p { margin: 5px 0 0; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.55; } }
+.details-collapse { margin-top: 24px; border: 0; :deep(.el-collapse-item__header) { border: 0; color: var(--el-text-color-secondary); background: transparent; font-family: inherit; font-size: 14px; } :deep(.el-collapse-item__wrap) { border: 0; background: transparent; } :deep(.el-collapse-item__content) { padding-bottom: 0; color: inherit; font-family: inherit; } }
 .health-list { display: grid; padding: 0 8px 10px 20px; }
-.health-row { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(110px, auto) minmax(0, 1fr); gap: 16px; align-items: center; min-height: 40px; }
+.health-row { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(110px, auto) minmax(0, 1fr); gap: 16px; align-items: center; min-height: 44px; }
 .health-state { display: flex; align-items: center; gap: 7px; font-weight: 500; i { width: 7px; height: 7px; background: var(--el-text-color-placeholder); } i.ok { background: var(--el-color-success); } i.busy { background: var(--el-color-primary); } i.warn { background: var(--el-color-warning); } i.bad { background: var(--el-color-danger); } }
-.health-detail { min-width: 0; color: var(--el-text-color-secondary); font-size: 11px; text-align: right; overflow-wrap: anywhere; }
-.panel-footer { display: grid; gap: 8px; padding: 14px 8px 14px 20px; color: var(--el-text-color-secondary); font-size: 11px; overflow-wrap: anywhere; details summary { cursor: pointer; } pre { white-space: pre-wrap; overflow-wrap: anywhere; } p { margin: 0; line-height: 1.5; } }
+.health-detail { min-width: 0; color: var(--el-text-color-secondary); font-size: 13px; text-align: right; overflow-wrap: anywhere; }
+.panel-footer { display: grid; gap: 8px; padding: 14px 8px 14px 20px; color: var(--el-text-color-secondary); font-size: 13px; overflow-wrap: anywhere; details summary { cursor: pointer; } pre { white-space: pre-wrap; overflow-wrap: anywhere; } }
 .ds5-page :deep(.el-button),
 .ds5-page :deep(.el-checkbox__inner),
 .ds5-page :deep(.el-progress-bar__outer),

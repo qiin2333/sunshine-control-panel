@@ -35,7 +35,7 @@ const ELEVATED_DS5_ARG: &str = "--elevated-dualsense";
 #[cfg(target_os = "windows")]
 const MAX_ELEVATED_MESSAGE_BYTES: usize = 64 * 1024;
 #[cfg(target_os = "windows")]
-const ELEVATION_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+const ELEVATION_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 static COMPONENT_OPERATION: Lazy<tokio::sync::Mutex<()>> =
     Lazy::new(|| tokio::sync::Mutex::new(()));
 
@@ -106,6 +106,7 @@ pub struct DualSenseStatus {
     pub usbip_available: bool,
     pub usbip_version: String,
     pub usbip_version_valid: bool,
+    pub reboot_recommended: bool,
     pub standard_profile: bool,
     pub composite_profile: bool,
     pub in_use: bool,
@@ -158,6 +159,12 @@ struct ProbeResult {
     composite: bool,
     driver_installed: bool,
     usbip_available: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UsbipInstallResult {
+    Ready,
+    RebootRecommended,
 }
 
 fn emit_progress(app: &tauri::AppHandle, stage: &str, progress: u32) {
@@ -435,6 +442,19 @@ fn pinned_usbip_installed(installed_version: Option<&str>) -> bool {
     installed_version == Some(USBIP_VERSION)
 }
 
+fn classify_usbip_installer_exit_code(
+    exit_code: Option<i32>,
+) -> Result<UsbipInstallResult, String> {
+    match exit_code {
+        Some(0) => Ok(UsbipInstallResult::Ready),
+        Some(3010) => Ok(UsbipInstallResult::RebootRecommended),
+        code => Err(format!(
+            "DS5-DRV-001: USB/IP installer failed with exit code {}",
+            code.unwrap_or(-1)
+        )),
+    }
+}
+
 #[tauri::command]
 pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
     let executable = sidecar_path();
@@ -488,6 +508,7 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
         usbip_available,
         usbip_version,
         usbip_version_valid,
+        reboot_recommended: false,
         standard_profile: result.standard,
         composite_profile: result.composite,
         in_use,
@@ -609,14 +630,14 @@ async fn ensure_pinned_usbip(
     progress: &ProgressReporter<'_>,
     client: &reqwest::Client,
     component_root: &Path,
-) -> Result<(), String> {
+) -> Result<UsbipInstallResult, String> {
     if installed_usbip_version().as_deref() == Some(USBIP_VERSION) {
-        return Ok(());
+        return Ok(UsbipInstallResult::Ready);
     }
 
     report_progress(progress, "transport_downloading", 3);
     let installer_path = component_root.join(format!("USBip-{USBIP_VERSION}-x64.partial.exe"));
-    let download_result: Result<(), String> = async {
+    let download_result: Result<UsbipInstallResult, String> = async {
         let response = client
             .get(USBIP_URL)
             .send()
@@ -682,27 +703,13 @@ async fn ensure_pinned_usbip(
                 format!("DS5-DRV-001: USB/IP installer failed: {error}")
             }
         })?;
-        match output.status.code() {
-            Some(0) => {}
-            Some(3010) => {
-                return Err(
-                    "DS5-DRV-003: USB/IP 0.9.7.7 was installed and Windows must restart"
-                        .to_string(),
-                );
-            }
-            code => {
-                return Err(format!(
-                    "DS5-DRV-001: USB/IP installer failed with exit code {}",
-                    code.unwrap_or(-1)
-                ));
-            }
-        }
+        let install_result = classify_usbip_installer_exit_code(output.status.code())?;
         if installed_usbip_version().as_deref() != Some(USBIP_VERSION) {
             return Err(format!(
                 "DS5-DRV-001: USB/IP installer completed but version {USBIP_VERSION} is not registered"
             ));
         }
-        Ok(())
+        Ok(install_result)
     }
     .await;
     let _ = fs::remove_file(&installer_path);
@@ -714,8 +721,8 @@ async fn ensure_pinned_usbip(
     _progress: &ProgressReporter<'_>,
     _client: &reqwest::Client,
     _component_root: &Path,
-) -> Result<(), String> {
-    Ok(())
+) -> Result<UsbipInstallResult, String> {
+    Ok(UsbipInstallResult::Ready)
 }
 
 async fn apply_config(
@@ -800,8 +807,8 @@ async fn dualsense_install_impl(
         .build()
         .map_err(|error| error.to_string())?;
 
-    let install_result: Result<(), String> = async {
-        ensure_pinned_usbip(progress, &client, &root).await?;
+    let install_result: Result<UsbipInstallResult, String> = async {
+        let usbip_install_result = ensure_pinned_usbip(progress, &client, &root).await?;
         let response = client
             .get(HIDMAESTRO_URL)
             .send()
@@ -877,14 +884,14 @@ async fn dualsense_install_impl(
             ));
         }
         report_progress(progress, "activating", 96);
-        Ok(())
+        Ok(usbip_install_result)
     }
     .await;
     let _ = fs::remove_file(&archive_path);
     if install_result.is_err() {
         let _ = fs::remove_dir_all(&staging);
     }
-    install_result?;
+    let reboot_recommended = matches!(install_result?, UsbipInstallResult::RebootRecommended);
     if let Err(config_error) = apply_config(
         previous_enabled,
         previous_audio_haptics,
@@ -924,7 +931,9 @@ async fn dualsense_install_impl(
         };
     }
     report_progress(progress, "complete", 100);
-    dualsense_get_status().await
+    let mut status = dualsense_get_status().await?;
+    status.reboot_recommended = reboot_recommended;
+    Ok(status)
 }
 
 #[cfg(target_os = "windows")]
@@ -1024,9 +1033,12 @@ async fn run_elevated_helper(operation: ElevatedOperation, token: uuid::Uuid) ->
     let _ = sender.send(final_message);
     drop(progress);
     drop(sender);
-    let writer_result = writer.await;
+    // The parent closes its pipe end after receiving the final message. Stop
+    // treating that expected EOF as cancellation before allowing the writer
+    // to finish and close its half of the connection.
     disconnect_watcher.abort();
     let _ = disconnect_watcher.await;
+    let writer_result = writer.await;
     match writer_result {
         Ok(Ok(())) => {}
         Ok(Err(_)) | Err(_) => return 4,
@@ -1104,6 +1116,53 @@ async fn read_limited_elevated_line<R: tokio::io::AsyncBufRead + Unpin>(
 }
 
 #[cfg(target_os = "windows")]
+async fn wait_for_elevated_process_exit(
+    process: &crate::utils::ElevatedProcess,
+    timeout: std::time::Duration,
+) -> Result<Option<i32>, String> {
+    let wait = async {
+        loop {
+            if let Some(exit_code) = process.exit_code()? {
+                return Ok::<_, String>(exit_code);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    };
+
+    match tokio::time::timeout(timeout, wait).await {
+        Ok(result) => result.map(Some),
+        Err(_) => Ok(None),
+    }
+}
+
+#[cfg(target_os = "windows")]
+async fn wait_for_elevated_pipe_connection<Connect, HelperExit>(
+    connect: Connect,
+    helper_exit: HelperExit,
+) -> Result<(), String>
+where
+    Connect: std::future::Future<Output = std::io::Result<()>>,
+    HelperExit: std::future::Future<Output = Result<Option<i32>, String>>,
+{
+    tokio::select! {
+        biased;
+        connected = connect => connected.map_err(|error| {
+            format!("DS5-PKG-004: administrator IPC connection failed: {error}")
+        }),
+        status = helper_exit => {
+            let status = status
+                .map_err(|error| format!("DS5-PKG-004: administrator helper wait failed: {error}"))?;
+            let Some(status) = status else {
+                return Err("DS5-PKG-004: administrator authorization timed out".to_string());
+            };
+            Err(format!(
+                "DS5-PKG-004: administrator authorization was canceled or the helper exited early ({status})"
+            ))
+        },
+    }
+}
+
+#[cfg(target_os = "windows")]
 async fn run_elevated_operation(
     app: Option<&tauri::AppHandle>,
     operation: ElevatedOperation,
@@ -1111,7 +1170,6 @@ async fn run_elevated_operation(
     use tokio::io::BufReader;
     use tokio::net::windows::named_pipe::ServerOptions;
 
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
     let token = uuid::Uuid::new_v4();
     let pipe_name = elevated_pipe_name(token);
     let server = ServerOptions::new()
@@ -1121,38 +1179,26 @@ async fn run_elevated_operation(
         .reject_remote_clients(true)
         .create(&pipe_name)
         .map_err(|error| format!("DS5-PKG-004: unable to create administrator IPC: {error}"))?;
-    let executable = std::env::current_exe()
-        .map_err(|error| format!("DS5-PKG-004: unable to locate Control Panel: {error}"))?;
-    let executable = executable.to_string_lossy().replace('\'', "''");
-    let ps_script = format!(
-        "$ErrorActionPreference = 'Stop'; try {{ $p = Start-Process -FilePath '{executable}' -ArgumentList '{ELEVATED_DS5_ARG}','{}','{token}' -Verb RunAs -WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode }} catch {{ [Console]::Error.WriteLine($_.Exception.Message); exit 1223 }}",
-        operation.as_arg()
-    );
-    let mut launcher = tokio::process::Command::new("powershell")
-        .args(["-NoProfile", "-Command", &ps_script])
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
-        .map_err(|error| {
-            format!("DS5-PKG-004: unable to request administrator authorization: {error}")
-        })?;
+    let operation_arg = operation.as_arg();
+    let token_arg = token.to_string();
+    let elevated_process = tokio::task::spawn_blocking(move || {
+        crate::utils::launch_current_executable_elevated(
+            &[ELEVATED_DS5_ARG, operation_arg, &token_arg],
+            windows::Win32::UI::WindowsAndMessaging::SW_HIDE.0,
+        )
+    })
+    .await
+    .map_err(|error| format!("DS5-PKG-004: administrator launch task failed: {error}"))?
+    .map_err(|error| {
+        format!("DS5-PKG-004: unable to request administrator authorization: {error}")
+    })?;
+    let mut helper_exit = Box::pin(wait_for_elevated_process_exit(
+        &elevated_process,
+        ELEVATION_CONNECT_TIMEOUT,
+    ));
 
-    tokio::select! {
-        connected = server.connect() => connected.map_err(|error| {
-            format!("DS5-PKG-004: administrator IPC connection failed: {error}")
-        })?,
-        status = launcher.wait() => {
-            let status = status.map_err(|error| error.to_string())?;
-            return Err(format!(
-                "DS5-PKG-004: administrator authorization was canceled or the helper exited early ({})",
-                status.code().unwrap_or(-1)
-            ));
-        },
-        _ = tokio::time::sleep(ELEVATION_CONNECT_TIMEOUT) => {
-            let _ = launcher.start_kill();
-            let _ = launcher.wait().await;
-            return Err("DS5-PKG-004: administrator authorization timed out".to_string());
-        },
-    }
+    wait_for_elevated_pipe_connection(server.connect(), &mut helper_exit).await?;
+    drop(helper_exit);
 
     let receive = async move {
         let mut reader = BufReader::new(server);
@@ -1177,36 +1223,36 @@ async fn run_elevated_operation(
         Ok(Ok(result)) => result,
         Ok(Err(error)) => {
             // Dropping the pipe wakes the elevated helper's disconnect watcher.
-            if tokio::time::timeout(std::time::Duration::from_secs(5), launcher.wait())
-                .await
-                .is_err()
-            {
-                let _ = launcher.start_kill();
-                let _ = launcher.wait().await;
-            }
+            let _ = wait_for_elevated_process_exit(
+                &elevated_process,
+                std::time::Duration::from_secs(5),
+            )
+            .await;
             return Err(error);
         }
         Err(_) => {
             // Dropping the timed-out receive future closes the pipe and causes
             // the helper to terminate itself even though this process cannot
             // directly kill a high-integrity child.
-            if tokio::time::timeout(std::time::Duration::from_secs(5), launcher.wait())
-                .await
-                .is_err()
-            {
-                let _ = launcher.start_kill();
-                let _ = launcher.wait().await;
-            }
+            let _ = wait_for_elevated_process_exit(
+                &elevated_process,
+                std::time::Duration::from_secs(5),
+            )
+            .await;
             return Err("DS5-PKG-004: administrator operation timed out".to_string());
         }
     };
-    let status = launcher.wait().await.map_err(|error| error.to_string())?;
+    let status =
+        wait_for_elevated_process_exit(&elevated_process, std::time::Duration::from_secs(5))
+            .await
+            .map_err(|error| format!("DS5-PKG-004: administrator helper wait failed: {error}"))?
+            .ok_or_else(|| "DS5-PKG-004: administrator helper did not exit".to_string())?;
     match final_result {
-        Some(Ok(data)) if status.success() => Ok(data),
+        Some(Ok(data)) if status == 0 => Ok(data),
         Some(Err(error)) => Err(error),
         _ => Err(format!(
             "DS5-PKG-004: administrator helper failed with exit code {}",
-            status.code().unwrap_or(-1)
+            status
         )),
     }
 }
@@ -1349,11 +1395,12 @@ mod tests {
     #[cfg(target_os = "windows")]
     use super::{
         ElevatedMessage, ElevatedOperation, MAX_ELEVATED_MESSAGE_BYTES, elevated_pipe_name,
-        read_limited_elevated_line,
+        read_limited_elevated_line, wait_for_elevated_pipe_connection,
     };
     use super::{
-        apply_gamepad_selection, component_state, component_test_failure, pinned_usbip_installed,
-        validate_requested_profile,
+        apply_gamepad_selection, classify_usbip_installer_exit_code, component_state,
+        component_test_failure, pinned_usbip_installed, validate_requested_profile,
+        UsbipInstallResult,
     };
     use std::process::Command;
 
@@ -1367,6 +1414,19 @@ mod tests {
     fn hid_only_profile_remains_available_without_usbip() {
         assert!(validate_requested_profile(true, false, false).is_ok());
         assert!(validate_requested_profile(false, true, false).is_ok());
+    }
+
+    #[test]
+    fn usbip_reboot_exit_code_keeps_component_installation_running() {
+        assert_eq!(
+            classify_usbip_installer_exit_code(Some(0)).unwrap(),
+            UsbipInstallResult::Ready
+        );
+        assert_eq!(
+            classify_usbip_installer_exit_code(Some(3010)).unwrap(),
+            UsbipInstallResult::RebootRecommended
+        );
+        assert!(classify_usbip_installer_exit_code(Some(1)).is_err());
     }
 
     #[test]
@@ -1469,6 +1529,18 @@ mod tests {
             .unwrap_err();
         write.await.unwrap();
         assert!(error.contains("exceeds 65536 bytes"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    async fn elevated_ipc_prefers_a_ready_pipe_over_a_ready_helper_exit() {
+        let result = wait_for_elevated_pipe_connection(
+            std::future::ready(Ok(())),
+            std::future::ready(Ok(Some(0))),
+        )
+        .await;
+
+        assert!(result.is_ok());
     }
 
     #[test]

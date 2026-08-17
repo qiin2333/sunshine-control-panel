@@ -655,6 +655,24 @@ mod tray_protocol_tests {
 
         assert!(response.is_none());
     }
+
+    #[test]
+    fn config_save_response_requires_business_success() {
+        assert!(validate_config_save_response(r#"{"status":"true"}"#).is_ok());
+        assert!(validate_config_save_response(r#"{"status":true}"#).is_ok());
+
+        let error = validate_config_save_response(
+            r#"{"status":"false","error":"failed to persist configuration"}"#,
+        )
+        .unwrap_err();
+        assert!(error.contains("failed to persist configuration"));
+    }
+
+    #[test]
+    fn config_save_response_rejects_missing_or_invalid_status() {
+        assert!(validate_config_save_response(r#"{}"#).is_err());
+        assert!(validate_config_save_response("not json").is_err());
+    }
 }
 
 #[derive(Debug)]
@@ -913,6 +931,30 @@ pub fn create_sse_https_client() -> Result<reqwest::Client, String> {
     SSE_HTTPS_CLIENT.as_ref().cloned().map_err(Clone::clone)
 }
 
+fn validate_config_save_response(body: &str) -> Result<(), String> {
+    let response: serde_json::Value = serde_json::from_str(body)
+        .map_err(|error| format!("Sunshine Config API returned invalid JSON: {error}"))?;
+    let succeeded = match response.get("status") {
+        Some(serde_json::Value::Bool(status)) => *status,
+        Some(serde_json::Value::String(status)) => status.eq_ignore_ascii_case("true"),
+        _ => {
+            return Err("Sunshine Config API response is missing a valid status".to_string());
+        }
+    };
+    if succeeded {
+        return Ok(());
+    }
+
+    let detail = response
+        .get("error")
+        .and_then(serde_json::Value::as_str)
+        .filter(|error| !error.trim().is_empty())
+        .unwrap_or("Sunshine rejected the configuration");
+    Err(format!(
+        "Sunshine Config API rejected configuration: {detail}"
+    ))
+}
+
 /// POST 配置数据到 Sunshine Config API
 /// 封装了获取 URL、创建客户端、POST 请求和错误处理的完整流程
 pub async fn post_sunshine_config(
@@ -931,16 +973,18 @@ pub async fn post_sunshine_config(
         .await
         .map_err(|e| format!("调用 Sunshine Config API 失败: {}", e))?;
 
-    if response.status().is_success() {
-        Ok(())
-    } else {
-        let status = response.status();
-        let error_body = response.text().await.unwrap_or_default();
-        Err(format!(
+    let status = response.status();
+    let response_body = response
+        .text()
+        .await
+        .map_err(|error| format!("无法读取 Sunshine Config API 响应: {error}"))?;
+    if !status.is_success() {
+        return Err(format!(
             "Sunshine Config API 返回错误 (状态: {}): {}",
-            status, error_body
-        ))
+            status, response_body
+        ));
     }
+    validate_config_save_response(&response_body)
 }
 
 #[tauri::command]

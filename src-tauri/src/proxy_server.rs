@@ -37,6 +37,8 @@ static PROXY_START_REQUESTED: AtomicBool = AtomicBool::new(false);
 static PROXY_READY_NOTIFY: Lazy<Notify> = Lazy::new(Notify::new);
 static PROXY_REQUEST_PERMITS: Lazy<Arc<Semaphore>> =
     Lazy::new(|| Arc::new(Semaphore::new(MAX_CONCURRENT_PROXY_REQUESTS)));
+static PROXY_PENDING_PERMITS: Lazy<Arc<Semaphore>> =
+    Lazy::new(|| Arc::new(Semaphore::new(MAX_PENDING_PROXY_REQUESTS)));
 
 /// 快速失败冷却时间（秒）- 在此时间内不重试，超过后会重新尝试连接
 const FAST_FAIL_COOLDOWN_SECS: u64 = 3;
@@ -55,9 +57,27 @@ const MAX_PROXY_REQUEST_BODY_BYTES: usize = 16 * 1024 * 1024;
 const MAX_PROXY_RESPONSE_BODY_BYTES: usize = 64 * 1024 * 1024;
 const MAX_INJECTABLE_HTML_BYTES: usize = 8 * 1024 * 1024;
 const MAX_CONCURRENT_PROXY_REQUESTS: usize = 16;
+const MAX_PENDING_PROXY_REQUESTS: usize = 16;
+const PROXY_ADMISSION_WAIT_SECS: u64 = 3;
 const PROXY_REQUEST_BODY_TIMEOUT_SECS: u64 = 15;
 const PROXY_STREAM_IDLE_TIMEOUT_SECS: u64 = 60;
 const PROXY_STREAM_CHUNK_BYTES: usize = 64 * 1024;
+
+struct UnboundedStreamRule {
+    method: &'static str,
+    path: &'static str,
+    bounded_when_header_present: Option<&'static str>,
+}
+
+/// Explicit allowlist for responses that are valid unbounded streams.
+///
+/// Rules must use an exact method and path. Optional headers can select a
+/// bounded mode on the same endpoint, as X-Log-Offset does for live log tails.
+const UNBOUNDED_STREAM_RULES: &[UnboundedStreamRule] = &[UnboundedStreamRule {
+    method: "GET",
+    path: "/api/logs",
+    bounded_when_header_present: Some("x-log-offset"),
+}];
 
 /// 代理服务器端口范围
 const PROXY_PORT_START: u16 = 48081;
@@ -280,16 +300,35 @@ fn hold_proxy_permit_with_timeout(
 }
 
 async fn proxy_concurrency_middleware(req: Request, next: Next) -> Response {
-    let permit = match PROXY_REQUEST_PERMITS.clone().try_acquire_owned() {
-        Ok(permit) => permit,
-        Err(_) => {
-            return proxy_limit_response(
-                axum::http::StatusCode::SERVICE_UNAVAILABLE,
-                "Too many concurrent proxy requests",
-            );
-        }
+    let permit = acquire_proxy_permit_with_wait(
+        PROXY_REQUEST_PERMITS.clone(),
+        PROXY_PENDING_PERMITS.clone(),
+        std::time::Duration::from_secs(PROXY_ADMISSION_WAIT_SECS),
+    )
+    .await;
+    let Some(permit) = permit else {
+        return proxy_limit_response(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "Too many concurrent proxy requests",
+        );
     };
     hold_proxy_permit(next.run(req).await, permit)
+}
+
+async fn acquire_proxy_permit_with_wait(
+    active: Arc<Semaphore>,
+    pending: Arc<Semaphore>,
+    wait_timeout: std::time::Duration,
+) -> Option<OwnedSemaphorePermit> {
+    if let Ok(permit) = active.clone().try_acquire_owned() {
+        return Some(permit);
+    }
+
+    let _pending_permit = pending.try_acquire_owned().ok()?;
+    tokio::time::timeout(wait_timeout, active.acquire_owned())
+        .await
+        .ok()?
+        .ok()
 }
 
 /// 启动本地代理服务器
@@ -686,6 +725,38 @@ fn limited_response_body(response: reqwest::Response, max_bytes: usize) -> Resul
     Ok(Body::from_stream(stream))
 }
 
+fn streamed_response_body(
+    response: reqwest::Response,
+    max_bytes: Option<usize>,
+) -> Result<Body, String> {
+    match max_bytes {
+        Some(max_bytes) => limited_response_body(response, max_bytes),
+        None => Ok(Body::from_stream(
+            response
+                .bytes_stream()
+                .map(|item| item.map_err(std::io::Error::other)),
+        )),
+    }
+}
+
+fn proxy_response_body_limit(
+    url: &str,
+    method: &axum::http::Method,
+    headers: &axum::http::HeaderMap,
+) -> Option<usize> {
+    let path = url::Url::parse(url).ok().map(|url| url.path().to_string());
+    let is_allowlisted_stream = path.as_deref().is_some_and(|path| {
+        UNBOUNDED_STREAM_RULES.iter().any(|rule| {
+            method.as_str() == rule.method
+                && path == rule.path
+                && !rule
+                    .bounded_when_header_present
+                    .is_some_and(|header| headers.contains_key(header))
+        })
+    });
+    (!is_allowlisted_stream).then_some(MAX_PROXY_RESPONSE_BODY_BYTES)
+}
+
 async fn read_limited_response_bytes(
     mut response: reqwest::Response,
     max_bytes: usize,
@@ -1053,6 +1124,22 @@ fn get_ai_http_client() -> &'static reqwest::Client {
     CLIENT.get_or_init(|| build_http_client(AI_PROXY_TIMEOUT_SECS))
 }
 
+fn get_streaming_http_client() -> &'static reqwest::Client {
+    use std::sync::OnceLock;
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .danger_accept_invalid_certs(true)
+            .pool_max_idle_per_host(3)
+            .connect_timeout(std::time::Duration::from_millis(PROXY_CONNECT_TIMEOUT_MS))
+            .read_timeout(std::time::Duration::from_secs(
+                PROXY_STREAM_IDLE_TIMEOUT_SECS,
+            ))
+            .build()
+            .expect("Failed to create streaming HTTP client")
+    })
+}
+
 fn build_http_client(timeout_secs: u64) -> reqwest::Client {
     reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
@@ -1109,7 +1196,10 @@ async fn fetch_and_proxy(
     body: &Bytes,
     is_ai_api: bool,
 ) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
-    let client = if is_ai_api {
+    let response_body_limit = proxy_response_body_limit(url, method, headers);
+    let client = if response_body_limit.is_none() {
+        get_streaming_http_client()
+    } else if is_ai_api {
         get_ai_http_client()
     } else {
         get_http_client()
@@ -1141,8 +1231,7 @@ async fn fetch_and_proxy(
             .map_err(std::io::Error::other)?;
         Body::from(inject_if_needed(body_bytes))
     } else {
-        limited_response_body(response, MAX_PROXY_RESPONSE_BODY_BYTES)
-            .map_err(std::io::Error::other)?
+        streamed_response_body(response, response_body_limit).map_err(std::io::Error::other)?
     };
 
     // 构建响应
@@ -1328,6 +1417,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn proxy_admission_waits_for_a_short_normal_burst() {
+        let active = Arc::new(Semaphore::new(1));
+        let pending = Arc::new(Semaphore::new(1));
+        let held = active.clone().acquire_owned().await.unwrap();
+        let release = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            drop(held);
+        });
+
+        let permit = acquire_proxy_permit_with_wait(
+            active.clone(),
+            pending.clone(),
+            std::time::Duration::from_secs(1),
+        )
+        .await
+        .expect("request should enter after the active slot is released");
+        release.await.unwrap();
+
+        assert_eq!(pending.available_permits(), 1);
+        drop(permit);
+        assert_eq!(active.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn proxy_admission_rejects_when_the_wait_queue_is_full() {
+        let active = Arc::new(Semaphore::new(1));
+        let pending = Arc::new(Semaphore::new(1));
+        let _active_permit = active.clone().acquire_owned().await.unwrap();
+        let _pending_permit = pending.clone().acquire_owned().await.unwrap();
+
+        let permit =
+            acquire_proxy_permit_with_wait(active, pending, std::time::Duration::from_secs(1))
+                .await;
+        assert!(permit.is_none());
+    }
+
+    #[tokio::test]
+    async fn proxy_admission_timeout_releases_the_wait_slot() {
+        let active = Arc::new(Semaphore::new(1));
+        let pending = Arc::new(Semaphore::new(1));
+        let _active_permit = active.clone().acquire_owned().await.unwrap();
+
+        let permit = acquire_proxy_permit_with_wait(
+            active,
+            pending.clone(),
+            std::time::Duration::from_millis(10),
+        )
+        .await;
+        assert!(permit.is_none());
+        assert_eq!(pending.available_permits(), 1);
+    }
+
+    #[tokio::test]
     async fn proxy_releases_permit_after_response_idle_timeout() {
         let semaphore = Arc::new(Semaphore::new(1));
         let permit = semaphore.clone().try_acquire_owned().unwrap();
@@ -1408,6 +1550,58 @@ mod tests {
         let body = limited_response_body(response, 8).unwrap();
 
         assert!(axum::body::to_bytes(body, usize::MAX).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn full_log_download_streams_without_a_total_size_limit() {
+        let url = spawn_one_shot_unknown_length_server("response-larger-than-test-limit").await;
+        let response = reqwest::get(url).await.unwrap();
+        let body = streamed_response_body(response, None).unwrap();
+        let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+
+        assert_eq!(bytes.as_ref(), b"response-larger-than-test-limit");
+    }
+
+    #[test]
+    fn only_full_log_download_bypasses_the_response_limit() {
+        let empty_headers = axum::http::HeaderMap::new();
+        assert_eq!(
+            proxy_response_body_limit(
+                "https://127.0.0.1:47990/api/logs",
+                &axum::http::Method::GET,
+                &empty_headers,
+            ),
+            None
+        );
+
+        let mut incremental_headers = axum::http::HeaderMap::new();
+        incremental_headers.insert("X-Log-Offset", axum::http::HeaderValue::from_static("0"));
+        assert_eq!(
+            proxy_response_body_limit(
+                "https://127.0.0.1:47990/api/logs",
+                &axum::http::Method::GET,
+                &incremental_headers,
+            ),
+            Some(MAX_PROXY_RESPONSE_BODY_BYTES)
+        );
+        assert_eq!(
+            proxy_response_body_limit(
+                "https://127.0.0.1:47990/api/config",
+                &axum::http::Method::GET,
+                &empty_headers,
+            ),
+            Some(MAX_PROXY_RESPONSE_BODY_BYTES)
+        );
+        for (method, url) in [
+            (axum::http::Method::POST, "https://127.0.0.1:47990/api/logs"),
+            (axum::http::Method::HEAD, "https://127.0.0.1:47990/api/logs"),
+            (axum::http::Method::GET, "https://127.0.0.1:47990/api/logs/"),
+        ] {
+            assert_eq!(
+                proxy_response_body_limit(url, &method, &empty_headers),
+                Some(MAX_PROXY_RESPONSE_BODY_BYTES)
+            );
+        }
     }
 
     #[tokio::test]

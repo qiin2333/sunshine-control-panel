@@ -387,7 +387,8 @@ async function loadToolbarShortcutStatus() {
 }
 
 async function onToolbarShortcutToggle(event) {
-  const enabled = event.currentTarget.checked
+  const input = event.currentTarget
+  const enabled = input.checked
   toolbarShortcutPending.value = true
   toolbarShortcutStateError.value = false
   try {
@@ -396,7 +397,7 @@ async function onToolbarShortcutToggle(event) {
     toolbarShortcutRegistered.value = Boolean(status.registered)
   } catch (error) {
     console.warn('[桌宠设置] 保存快捷键状态失败:', error)
-    event.currentTarget.checked = toolbarShortcutEnabled.value
+    input.checked = toolbarShortcutEnabled.value
     toolbarShortcutStateError.value = true
   } finally {
     toolbarShortcutPending.value = false

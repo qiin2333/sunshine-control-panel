@@ -18,9 +18,9 @@
         <el-checkbox
           v-model="enabled"
           class="enable-control"
-          :disabled="!status.verified || status.in_use || saving"
+          :disabled="!status.verified || status.in_use || controlsBusy"
           @change="saveSettings"
-        >{{ t.dualSense.enableShort }}</el-checkbox>
+        >{{ saving ? t.dualSense.saving : t.dualSense.enableShort }}</el-checkbox>
       </section>
 
       <section class="status-row" aria-live="polite">
@@ -35,7 +35,7 @@
             text
             class="menu-action menu-action-primary"
             :loading="operation === 'install'"
-            :disabled="loading || status.in_use"
+            :disabled="loading || status.in_use || controlsBusy"
             @click="install"
           >
             <span class="action-bracket" aria-hidden="true">[</span>
@@ -47,7 +47,7 @@
             text
             class="menu-action menu-action-warning"
             :loading="operation === 'install'"
-            :disabled="loading || status.in_use"
+            :disabled="loading || status.in_use || controlsBusy"
             @click="install"
           >
             <span class="action-bracket" aria-hidden="true">[</span>
@@ -58,7 +58,7 @@
             text
             class="menu-action menu-action-secondary"
             :loading="loading"
-            :disabled="!!operation"
+            :disabled="controlsBusy"
             @click="refresh()"
           >
             <el-icon><Refresh /></el-icon>{{ t.dualSense.refresh }}
@@ -97,7 +97,7 @@
             :class="{ 'is-selected': audioHaptics }"
             role="checkbox"
             :aria-checked="audioHaptics"
-            :disabled="status.in_use || saving || (!status.usbip_available && !audioHaptics)"
+            :disabled="status.in_use || controlsBusy || (!status.usbip_available && !audioHaptics)"
             @click="setAudioHaptics(!audioHaptics)"
           >
             <span class="selection-cursor" aria-hidden="true">▶</span>
@@ -105,7 +105,7 @@
               <strong>{{ t.dualSense.nativeModeShort }}</strong>
               <small>{{ status.usbip_available ? t.dualSense.nativeModeTip : t.dualSense.nativeUnavailable }}</small>
             </span>
-            <kbd>{{ audioHaptics ? t.dualSense.enabledLabel : t.dualSense.disabledLabel }}</kbd>
+            <kbd>{{ saving ? t.dualSense.saving : (audioHaptics ? t.dualSense.enabledLabel : t.dualSense.disabledLabel) }}</kbd>
           </button>
         </div>
       </section>
@@ -119,18 +119,20 @@
           <el-button
             text
             :loading="operation === 'standard'"
-            :disabled="status.in_use || !!operation || !status.standard_profile"
+            :disabled="status.in_use || controlsBusy || !status.standard_profile"
             @click="test('standard')"
           >[ {{ t.dualSense.testStandard }} ]</el-button>
           <el-button
             text
             :loading="operation === 'composite'"
-            :disabled="status.in_use || !!operation || !canTestAudioHaptics"
+            :disabled="status.in_use || controlsBusy || !canTestAudioHaptics"
             @click="test('composite')"
           >[ {{ t.dualSense.testComposite }} ]</el-button>
-          <el-button v-if="testCompleted" text type="success" @click="emit('open-controller-meta')">
-            [ {{ t.dualSense.openControllerMeta }} ]
-          </el-button>
+          <div v-if="testCompleted" class="controller-meta-action">
+            <el-button text type="success" @click="emit('open-controller-meta')">
+              [ {{ t.dualSense.openControllerMeta }} ]
+            </el-button>
+          </div>
         </div>
       </section>
 
@@ -153,7 +155,7 @@
               link
               type="danger"
               :loading="operation === 'uninstall'"
-              :disabled="status.in_use"
+              :disabled="status.in_use || controlsBusy"
               @click="uninstall"
             >{{ t.dualSense.uninstall }}</el-button>
           </footer>
@@ -168,7 +170,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { dualsense } from '../tauri-adapter.js'
-import { friendlyDualSenseError } from '../composables/dualsenseErrors.js'
+import { dualSenseErrorCode, friendlyDualSenseError } from '../composables/dualsenseErrors.js'
 import { useI18n } from '../desktop/i18n/index.js'
 
 const { t } = useI18n()
@@ -176,6 +178,7 @@ const emit = defineEmits(['open-controller-meta'])
 const loading = ref(true)
 const statusKnown = ref(false)
 const saving = ref(false)
+const refreshing = ref(false)
 const operation = ref('')
 const operationProgress = ref(0)
 const operationStageKey = ref('preparing')
@@ -194,6 +197,7 @@ const status = ref({
 let pollTimer
 let unlistenProgress
 
+const controlsBusy = computed(() => refreshing.value || saving.value || Boolean(operation.value))
 const stateLabel = computed(() => t.value.dualSense.states[status.value.state] || status.value.state)
 const operationStage = computed(() => t.value.dualSense.stages[operationStageKey.value] || operationStageKey.value)
 const nextAction = computed(() => {
@@ -257,31 +261,45 @@ const showError = (message, context = 'generic') => ElMessage.error(
 )
 
 const refresh = async (quiet = false) => {
+  if (controlsBusy.value) return false
+  refreshing.value = true
   if (!quiet) loading.value = true
-  const result = await dualsense.getStatus()
-  if (result.success) {
-    status.value = result.data
-    statusKnown.value = true
-    enabled.value = result.data.enabled
-    audioHaptics.value = result.data.audio_haptics
-  } else if (!quiet) {
-    showError(result.message, 'status')
+  let refreshed = false
+  try {
+    const result = await dualsense.getStatus()
+    if (result.success) {
+      status.value = result.data
+      statusKnown.value = true
+      enabled.value = result.data.enabled
+      audioHaptics.value = result.data.audio_haptics
+      refreshed = true
+    } else if (!quiet) {
+      showError(result.message, 'status')
+    }
+  } finally {
+    loading.value = false
+    refreshing.value = false
   }
-  loading.value = false
+  return refreshed
 }
 
 const install = async () => {
+  if (controlsBusy.value) return
+  operation.value = 'confirm-install'
   try {
     await ElMessageBox.confirm(t.value.dualSense.installConfirm, t.value.dualSense.installTitle, {
       type: 'warning', confirmButtonText: t.value.dualSense.install,
     })
-  } catch { return }
+  } catch {
+    operation.value = ''
+    return
+  }
   operation.value = 'install'
   operationProgress.value = 0
   const result = await dualsense.install()
   if (!result.success) {
-    await refresh(true)
     operation.value = ''
+    await refresh(true)
     return showError(result.message, 'install')
   }
   operation.value = ''
@@ -299,31 +317,58 @@ const install = async () => {
 }
 
 const saveSettings = async () => {
+  if (refreshing.value || operation.value || saving.value) {
+    enabled.value = status.value.enabled
+    audioHaptics.value = status.value.audio_haptics
+    return
+  }
+  const requestedEnabled = enabled.value
+  const requestedAudioHaptics = audioHaptics.value
   saving.value = true
-  const result = await dualsense.setConfig(enabled.value, audioHaptics.value)
+  let result = await dualsense.setConfig(requestedEnabled, requestedAudioHaptics)
+  let refreshedAfterFailure = false
+  if (!result.success && dualSenseErrorCode(result.message) === 'DS5-CFG-003') {
+    saving.value = false
+    refreshedAfterFailure = await refresh(true)
+    const canRetry = refreshedAfterFailure
+      && !status.value.in_use
+      && (!requestedEnabled || status.value.verified)
+      && (!requestedEnabled || !requestedAudioHaptics || status.value.usbip_available)
+    if (canRetry) {
+      enabled.value = requestedEnabled
+      audioHaptics.value = requestedAudioHaptics
+      saving.value = true
+      result = await dualsense.setConfig(requestedEnabled, requestedAudioHaptics)
+      refreshedAfterFailure = false
+    }
+  }
   if (!result.success) {
-    if (String(result.message || '').includes('DS5-CFG-002')) {
-      await refresh(true)
-    } else {
+    saving.value = false
+    if (!refreshedAfterFailure) {
+      refreshedAfterFailure = await refresh(true)
+    }
+    if (!refreshedAfterFailure) {
       enabled.value = status.value.enabled
       audioHaptics.value = status.value.audio_haptics
     }
-    saving.value = false
     return showError(result.message, 'config')
   }
   saving.value = false
   status.value = result.data
+  enabled.value = result.data.enabled
+  audioHaptics.value = result.data.audio_haptics
   ElMessage.success(t.value.dualSense.configSuccess)
 }
 
 const setAudioHaptics = async (enabled) => {
-  if (audioHaptics.value === enabled) return
+  if (controlsBusy.value || audioHaptics.value === enabled) return
   audioHaptics.value = enabled
   testCompleted.value = false
   await saveSettings()
 }
 
 const test = async (profile) => {
+  if (controlsBusy.value) return
   operation.value = profile
   const result = await dualsense.selfTest(profile)
   operation.value = ''
@@ -334,11 +379,16 @@ const test = async (profile) => {
 }
 
 const uninstall = async () => {
+  if (controlsBusy.value) return
+  operation.value = 'confirm-uninstall'
   try {
     await ElMessageBox.confirm(t.value.dualSense.uninstallConfirm, t.value.dualSense.uninstallTitle, {
       type: 'warning', confirmButtonText: t.value.dualSense.uninstall,
     })
-  } catch { return }
+  } catch {
+    operation.value = ''
+    return
+  }
   operation.value = 'uninstall'
   const result = await dualsense.uninstall()
   operation.value = ''
@@ -360,7 +410,7 @@ onMounted(async () => {
   }
   await refresh()
   pollTimer = window.setInterval(() => {
-    if (operation.value || saving.value) return
+    if (controlsBusy.value) return
     refresh(true)
   }, 30000)
 })
@@ -463,7 +513,10 @@ onUnmounted(() => {
   strong { font-weight: 500; }
   small { margin-top: 4px; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.55; }
 }
-.test-section { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 32px; margin-top: 26px; p { margin: 5px 0 0; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.55; } }
+.test-section { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; margin-top: 26px; p { margin: 5px 0 0; max-width: 680px; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.55; } }
+.test-actions { justify-content: flex-start; }
+.controller-meta-action { flex: 0 0 100%; }
+.controller-meta-action :deep(.el-button) { margin-left: 0; }
 .details-collapse { margin-top: 24px; border: 0; :deep(.el-collapse-item__header) { border: 0; color: var(--el-text-color-secondary); background: transparent; font-family: inherit; font-size: 14px; } :deep(.el-collapse-item__wrap) { border: 0; background: transparent; } :deep(.el-collapse-item__content) { padding-bottom: 0; color: inherit; font-family: inherit; } }
 .health-list { display: grid; padding: 0 8px 10px 20px; }
 .health-row { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(110px, auto) minmax(0, 1fr); gap: 16px; align-items: center; min-height: 44px; }

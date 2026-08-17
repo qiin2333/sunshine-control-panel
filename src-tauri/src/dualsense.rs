@@ -6,7 +6,7 @@
 //! runtime and first-party process ownership separate.
 
 use futures_util::StreamExt;
-use once_cell::sync::Lazy;
+use once_cell::sync::{Lazy, OnceCell};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
@@ -30,6 +30,7 @@ const MAX_USBIP_INSTALLER_BYTES: u64 = 48 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES: u64 = 200 * 1024 * 1024;
 const MAX_ARCHIVE_FILES: usize = 256;
 const SIDECAR_EXE: &str = "Sunshine.Ds5Sidecar.exe";
+const CONFIG_APPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 #[cfg(target_os = "windows")]
 const ELEVATED_DS5_ARG: &str = "--elevated-dualsense";
 #[cfg(target_os = "windows")]
@@ -38,6 +39,8 @@ const MAX_ELEVATED_MESSAGE_BYTES: usize = 64 * 1024;
 const ELEVATION_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 static COMPONENT_OPERATION: Lazy<tokio::sync::Mutex<()>> =
     Lazy::new(|| tokio::sync::Mutex::new(()));
+#[cfg(target_os = "windows")]
+static ELEVATED_HELPER_JOB: OnceCell<std::os::windows::io::OwnedHandle> = OnceCell::new();
 
 type ProgressReporter<'a> = dyn Fn(&str, u32) + Send + Sync + 'a;
 
@@ -242,6 +245,7 @@ fn run_with_timeout(
     command: &mut Command,
     timeout: std::time::Duration,
     timeout_error: &str,
+    capture_output: bool,
 ) -> Result<std::process::Output, String> {
     const MAX_CAPTURED_OUTPUT: usize = 1024 * 1024;
 
@@ -270,29 +274,20 @@ fn run_with_timeout(
         })
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        command.creation_flags(CREATE_NO_WINDOW);
+    if capture_output {
+        command
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+    } else {
+        command
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
     }
-
-    command
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
     let mut child = command
         .spawn()
         .map_err(|error| format!("DS5-PKG-003: unable to start sidecar: {error}"))?;
-    let stdout_reader = child
-        .stdout
-        .take()
-        .map(drain_pipe)
-        .ok_or_else(|| "DS5-PKG-003: unable to capture sidecar stdout".to_string())?;
-    let stderr_reader = child
-        .stderr
-        .take()
-        .map(drain_pipe)
-        .ok_or_else(|| "DS5-PKG-003: unable to capture sidecar stderr".to_string())?;
+    let stdout_reader = child.stdout.take().map(drain_pipe);
+    let stderr_reader = child.stderr.take().map(drain_pipe);
     let deadline = std::time::Instant::now() + timeout;
     loop {
         if let Some(status) = child
@@ -301,19 +296,75 @@ fn run_with_timeout(
         {
             return Ok(std::process::Output {
                 status,
-                stdout: stdout_reader.join().unwrap_or_default(),
-                stderr: stderr_reader.join().unwrap_or_default(),
+                stdout: stdout_reader
+                    .map(|reader| reader.join().unwrap_or_default())
+                    .unwrap_or_default(),
+                stderr: stderr_reader
+                    .map(|reader| reader.join().unwrap_or_default())
+                    .unwrap_or_default(),
             });
         }
         if std::time::Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            let _ = stdout_reader.join();
-            let _ = stderr_reader.join();
+            #[cfg(target_os = "windows")]
+            if ELEVATED_HELPER_JOB.get().is_some() {
+                // A descendant may still hold an inherited pipe handle. The
+                // helper reports the timeout and exits, which closes its Job
+                // handle and terminates the complete process tree.
+                drop(stdout_reader);
+                drop(stderr_reader);
+                return Err(timeout_error.to_string());
+            }
+            if let Some(reader) = stdout_reader {
+                let _ = reader.join();
+            }
+            if let Some(reader) = stderr_reader {
+                let _ = reader.join();
+            }
             return Err(timeout_error.to_string());
         }
         std::thread::sleep(std::time::Duration::from_millis(25));
     }
+}
+
+#[cfg(target_os = "windows")]
+/// Bind the elevated helper and all children it launches to one lifetime job.
+fn bind_elevated_helper_lifetime() -> Result<(), String> {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle};
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        SetInformationJobObject,
+    };
+    use windows::Win32::System::Threading::GetCurrentProcess;
+    use windows::core::PCWSTR;
+
+    ELEVATED_HELPER_JOB
+        .get_or_try_init(|| unsafe {
+            let raw_job = CreateJobObjectW(None, PCWSTR::null()).map_err(|error| {
+                format!("DS5-PKG-003: unable to create elevated helper job: {error}")
+            })?;
+            let job = std::os::windows::io::OwnedHandle::from_raw_handle(raw_job.0);
+            let job_handle = HANDLE(job.as_raw_handle());
+            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            SetInformationJobObject(
+                job_handle,
+                JobObjectExtendedLimitInformation,
+                std::ptr::from_ref(&limits).cast(),
+                std::mem::size_of_val(&limits) as u32,
+            )
+            .map_err(|error| {
+                format!("DS5-PKG-003: unable to configure elevated helper job: {error}")
+            })?;
+            AssignProcessToJobObject(job_handle, GetCurrentProcess()).map_err(|error| {
+                format!("DS5-PKG-003: unable to bind elevated helper lifetime: {error}")
+            })?;
+            Ok(job)
+        })
+        .map(|_| ())
 }
 
 fn apply_gamepad_selection(config: &mut serde_json::Map<String, serde_json::Value>, enabled: bool) {
@@ -340,6 +391,7 @@ fn run_probe(executable: &Path) -> Result<ProbeResult, String> {
         &mut command,
         std::time::Duration::from_secs(15),
         "DS5-PKG-003: sidecar probe timed out",
+        true,
     )?;
     if !output.status.success() {
         return Err(format!(
@@ -692,6 +744,7 @@ async fn ensure_pinned_usbip(
                 &mut command,
                 std::time::Duration::from_secs(600),
                 "DS5-DRV-001: USB/IP installer timed out",
+                false,
             )
         })
         .await
@@ -758,7 +811,9 @@ async fn apply_config(
     if sync_gamepad_selection {
         apply_gamepad_selection(&mut config, enabled);
     }
-    crate::sunshine::post_sunshine_config(&config).await?;
+    crate::sunshine::post_sunshine_config(&config)
+        .await
+        .map_err(|error| format!("DS5-CFG-003: unable to save Sunshine configuration: {error}"))?;
     let restart = crate::sunshine::post_tray_restart_action()
         .await
         .map_err(|error| {
@@ -973,8 +1028,8 @@ async fn run_elevated_helper(operation: ElevatedOperation, token: uuid::Uuid) ->
     };
     let (mut pipe_reader, mut pipe_writer) = tokio::io::split(pipe);
     // The parent never sends application data. EOF means that it timed out or
-    // failed, so terminate this elevated helper instead of leaving an orphaned
-    // operation running at high integrity.
+    // failed, so terminate this elevated helper. Long-running child processes
+    // are job-bound and terminate when Windows closes this process's handles.
     let disconnect_watcher = tokio::spawn(async move {
         let mut control = [0u8; 1];
         let _ = pipe_reader.read(&mut control).await;
@@ -1004,6 +1059,7 @@ async fn run_elevated_helper(operation: ElevatedOperation, token: uuid::Uuid) ->
         });
     };
     let outcome: Result<serde_json::Value, String> = async {
+        bind_elevated_helper_lifetime()?;
         if !crate::bat_runner::is_elevated() {
             return Err("DS5-PKG-004: administrator authorization was not granted".to_string());
         }
@@ -1264,13 +1320,16 @@ pub async fn dualsense_install(app: tauri::AppHandle) -> Result<DualSenseStatus,
     })?;
     ensure_no_active_session().await?;
     #[cfg(target_os = "windows")]
-    if !crate::bat_runner::is_elevated() {
+    {
         let data = run_elevated_operation(Some(&app), ElevatedOperation::Install).await?;
         return serde_json::from_value(data)
             .map_err(|error| format!("DS5-PKG-003: invalid administrator result: {error}"));
     }
-    let progress = |stage: &str, value: u32| emit_progress(&app, stage, value);
-    dualsense_install_impl(&progress).await
+    #[cfg(not(target_os = "windows"))]
+    {
+        let progress = |stage: &str, value: u32| emit_progress(&app, stage, value);
+        dualsense_install_impl(&progress).await
+    }
 }
 
 #[tauri::command]
@@ -1292,7 +1351,15 @@ pub async fn dualsense_set_config(
             probe.usbip_available && pinned_usbip_installed(usbip_version.as_deref());
         validate_requested_profile(enabled, audio_haptics, usbip_available)?;
     }
-    apply_config(enabled, audio_haptics, Some(&sidecar_path()), true).await?;
+    tokio::time::timeout(
+        CONFIG_APPLY_TIMEOUT,
+        apply_config(enabled, audio_haptics, Some(&sidecar_path()), true),
+    )
+    .await
+    .map_err(|_| {
+        "DS5-CFG-004: timed out while applying DualSense configuration; the resulting state is unknown"
+            .to_string()
+    })??;
     dualsense_get_status().await
 }
 
@@ -1317,6 +1384,7 @@ async fn dualsense_self_test_impl(profile: String) -> Result<serde_json::Value, 
                 &mut command,
                 std::time::Duration::from_secs(60),
                 "DS5-PKG-003: component self-test timed out",
+                true,
             )
             .and_then(|output| {
                 output
@@ -1354,7 +1422,7 @@ pub async fn dualsense_self_test(profile: String) -> Result<serde_json::Value, S
         return Err("DS5-PKG-003: invalid self-test profile".to_string());
     }
     #[cfg(target_os = "windows")]
-    if !crate::bat_runner::is_elevated() {
+    {
         let operation = if profile == "composite" {
             ElevatedOperation::TestComposite
         } else {
@@ -1362,7 +1430,10 @@ pub async fn dualsense_self_test(profile: String) -> Result<serde_json::Value, S
         };
         return run_elevated_operation(None, operation).await;
     }
-    dualsense_self_test_impl(profile).await
+    #[cfg(not(target_os = "windows"))]
+    {
+        dualsense_self_test_impl(profile).await
+    }
 }
 
 async fn dualsense_uninstall_impl() -> Result<DualSenseStatus, String> {
@@ -1382,12 +1453,15 @@ pub async fn dualsense_uninstall() -> Result<DualSenseStatus, String> {
     })?;
     ensure_no_active_session().await?;
     #[cfg(target_os = "windows")]
-    if !crate::bat_runner::is_elevated() {
+    {
         let data = run_elevated_operation(None, ElevatedOperation::Uninstall).await?;
         return serde_json::from_value(data)
             .map_err(|error| format!("DS5-PKG-003: invalid administrator result: {error}"));
     }
-    dualsense_uninstall_impl().await
+    #[cfg(not(target_os = "windows"))]
+    {
+        dualsense_uninstall_impl().await
+    }
 }
 
 #[cfg(test)]
@@ -1398,9 +1472,9 @@ mod tests {
         read_limited_elevated_line, wait_for_elevated_pipe_connection,
     };
     use super::{
-        apply_gamepad_selection, classify_usbip_installer_exit_code, component_state,
-        component_test_failure, pinned_usbip_installed, validate_requested_profile,
-        UsbipInstallResult,
+        UsbipInstallResult, apply_gamepad_selection, classify_usbip_installer_exit_code,
+        component_state, component_test_failure, pinned_usbip_installed,
+        validate_requested_profile,
     };
     use std::process::Command;
 

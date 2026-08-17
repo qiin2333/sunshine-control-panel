@@ -106,6 +106,7 @@ pub struct DualSenseStatus {
     pub usbip_available: bool,
     pub usbip_version: String,
     pub usbip_version_valid: bool,
+    pub reboot_recommended: bool,
     pub standard_profile: bool,
     pub composite_profile: bool,
     pub in_use: bool,
@@ -158,6 +159,12 @@ struct ProbeResult {
     composite: bool,
     driver_installed: bool,
     usbip_available: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UsbipInstallResult {
+    Ready,
+    RebootRecommended,
 }
 
 fn emit_progress(app: &tauri::AppHandle, stage: &str, progress: u32) {
@@ -435,6 +442,19 @@ fn pinned_usbip_installed(installed_version: Option<&str>) -> bool {
     installed_version == Some(USBIP_VERSION)
 }
 
+fn classify_usbip_installer_exit_code(
+    exit_code: Option<i32>,
+) -> Result<UsbipInstallResult, String> {
+    match exit_code {
+        Some(0) => Ok(UsbipInstallResult::Ready),
+        Some(3010) => Ok(UsbipInstallResult::RebootRecommended),
+        code => Err(format!(
+            "DS5-DRV-001: USB/IP installer failed with exit code {}",
+            code.unwrap_or(-1)
+        )),
+    }
+}
+
 #[tauri::command]
 pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
     let executable = sidecar_path();
@@ -488,6 +508,7 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
         usbip_available,
         usbip_version,
         usbip_version_valid,
+        reboot_recommended: false,
         standard_profile: result.standard,
         composite_profile: result.composite,
         in_use,
@@ -609,14 +630,14 @@ async fn ensure_pinned_usbip(
     progress: &ProgressReporter<'_>,
     client: &reqwest::Client,
     component_root: &Path,
-) -> Result<(), String> {
+) -> Result<UsbipInstallResult, String> {
     if installed_usbip_version().as_deref() == Some(USBIP_VERSION) {
-        return Ok(());
+        return Ok(UsbipInstallResult::Ready);
     }
 
     report_progress(progress, "transport_downloading", 3);
     let installer_path = component_root.join(format!("USBip-{USBIP_VERSION}-x64.partial.exe"));
-    let download_result: Result<(), String> = async {
+    let download_result: Result<UsbipInstallResult, String> = async {
         let response = client
             .get(USBIP_URL)
             .send()
@@ -682,27 +703,13 @@ async fn ensure_pinned_usbip(
                 format!("DS5-DRV-001: USB/IP installer failed: {error}")
             }
         })?;
-        match output.status.code() {
-            Some(0) => {}
-            Some(3010) => {
-                return Err(
-                    "DS5-DRV-003: USB/IP 0.9.7.7 was installed and Windows must restart"
-                        .to_string(),
-                );
-            }
-            code => {
-                return Err(format!(
-                    "DS5-DRV-001: USB/IP installer failed with exit code {}",
-                    code.unwrap_or(-1)
-                ));
-            }
-        }
+        let install_result = classify_usbip_installer_exit_code(output.status.code())?;
         if installed_usbip_version().as_deref() != Some(USBIP_VERSION) {
             return Err(format!(
                 "DS5-DRV-001: USB/IP installer completed but version {USBIP_VERSION} is not registered"
             ));
         }
-        Ok(())
+        Ok(install_result)
     }
     .await;
     let _ = fs::remove_file(&installer_path);
@@ -714,8 +721,8 @@ async fn ensure_pinned_usbip(
     _progress: &ProgressReporter<'_>,
     _client: &reqwest::Client,
     _component_root: &Path,
-) -> Result<(), String> {
-    Ok(())
+) -> Result<UsbipInstallResult, String> {
+    Ok(UsbipInstallResult::Ready)
 }
 
 async fn apply_config(
@@ -800,8 +807,8 @@ async fn dualsense_install_impl(
         .build()
         .map_err(|error| error.to_string())?;
 
-    let install_result: Result<(), String> = async {
-        ensure_pinned_usbip(progress, &client, &root).await?;
+    let install_result: Result<UsbipInstallResult, String> = async {
+        let usbip_install_result = ensure_pinned_usbip(progress, &client, &root).await?;
         let response = client
             .get(HIDMAESTRO_URL)
             .send()
@@ -877,14 +884,14 @@ async fn dualsense_install_impl(
             ));
         }
         report_progress(progress, "activating", 96);
-        Ok(())
+        Ok(usbip_install_result)
     }
     .await;
     let _ = fs::remove_file(&archive_path);
     if install_result.is_err() {
         let _ = fs::remove_dir_all(&staging);
     }
-    install_result?;
+    let reboot_recommended = matches!(install_result?, UsbipInstallResult::RebootRecommended);
     if let Err(config_error) = apply_config(
         previous_enabled,
         previous_audio_haptics,
@@ -924,7 +931,9 @@ async fn dualsense_install_impl(
         };
     }
     report_progress(progress, "complete", 100);
-    dualsense_get_status().await
+    let mut status = dualsense_get_status().await?;
+    status.reboot_recommended = reboot_recommended;
+    Ok(status)
 }
 
 #[cfg(target_os = "windows")]
@@ -1389,8 +1398,9 @@ mod tests {
         read_limited_elevated_line, wait_for_elevated_pipe_connection,
     };
     use super::{
-        apply_gamepad_selection, component_state, component_test_failure, pinned_usbip_installed,
-        validate_requested_profile,
+        apply_gamepad_selection, classify_usbip_installer_exit_code, component_state,
+        component_test_failure, pinned_usbip_installed, validate_requested_profile,
+        UsbipInstallResult,
     };
     use std::process::Command;
 
@@ -1404,6 +1414,19 @@ mod tests {
     fn hid_only_profile_remains_available_without_usbip() {
         assert!(validate_requested_profile(true, false, false).is_ok());
         assert!(validate_requested_profile(false, true, false).is_ok());
+    }
+
+    #[test]
+    fn usbip_reboot_exit_code_keeps_component_installation_running() {
+        assert_eq!(
+            classify_usbip_installer_exit_code(Some(0)).unwrap(),
+            UsbipInstallResult::Ready
+        );
+        assert_eq!(
+            classify_usbip_installer_exit_code(Some(3010)).unwrap(),
+            UsbipInstallResult::RebootRecommended
+        );
+        assert!(classify_usbip_installer_exit_code(Some(1)).is_err());
     }
 
     #[test]

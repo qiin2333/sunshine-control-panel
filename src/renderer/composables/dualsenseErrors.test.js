@@ -4,7 +4,7 @@ import { dualSenseErrorCode, friendlyDualSenseError } from './dualsenseErrors.js
 
 const messages = {
   unknown: 'Please try again.',
-  codes: { 'DS5-DRV-003': 'Restart Windows.' },
+  codes: { 'DS5-DRV-001': 'Repair the USB/IP transport.' },
   contexts: {
     test: {
       'DS5-PKG-003': 'The test device could not start. Repair the component and try again.',
@@ -23,7 +23,7 @@ describe('DualSense user-facing errors', () => {
   })
 
   it('uses actionable code guidance outside a specific operation', () => {
-    assert.equal(friendlyDualSenseError('DS5-DRV-003: restart required', messages), 'Restart Windows.')
+    assert.equal(friendlyDualSenseError('DS5-DRV-001: installer failed', messages), 'Repair the USB/IP transport.')
   })
 
   it('uses the operation fallback for an unknown diagnostic code', () => {

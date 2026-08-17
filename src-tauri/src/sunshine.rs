@@ -30,6 +30,7 @@ static HTTPS_CLIENT: Lazy<Result<reqwest::Client, String>> = Lazy::new(|| {
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))
 });
+const MAX_CONFIG_SAVE_RESPONSE_BYTES: usize = 64 * 1024;
 static SSE_HTTPS_CLIENT: Lazy<Result<reqwest::Client, String>> = Lazy::new(|| {
     reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
@@ -966,7 +967,7 @@ pub async fn post_sunshine_config(
     let config_url = format!("{}/api/config", sunshine_url.trim_end_matches('/'));
 
     let client = create_https_client()?;
-    let response = client
+    let mut response = client
         .post(&config_url)
         .json(config_data)
         .send()
@@ -974,10 +975,30 @@ pub async fn post_sunshine_config(
         .map_err(|e| format!("调用 Sunshine Config API 失败: {}", e))?;
 
     let status = response.status();
-    let response_body = response
-        .text()
+    if response
+        .content_length()
+        .is_some_and(|size| size > MAX_CONFIG_SAVE_RESPONSE_BYTES as u64)
+    {
+        return Err("Sunshine Config API response exceeds 64 KiB".to_string());
+    }
+    let mut response_bytes = Vec::with_capacity(
+        response
+            .content_length()
+            .unwrap_or_default()
+            .min(MAX_CONFIG_SAVE_RESPONSE_BYTES as u64) as usize,
+    );
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .map_err(|error| format!("无法读取 Sunshine Config API 响应: {error}"))?;
+        .map_err(|error| format!("无法读取 Sunshine Config API 响应: {error}"))?
+    {
+        if response_bytes.len().saturating_add(chunk.len()) > MAX_CONFIG_SAVE_RESPONSE_BYTES {
+            return Err("Sunshine Config API response exceeds 64 KiB".to_string());
+        }
+        response_bytes.extend_from_slice(&chunk);
+    }
+    let response_body = String::from_utf8(response_bytes)
+        .map_err(|error| format!("Sunshine Config API 响应不是有效 UTF-8: {error}"))?;
     if !status.is_success() {
         return Err(format!(
             "Sunshine Config API 返回错误 (状态: {}): {}",

@@ -1,16 +1,18 @@
 use axum::{
     Router,
+    body::Body,
     extract::Request,
     middleware::Next,
     response::{IntoResponse, Response},
 };
 use bytes::Bytes;
+use futures_util::StreamExt;
 use log::{debug, error, info, warn};
 use once_cell::sync::Lazy;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
-use tokio::sync::Notify;
+use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
 use tower_http::cors::CorsLayer;
 
 /// 全局 Sunshine 目标 URL（动态配置）
@@ -33,6 +35,8 @@ static PROXY_PORT: AtomicU16 = AtomicU16::new(48081);
 static PROXY_READY: AtomicBool = AtomicBool::new(false);
 static PROXY_START_REQUESTED: AtomicBool = AtomicBool::new(false);
 static PROXY_READY_NOTIFY: Lazy<Notify> = Lazy::new(Notify::new);
+static PROXY_REQUEST_PERMITS: Lazy<Arc<Semaphore>> =
+    Lazy::new(|| Arc::new(Semaphore::new(MAX_CONCURRENT_PROXY_REQUESTS)));
 
 /// 快速失败冷却时间（秒）- 在此时间内不重试，超过后会重新尝试连接
 const FAST_FAIL_COOLDOWN_SECS: u64 = 3;
@@ -45,6 +49,15 @@ const AI_PROXY_TIMEOUT_SECS: u64 = 120;
 
 /// 本机 Sunshine 连接应快速建立；连接超时不跟随 AI 响应超时放大。
 const PROXY_CONNECT_TIMEOUT_MS: u64 = 500;
+
+/// Bound memory and active work exposed by the unauthenticated loopback proxy.
+const MAX_PROXY_REQUEST_BODY_BYTES: usize = 16 * 1024 * 1024;
+const MAX_PROXY_RESPONSE_BODY_BYTES: usize = 64 * 1024 * 1024;
+const MAX_INJECTABLE_HTML_BYTES: usize = 8 * 1024 * 1024;
+const MAX_CONCURRENT_PROXY_REQUESTS: usize = 16;
+const PROXY_REQUEST_BODY_TIMEOUT_SECS: u64 = 15;
+const PROXY_STREAM_IDLE_TIMEOUT_SECS: u64 = 60;
+const PROXY_STREAM_CHUNK_BYTES: usize = 64 * 1024;
 
 /// 代理服务器端口范围
 const PROXY_PORT_START: u16 = 48081;
@@ -195,6 +208,90 @@ async fn pna_middleware(req: Request, next: Next) -> Response {
     response
 }
 
+fn hold_proxy_permit(response: Response, permit: OwnedSemaphorePermit) -> Response {
+    hold_proxy_permit_with_timeout(
+        response,
+        permit,
+        std::time::Duration::from_secs(PROXY_STREAM_IDLE_TIMEOUT_SECS),
+    )
+}
+
+fn hold_proxy_permit_with_timeout(
+    response: Response,
+    permit: OwnedSemaphorePermit,
+    idle_timeout: std::time::Duration,
+) -> Response {
+    let (parts, body) = response.into_parts();
+    let (sender, receiver) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(2);
+    tokio::spawn(async move {
+        let _permit = permit;
+        let mut source = body.into_data_stream();
+
+        loop {
+            let item = tokio::select! {
+                _ = sender.closed() => break,
+                result = tokio::time::timeout(idle_timeout, source.next()) => {
+                    match result {
+                        Ok(item) => item,
+                        Err(_) => break,
+                    }
+                },
+            };
+            let Some(item) = item else {
+                break;
+            };
+            let chunk = match item {
+                Ok(chunk) => chunk,
+                Err(error) => {
+                    let _ = tokio::select! {
+                        _ = sender.closed() => false,
+                        result = tokio::time::timeout(
+                            idle_timeout,
+                            sender.send(Err(std::io::Error::other(error))),
+                        ) => result.is_ok_and(|sent| sent.is_ok()),
+                    };
+                    break;
+                }
+            };
+
+            let mut offset = 0;
+            while offset < chunk.len() {
+                let end = offset
+                    .saturating_add(PROXY_STREAM_CHUNK_BYTES)
+                    .min(chunk.len());
+                let part = chunk.slice(offset..end);
+                let sent = tokio::select! {
+                    _ = sender.closed() => break,
+                    result = tokio::time::timeout(idle_timeout, sender.send(Ok(part))) => {
+                        result.is_ok_and(|sent| sent.is_ok())
+                    },
+                };
+                if !sent {
+                    return;
+                }
+                offset = end;
+            }
+        }
+    });
+    let stream = futures_util::stream::unfold(receiver, |mut receiver| async move {
+        receiver.recv().await.map(|item| (item, receiver))
+    });
+    Response::from_parts(parts, Body::from_stream(stream))
+}
+
+async fn proxy_concurrency_middleware(req: Request, next: Next) -> Response {
+    let permit = match PROXY_REQUEST_PERMITS.clone().try_acquire_owned() {
+        Ok(permit) => permit,
+        Err(_) => {
+            return proxy_limit_response(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "Too many concurrent proxy requests",
+            );
+        }
+    };
+    hold_proxy_permit(next.run(req).await, permit)
+}
+
 /// 启动本地代理服务器
 pub async fn start_proxy_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     PROXY_READY.store(false, Ordering::Release);
@@ -202,7 +299,8 @@ pub async fn start_proxy_server() -> Result<(), Box<dyn std::error::Error + Send
     let app = Router::new()
         .fallback(proxy_handler)
         .layer(CorsLayer::permissive())
-        .layer(axum::middleware::from_fn(pna_middleware));
+        .layer(axum::middleware::from_fn(pna_middleware))
+        .layer(axum::middleware::from_fn(proxy_concurrency_middleware));
 
     // 尝试在端口范围内找到可用端口
     let mut listener = None;
@@ -503,6 +601,121 @@ fn connection_failure_response(
     }
 }
 
+fn proxy_limit_response(status: axum::http::StatusCode, message: &'static str) -> Response {
+    let mut response = (status, message).into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("text/plain; charset=utf-8"),
+    );
+    headers.insert(
+        axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        axum::http::HeaderValue::from_static("*"),
+    );
+    headers.insert(
+        axum::http::HeaderName::from_static("access-control-allow-private-network"),
+        axum::http::HeaderValue::from_static("true"),
+    );
+    response
+}
+
+async fn read_proxy_request_body(req: Request) -> Result<Bytes, Response> {
+    read_proxy_request_body_with_timeout(
+        req,
+        std::time::Duration::from_secs(PROXY_REQUEST_BODY_TIMEOUT_SECS),
+    )
+    .await
+}
+
+async fn read_proxy_request_body_with_timeout(
+    req: Request,
+    timeout: std::time::Duration,
+) -> Result<Bytes, Response> {
+    match tokio::time::timeout(
+        timeout,
+        axum::body::to_bytes(req.into_body(), MAX_PROXY_REQUEST_BODY_BYTES),
+    )
+    .await
+    {
+        Ok(Ok(bytes)) => Ok(bytes),
+        Ok(Err(_)) => Err(proxy_limit_response(
+            axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+            "Proxy request body exceeds 16 MiB",
+        )),
+        Err(_) => Err(proxy_limit_response(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            "Proxy request body timed out",
+        )),
+    }
+}
+
+fn limited_response_body(response: reqwest::Response, max_bytes: usize) -> Result<Body, String> {
+    if response
+        .content_length()
+        .is_some_and(|size| size > max_bytes as u64)
+    {
+        return Err(format!("Proxy response body exceeds {max_bytes} bytes"));
+    }
+
+    let stream = response
+        .bytes_stream()
+        .scan((0usize, false), move |(received, stopped), item| {
+            let next = if *stopped {
+                None
+            } else {
+                match item {
+                    Ok(chunk) => {
+                        if (*received).saturating_add(chunk.len()) > max_bytes {
+                            *stopped = true;
+                            Some(Err(std::io::Error::other(format!(
+                                "Proxy response body exceeds {max_bytes} bytes"
+                            ))))
+                        } else {
+                            *received += chunk.len();
+                            Some(Ok(chunk))
+                        }
+                    }
+                    Err(error) => {
+                        *stopped = true;
+                        Some(Err(std::io::Error::other(error)))
+                    }
+                }
+            };
+            futures_util::future::ready(next)
+        });
+    Ok(Body::from_stream(stream))
+}
+
+async fn read_limited_response_bytes(
+    mut response: reqwest::Response,
+    max_bytes: usize,
+) -> Result<Vec<u8>, String> {
+    if response
+        .content_length()
+        .is_some_and(|size| size > max_bytes as u64)
+    {
+        return Err(format!("Proxy response body exceeds {max_bytes} bytes"));
+    }
+
+    let mut body = Vec::with_capacity(
+        response
+            .content_length()
+            .unwrap_or_default()
+            .min(max_bytes as u64) as usize,
+    );
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| format!("Failed to read proxy response: {error}"))?
+    {
+        if body.len().saturating_add(chunk.len()) > max_bytes {
+            return Err(format!("Proxy response body exceeds {max_bytes} bytes"));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
 /// 代理处理器
 async fn proxy_handler(req: Request) -> Response {
     let method = req.method().clone();
@@ -526,12 +739,9 @@ async fn proxy_handler(req: Request) -> Response {
     let is_ai_api = is_ai_api_request(&path);
 
     // 获取请求体
-    let body = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
+    let body = match read_proxy_request_body(req).await {
         Ok(bytes) => bytes,
-        Err(e) => {
-            error!("❌ 读取请求体失败: {}", e);
-            return (axum::http::StatusCode::BAD_REQUEST, "读取请求体失败").into_response();
-        }
+        Err(response) => return response,
     };
 
     // 构建目标 URL
@@ -646,12 +856,9 @@ async fn handle_steam_api(
     req: Request,
 ) -> Response {
     // 获取请求体
-    let body = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
+    let body = match read_proxy_request_body(req).await {
         Ok(bytes) => bytes,
-        Err(e) => {
-            error!("❌ 读取请求体失败: {}", e);
-            return (axum::http::StatusCode::BAD_REQUEST, "读取请求体失败").into_response();
-        }
+        Err(response) => return response,
     };
 
     // 构建目标 URL
@@ -706,52 +913,41 @@ async fn handle_steam_api(
 async fn build_cors_response(response: reqwest::Response) -> Response {
     let status = response.status();
     let resp_headers = response.headers().clone();
-
-    match response.bytes().await {
-        Ok(body_bytes) => {
-            let mut builder = axum::http::Response::builder().status(status.as_u16());
-
-            // 复制响应头（排除 CORS 和 transfer-encoding）
-            for (key, value) in resp_headers.iter() {
-                let key_str = key.as_str().to_lowercase();
-                if !key_str.starts_with("access-control-") && key_str != "transfer-encoding" {
-                    builder = builder.header(key.as_str(), value);
-                }
-            }
-
-            // 添加 CORS 头部
-            builder
-                .header("Access-Control-Allow-Origin", "*")
-                .header(
-                    "Access-Control-Allow-Methods",
-                    "GET, POST, PUT, DELETE, OPTIONS",
-                )
-                .header("Access-Control-Allow-Headers", "*")
-                .body(axum::body::Body::from(body_bytes.to_vec()))
-                .unwrap_or_else(|_| {
-                    (
-                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                        "构建响应失败",
-                    )
-                        .into_response()
-                })
-        }
-        Err(e) => {
-            error!("❌ 读取响应失败: {}", e);
-            (
+    let body = match limited_response_body(response, MAX_PROXY_RESPONSE_BODY_BYTES) {
+        Ok(body) => body,
+        Err(error) => {
+            warn!("拒绝过大的代理响应: {}", error);
+            return proxy_limit_response(
                 axum::http::StatusCode::BAD_GATEWAY,
-                [(
-                    axum::http::header::CONTENT_TYPE,
-                    "application/json; charset=utf-8",
-                )],
-                format!(
-                    r#"{{"success":false,"error":"Failed to read response: {}"}}"#,
-                    e
-                ),
-            )
-                .into_response()
+                "Proxy response body exceeds 64 MiB",
+            );
+        }
+    };
+    let mut builder = axum::http::Response::builder().status(status.as_u16());
+
+    // 复制响应头（排除 CORS、长度与传输编码）
+    for (key, value) in resp_headers.iter() {
+        let key_str = key.as_str().to_lowercase();
+        if !key_str.starts_with("access-control-") && key_str != "transfer-encoding" {
+            builder = builder.header(key.as_str(), value);
         }
     }
+
+    builder
+        .header("Access-Control-Allow-Origin", "*")
+        .header(
+            "Access-Control-Allow-Methods",
+            "GET, POST, PUT, DELETE, OPTIONS",
+        )
+        .header("Access-Control-Allow-Headers", "*")
+        .body(body)
+        .unwrap_or_else(|_| {
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "构建响应失败",
+            )
+                .into_response()
+        })
 }
 
 /// 处理外部代理请求（绕过 CORS 限制）
@@ -816,70 +1012,15 @@ async fn handle_external_proxy(
     debug!("🌐 外部代理请求: {}", target_url);
 
     // 获取请求体
-    let body = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
+    let body = match read_proxy_request_body(req).await {
         Ok(bytes) => bytes,
-        Err(e) => {
-            error!("❌ 读取请求体失败: {}", e);
-            return (axum::http::StatusCode::BAD_REQUEST, "读取请求体失败").into_response();
-        }
+        Err(response) => return response,
     };
 
     // 发送请求
     let client = get_http_client();
     match send_request(client, &target_url, method, headers, &body).await {
-        Ok(response) => {
-            let status = response.status();
-            let resp_headers = response.headers().clone();
-
-            match response.bytes().await {
-                Ok(body) => {
-                    let mut builder = axum::http::Response::builder().status(status.as_u16());
-
-                    // 复制响应头（排除 CORS 相关头部，我们会添加自己的）
-                    for (key, value) in resp_headers.iter() {
-                        let key_str = key.as_str().to_lowercase();
-                        if !key_str.starts_with("access-control-") && key_str != "transfer-encoding"
-                        {
-                            builder = builder.header(key.as_str(), value);
-                        }
-                    }
-
-                    // 添加 CORS 头部
-                    builder = builder
-                        .header("Access-Control-Allow-Origin", "*")
-                        .header(
-                            "Access-Control-Allow-Methods",
-                            "GET, POST, PUT, DELETE, OPTIONS",
-                        )
-                        .header("Access-Control-Allow-Headers", "*");
-
-                    builder
-                        .body(axum::body::Body::from(body.to_vec()))
-                        .unwrap_or_else(|_| {
-                            (
-                                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                                "构建响应失败",
-                            )
-                                .into_response()
-                        })
-                }
-                Err(e) => {
-                    error!("❌ 读取外部响应失败: {}", e);
-                    (
-                        axum::http::StatusCode::BAD_GATEWAY,
-                        [(
-                            axum::http::header::CONTENT_TYPE,
-                            "application/json; charset=utf-8",
-                        )],
-                        format!(
-                            r#"{{"success":false,"error":"Failed to read response: {}"}}"#,
-                            e
-                        ),
-                    )
-                        .into_response()
-                }
-            }
-        }
+        Ok(response) => build_cors_response(response).await,
         Err(e) => {
             error!("❌ 外部代理请求失败: {}", e);
             (
@@ -992,14 +1133,16 @@ async fn fetch_and_proxy(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("text/html");
 
-    let body_bytes = response.bytes().await?.to_vec();
-
     // 判断是否需要注入脚本
     let needs_injection = should_inject_script(url, content_type);
     let final_body = if needs_injection {
-        inject_if_needed(body_bytes)
+        let body_bytes = read_limited_response_bytes(response, MAX_INJECTABLE_HTML_BYTES)
+            .await
+            .map_err(std::io::Error::other)?;
+        Body::from(inject_if_needed(body_bytes))
     } else {
-        body_bytes
+        limited_response_body(response, MAX_PROXY_RESPONSE_BODY_BYTES)
+            .map_err(std::io::Error::other)?
     };
 
     // 构建响应
@@ -1032,7 +1175,7 @@ async fn fetch_and_proxy(
         res = res.header("Expires", "0");
     }
 
-    Ok(res.body(axum::body::Body::from(final_body))?)
+    Ok(res.body(final_body)?)
 }
 
 /// 判断是否应该注入脚本
@@ -1123,6 +1266,148 @@ mod tests {
         });
 
         format!("http://{}", addr)
+    }
+
+    async fn spawn_one_shot_unknown_length_server(body: &'static str) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request_buf = [0_u8; 1024];
+            let _ = stream.read(&mut request_buf).await;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n{body}"
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+            stream.shutdown().await.unwrap();
+        });
+
+        format!("http://{}", addr)
+    }
+
+    #[tokio::test]
+    async fn proxy_rejects_oversized_request_body() {
+        let request = axum::http::Request::builder()
+            .method(axum::http::Method::POST)
+            .uri("/api/config")
+            .body(Body::from(vec![0_u8; MAX_PROXY_REQUEST_BODY_BYTES + 1]))
+            .unwrap();
+
+        let response = read_proxy_request_body(request).await.unwrap_err();
+        assert_eq!(response.status(), axum::http::StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(response.headers()["Access-Control-Allow-Origin"], "*");
+        assert_eq!(
+            response.headers()["Access-Control-Allow-Private-Network"],
+            "true"
+        );
+    }
+
+    #[tokio::test]
+    async fn proxy_permit_lives_until_response_body_is_dropped() {
+        let semaphore = Arc::new(Semaphore::new(1));
+        let permit = semaphore.clone().try_acquire_owned().unwrap();
+        let body =
+            Body::from_stream(futures_util::stream::pending::<Result<Bytes, std::io::Error>>());
+        let response = hold_proxy_permit_with_timeout(
+            Response::new(body),
+            permit,
+            std::time::Duration::from_secs(1),
+        );
+
+        assert_eq!(semaphore.available_permits(), 0);
+        drop(response);
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while semaphore.available_permits() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(semaphore.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn proxy_releases_permit_after_response_idle_timeout() {
+        let semaphore = Arc::new(Semaphore::new(1));
+        let permit = semaphore.clone().try_acquire_owned().unwrap();
+        let body =
+            Body::from_stream(futures_util::stream::pending::<Result<Bytes, std::io::Error>>());
+        let response = hold_proxy_permit_with_timeout(
+            Response::new(body),
+            permit,
+            std::time::Duration::from_millis(10),
+        );
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while semaphore.available_permits() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(semaphore.available_permits(), 1);
+        drop(response);
+    }
+
+    #[tokio::test]
+    async fn proxy_releases_permit_when_source_errors_with_full_queue() {
+        let semaphore = Arc::new(Semaphore::new(1));
+        let permit = semaphore.clone().try_acquire_owned().unwrap();
+        let source = futures_util::stream::iter(vec![
+            Ok(Bytes::from(vec![0_u8; PROXY_STREAM_CHUNK_BYTES * 2])),
+            Err(std::io::Error::other("upstream failed")),
+        ]);
+        let response = hold_proxy_permit_with_timeout(
+            Response::new(Body::from_stream(source)),
+            permit,
+            std::time::Duration::from_millis(10),
+        );
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while semaphore.available_permits() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(semaphore.available_permits(), 1);
+        drop(response);
+    }
+
+    #[tokio::test]
+    async fn proxy_times_out_a_stalled_request_body() {
+        let body =
+            Body::from_stream(futures_util::stream::pending::<Result<Bytes, std::io::Error>>());
+        let request = axum::http::Request::builder()
+            .method(axum::http::Method::POST)
+            .uri("/api/config")
+            .body(body)
+            .unwrap();
+
+        let response =
+            read_proxy_request_body_with_timeout(request, std::time::Duration::from_millis(10))
+                .await
+                .unwrap_err();
+        assert_eq!(response.status(), axum::http::StatusCode::REQUEST_TIMEOUT);
+    }
+
+    #[tokio::test]
+    async fn proxy_rejects_oversized_buffered_response() {
+        let url = spawn_one_shot_unknown_length_server("response-too-large").await;
+        let response = reqwest::get(url).await.unwrap();
+
+        let error = read_limited_response_bytes(response, 8).await.unwrap_err();
+        assert!(error.contains("exceeds 8 bytes"));
+    }
+
+    #[tokio::test]
+    async fn proxy_stops_oversized_streamed_response() {
+        let url = spawn_one_shot_unknown_length_server("response-too-large").await;
+        let response = reqwest::get(url).await.unwrap();
+        let body = limited_response_body(response, 8).unwrap();
+
+        assert!(axum::body::to_bytes(body, usize::MAX).await.is_err());
     }
 
     #[tokio::test]

@@ -84,7 +84,7 @@ let componentDisposed = false
 
 const loadPixi = async () => {
   if (!pixiModulePromise) {
-    pixiModulePromise = import('pixi.js')
+    pixiModulePromise = import('./pixiRuntime.js')
   }
   return pixiModulePromise
 }

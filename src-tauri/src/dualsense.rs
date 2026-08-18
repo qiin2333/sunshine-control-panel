@@ -230,6 +230,9 @@ fn config_bool(key: &str, default_value: bool) -> bool {
 fn config_f64(key: &str, default_value: f64) -> f64 {
     read_config_value(key)
         .and_then(|value| value.parse::<f64>().ok())
+        // A hand-edited config may contain "nan"/"inf"; fall back instead of
+        // surfacing non-finite values to the UI and back into Sunshine.
+        .filter(|value| value.is_finite())
         .unwrap_or(default_value)
 }
 

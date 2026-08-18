@@ -116,22 +116,22 @@
         <div class="tuning-grid">
           <label class="tuning-field">
             <span>{{ t.dualSense.tuningStrength }}</span>
-            <el-input-number v-model="legacyStrength" :min="0.1" :max="4" :step="0.05" size="small" />
+            <el-input-number v-model="legacyStrength" :min="0.1" :max="4" :step="0.05" size="small" :disabled="tuningSaving" />
           </label>
           <label class="tuning-field">
             <span>{{ t.dualSense.tuningCurve }}</span>
-            <el-input-number v-model="legacyCurve" :min="0.3" :max="2" :step="0.05" size="small" />
+            <el-input-number v-model="legacyCurve" :min="0.3" :max="2" :step="0.05" size="small" :disabled="tuningSaving" />
           </label>
           <label class="tuning-field">
             <span>{{ t.dualSense.tuningGate }}</span>
             <el-input-number
               v-model="legacyNoiseGate" :min="0.002" :max="0.06"
-              :step="0.002" :precision="3" size="small"
+              :step="0.002" :precision="3" size="small" :disabled="tuningSaving"
             />
           </label>
         </div>
         <div class="tuning-actions">
-          <el-button text class="menu-action menu-action-secondary" @click="applyErmPreset">
+          <el-button text class="menu-action menu-action-secondary" :disabled="tuningSaving" @click="applyErmPreset">
             <span class="action-bracket" aria-hidden="true">[</span>
             <span>{{ t.dualSense.tuningPresetErm }}</span>
             <span class="action-bracket" aria-hidden="true">]</span>

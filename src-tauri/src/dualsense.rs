@@ -693,8 +693,13 @@ pub async fn dualsense_set_haptics_tuning(
 
 #[tauri::command]
 pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
-    let snapshot = get_core_ds5_settings().await?;
-    let settings = snapshot.settings;
+    let (settings, config_revision, config_error) = match get_core_ds5_settings().await {
+        Ok(snapshot) => (snapshot.settings, snapshot.revision, String::new()),
+        Err(error) => {
+            warn!("DualSense status could not read the configuration: {error}");
+            (CoreDualSenseSettings::default(), 0, error)
+        }
+    };
     let executable = sidecar_path();
     let installed = executable.is_file();
     let in_use = has_active_session().await;
@@ -709,7 +714,7 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
     } else {
         None
     };
-    let (verified, result, error_code, detail) = match probe {
+    let (verified, result, mut error_code, mut detail) = match probe {
         Some(Ok(result)) => (true, result, String::new(), String::new()),
         Some(Err(detail)) => {
             let code = detail
@@ -721,6 +726,14 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
         }
         None => (false, ProbeResult::default(), String::new(), String::new()),
     };
+    if error_code.is_empty() && !config_error.is_empty() {
+        error_code = config_error
+            .split(':')
+            .next()
+            .unwrap_or("DS5-CFG-001")
+            .to_string();
+        detail = config_error;
+    }
     let usbip_version = installed_usbip_version().unwrap_or_default();
     let usbip_version_valid = pinned_usbip_installed(Some(usbip_version.as_str()));
     let usbip_available = result.usbip_available && usbip_version_valid;
@@ -735,7 +748,7 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
         legacy_strength: settings.ds5_legacy_haptics_strength,
         legacy_curve: settings.ds5_legacy_haptics_curve,
         legacy_noise_gate: settings.ds5_legacy_haptics_noise_gate,
-        config_revision: snapshot.revision,
+        config_revision,
         component_version: installed
             .then_some(COMPONENT_VERSION)
             .unwrap_or_default()

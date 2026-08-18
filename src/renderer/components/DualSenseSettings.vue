@@ -454,11 +454,9 @@ const saveTuning = async () => {
     legacyStrength.value, legacyCurve.value, legacyNoiseGate.value)
   tuningSaving.value = false
   if (!result.success) return showError(result.message, 'config')
-  if (!preserveTuning) {
-    legacyStrength.value = result.data.legacy_strength
-    legacyCurve.value = result.data.legacy_curve
-    legacyNoiseGate.value = result.data.legacy_noise_gate
-  }
+  legacyStrength.value = result.data.legacy_strength
+  legacyCurve.value = result.data.legacy_curve
+  legacyNoiseGate.value = result.data.legacy_noise_gate
   status.value.legacy_strength = result.data.legacy_strength
   status.value.legacy_curve = result.data.legacy_curve
   status.value.legacy_noise_gate = result.data.legacy_noise_gate

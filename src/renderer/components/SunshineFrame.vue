@@ -425,7 +425,6 @@ onMounted(async () => {
 
   try {
     await invoke('wait_for_proxy_ready')
-    await refreshProxyTarget()
     const proxyBaseUrl = await sunshine.getProxyUrl()
     proxyBase = proxyBaseUrl
 
@@ -436,6 +435,7 @@ onMounted(async () => {
       return
     }
     localProxyVerified = true
+    await refreshProxyTarget()
 
     const cmdLineUrl = await sunshine.getCommandLineUrl()
 

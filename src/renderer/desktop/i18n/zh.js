@@ -1051,8 +1051,10 @@ export const zh = {
     tuningCurve: '响应曲线',
     tuningGate: '噪声门',
     tuningPresetErm: 'ERM 推荐',
+    tuningPresetDefault: '默认映射',
     tuningSave: '保存微调',
-    tuningSaved: '触觉微调已保存，立即生效。',
+    tuningSaved: '触觉微调已保存并应用到运行态 · revision {revision}',
+    tuningRevision: '已应用 · revision {revision}',
     errors: {
       unknown: '操作未完成，请重试。如果问题持续，请点击“修复组件”。',
       codes: {
@@ -1065,7 +1067,7 @@ export const zh = {
         'DS5-CFG-001': '无法读取 DualSense 设置，请确认 Sunshine 已更新并正在运行。',
         'DS5-CFG-003': 'Sunshine 未能保存 DualSense 设置。请确认 Sunshine 正在运行后重试。',
         'DS5-CFG-004': '保存等待超时。系统已尝试刷新状态，请确认开关显示；如未生效可重试。',
-        'DS5-CFG-005': 'DualSense 配置可能已损坏，请清理 ds5_config.json 后重试。',
+        'DS5-CFG-005': 'DualSense 配置可能已损坏，请删除 Sunshine 配置目录中的 ds5_config.json 后重试。',
         'DS5-RUN-002': '当前有串流或其他 DualSense 操作正在进行。请结束后重试。',
         'DS5-RUN-003': 'HD Haptics 仅在指定的 USB/IP 0.9.7.7 可用时才能启用。',
       },

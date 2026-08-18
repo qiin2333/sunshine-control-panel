@@ -6,6 +6,7 @@
 //! runtime and first-party process ownership separate.
 
 use futures_util::StreamExt;
+use log::warn;
 use once_cell::sync::{Lazy, OnceCell};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -104,6 +105,7 @@ pub struct DualSenseStatus {
     pub legacy_strength: f64,
     pub legacy_curve: f64,
     pub legacy_noise_gate: f64,
+    pub config_revision: u64,
     pub component_version: String,
     pub runtime_version: String,
     pub install_path: String,
@@ -176,11 +178,59 @@ struct CoreDualSenseSettings {
     ds5_legacy_haptics_noise_gate: f64,
 }
 
+impl Default for CoreDualSenseSettings {
+    fn default() -> Self {
+        Self {
+            ds5_enabled: false,
+            ds5_audio_haptics: true,
+            ds5_legacy_haptics_strength: 1.0,
+            ds5_legacy_haptics_curve: 1.0,
+            ds5_legacy_haptics_noise_gate: 0.020,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct CoreDualSenseResponse {
     status: bool,
+    applied: bool,
+    revision: u64,
+    #[serde(default)]
+    changed: Option<bool>,
     #[serde(flatten)]
     settings: CoreDualSenseSettings,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DualSenseTuningResult {
+    legacy_strength: f64,
+    legacy_curve: f64,
+    legacy_noise_gate: f64,
+    revision: u64,
+    changed: bool,
+}
+
+fn validate_core_ds5_response(
+    result: CoreDualSenseResponse,
+) -> Result<CoreDualSenseResponse, String> {
+    if !result.status || !result.applied || result.revision == 0 {
+        return Err(
+            "DS5-CFG-001: Sunshine rejected the DualSense configuration request".to_string(),
+        );
+    }
+    let values = result.settings;
+    if clamp_tuning(
+        values.ds5_legacy_haptics_strength,
+        values.ds5_legacy_haptics_curve,
+        values.ds5_legacy_haptics_noise_gate,
+    ) != Some((
+        values.ds5_legacy_haptics_strength,
+        values.ds5_legacy_haptics_curve,
+        values.ds5_legacy_haptics_noise_gate,
+    )) {
+        return Err("DS5-CFG-001: Sunshine returned invalid DualSense values".to_string());
+    }
+    Ok(result)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -216,7 +266,7 @@ fn sidecar_path() -> PathBuf {
 
 async fn read_core_ds5_response(
     mut response: reqwest::Response,
-) -> Result<CoreDualSenseSettings, String> {
+) -> Result<CoreDualSenseResponse, String> {
     const MAX_RESPONSE_BYTES: usize = 64 * 1024;
     let status = response.status();
     if response
@@ -258,15 +308,10 @@ async fn read_core_ds5_response(
     let result: CoreDualSenseResponse = serde_json::from_slice(&bytes).map_err(|error| {
         format!("DS5-CFG-001: invalid DualSense configuration response: {error}")
     })?;
-    if !result.status {
-        return Err(
-            "DS5-CFG-001: Sunshine rejected the DualSense configuration request".to_string(),
-        );
-    }
-    Ok(result.settings)
+    validate_core_ds5_response(result)
 }
 
-async fn get_core_ds5_settings() -> Result<CoreDualSenseSettings, String> {
+async fn get_core_ds5_settings() -> Result<CoreDualSenseResponse, String> {
     let base_url = crate::sunshine::get_sunshine_url().await?;
     let response = crate::sunshine::create_https_client()?
         .get(format!(
@@ -281,7 +326,7 @@ async fn get_core_ds5_settings() -> Result<CoreDualSenseSettings, String> {
 
 async fn save_core_ds5_settings(
     settings: CoreDualSenseSettings,
-) -> Result<CoreDualSenseSettings, String> {
+) -> Result<CoreDualSenseResponse, String> {
     let base_url = crate::sunshine::get_sunshine_url().await?;
     let response = crate::sunshine::create_https_client()?
         .post(format!(
@@ -536,6 +581,59 @@ fn component_state(
     }
 }
 
+async fn ensure_no_active_session_for_uninstall() -> Result<(), String> {
+    match crate::sunshine::get_active_sessions().await {
+        Ok(sessions) if sessions.is_empty() => Ok(()),
+        Ok(_) => Err(
+            "DS5-RUN-002: finish the active Sunshine stream before changing the component"
+                .to_string(),
+        ),
+        Err(error) => {
+            // An offline Core cannot own an active Sidecar session. If the API
+            // alone is degraded, Windows file ownership still makes removal fail safely.
+            warn!("DualSense uninstall could not verify active sessions: {error}");
+            Ok(())
+        }
+    }
+}
+
+fn clamp_tuning(strength: f64, curve: f64, noise_gate: f64) -> Option<(f64, f64, f64)> {
+    (strength.is_finite() && curve.is_finite() && noise_gate.is_finite()).then_some((
+        strength.clamp(0.1, 4.0),
+        curve.clamp(0.3, 2.0),
+        noise_gate.clamp(0.002, 0.060),
+    ))
+}
+
+fn local_uninstalled_status() -> DualSenseStatus {
+    let usbip_version = installed_usbip_version().unwrap_or_default();
+    DualSenseStatus {
+        state: "not_installed".to_string(),
+        installed: false,
+        verified: false,
+        enabled: false,
+        audio_haptics: true,
+        legacy_strength: 1.0,
+        legacy_curve: 1.0,
+        legacy_noise_gate: 0.020,
+        config_revision: 0,
+        component_version: String::new(),
+        runtime_version: String::new(),
+        install_path: active_dir().to_string_lossy().to_string(),
+        sidecar_path: sidecar_path().to_string_lossy().to_string(),
+        driver_installed: false,
+        usbip_available: false,
+        usbip_version_valid: pinned_usbip_installed(Some(usbip_version.as_str())),
+        usbip_version,
+        reboot_recommended: false,
+        standard_profile: false,
+        composite_profile: false,
+        in_use: false,
+        error_code: String::new(),
+        detail: String::new(),
+    }
+}
+
 fn validate_requested_profile(
     enabled: bool,
     audio_haptics: bool,
@@ -573,24 +671,30 @@ pub async fn dualsense_set_haptics_tuning(
     strength: f64,
     curve: f64,
     noise_gate: f64,
-) -> Result<(), String> {
+) -> Result<DualSenseTuningResult, String> {
     let _operation = COMPONENT_OPERATION.try_lock().map_err(|_| {
         "DS5-RUN-002: another DualSense component operation is still running".to_string()
     })?;
-    if !strength.is_finite() || !curve.is_finite() || !noise_gate.is_finite() {
-        return Err("DS5-CFG-001: DualSense tuning values must be finite".to_string());
-    }
-    let mut settings = get_core_ds5_settings().await?;
-    settings.ds5_legacy_haptics_strength = strength.clamp(0.1, 4.0);
-    settings.ds5_legacy_haptics_curve = curve.clamp(0.3, 2.0);
-    settings.ds5_legacy_haptics_noise_gate = noise_gate.clamp(0.002, 0.060);
-    save_core_ds5_settings(settings).await?;
-    Ok(())
+    let (strength, curve, noise_gate) = clamp_tuning(strength, curve, noise_gate)
+        .ok_or_else(|| "DS5-CFG-001: DualSense tuning values must be finite".to_string())?;
+    let mut settings = get_core_ds5_settings().await?.settings;
+    settings.ds5_legacy_haptics_strength = strength;
+    settings.ds5_legacy_haptics_curve = curve;
+    settings.ds5_legacy_haptics_noise_gate = noise_gate;
+    let applied = save_core_ds5_settings(settings).await?;
+    Ok(DualSenseTuningResult {
+        legacy_strength: applied.settings.ds5_legacy_haptics_strength,
+        legacy_curve: applied.settings.ds5_legacy_haptics_curve,
+        legacy_noise_gate: applied.settings.ds5_legacy_haptics_noise_gate,
+        revision: applied.revision,
+        changed: applied.changed.unwrap_or(false),
+    })
 }
 
 #[tauri::command]
 pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
-    let settings = get_core_ds5_settings().await?;
+    let snapshot = get_core_ds5_settings().await?;
+    let settings = snapshot.settings;
     let executable = sidecar_path();
     let installed = executable.is_file();
     let in_use = has_active_session().await;
@@ -631,6 +735,7 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
         legacy_strength: settings.ds5_legacy_haptics_strength,
         legacy_curve: settings.ds5_legacy_haptics_curve,
         legacy_noise_gate: settings.ds5_legacy_haptics_noise_gate,
+        config_revision: snapshot.revision,
         component_version: installed
             .then_some(COMPONENT_VERSION)
             .unwrap_or_default()
@@ -1334,7 +1439,7 @@ pub async fn dualsense_set_config(
             probe.usbip_available && pinned_usbip_installed(usbip_version.as_deref());
         validate_requested_profile(enabled, audio_haptics, usbip_available)?;
     }
-    let mut settings = get_core_ds5_settings().await?;
+    let mut settings = get_core_ds5_settings().await?.settings;
     settings.ds5_enabled = enabled;
     settings.ds5_audio_haptics = audio_haptics;
     tokio::time::timeout(CONFIG_APPLY_TIMEOUT, save_core_ds5_settings(settings))
@@ -1420,16 +1525,32 @@ pub async fn dualsense_self_test(profile: String) -> Result<serde_json::Value, S
 }
 
 async fn dualsense_uninstall_impl() -> Result<DualSenseStatus, String> {
-    let mut settings = get_core_ds5_settings().await?;
+    let mut settings = match get_core_ds5_settings().await {
+        Ok(snapshot) => snapshot.settings,
+        Err(error) => {
+            warn!("DualSense uninstall could not read the current configuration: {error}");
+            CoreDualSenseSettings::default()
+        }
+    };
     settings.ds5_enabled = false;
     settings.ds5_audio_haptics = true;
-    save_core_ds5_settings(settings).await?;
+    if let Err(error) = save_core_ds5_settings(settings).await {
+        // Removing the optional component must remain possible while Sunshine
+        // is stopped. A later Core start safely falls back when files are absent.
+        warn!("DualSense uninstall could not reset the configuration: {error}");
+    }
     let root = component_root();
     if root.exists() {
         fs::remove_dir_all(&root)
             .map_err(|error| format!("DS5-PKG-002: unable to remove component: {error}"))?;
     }
-    dualsense_get_status().await
+    match dualsense_get_status().await {
+        Ok(status) => Ok(status),
+        Err(error) => {
+            warn!("DualSense uninstall could not refresh Core status: {error}");
+            Ok(local_uninstalled_status())
+        }
+    }
 }
 
 #[tauri::command]
@@ -1437,7 +1558,7 @@ pub async fn dualsense_uninstall() -> Result<DualSenseStatus, String> {
     let _operation = COMPONENT_OPERATION.try_lock().map_err(|_| {
         "DS5-RUN-002: another DualSense component operation is still running".to_string()
     })?;
-    ensure_no_active_session().await?;
+    ensure_no_active_session_for_uninstall().await?;
     #[cfg(target_os = "windows")]
     {
         let data = run_elevated_operation(None, ElevatedOperation::Uninstall).await?;
@@ -1453,8 +1574,9 @@ pub async fn dualsense_uninstall() -> Result<DualSenseStatus, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CoreDualSenseSettings, UsbipInstallResult, classify_usbip_installer_exit_code,
-        component_state, component_test_failure, pinned_usbip_installed,
+        CoreDualSenseResponse, CoreDualSenseSettings, UsbipInstallResult, clamp_tuning,
+        classify_usbip_installer_exit_code, component_state, component_test_failure,
+        local_uninstalled_status, pinned_usbip_installed, validate_core_ds5_response,
         validate_requested_profile,
     };
     #[cfg(target_os = "windows")]
@@ -1515,6 +1637,48 @@ mod tests {
         assert_eq!(object.len(), 5);
         assert!(!object.contains_key("gamepad"));
         assert!(!object.contains_key("ds5_sidecar_path"));
+    }
+
+    #[test]
+    fn tuning_values_are_clamped_to_the_supported_ranges() {
+        assert_eq!(clamp_tuning(9.0, 9.0, 9.0), Some((4.0, 2.0, 0.060)));
+        assert_eq!(clamp_tuning(-1.0, -1.0, 0.0), Some((0.1, 0.3, 0.002)));
+        assert!(clamp_tuning(f64::NAN, 1.0, 0.020).is_none());
+        assert!(clamp_tuning(1.0, f64::INFINITY, 0.020).is_none());
+    }
+
+    #[test]
+    fn core_response_requires_applied_revision_and_valid_values() {
+        let valid = || CoreDualSenseResponse {
+            status: true,
+            applied: true,
+            revision: 2,
+            changed: Some(true),
+            settings: CoreDualSenseSettings::default(),
+        };
+        assert!(validate_core_ds5_response(valid()).is_ok());
+
+        let mut rejected = valid();
+        rejected.applied = false;
+        assert!(validate_core_ds5_response(rejected).is_err());
+
+        let mut missing_revision = valid();
+        missing_revision.revision = 0;
+        assert!(validate_core_ds5_response(missing_revision).is_err());
+
+        let mut invalid_value = valid();
+        invalid_value.settings.ds5_legacy_haptics_curve = 3.0;
+        assert!(validate_core_ds5_response(invalid_value).is_err());
+    }
+
+    #[test]
+    fn offline_uninstall_status_is_locally_complete() {
+        let status = local_uninstalled_status();
+        assert_eq!(status.state, "not_installed");
+        assert!(!status.installed);
+        assert!(!status.enabled);
+        assert!(status.audio_haptics);
+        assert!(!status.in_use);
     }
 
     #[test]

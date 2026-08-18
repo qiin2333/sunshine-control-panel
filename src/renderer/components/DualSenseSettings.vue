@@ -113,6 +113,9 @@
       <section v-if="status.verified" class="tuning-section" :aria-label="t.dualSense.tuningTitle">
         <span class="section-label">{{ t.dualSense.tuningTitle }}</span>
         <p class="tuning-hint">{{ t.dualSense.tuningHint }}</p>
+        <p v-if="status.config_revision" class="tuning-revision">
+          {{ t.dualSense.tuningRevision.replace('{revision}', status.config_revision) }}
+        </p>
         <div class="tuning-grid">
           <label class="tuning-field">
             <span>{{ t.dualSense.tuningStrength }}</span>
@@ -131,6 +134,11 @@
           </label>
         </div>
         <div class="tuning-actions">
+          <el-button text class="menu-action menu-action-secondary" :disabled="controlsBusy" @click="applyDefaultPreset">
+            <span class="action-bracket" aria-hidden="true">[</span>
+            <span>{{ t.dualSense.tuningPresetDefault }}</span>
+            <span class="action-bracket" aria-hidden="true">]</span>
+          </el-button>
           <el-button text class="menu-action menu-action-secondary" :disabled="controlsBusy" @click="applyErmPreset">
             <span class="action-bracket" aria-hidden="true">[</span>
             <span>{{ t.dualSense.tuningPresetErm }}</span>
@@ -235,12 +243,17 @@ const status = ref({
   usbip_version_valid: false, reboot_recommended: false,
   standard_profile: false, composite_profile: false, in_use: false,
   legacy_strength: 1, legacy_curve: 1, legacy_noise_gate: 0.02,
+  config_revision: 0,
   error_code: '', detail: '',
 })
 let pollTimer
 let unlistenProgress
 
 const controlsBusy = computed(() => refreshing.value || saving.value || tuningSaving.value || Boolean(operation.value))
+const tuningDirty = computed(() =>
+  legacyStrength.value !== status.value.legacy_strength
+  || legacyCurve.value !== status.value.legacy_curve
+  || legacyNoiseGate.value !== status.value.legacy_noise_gate)
 const stateLabel = computed(() => t.value.dualSense.states[status.value.state] || status.value.state)
 const operationStage = computed(() => t.value.dualSense.stages[operationStageKey.value] || operationStageKey.value)
 const nextAction = computed(() => {
@@ -305,6 +318,7 @@ const showError = (message, context = 'generic') => ElMessage.error(
 
 const refresh = async (quiet = false) => {
   if (controlsBusy.value) return false
+  const preserveTuning = quiet && tuningDirty.value
   refreshing.value = true
   if (!quiet) loading.value = true
   let refreshed = false
@@ -315,9 +329,11 @@ const refresh = async (quiet = false) => {
       statusKnown.value = true
       enabled.value = result.data.enabled
       audioHaptics.value = result.data.audio_haptics
-      legacyStrength.value = result.data.legacy_strength
-      legacyCurve.value = result.data.legacy_curve
-      legacyNoiseGate.value = result.data.legacy_noise_gate
+      if (!preserveTuning) {
+        legacyStrength.value = result.data.legacy_strength
+        legacyCurve.value = result.data.legacy_curve
+        legacyNoiseGate.value = result.data.legacy_noise_gate
+      }
       refreshed = true
     } else if (!quiet) {
       showError(result.message, 'status')
@@ -373,6 +389,7 @@ const saveSettings = async () => {
   }
   const requestedEnabled = enabled.value
   const requestedAudioHaptics = audioHaptics.value
+  const preserveTuning = tuningDirty.value
   saving.value = true
   let result = await dualsense.setConfig(requestedEnabled, requestedAudioHaptics)
   let refreshedAfterFailure = false
@@ -424,6 +441,12 @@ const applyErmPreset = () => {
   legacyNoiseGate.value = 0.006
 }
 
+const applyDefaultPreset = () => {
+  legacyStrength.value = 1
+  legacyCurve.value = 1
+  legacyNoiseGate.value = 0.02
+}
+
 const saveTuning = async () => {
   if (controlsBusy.value) return
   tuningSaving.value = true
@@ -431,8 +454,16 @@ const saveTuning = async () => {
     legacyStrength.value, legacyCurve.value, legacyNoiseGate.value)
   tuningSaving.value = false
   if (!result.success) return showError(result.message, 'config')
-  ElMessage.success(t.value.dualSense.tuningSaved)
-  await refresh()
+  if (!preserveTuning) {
+    legacyStrength.value = result.data.legacy_strength
+    legacyCurve.value = result.data.legacy_curve
+    legacyNoiseGate.value = result.data.legacy_noise_gate
+  }
+  status.value.legacy_strength = result.data.legacy_strength
+  status.value.legacy_curve = result.data.legacy_curve
+  status.value.legacy_noise_gate = result.data.legacy_noise_gate
+  status.value.config_revision = result.data.revision
+  ElMessage.success(t.value.dualSense.tuningSaved.replace('{revision}', result.data.revision))
 }
 
 const test = async (profile) => {
@@ -584,6 +615,7 @@ onUnmounted(() => {
 .test-section { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; margin-top: 26px; p { margin: 5px 0 0; max-width: 680px; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.55; } }
 .tuning-section { margin-top: 26px; }
 .tuning-hint { margin: 0 0 12px; max-width: 680px; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.55; }
+.tuning-revision { margin: -5px 0 12px; color: var(--el-color-success); font-size: 12px; }
 .tuning-grid { display: flex; flex-wrap: wrap; gap: 22px; }
 .tuning-field { display: grid; gap: 6px; font-size: 13px; color: var(--el-text-color-regular); }
 .tuning-actions { display: flex; gap: 8px; margin-top: 14px; }

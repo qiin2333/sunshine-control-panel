@@ -4,6 +4,7 @@ use axum::{
     extract::Request,
     middleware::Next,
     response::{IntoResponse, Response},
+    routing::get,
 };
 use bytes::Bytes;
 use futures_util::StreamExt;
@@ -39,6 +40,7 @@ static PROXY_REQUEST_PERMITS: Lazy<Arc<Semaphore>> =
     Lazy::new(|| Arc::new(Semaphore::new(MAX_CONCURRENT_PROXY_REQUESTS)));
 static PROXY_PENDING_PERMITS: Lazy<Arc<Semaphore>> =
     Lazy::new(|| Arc::new(Semaphore::new(MAX_PENDING_PROXY_REQUESTS)));
+static PROXY_HEALTH_TOKEN: Lazy<String> = Lazy::new(|| uuid::Uuid::new_v4().to_string());
 
 /// 快速失败冷却时间（秒）- 在此时间内不重试，超过后会重新尝试连接
 const FAST_FAIL_COOLDOWN_SECS: u64 = 3;
@@ -62,6 +64,13 @@ const PROXY_ADMISSION_WAIT_SECS: u64 = 3;
 const PROXY_REQUEST_BODY_TIMEOUT_SECS: u64 = 15;
 const PROXY_STREAM_IDLE_TIMEOUT_SECS: u64 = 60;
 const PROXY_STREAM_CHUNK_BYTES: usize = 64 * 1024;
+const PROXY_HEALTH_PATH: &str = "/__foundation_proxy_health";
+
+#[derive(serde::Serialize)]
+pub struct ProxyHealthCheck {
+    url: String,
+    token: String,
+}
 
 struct UnboundedStreamRule {
     method: &'static str,
@@ -97,6 +106,44 @@ pub fn get_proxy_url() -> String {
 #[tauri::command]
 pub fn get_proxy_url_command() -> String {
     get_proxy_url()
+}
+
+/// Return a per-process challenge used by the WebView to verify loopback routing.
+#[tauri::command]
+pub fn get_proxy_health_check() -> ProxyHealthCheck {
+    ProxyHealthCheck {
+        url: format!(
+            "{}{}?token={}",
+            get_proxy_url(),
+            PROXY_HEALTH_PATH,
+            PROXY_HEALTH_TOKEN.as_str()
+        ),
+        token: PROXY_HEALTH_TOKEN.as_str().to_owned(),
+    }
+}
+
+async fn proxy_health_handler(request: Request) -> Response {
+    let valid_token = request.uri().query().is_some_and(|query| {
+        query
+            .split('&')
+            .any(|pair| pair.strip_prefix("token=") == Some(PROXY_HEALTH_TOKEN.as_str()))
+    });
+
+    if !valid_token {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    }
+
+    (
+        [
+            (axum::http::header::CACHE_CONTROL, "no-store"),
+            (
+                axum::http::header::CONTENT_TYPE,
+                "text/plain; charset=utf-8",
+            ),
+        ],
+        PROXY_HEALTH_TOKEN.as_str(),
+    )
+        .into_response()
 }
 
 /// Wait until the local proxy listener is ready before loading the main frame.
@@ -300,6 +347,11 @@ fn hold_proxy_permit_with_timeout(
 }
 
 async fn proxy_concurrency_middleware(req: Request, next: Next) -> Response {
+    // 健康检查不访问 Sunshine，不能因日志下载占满代理槽位而误报为 TUN 拦截。
+    if req.uri().path() == PROXY_HEALTH_PATH {
+        return next.run(req).await;
+    }
+
     let permit = acquire_proxy_permit_with_wait(
         PROXY_REQUEST_PERMITS.clone(),
         PROXY_PENDING_PERMITS.clone(),
@@ -336,6 +388,7 @@ pub async fn start_proxy_server() -> Result<(), Box<dyn std::error::Error + Send
     PROXY_READY.store(false, Ordering::Release);
 
     let app = Router::new()
+        .route(PROXY_HEALTH_PATH, get(proxy_health_handler))
         .fallback(proxy_handler)
         .layer(CorsLayer::permissive())
         .layer(axum::middleware::from_fn(pna_middleware))
@@ -1373,6 +1426,36 @@ mod tests {
         });
 
         format!("http://{}", addr)
+    }
+
+    #[tokio::test]
+    async fn proxy_health_requires_the_current_process_challenge() {
+        let check = get_proxy_health_check();
+        let valid_request = axum::http::Request::builder()
+            .uri(check.url)
+            .body(Body::empty())
+            .unwrap();
+        let valid_response = proxy_health_handler(valid_request).await;
+        assert_eq!(valid_response.status(), axum::http::StatusCode::OK);
+        assert_eq!(
+            valid_response.headers()[axum::http::header::CACHE_CONTROL],
+            "no-store"
+        );
+        let valid_body = axum::body::to_bytes(valid_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(valid_body.as_ref(), check.token.as_bytes());
+
+        for uri in [PROXY_HEALTH_PATH, "/__foundation_proxy_health?token=wrong"] {
+            let invalid_request = axum::http::Request::builder()
+                .uri(uri)
+                .body(Body::empty())
+                .unwrap();
+            assert_eq!(
+                proxy_health_handler(invalid_request).await.status(),
+                axum::http::StatusCode::NOT_FOUND
+            );
+        }
     }
 
     #[tokio::test]

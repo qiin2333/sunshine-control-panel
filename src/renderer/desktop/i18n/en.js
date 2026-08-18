@@ -1,4 +1,10 @@
 export const en = {
+  sunshineFrame: {
+    preparing: 'Preparing {path} ...',
+    proxyUnavailable: 'The local Sunshine WebUI could not be reached. A proxy or TUN service may be intercepting localhost, 127.0.0.0/8, or IPv6 loopback traffic. Exclude loopback traffic from the proxy and try again.',
+    retry: 'Check again',
+  },
+
   // === Navigation ===
   nav: {
     apps: 'Apps',

@@ -1045,6 +1045,14 @@ export const zh = {
     technicalDetails: '技术信息',
     uninstallSuccess: 'DualSense 组件已移除',
     configSuccess: 'DualSense 设置已保存，将在下次串流时生效。',
+    tuningTitle: '触觉微调',
+    tuningHint: '调整 PCM 转传统振动回退（供不支持 DS5 触觉协议的客户端）的映射。保存后即时生效，无需重启或重连。ERM 手柄推荐：响应曲线 0.5、噪声门 0.006。',
+    tuningStrength: '整体强度',
+    tuningCurve: '响应曲线',
+    tuningGate: '噪声门',
+    tuningPresetErm: 'ERM 推荐',
+    tuningSave: '保存微调',
+    tuningSaved: '触觉微调已保存，立即生效。',
     errors: {
       unknown: '操作未完成，请重试。如果问题持续，请点击“修复组件”。',
       codes: {

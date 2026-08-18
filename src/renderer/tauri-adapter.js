@@ -109,6 +109,11 @@ export const dualsense = {
     enabled: !!enabled,
     audioHaptics: !!audioHaptics,
   }),
+  setHapticsTuning: (strength, curve, noiseGate) => wrapResult('dualsense_set_haptics_tuning', {
+    strength,
+    curve,
+    noiseGate,
+  }),
   selfTest: (profile) => wrapResult('dualsense_self_test', { profile }),
 }
 

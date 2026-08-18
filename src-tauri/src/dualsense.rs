@@ -101,6 +101,9 @@ pub struct DualSenseStatus {
     pub verified: bool,
     pub enabled: bool,
     pub audio_haptics: bool,
+    pub legacy_strength: f64,
+    pub legacy_curve: f64,
+    pub legacy_noise_gate: f64,
     pub component_version: String,
     pub runtime_version: String,
     pub install_path: String,
@@ -221,6 +224,12 @@ fn config_bool(key: &str, default_value: bool) -> bool {
                 "true" | "yes" | "1" | "enabled"
             )
         })
+        .unwrap_or(default_value)
+}
+
+fn config_f64(key: &str, default_value: f64) -> f64 {
+    read_config_value(key)
+        .and_then(|value| value.parse::<f64>().ok())
         .unwrap_or(default_value)
 }
 
@@ -508,6 +517,40 @@ fn classify_usbip_installer_exit_code(
 }
 
 #[tauri::command]
+pub async fn dualsense_set_haptics_tuning(
+    strength: f64,
+    curve: f64,
+    noise_gate: f64,
+) -> Result<(), String> {
+    let strength = strength.clamp(0.1, 4.0);
+    let curve = curve.clamp(0.3, 2.0);
+    let noise_gate = noise_gate.clamp(0.002, 0.060);
+    let mut config = crate::vdd::read_full_sunshine_config()
+        .await
+        .map_err(|error| {
+            format!("DS5-CFG-001: unable to read the complete Sunshine configuration: {error}")
+        })?;
+    config.insert(
+        "ds5_legacy_haptics_strength".to_string(),
+        serde_json::json!(strength),
+    );
+    config.insert(
+        "ds5_legacy_haptics_curve".to_string(),
+        serde_json::json!(curve),
+    );
+    config.insert(
+        "ds5_legacy_haptics_noise_gate".to_string(),
+        serde_json::json!(noise_gate),
+    );
+    // The Sunshine core reads these values per haptics packet, so a config
+    // save applies to a running stream without restarting the service.
+    crate::sunshine::post_sunshine_config(&config)
+        .await
+        .map_err(|error| format!("DS5-CFG-003: unable to save Sunshine configuration: {error}"))?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
     let executable = sidecar_path();
     let installed = executable.is_file();
@@ -515,6 +558,9 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
     let enabled = config_bool("ds5_enabled", false)
         && read_config_value("gamepad").is_some_and(|gamepad| gamepad.eq_ignore_ascii_case("ds5"));
     let audio_haptics = config_bool("ds5_audio_haptics", false);
+    let legacy_strength = config_f64("ds5_legacy_haptics_strength", 1.0);
+    let legacy_curve = config_f64("ds5_legacy_haptics_curve", 1.0);
+    let legacy_noise_gate = config_f64("ds5_legacy_haptics_noise_gate", 0.020);
     let probe = if installed {
         let probe_executable = executable.clone();
         Some(
@@ -549,6 +595,9 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
         verified,
         enabled,
         audio_haptics,
+        legacy_strength,
+        legacy_curve,
+        legacy_noise_gate,
         component_version: installed
             .then_some(COMPONENT_VERSION)
             .unwrap_or_default()

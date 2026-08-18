@@ -229,6 +229,7 @@ fn main() {
             dualsense::dualsense_install,
             dualsense::dualsense_uninstall,
             dualsense::dualsense_set_config,
+            dualsense::dualsense_set_haptics_tuning,
             dualsense::dualsense_self_test,
             fs_utils::get_icc_file_list,
             fs_utils::read_directory,

@@ -54,7 +54,50 @@ fn configure_async_runtime() {
     tauri::async_runtime::set(runtime.handle().clone());
 }
 
+#[cfg(target_os = "windows")]
+fn configure_loopback_proxy_bypass() {
+    // This runs before any helper path or async worker can create an HTTP
+    // client, so every GUI-owned loopback request gets the same direct route.
+    unsafe {
+        // WebView2 uses Chromium's bypass syntax. Keep external requests on the
+        // user's configured proxy while forcing every loopback form to direct.
+        std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", [
+            // 安全：忽略自签名证书错误（连接本地 Sunshine）
+            "--ignore-certificate-errors",
+            "--proxy-bypass-list=localhost;*.localhost;127.0.0.0/8;[::1]",
+            // 节流：激进的后台/隐藏标签页定时器节流
+            "--enable-features=IntensiveWakeUpThrottling,ThrottleDisplayNoneAndVisibilityHiddenCrossOriginIframes",
+            // GPU 优化：禁用 Edge 特有的 UI 覆盖层（减少不必要的 GPU 合成层）
+            "--disable-features=msWebOOUI",
+            // GPU 优化：禁用 GPU 着色器磁盘缓存，减少 VRAM 占用
+            "--disable-gpu-shader-disk-cache",
+            // GPU 优化：关闭 GPU 光栅化抗锯齿（控制面板 UI 无需 MSAA）
+            "--gpu-rasterization-msaa-sample-count=0",
+            // GPU 优化：限制渲染进程数量，减少 GPU 上下文切换开销
+            "--renderer-process-limit=1",
+        ].join(" "));
+
+        // reqwest follows NO_PROXY/no_proxy. Preserve the user's existing
+        // exclusions and add the same loopback scope used by WebView2.
+        for key in ["NO_PROXY", "no_proxy"] {
+            let mut value = std::env::var(key).unwrap_or_default();
+            for entry in ["localhost", ".localhost", "127.0.0.0/8", "::1"] {
+                if !value.split(',').any(|current| current.trim() == entry) {
+                    if !value.is_empty() {
+                        value.push(',');
+                    }
+                    value.push_str(entry);
+                }
+            }
+            std::env::set_var(key, value);
+        }
+    }
+}
+
 fn main() {
+    #[cfg(target_os = "windows")]
+    configure_loopback_proxy_bypass();
+
     #[cfg(target_os = "windows")]
     utils::wait_for_elevated_restart_handoff();
 
@@ -79,27 +122,9 @@ fn main() {
     }
 
     // The agent mostly waits on local I/O. Bounding the shared runtime avoids
-    // allocating one worker per logical CPU on high-core-count hosts.
+    // allocating one worker per logical CPU on high-core-count hosts. Proxy
+    // environment variables must be finalized before worker threads start.
     configure_async_runtime();
-
-    // 设置 WebView2 浏览器参数以优化 GPU 占用和安全策略
-    #[cfg(target_os = "windows")]
-    unsafe {
-        std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", [
-            // 安全：忽略自签名证书错误（连接本地 Sunshine）
-            "--ignore-certificate-errors",
-            // 节流：激进的后台/隐藏标签页定时器节流
-            "--enable-features=IntensiveWakeUpThrottling,ThrottleDisplayNoneAndVisibilityHiddenCrossOriginIframes",
-            // GPU 优化：禁用 Edge 特有的 UI 覆盖层（减少不必要的 GPU 合成层）
-            "--disable-features=msWebOOUI",
-            // GPU 优化：禁用 GPU 着色器磁盘缓存，减少 VRAM 占用
-            "--disable-gpu-shader-disk-cache",
-            // GPU 优化：关闭 GPU 光栅化抗锯齿（控制面板 UI 无需 MSAA）
-            "--gpu-rasterization-msaa-sample-count=0",
-            // GPU 优化：限制渲染进程数量，减少 GPU 上下文切换开销
-            "--renderer-process-limit=1",
-        ].join(" "));
-    }
 
     let builder = tauri::Builder::default()
         .manage(app::AppState {
@@ -184,6 +209,7 @@ fn main() {
             sunshine::restart_sunshine_in_user_mode,
             sunshine::restart_sunshine_service,
             proxy_server::get_proxy_url_command,
+            proxy_server::get_proxy_health_check,
             proxy_server::refresh_sunshine_target,
             proxy_server::wait_for_proxy_ready,
             utils::open_external_url,

@@ -1,4 +1,10 @@
 export const zh = {
+  sunshineFrame: {
+    preparing: '正在准备 {path} ...',
+    proxyUnavailable: '无法连接本机 Sunshine WebUI。代理或 TUN 软件可能拦截了 localhost、127.0.0.0/8 或 IPv6 环回地址，请将本机环回流量设为直连后重试。',
+    retry: '重新检测',
+  },
+
   // === 导航 ===
   nav: {
     apps: '应用',

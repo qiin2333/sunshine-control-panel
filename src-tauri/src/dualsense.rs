@@ -167,6 +167,22 @@ struct ProbeResult {
     usbip_available: bool,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+struct CoreDualSenseSettings {
+    ds5_enabled: bool,
+    ds5_audio_haptics: bool,
+    ds5_legacy_haptics_strength: f64,
+    ds5_legacy_haptics_curve: f64,
+    ds5_legacy_haptics_noise_gate: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct CoreDualSenseResponse {
+    status: bool,
+    #[serde(flatten)]
+    settings: CoreDualSenseSettings,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum UsbipInstallResult {
     Ready,
@@ -198,42 +214,87 @@ fn sidecar_path() -> PathBuf {
     active_dir().join(SIDECAR_EXE)
 }
 
-fn config_path() -> PathBuf {
-    PathBuf::from(crate::sunshine::get_sunshine_install_path())
-        .join("config")
-        .join("sunshine.conf")
-}
-
-fn read_config_value(key: &str) -> Option<String> {
-    let content = fs::read_to_string(config_path()).ok()?;
-    content.lines().find_map(|line| {
-        let line = line.trim();
-        if line.starts_with('#') || line.is_empty() {
-            return None;
+async fn read_core_ds5_response(
+    mut response: reqwest::Response,
+) -> Result<CoreDualSenseSettings, String> {
+    const MAX_RESPONSE_BYTES: usize = 64 * 1024;
+    let status = response.status();
+    if response
+        .content_length()
+        .is_some_and(|size| size > MAX_RESPONSE_BYTES as u64)
+    {
+        return Err("DS5-CFG-001: DualSense configuration response is too large".to_string());
+    }
+    let mut bytes = Vec::with_capacity(
+        response
+            .content_length()
+            .unwrap_or_default()
+            .min(MAX_RESPONSE_BYTES as u64) as usize,
+    );
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| format!("DS5-CFG-001: unable to read DualSense configuration: {error}"))?
+    {
+        if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
+            return Err("DS5-CFG-001: DualSense configuration response is too large".to_string());
         }
-        let (candidate, value) = line.split_once('=')?;
-        (candidate.trim() == key).then(|| value.trim().to_string())
-    })
+        bytes.extend_from_slice(&chunk);
+    }
+    if !status.is_success() {
+        let error_code = serde_json::from_slice::<serde_json::Value>(&bytes)
+            .ok()
+            .and_then(|body| body.get("error_code")?.as_str().map(str::to_owned));
+        if error_code.as_deref() == Some("ds5_config_invalid") {
+            return Err(
+                "DS5-CFG-005: the independent DualSense configuration is invalid".to_string(),
+            );
+        }
+        return Err(format!(
+            "DS5-CFG-001: Sunshine rejected the DualSense configuration request (HTTP {})",
+            status.as_u16()
+        ));
+    }
+    let result: CoreDualSenseResponse = serde_json::from_slice(&bytes).map_err(|error| {
+        format!("DS5-CFG-001: invalid DualSense configuration response: {error}")
+    })?;
+    if !result.status {
+        return Err(
+            "DS5-CFG-001: Sunshine rejected the DualSense configuration request".to_string(),
+        );
+    }
+    Ok(result.settings)
 }
 
-fn config_bool(key: &str, default_value: bool) -> bool {
-    read_config_value(key)
-        .map(|value| {
-            matches!(
-                value.to_ascii_lowercase().as_str(),
-                "true" | "yes" | "1" | "enabled"
-            )
-        })
-        .unwrap_or(default_value)
+async fn get_core_ds5_settings() -> Result<CoreDualSenseSettings, String> {
+    let base_url = crate::sunshine::get_sunshine_url().await?;
+    let response = crate::sunshine::create_https_client()?
+        .get(format!(
+            "{}/api/dualsense/config",
+            base_url.trim_end_matches('/')
+        ))
+        .send()
+        .await
+        .map_err(|error| format!("DS5-CFG-001: unable to read DualSense configuration: {error}"))?;
+    read_core_ds5_response(response).await
 }
 
-fn config_f64(key: &str, default_value: f64) -> f64 {
-    read_config_value(key)
-        .and_then(|value| value.parse::<f64>().ok())
-        // A hand-edited config may contain "nan"/"inf"; fall back instead of
-        // surfacing non-finite values to the UI and back into Sunshine.
-        .filter(|value| value.is_finite())
-        .unwrap_or(default_value)
+async fn save_core_ds5_settings(
+    settings: CoreDualSenseSettings,
+) -> Result<CoreDualSenseSettings, String> {
+    let base_url = crate::sunshine::get_sunshine_url().await?;
+    let response = crate::sunshine::create_https_client()?
+        .post(format!(
+            "{}/api/dualsense/config",
+            base_url.trim_end_matches('/')
+        ))
+        .json(&settings)
+        .send()
+        .await
+        .map_err(|error| format!("DS5-CFG-003: unable to save DualSense configuration: {error}"))?;
+    read_core_ds5_response(response)
+        .await
+        .map_err(|error| error.replacen("DS5-CFG-001:", "DS5-CFG-003:", 1))
 }
 
 fn sha256_file(path: &Path) -> Result<String, String> {
@@ -379,18 +440,6 @@ fn bind_elevated_helper_lifetime() -> Result<(), String> {
         .map(|_| ())
 }
 
-fn apply_gamepad_selection(config: &mut serde_json::Map<String, serde_json::Value>, enabled: bool) {
-    if enabled {
-        config.insert("gamepad".to_string(), serde_json::json!("ds5"));
-    } else if config
-        .get("gamepad")
-        .and_then(serde_json::Value::as_str)
-        .is_some_and(|gamepad| gamepad.eq_ignore_ascii_case("ds5"))
-    {
-        config.insert("gamepad".to_string(), serde_json::json!("auto"));
-    }
-}
-
 fn run_probe(executable: &Path) -> Result<ProbeResult, String> {
     if !executable.is_file() {
         return Err("DS5-PKG-003: Sunshine DualSense sidecar is missing".to_string());
@@ -525,45 +574,26 @@ pub async fn dualsense_set_haptics_tuning(
     curve: f64,
     noise_gate: f64,
 ) -> Result<(), String> {
-    let strength = strength.clamp(0.1, 4.0);
-    let curve = curve.clamp(0.3, 2.0);
-    let noise_gate = noise_gate.clamp(0.002, 0.060);
-    let mut config = crate::vdd::read_full_sunshine_config()
-        .await
-        .map_err(|error| {
-            format!("DS5-CFG-001: unable to read the complete Sunshine configuration: {error}")
-        })?;
-    config.insert(
-        "ds5_legacy_haptics_strength".to_string(),
-        serde_json::json!(strength),
-    );
-    config.insert(
-        "ds5_legacy_haptics_curve".to_string(),
-        serde_json::json!(curve),
-    );
-    config.insert(
-        "ds5_legacy_haptics_noise_gate".to_string(),
-        serde_json::json!(noise_gate),
-    );
-    // The Sunshine core reads these values per haptics packet, so a config
-    // save applies to a running stream without restarting the service.
-    crate::sunshine::post_sunshine_config(&config)
-        .await
-        .map_err(|error| format!("DS5-CFG-003: unable to save Sunshine configuration: {error}"))?;
+    let _operation = COMPONENT_OPERATION.try_lock().map_err(|_| {
+        "DS5-RUN-002: another DualSense component operation is still running".to_string()
+    })?;
+    if !strength.is_finite() || !curve.is_finite() || !noise_gate.is_finite() {
+        return Err("DS5-CFG-001: DualSense tuning values must be finite".to_string());
+    }
+    let mut settings = get_core_ds5_settings().await?;
+    settings.ds5_legacy_haptics_strength = strength.clamp(0.1, 4.0);
+    settings.ds5_legacy_haptics_curve = curve.clamp(0.3, 2.0);
+    settings.ds5_legacy_haptics_noise_gate = noise_gate.clamp(0.002, 0.060);
+    save_core_ds5_settings(settings).await?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
+    let settings = get_core_ds5_settings().await?;
     let executable = sidecar_path();
     let installed = executable.is_file();
     let in_use = has_active_session().await;
-    let enabled = config_bool("ds5_enabled", false)
-        && read_config_value("gamepad").is_some_and(|gamepad| gamepad.eq_ignore_ascii_case("ds5"));
-    let audio_haptics = config_bool("ds5_audio_haptics", false);
-    let legacy_strength = config_f64("ds5_legacy_haptics_strength", 1.0);
-    let legacy_curve = config_f64("ds5_legacy_haptics_curve", 1.0);
-    let legacy_noise_gate = config_f64("ds5_legacy_haptics_noise_gate", 0.020);
     let probe = if installed {
         let probe_executable = executable.clone();
         Some(
@@ -596,11 +626,11 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
         state: state.to_string(),
         installed,
         verified,
-        enabled,
-        audio_haptics,
-        legacy_strength,
-        legacy_curve,
-        legacy_noise_gate,
+        enabled: settings.ds5_enabled,
+        audio_haptics: settings.ds5_audio_haptics,
+        legacy_strength: settings.ds5_legacy_haptics_strength,
+        legacy_curve: settings.ds5_legacy_haptics_curve,
+        legacy_noise_gate: settings.ds5_legacy_haptics_noise_gate,
         component_version: installed
             .then_some(COMPONENT_VERSION)
             .unwrap_or_default()
@@ -830,69 +860,9 @@ async fn ensure_pinned_usbip(
     Ok(UsbipInstallResult::Ready)
 }
 
-async fn apply_config(
-    enabled: bool,
-    audio_haptics: bool,
-    executable: Option<&Path>,
-    sync_gamepad_selection: bool,
-) -> Result<(), String> {
-    if !config_path().is_file() {
-        return Err(
-            "DS5-CFG-001: Sunshine configuration file is missing; refusing to create a partial replacement"
-                .to_string(),
-        );
-    }
-    let mut config = crate::vdd::read_full_sunshine_config()
-        .await
-        .map_err(|error| {
-            format!("DS5-CFG-001: unable to read the complete Sunshine configuration: {error}")
-        })?;
-    config.insert("ds5_enabled".to_string(), serde_json::json!(enabled));
-    config.insert(
-        "ds5_audio_haptics".to_string(),
-        serde_json::json!(audio_haptics),
-    );
-    config.insert(
-        "ds5_sidecar_path".to_string(),
-        serde_json::json!(
-            executable
-                .map(|path| path.to_string_lossy().to_string())
-                .unwrap_or_default()
-        ),
-    );
-    if sync_gamepad_selection {
-        apply_gamepad_selection(&mut config, enabled);
-    }
-    crate::sunshine::post_sunshine_config(&config)
-        .await
-        .map_err(|error| format!("DS5-CFG-003: unable to save Sunshine configuration: {error}"))?;
-    let restart = crate::sunshine::post_tray_restart_action()
-        .await
-        .map_err(|error| {
-            format!(
-                "DS5-CFG-002: configuration was saved, but Sunshine could not be restarted: {error}"
-            )
-        })?;
-    if let Some(response) = restart.filter(|response| !response.status) {
-        let error = if !response.error.trim().is_empty() {
-            response.error
-        } else if !response.message.trim().is_empty() {
-            response.message
-        } else {
-            "Sunshine rejected the restart request".to_string()
-        };
-        return Err(format!(
-            "DS5-CFG-002: configuration was saved, but Sunshine could not be restarted: {error}"
-        ));
-    }
-    Ok(())
-}
-
 async fn dualsense_install_impl(
     progress: &ProgressReporter<'_>,
 ) -> Result<DualSenseStatus, String> {
-    let previous_enabled = config_bool("ds5_enabled", false);
-    let previous_audio_haptics = config_bool("ds5_audio_haptics", false);
     report_progress(progress, "preparing", 1);
     let source = sidecar_source_dir()?;
     let root = component_root();
@@ -906,7 +876,6 @@ async fn dualsense_install_impl(
     let archive_path = root.join(format!("{operation}.partial"));
     let active = active_dir();
     let backup = root.join("previous");
-    let had_previous = active.exists();
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(10))
         .timeout(std::time::Duration::from_secs(600))
@@ -999,44 +968,6 @@ async fn dualsense_install_impl(
         let _ = fs::remove_dir_all(&staging);
     }
     let reboot_recommended = matches!(install_result?, UsbipInstallResult::RebootRecommended);
-    if let Err(config_error) = apply_config(
-        previous_enabled,
-        previous_audio_haptics,
-        Some(&sidecar_path()),
-        false,
-    )
-    .await
-    {
-        // The component and configuration are already valid when only the
-        // runtime restart failed. Keep them so a manual restart can finish the
-        // activation instead of rolling back to a missing or older component.
-        if config_error.starts_with("DS5-CFG-002:") {
-            return Err(config_error);
-        }
-        let rollback_result = (|| -> Result<(), String> {
-            if active.exists() {
-                fs::remove_dir_all(&active).map_err(|error| {
-                    format!("unable to remove failed active component: {error}")
-                })?;
-            }
-            if had_previous {
-                if !backup.exists() {
-                    return Err("previous component backup is missing".to_string());
-                }
-                fs::rename(&backup, &active)
-                    .map_err(|error| format!("unable to restore previous component: {error}"))?;
-            }
-            Ok(())
-        })();
-        return match rollback_result {
-            Ok(()) => Err(format!(
-                "{config_error}; activated component was rolled back"
-            )),
-            Err(rollback_error) => Err(format!(
-                "{config_error}; component rollback also failed: {rollback_error}"
-            )),
-        };
-    }
     report_progress(progress, "complete", 100);
     let mut status = dualsense_get_status().await?;
     status.reboot_recommended = reboot_recommended;
@@ -1403,10 +1334,10 @@ pub async fn dualsense_set_config(
             probe.usbip_available && pinned_usbip_installed(usbip_version.as_deref());
         validate_requested_profile(enabled, audio_haptics, usbip_available)?;
     }
-    tokio::time::timeout(
-        CONFIG_APPLY_TIMEOUT,
-        apply_config(enabled, audio_haptics, Some(&sidecar_path()), true),
-    )
+    let mut settings = get_core_ds5_settings().await?;
+    settings.ds5_enabled = enabled;
+    settings.ds5_audio_haptics = audio_haptics;
+    tokio::time::timeout(CONFIG_APPLY_TIMEOUT, save_core_ds5_settings(settings))
     .await
     .map_err(|_| {
         "DS5-CFG-004: timed out while applying DualSense configuration; the resulting state is unknown"
@@ -1489,7 +1420,10 @@ pub async fn dualsense_self_test(profile: String) -> Result<serde_json::Value, S
 }
 
 async fn dualsense_uninstall_impl() -> Result<DualSenseStatus, String> {
-    apply_config(false, true, None, true).await?;
+    let mut settings = get_core_ds5_settings().await?;
+    settings.ds5_enabled = false;
+    settings.ds5_audio_haptics = true;
+    save_core_ds5_settings(settings).await?;
     let root = component_root();
     if root.exists() {
         fs::remove_dir_all(&root)
@@ -1518,15 +1452,15 @@ pub async fn dualsense_uninstall() -> Result<DualSenseStatus, String> {
 
 #[cfg(test)]
 mod tests {
+    use super::{
+        CoreDualSenseSettings, UsbipInstallResult, classify_usbip_installer_exit_code,
+        component_state, component_test_failure, pinned_usbip_installed,
+        validate_requested_profile,
+    };
     #[cfg(target_os = "windows")]
     use super::{
         ElevatedMessage, ElevatedOperation, MAX_ELEVATED_MESSAGE_BYTES, elevated_pipe_name,
         read_limited_elevated_line, wait_for_elevated_pipe_connection,
-    };
-    use super::{
-        UsbipInstallResult, apply_gamepad_selection, classify_usbip_installer_exit_code,
-        component_state, component_test_failure, pinned_usbip_installed,
-        validate_requested_profile,
     };
     use std::process::Command;
 
@@ -1568,29 +1502,19 @@ mod tests {
     }
 
     #[test]
-    fn enabling_dualsense_selects_the_ds5_gamepad_backend() {
-        let mut config = serde_json::Map::new();
-        config.insert("gamepad".to_string(), serde_json::json!("auto"));
-
-        apply_gamepad_selection(&mut config, true);
-
-        assert_eq!(config.get("gamepad"), Some(&serde_json::json!("ds5")));
-    }
-
-    #[test]
-    fn disabling_dualsense_restores_auto_only_when_ds5_is_selected() {
-        let mut ds5_config = serde_json::Map::new();
-        ds5_config.insert("gamepad".to_string(), serde_json::json!("ds5"));
-        apply_gamepad_selection(&mut ds5_config, false);
-        assert_eq!(ds5_config.get("gamepad"), Some(&serde_json::json!("auto")));
-
-        let mut explicit_config = serde_json::Map::new();
-        explicit_config.insert("gamepad".to_string(), serde_json::json!("x360"));
-        apply_gamepad_selection(&mut explicit_config, false);
-        assert_eq!(
-            explicit_config.get("gamepad"),
-            Some(&serde_json::json!("x360"))
-        );
+    fn core_settings_payload_contains_only_independent_ds5_fields() {
+        let payload = serde_json::to_value(CoreDualSenseSettings {
+            ds5_enabled: true,
+            ds5_audio_haptics: false,
+            ds5_legacy_haptics_strength: 1.5,
+            ds5_legacy_haptics_curve: 0.5,
+            ds5_legacy_haptics_noise_gate: 0.006,
+        })
+        .unwrap();
+        let object = payload.as_object().unwrap();
+        assert_eq!(object.len(), 5);
+        assert!(!object.contains_key("gamepad"));
+        assert!(!object.contains_key("ds5_sidecar_path"));
     }
 
     #[test]

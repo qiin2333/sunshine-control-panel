@@ -8,6 +8,7 @@ const messages = {
     'DS5-DRV-001': 'Repair the USB/IP transport.',
     'DS5-CFG-003': 'Make sure Sunshine is running.',
     'DS5-CFG-004': 'Check the current switch state.',
+    'DS5-CFG-005': 'Remove the damaged DualSense settings file.',
   },
   contexts: {
     test: {
@@ -41,6 +42,13 @@ describe('DualSense user-facing errors', () => {
     assert.equal(
       friendlyDualSenseError('DS5-CFG-004: timed out while applying DualSense configuration', messages, 'config'),
       'Check the current switch state.',
+    )
+  })
+
+  it('maps an invalid independent settings file without exposing its path', () => {
+    assert.equal(
+      friendlyDualSenseError('DS5-CFG-005: invalid local file', messages, 'config'),
+      'Remove the damaged DualSense settings file.',
     )
   })
 

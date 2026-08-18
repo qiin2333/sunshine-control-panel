@@ -116,29 +116,29 @@
         <div class="tuning-grid">
           <label class="tuning-field">
             <span>{{ t.dualSense.tuningStrength }}</span>
-            <el-input-number v-model="legacyStrength" :min="0.1" :max="4" :step="0.05" size="small" :disabled="tuningSaving" />
+            <el-input-number v-model="legacyStrength" :min="0.1" :max="4" :step="0.05" size="small" :disabled="controlsBusy" />
           </label>
           <label class="tuning-field">
             <span>{{ t.dualSense.tuningCurve }}</span>
-            <el-input-number v-model="legacyCurve" :min="0.3" :max="2" :step="0.05" size="small" :disabled="tuningSaving" />
+            <el-input-number v-model="legacyCurve" :min="0.3" :max="2" :step="0.05" size="small" :disabled="controlsBusy" />
           </label>
           <label class="tuning-field">
             <span>{{ t.dualSense.tuningGate }}</span>
             <el-input-number
               v-model="legacyNoiseGate" :min="0.002" :max="0.06"
-              :step="0.002" :precision="3" size="small" :disabled="tuningSaving"
+              :step="0.002" :precision="3" size="small" :disabled="controlsBusy"
             />
           </label>
         </div>
         <div class="tuning-actions">
-          <el-button text class="menu-action menu-action-secondary" :disabled="tuningSaving" @click="applyErmPreset">
+          <el-button text class="menu-action menu-action-secondary" :disabled="controlsBusy" @click="applyErmPreset">
             <span class="action-bracket" aria-hidden="true">[</span>
             <span>{{ t.dualSense.tuningPresetErm }}</span>
             <span class="action-bracket" aria-hidden="true">]</span>
           </el-button>
           <el-button
             text class="menu-action menu-action-primary"
-            :loading="tuningSaving" :disabled="status.in_use"
+            :loading="tuningSaving" :disabled="controlsBusy"
             @click="saveTuning"
           >
             <span class="action-bracket" aria-hidden="true">[</span>
@@ -240,7 +240,7 @@ const status = ref({
 let pollTimer
 let unlistenProgress
 
-const controlsBusy = computed(() => refreshing.value || saving.value || Boolean(operation.value))
+const controlsBusy = computed(() => refreshing.value || saving.value || tuningSaving.value || Boolean(operation.value))
 const stateLabel = computed(() => t.value.dualSense.states[status.value.state] || status.value.state)
 const operationStage = computed(() => t.value.dualSense.stages[operationStageKey.value] || operationStageKey.value)
 const nextAction = computed(() => {
@@ -425,7 +425,7 @@ const applyErmPreset = () => {
 }
 
 const saveTuning = async () => {
-  if (tuningSaving.value) return
+  if (controlsBusy.value) return
   tuningSaving.value = true
   const result = await dualsense.setHapticsTuning(
     legacyStrength.value, legacyCurve.value, legacyNoiseGate.value)

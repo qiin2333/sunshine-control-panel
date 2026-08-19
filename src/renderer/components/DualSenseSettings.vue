@@ -217,6 +217,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { dualsense } from '../tauri-adapter.js'
 import { dualSenseErrorCode, friendlyDualSenseError } from '../composables/dualsenseErrors.js'
+import { dualSenseConfigUiState } from '../composables/dualsenseConfigSync.js'
 import { useI18n } from '../desktop/i18n/index.js'
 
 const { t } = useI18n()
@@ -421,11 +422,14 @@ const saveSettings = async () => {
   }
   saving.value = false
   status.value = result.data
-  enabled.value = result.data.enabled
-  audioHaptics.value = result.data.audio_haptics
-  legacyStrength.value = result.data.legacy_strength
-  legacyCurve.value = result.data.legacy_curve
-  legacyNoiseGate.value = result.data.legacy_noise_gate
+  const uiState = dualSenseConfigUiState(result.data, preserveTuning)
+  enabled.value = uiState.enabled
+  audioHaptics.value = uiState.audioHaptics
+  if (uiState.tuning) {
+    legacyStrength.value = uiState.tuning.strength
+    legacyCurve.value = uiState.tuning.curve
+    legacyNoiseGate.value = uiState.tuning.noiseGate
+  }
   ElMessage.success(t.value.dualSense.configSuccess)
 }
 

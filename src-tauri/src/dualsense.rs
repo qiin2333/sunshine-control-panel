@@ -18,10 +18,10 @@ use tauri::Emitter;
 
 const COMPONENT_VERSION: &str = "1.0.0";
 const PROTOCOL_VERSION: u32 = 1;
-const HIDMAESTRO_VERSION: &str = "v1.6.1";
+const HIDMAESTRO_VERSION: &str = "v1.6.2";
 const HIDMAESTRO_URL: &str =
-    "https://github.com/hifihedgehog/HIDMaestro/releases/download/v1.6.1/HIDMaestro-v1.6.1.zip";
-const HIDMAESTRO_SHA256: &str = "00145c23d9838be6089389ce58b3fd2b6766fa9bc0f1f3c60a3c885361b53c34";
+    "https://github.com/hifihedgehog/HIDMaestro/releases/download/v1.6.2/HIDMaestro-v1.6.2.zip";
+const HIDMAESTRO_SHA256: &str = "6ae8df0cf317baf7e65777e2929f618916a67831b5ff1162205310f2c08b80ff";
 const USBIP_VERSION: &str = "0.9.7.7";
 const USBIP_URL: &str =
     "https://github.com/vadimgrn/usbip-win2/releases/download/v.0.9.7.7/USBip-0.9.7.7-x64.exe";

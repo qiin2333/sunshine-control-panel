@@ -1035,7 +1035,7 @@ export const zh = {
     uninstall: '卸载组件',
     refresh: '刷新状态',
     installTitle: '安装第三方 DualSense 运行时？',
-    installConfirm: '将从官方 GitHub Release 下载 HIDMaestro v1.6.1（118.9 MB）和 USB/IP 0.9.7.7（31.7 MB）。Sunshine 会在安装前校验文件完整性。Windows 仅会为本次安装请求管理员权限；更新驱动时，USB 设备可能会短暂重新连接。',
+    installConfirm: '将从官方 GitHub Release 下载 HIDMaestro v1.6.2（118.9 MB）和 USB/IP 0.9.7.7（31.7 MB）。Sunshine 会在安装前校验文件完整性。Windows 仅会为本次安装请求管理员权限；更新驱动时，USB 设备可能会短暂重新连接。',
     uninstallTitle: '卸载 DualSense 组件？',
     uninstallConfirm: '这会关闭 DualSense 模拟并删除受保护的组件文件，不会删除已安装的 USB/IP 驱动。',
     installSuccess: 'DualSense 组件已安装并验证通过。',

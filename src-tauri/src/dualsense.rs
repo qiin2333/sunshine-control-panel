@@ -765,9 +765,19 @@ pub async fn dualsense_set_haptics_tuning(
     })
 }
 
-#[tauri::command]
-pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
-    let (settings, config_revision, config_error) = match get_core_ds5_settings().await {
+async fn resolve_core_config<F, Fut>(
+    confirmed: Option<CoreDualSenseResponse>,
+    fetch: F,
+) -> (CoreDualSenseSettings, u64, String)
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<CoreDualSenseSnapshot, String>>,
+{
+    if let Some(response) = confirmed {
+        return (response.settings, response.revision, String::new());
+    }
+
+    match fetch().await {
         Ok(snapshot) => (
             snapshot.response.settings,
             snapshot.response.revision,
@@ -777,7 +787,14 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
             warn!("DualSense status could not read the configuration: {error}");
             (CoreDualSenseSettings::default(), 0, error)
         }
-    };
+    }
+}
+
+async fn dualsense_get_status_with_config(
+    confirmed: Option<CoreDualSenseResponse>,
+) -> Result<DualSenseStatus, String> {
+    let (settings, config_revision, config_error) =
+        resolve_core_config(confirmed, get_core_ds5_settings).await;
     let executable = sidecar_path();
     let installed = executable.is_file();
     let in_use = has_active_session().await;
@@ -845,6 +862,11 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
         error_code,
         detail,
     })
+}
+
+#[tauri::command]
+pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
+    dualsense_get_status_with_config(None).await
 }
 
 fn sidecar_source_dir() -> Result<PathBuf, String> {
@@ -1538,7 +1560,7 @@ pub async fn dualsense_set_config(
     let mut settings = snapshot.response.settings;
     update_config_fields(&mut settings, enabled, audio_haptics);
     let entity_tag = require_entity_tag(snapshot.entity_tag)?;
-    tokio::time::timeout(
+    let applied = tokio::time::timeout(
         CONFIG_APPLY_TIMEOUT,
         save_core_ds5_settings(settings, entity_tag),
     )
@@ -1547,7 +1569,7 @@ pub async fn dualsense_set_config(
         "DS5-CFG-004: timed out while applying DualSense configuration; the resulting state is unknown"
             .to_string()
     })??;
-    dualsense_get_status().await
+    dualsense_get_status_with_config(Some(applied.response)).await
 }
 
 async fn dualsense_self_test_impl(profile: String) -> Result<serde_json::Value, String> {
@@ -1675,9 +1697,9 @@ mod tests {
     use super::{
         clamp_tuning, classify_usbip_installer_exit_code, component_state, component_test_failure,
         core_ds5_http_error, local_uninstalled_status, pinned_usbip_installed, require_entity_tag,
-        update_config_fields, update_tuning_fields, validate_core_ds5_response,
-        validate_requested_profile, validate_strong_entity_tag, CoreDualSenseResponse,
-        CoreDualSenseSettings, UsbipInstallResult,
+        resolve_core_config, update_config_fields, update_tuning_fields,
+        validate_core_ds5_response, validate_requested_profile, validate_strong_entity_tag,
+        CoreDualSenseResponse, CoreDualSenseSettings, UsbipInstallResult,
     };
     #[cfg(target_os = "windows")]
     use super::{
@@ -1784,6 +1806,41 @@ mod tests {
             reqwest::StatusCode::BAD_REQUEST,
         )
         .starts_with("DS5-CFG-007:"));
+    }
+
+    #[tokio::test]
+    async fn confirmed_save_result_skips_a_failing_config_refresh() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let fetch_called = AtomicBool::new(false);
+        let confirmed = CoreDualSenseResponse {
+            status: true,
+            applied: true,
+            revision: 12,
+            changed: Some(true),
+            settings: CoreDualSenseSettings {
+                ds5_enabled: true,
+                ds5_audio_haptics: false,
+                ds5_legacy_haptics_strength: 1.4,
+                ds5_legacy_haptics_curve: 0.7,
+                ds5_legacy_haptics_noise_gate: 0.008,
+            },
+        };
+
+        let (settings, revision, error) = resolve_core_config(Some(confirmed), || async {
+            fetch_called.store(true, Ordering::Relaxed);
+            Err("DS5-CFG-001: simulated refresh failure".to_string())
+        })
+        .await;
+
+        assert!(!fetch_called.load(Ordering::Relaxed));
+        assert!(settings.ds5_enabled);
+        assert!(!settings.ds5_audio_haptics);
+        assert_eq!(settings.ds5_legacy_haptics_strength, 1.4);
+        assert_eq!(settings.ds5_legacy_haptics_curve, 0.7);
+        assert_eq!(settings.ds5_legacy_haptics_noise_gate, 0.008);
+        assert_eq!(revision, 12);
+        assert!(error.is_empty());
     }
 
     #[test]

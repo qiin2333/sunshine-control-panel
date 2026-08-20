@@ -663,15 +663,9 @@ fn clamp_tuning(strength: f64, curve: f64, noise_gate: f64) -> Option<(f64, f64,
     ))
 }
 
-fn update_config_fields(
-    settings: &mut CoreDualSenseSettings,
-    enabled: bool,
-    audio_haptics: bool,
-) -> bool {
-    let changed = settings.ds5_enabled != enabled || settings.ds5_audio_haptics != audio_haptics;
+fn update_config_fields(settings: &mut CoreDualSenseSettings, enabled: bool, audio_haptics: bool) {
     settings.ds5_enabled = enabled;
     settings.ds5_audio_haptics = audio_haptics;
-    changed
 }
 
 fn update_tuning_fields(
@@ -679,14 +673,10 @@ fn update_tuning_fields(
     strength: f64,
     curve: f64,
     noise_gate: f64,
-) -> bool {
-    let changed = settings.ds5_legacy_haptics_strength != strength
-        || settings.ds5_legacy_haptics_curve != curve
-        || settings.ds5_legacy_haptics_noise_gate != noise_gate;
+) {
     settings.ds5_legacy_haptics_strength = strength;
     settings.ds5_legacy_haptics_curve = curve;
     settings.ds5_legacy_haptics_noise_gate = noise_gate;
-    changed
 }
 
 fn local_uninstalled_status() -> DualSenseStatus {
@@ -763,15 +753,7 @@ pub async fn dualsense_set_haptics_tuning(
         .ok_or_else(|| "DS5-CFG-001: DualSense tuning values must be finite".to_string())?;
     let snapshot = get_core_ds5_settings().await?;
     let mut settings = snapshot.response.settings;
-    if !update_tuning_fields(&mut settings, strength, curve, noise_gate) {
-        return Ok(DualSenseTuningResult {
-            legacy_strength: settings.ds5_legacy_haptics_strength,
-            legacy_curve: settings.ds5_legacy_haptics_curve,
-            legacy_noise_gate: settings.ds5_legacy_haptics_noise_gate,
-            revision: snapshot.response.revision,
-            changed: false,
-        });
-    }
+    update_tuning_fields(&mut settings, strength, curve, noise_gate);
     let entity_tag = require_entity_tag(snapshot.entity_tag)?;
     let applied = save_core_ds5_settings(settings, entity_tag).await?.response;
     Ok(DualSenseTuningResult {
@@ -1554,9 +1536,7 @@ pub async fn dualsense_set_config(
     }
     let snapshot = get_core_ds5_settings().await?;
     let mut settings = snapshot.response.settings;
-    if !update_config_fields(&mut settings, enabled, audio_haptics) {
-        return dualsense_get_status().await;
-    }
+    update_config_fields(&mut settings, enabled, audio_haptics);
     let entity_tag = require_entity_tag(snapshot.entity_tag)?;
     tokio::time::timeout(
         CONFIG_APPLY_TIMEOUT,
@@ -1647,9 +1627,7 @@ async fn dualsense_uninstall_impl() -> Result<DualSenseStatus, String> {
     let reset_result: Result<(), String> = async {
         let snapshot = get_core_ds5_settings().await?;
         let mut settings = snapshot.response.settings;
-        if !update_config_fields(&mut settings, false, true) {
-            return Ok(());
-        }
+        update_config_fields(&mut settings, false, true);
         let entity_tag = require_entity_tag(snapshot.entity_tag)?;
         save_core_ds5_settings(settings, entity_tag).await?;
         Ok(())
@@ -1809,15 +1787,22 @@ mod tests {
     }
 
     #[test]
-    fn unchanged_panel_updates_do_not_require_a_write() {
+    fn field_updates_preserve_unrelated_settings() {
         let mut settings = CoreDualSenseSettings::default();
-        assert!(!update_config_fields(&mut settings, false, true));
-        assert!(!update_tuning_fields(&mut settings, 1.0, 0.5, 0.020));
+        update_tuning_fields(&mut settings, 1.25, 0.7, 0.006);
+        update_config_fields(&mut settings, true, false);
+        assert!(settings.ds5_enabled);
+        assert!(!settings.ds5_audio_haptics);
+        assert_eq!(settings.ds5_legacy_haptics_strength, 1.25);
+        assert_eq!(settings.ds5_legacy_haptics_curve, 0.7);
+        assert_eq!(settings.ds5_legacy_haptics_noise_gate, 0.006);
 
-        assert!(update_config_fields(&mut settings, true, false));
-        assert!(!update_config_fields(&mut settings, true, false));
-        assert!(update_tuning_fields(&mut settings, 1.25, 0.7, 0.006));
-        assert!(!update_tuning_fields(&mut settings, 1.25, 0.7, 0.006));
+        update_tuning_fields(&mut settings, 1.5, 0.9, 0.010);
+        assert!(settings.ds5_enabled);
+        assert!(!settings.ds5_audio_haptics);
+        assert_eq!(settings.ds5_legacy_haptics_strength, 1.5);
+        assert_eq!(settings.ds5_legacy_haptics_curve, 0.9);
+        assert_eq!(settings.ds5_legacy_haptics_noise_gate, 0.010);
     }
 
     #[test]

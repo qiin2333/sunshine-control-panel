@@ -9,6 +9,8 @@ const messages = {
     'DS5-CFG-003': 'Make sure Sunshine is running.',
     'DS5-CFG-004': 'Check the current switch state.',
     'DS5-CFG-005': 'Remove the damaged DualSense settings file.',
+    'DS5-CFG-006': 'Refresh before saving again.',
+    'DS5-CFG-007': 'Update Sunshine and Control Panel together.',
   },
   contexts: {
     test: {
@@ -49,6 +51,20 @@ describe('DualSense user-facing errors', () => {
     assert.equal(
       friendlyDualSenseError('DS5-CFG-005: invalid local file', messages, 'config'),
       'Remove the damaged DualSense settings file.',
+    )
+  })
+
+  it('maps a blocked stale update to a refresh action', () => {
+    assert.equal(
+      friendlyDualSenseError('DS5-CFG-006: stale entity tag', messages, 'config'),
+      'Refresh before saving again.',
+    )
+  })
+
+  it('maps a conditional protocol mismatch to a coordinated update action', () => {
+    assert.equal(
+      friendlyDualSenseError('DS5-CFG-007: missing strong entity tag', messages, 'config'),
+      'Update Sunshine and Control Panel together.',
     )
   })
 

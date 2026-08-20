@@ -1068,6 +1068,8 @@ export const zh = {
         'DS5-CFG-003': 'Sunshine 未能保存 DualSense 设置。请确认 Sunshine 正在运行后重试。',
         'DS5-CFG-004': '保存等待超时。系统已尝试刷新状态，请确认开关显示；如未生效可重试。',
         'DS5-CFG-005': 'DualSense 配置可能已损坏，请删除 Sunshine 配置目录中的 ds5_config.json 后重试。',
+        'DS5-CFG-006': 'DualSense 配置已被其他任务修改，本次保存未执行。请刷新后重新确认设置。',
+        'DS5-CFG-007': 'Sunshine 与控制面板的条件保存协议不兼容，请同步更新两者。',
         'DS5-RUN-002': '当前有串流或其他 DualSense 操作正在进行。请结束后重试。',
         'DS5-RUN-003': 'HD Haptics 仅在指定的 USB/IP 0.9.7.7 可用时才能启用。',
       },

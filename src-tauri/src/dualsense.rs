@@ -8,6 +8,7 @@
 use futures_util::StreamExt;
 use log::warn;
 use once_cell::sync::{Lazy, OnceCell};
+use reqwest::header::HeaderValue;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
@@ -124,8 +125,8 @@ pub struct DualSenseStatus {
 
 #[cfg(target_os = "windows")]
 fn installed_usbip_version() -> Option<String> {
-    use winreg::RegKey;
     use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY};
+    use winreg::RegKey;
 
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     let uninstall = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
@@ -184,7 +185,7 @@ impl Default for CoreDualSenseSettings {
             ds5_enabled: false,
             ds5_audio_haptics: true,
             ds5_legacy_haptics_strength: 1.0,
-            ds5_legacy_haptics_curve: 1.0,
+            ds5_legacy_haptics_curve: 0.5,
             ds5_legacy_haptics_noise_gate: 0.020,
         }
     }
@@ -201,6 +202,12 @@ struct CoreDualSenseResponse {
     settings: CoreDualSenseSettings,
 }
 
+#[derive(Debug)]
+struct CoreDualSenseSnapshot {
+    response: CoreDualSenseResponse,
+    entity_tag: Option<HeaderValue>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct DualSenseTuningResult {
     legacy_strength: f64,
@@ -208,6 +215,57 @@ pub struct DualSenseTuningResult {
     legacy_noise_gate: f64,
     revision: u64,
     changed: bool,
+}
+
+fn validate_strong_entity_tag(value: HeaderValue) -> Result<HeaderValue, String> {
+    const MAX_ENTITY_TAG_SIZE: usize = 512;
+    let bytes = value.as_bytes();
+    let valid = bytes.len() >= 2
+        && bytes.len() <= MAX_ENTITY_TAG_SIZE
+        && bytes.first() == Some(&b'"')
+        && bytes.last() == Some(&b'"')
+        && bytes[1..bytes.len() - 1]
+            .iter()
+            .copied()
+            .all(|byte| byte == 0x21 || (0x23..=0x7e).contains(&byte) || byte >= 0x80);
+    valid.then_some(value).ok_or_else(|| {
+        "DS5-CFG-007: Sunshine returned an invalid DualSense configuration ETag".to_string()
+    })
+}
+
+fn require_entity_tag(entity_tag: Option<HeaderValue>) -> Result<HeaderValue, String> {
+    entity_tag.ok_or_else(|| {
+        "DS5-CFG-007: Sunshine does not expose conditional DualSense configuration updates"
+            .to_string()
+    })
+}
+
+fn core_ds5_http_error(error_code: Option<&str>, status: reqwest::StatusCode) -> String {
+    match error_code {
+        Some("ds5_config_invalid") => {
+            "DS5-CFG-005: the independent DualSense configuration is invalid".to_string()
+        }
+        Some("ds5_precondition_failed") => {
+            "DS5-CFG-006: DualSense configuration changed during this save; refresh and try again"
+                .to_string()
+        }
+        Some("ds5_precondition_required") | Some("ds5_if_match_invalid") => {
+            "DS5-CFG-007: Sunshine rejected the conditional DualSense configuration protocol"
+                .to_string()
+        }
+        _ if status == reqwest::StatusCode::PRECONDITION_FAILED => {
+            "DS5-CFG-006: DualSense configuration changed during this save; refresh and try again"
+                .to_string()
+        }
+        _ if status.as_u16() == 428 => {
+            "DS5-CFG-007: Sunshine rejected the conditional DualSense configuration protocol"
+                .to_string()
+        }
+        _ => format!(
+            "DS5-CFG-001: Sunshine rejected the DualSense configuration request (HTTP {})",
+            status.as_u16()
+        ),
+    }
 }
 
 fn validate_core_ds5_response(
@@ -266,9 +324,10 @@ fn sidecar_path() -> PathBuf {
 
 async fn read_core_ds5_response(
     mut response: reqwest::Response,
-) -> Result<CoreDualSenseResponse, String> {
+) -> Result<CoreDualSenseSnapshot, String> {
     const MAX_RESPONSE_BYTES: usize = 64 * 1024;
     let status = response.status();
+    let entity_tag = response.headers().get(reqwest::header::ETAG).cloned();
     if response
         .content_length()
         .is_some_and(|size| size > MAX_RESPONSE_BYTES as u64)
@@ -295,23 +354,20 @@ async fn read_core_ds5_response(
         let error_code = serde_json::from_slice::<serde_json::Value>(&bytes)
             .ok()
             .and_then(|body| body.get("error_code")?.as_str().map(str::to_owned));
-        if error_code.as_deref() == Some("ds5_config_invalid") {
-            return Err(
-                "DS5-CFG-005: the independent DualSense configuration is invalid".to_string(),
-            );
-        }
-        return Err(format!(
-            "DS5-CFG-001: Sunshine rejected the DualSense configuration request (HTTP {})",
-            status.as_u16()
-        ));
+        return Err(core_ds5_http_error(error_code.as_deref(), status));
     }
     let result: CoreDualSenseResponse = serde_json::from_slice(&bytes).map_err(|error| {
         format!("DS5-CFG-001: invalid DualSense configuration response: {error}")
     })?;
-    validate_core_ds5_response(result)
+    let result = validate_core_ds5_response(result)?;
+    let entity_tag = entity_tag.map(validate_strong_entity_tag).transpose()?;
+    Ok(CoreDualSenseSnapshot {
+        response: result,
+        entity_tag,
+    })
 }
 
-async fn get_core_ds5_settings() -> Result<CoreDualSenseResponse, String> {
+async fn get_core_ds5_settings() -> Result<CoreDualSenseSnapshot, String> {
     let base_url = crate::sunshine::get_sunshine_url().await?;
     let response = crate::sunshine::create_https_client()?
         .get(format!(
@@ -326,13 +382,15 @@ async fn get_core_ds5_settings() -> Result<CoreDualSenseResponse, String> {
 
 async fn save_core_ds5_settings(
     settings: CoreDualSenseSettings,
-) -> Result<CoreDualSenseResponse, String> {
+    entity_tag: HeaderValue,
+) -> Result<CoreDualSenseSnapshot, String> {
     let base_url = crate::sunshine::get_sunshine_url().await?;
     let response = crate::sunshine::create_https_client()?
         .post(format!(
             "{}/api/dualsense/config",
             base_url.trim_end_matches('/')
         ))
+        .header(reqwest::header::IF_MATCH, entity_tag)
         .json(&settings)
         .send()
         .await
@@ -450,14 +508,14 @@ fn run_with_timeout(
 /// Bind the elevated helper and all children it launches to one lifetime job.
 fn bind_elevated_helper_lifetime() -> Result<(), String> {
     use std::os::windows::io::{AsRawHandle, FromRawHandle};
+    use windows::core::PCWSTR;
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-        SetInformationJobObject,
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
     use windows::Win32::System::Threading::GetCurrentProcess;
-    use windows::core::PCWSTR;
 
     ELEVATED_HELPER_JOB
         .get_or_try_init(|| unsafe {
@@ -605,6 +663,32 @@ fn clamp_tuning(strength: f64, curve: f64, noise_gate: f64) -> Option<(f64, f64,
     ))
 }
 
+fn update_config_fields(
+    settings: &mut CoreDualSenseSettings,
+    enabled: bool,
+    audio_haptics: bool,
+) -> bool {
+    let changed = settings.ds5_enabled != enabled || settings.ds5_audio_haptics != audio_haptics;
+    settings.ds5_enabled = enabled;
+    settings.ds5_audio_haptics = audio_haptics;
+    changed
+}
+
+fn update_tuning_fields(
+    settings: &mut CoreDualSenseSettings,
+    strength: f64,
+    curve: f64,
+    noise_gate: f64,
+) -> bool {
+    let changed = settings.ds5_legacy_haptics_strength != strength
+        || settings.ds5_legacy_haptics_curve != curve
+        || settings.ds5_legacy_haptics_noise_gate != noise_gate;
+    settings.ds5_legacy_haptics_strength = strength;
+    settings.ds5_legacy_haptics_curve = curve;
+    settings.ds5_legacy_haptics_noise_gate = noise_gate;
+    changed
+}
+
 fn local_uninstalled_status() -> DualSenseStatus {
     let usbip_version = installed_usbip_version().unwrap_or_default();
     DualSenseStatus {
@@ -614,7 +698,7 @@ fn local_uninstalled_status() -> DualSenseStatus {
         enabled: false,
         audio_haptics: true,
         legacy_strength: 1.0,
-        legacy_curve: 1.0,
+        legacy_curve: 0.5,
         legacy_noise_gate: 0.020,
         config_revision: 0,
         component_version: String::new(),
@@ -677,11 +761,19 @@ pub async fn dualsense_set_haptics_tuning(
     })?;
     let (strength, curve, noise_gate) = clamp_tuning(strength, curve, noise_gate)
         .ok_or_else(|| "DS5-CFG-001: DualSense tuning values must be finite".to_string())?;
-    let mut settings = get_core_ds5_settings().await?.settings;
-    settings.ds5_legacy_haptics_strength = strength;
-    settings.ds5_legacy_haptics_curve = curve;
-    settings.ds5_legacy_haptics_noise_gate = noise_gate;
-    let applied = save_core_ds5_settings(settings).await?;
+    let snapshot = get_core_ds5_settings().await?;
+    let mut settings = snapshot.response.settings;
+    if !update_tuning_fields(&mut settings, strength, curve, noise_gate) {
+        return Ok(DualSenseTuningResult {
+            legacy_strength: settings.ds5_legacy_haptics_strength,
+            legacy_curve: settings.ds5_legacy_haptics_curve,
+            legacy_noise_gate: settings.ds5_legacy_haptics_noise_gate,
+            revision: snapshot.response.revision,
+            changed: false,
+        });
+    }
+    let entity_tag = require_entity_tag(snapshot.entity_tag)?;
+    let applied = save_core_ds5_settings(settings, entity_tag).await?.response;
     Ok(DualSenseTuningResult {
         legacy_strength: applied.settings.ds5_legacy_haptics_strength,
         legacy_curve: applied.settings.ds5_legacy_haptics_curve,
@@ -694,7 +786,11 @@ pub async fn dualsense_set_haptics_tuning(
 #[tauri::command]
 pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
     let (settings, config_revision, config_error) = match get_core_ds5_settings().await {
-        Ok(snapshot) => (snapshot.settings, snapshot.revision, String::new()),
+        Ok(snapshot) => (
+            snapshot.response.settings,
+            snapshot.response.revision,
+            String::new(),
+        ),
         Err(error) => {
             warn!("DualSense status could not read the configuration: {error}");
             (CoreDualSenseSettings::default(), 0, error)
@@ -1200,7 +1296,11 @@ async fn run_elevated_helper(operation: ElevatedOperation, token: uuid::Uuid) ->
         Ok(Ok(())) => {}
         Ok(Err(_)) | Err(_) => return 4,
     }
-    if succeeded { 0 } else { 1 }
+    if succeeded {
+        0
+    } else {
+        1
+    }
 }
 
 /// Handle a narrowly allowlisted elevated DualSense operation before Tauri or
@@ -1452,10 +1552,16 @@ pub async fn dualsense_set_config(
             probe.usbip_available && pinned_usbip_installed(usbip_version.as_deref());
         validate_requested_profile(enabled, audio_haptics, usbip_available)?;
     }
-    let mut settings = get_core_ds5_settings().await?.settings;
-    settings.ds5_enabled = enabled;
-    settings.ds5_audio_haptics = audio_haptics;
-    tokio::time::timeout(CONFIG_APPLY_TIMEOUT, save_core_ds5_settings(settings))
+    let snapshot = get_core_ds5_settings().await?;
+    let mut settings = snapshot.response.settings;
+    if !update_config_fields(&mut settings, enabled, audio_haptics) {
+        return dualsense_get_status().await;
+    }
+    let entity_tag = require_entity_tag(snapshot.entity_tag)?;
+    tokio::time::timeout(
+        CONFIG_APPLY_TIMEOUT,
+        save_core_ds5_settings(settings, entity_tag),
+    )
     .await
     .map_err(|_| {
         "DS5-CFG-004: timed out while applying DualSense configuration; the resulting state is unknown"
@@ -1538,16 +1644,18 @@ pub async fn dualsense_self_test(profile: String) -> Result<serde_json::Value, S
 }
 
 async fn dualsense_uninstall_impl() -> Result<DualSenseStatus, String> {
-    let mut settings = match get_core_ds5_settings().await {
-        Ok(snapshot) => snapshot.settings,
-        Err(error) => {
-            warn!("DualSense uninstall could not read the current configuration: {error}");
-            CoreDualSenseSettings::default()
+    let reset_result: Result<(), String> = async {
+        let snapshot = get_core_ds5_settings().await?;
+        let mut settings = snapshot.response.settings;
+        if !update_config_fields(&mut settings, false, true) {
+            return Ok(());
         }
-    };
-    settings.ds5_enabled = false;
-    settings.ds5_audio_haptics = true;
-    if let Err(error) = save_core_ds5_settings(settings).await {
+        let entity_tag = require_entity_tag(snapshot.entity_tag)?;
+        save_core_ds5_settings(settings, entity_tag).await?;
+        Ok(())
+    }
+    .await;
+    if let Err(error) = reset_result {
         // Removing the optional component must remain possible while Sunshine
         // is stopped. A later Core start safely falls back when files are absent.
         warn!("DualSense uninstall could not reset the configuration: {error}");
@@ -1587,16 +1695,18 @@ pub async fn dualsense_uninstall() -> Result<DualSenseStatus, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CoreDualSenseResponse, CoreDualSenseSettings, UsbipInstallResult, clamp_tuning,
-        classify_usbip_installer_exit_code, component_state, component_test_failure,
-        local_uninstalled_status, pinned_usbip_installed, validate_core_ds5_response,
-        validate_requested_profile,
+        clamp_tuning, classify_usbip_installer_exit_code, component_state, component_test_failure,
+        core_ds5_http_error, local_uninstalled_status, pinned_usbip_installed, require_entity_tag,
+        update_config_fields, update_tuning_fields, validate_core_ds5_response,
+        validate_requested_profile, validate_strong_entity_tag, CoreDualSenseResponse,
+        CoreDualSenseSettings, UsbipInstallResult,
     };
     #[cfg(target_os = "windows")]
     use super::{
-        ElevatedMessage, ElevatedOperation, MAX_ELEVATED_MESSAGE_BYTES, elevated_pipe_name,
-        read_limited_elevated_line, wait_for_elevated_pipe_connection,
+        elevated_pipe_name, read_limited_elevated_line, wait_for_elevated_pipe_connection,
+        ElevatedMessage, ElevatedOperation, MAX_ELEVATED_MESSAGE_BYTES,
     };
+    use reqwest::header::HeaderValue;
     use std::process::Command;
 
     #[test]
@@ -1658,6 +1768,56 @@ mod tests {
         assert_eq!(clamp_tuning(-1.0, -1.0, 0.0), Some((0.1, 0.3, 0.002)));
         assert!(clamp_tuning(f64::NAN, 1.0, 0.020).is_none());
         assert!(clamp_tuning(1.0, f64::INFINITY, 0.020).is_none());
+    }
+
+    #[test]
+    fn conditional_updates_require_a_short_strong_entity_tag() {
+        let strong = HeaderValue::from_static("\"ds5-v1-2\"");
+        assert_eq!(validate_strong_entity_tag(strong.clone()).unwrap(), strong);
+        for invalid in [
+            HeaderValue::from_static("W/\"ds5-v1-2\""),
+            HeaderValue::from_static("ds5-v1-2"),
+            HeaderValue::from_static("\"first\", \"second\""),
+        ] {
+            assert!(validate_strong_entity_tag(invalid).is_err());
+        }
+        let oversized_text = format!("\"{}\"", "x".repeat(512));
+        let oversized = HeaderValue::from_bytes(oversized_text.as_bytes()).unwrap();
+        assert!(validate_strong_entity_tag(oversized).is_err());
+        assert!(require_entity_tag(None)
+            .unwrap_err()
+            .starts_with("DS5-CFG-007:"));
+    }
+
+    #[test]
+    fn conditional_update_errors_keep_stable_user_facing_codes() {
+        assert!(core_ds5_http_error(
+            Some("ds5_precondition_failed"),
+            reqwest::StatusCode::PRECONDITION_FAILED,
+        )
+        .starts_with("DS5-CFG-006:"));
+        assert!(core_ds5_http_error(
+            Some("ds5_precondition_required"),
+            reqwest::StatusCode::from_u16(428).unwrap(),
+        )
+        .starts_with("DS5-CFG-007:"));
+        assert!(core_ds5_http_error(
+            Some("ds5_if_match_invalid"),
+            reqwest::StatusCode::BAD_REQUEST,
+        )
+        .starts_with("DS5-CFG-007:"));
+    }
+
+    #[test]
+    fn unchanged_panel_updates_do_not_require_a_write() {
+        let mut settings = CoreDualSenseSettings::default();
+        assert!(!update_config_fields(&mut settings, false, true));
+        assert!(!update_tuning_fields(&mut settings, 1.0, 0.5, 0.020));
+
+        assert!(update_config_fields(&mut settings, true, false));
+        assert!(!update_config_fields(&mut settings, true, false));
+        assert!(update_tuning_fields(&mut settings, 1.25, 0.7, 0.006));
+        assert!(!update_tuning_fields(&mut settings, 1.25, 0.7, 0.006));
     }
 
     #[test]

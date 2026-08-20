@@ -232,7 +232,7 @@ const operationStageKey = ref('preparing')
 const enabled = ref(false)
 const audioHaptics = ref(false)
 const legacyStrength = ref(1)
-const legacyCurve = ref(1)
+const legacyCurve = ref(0.5)
 const legacyNoiseGate = ref(0.02)
 const tuningSaving = ref(false)
 const testCompleted = ref(false)
@@ -243,7 +243,7 @@ const status = ref({
   audio_haptics: false, driver_installed: false, usbip_available: false, usbip_version: '',
   usbip_version_valid: false, reboot_recommended: false,
   standard_profile: false, composite_profile: false, in_use: false,
-  legacy_strength: 1, legacy_curve: 1, legacy_noise_gate: 0.02,
+  legacy_strength: 1, legacy_curve: 0.5, legacy_noise_gate: 0.02,
   config_revision: 0,
   error_code: '', detail: '',
 })
@@ -447,7 +447,7 @@ const applyErmPreset = () => {
 
 const applyDefaultPreset = () => {
   legacyStrength.value = 1
-  legacyCurve.value = 1
+  legacyCurve.value = 0.5
   legacyNoiseGate.value = 0.02
 }
 

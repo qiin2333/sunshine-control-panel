@@ -1052,9 +1052,13 @@ export const zh = {
     tuningGate: '噪声门',
     tuningPresetErm: 'ERM 推荐',
     tuningPresetDefault: '默认映射',
+    tuningPresetTitle: '快速预设',
+    tuningPresetDefaultTip: '恢复标准的触觉映射参数。',
+    tuningPresetErmTip: '优化传统 ERM 振动的响应。',
     tuningSave: '保存微调',
-    tuningSaved: '触觉微调已保存并应用到运行态 · revision {revision}',
-    tuningRevision: '已应用 · revision {revision}',
+    tuningSaved: '触觉微调已保存并立即生效。',
+    tuningRevision: '当前配置版本 {revision}',
+    tuningRevisionTip: '设置发生变化时版本号递增，用于避免多个窗口互相覆盖。',
     errors: {
       unknown: '操作未完成，请重试。如果问题持续，请点击“修复组件”。',
       codes: {

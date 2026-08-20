@@ -111,11 +111,29 @@
       </section>
 
       <section v-if="status.verified" class="tuning-section" :aria-label="t.dualSense.tuningTitle">
-        <span class="section-label">{{ t.dualSense.tuningTitle }}</span>
-        <p class="tuning-hint">{{ t.dualSense.tuningHint }}</p>
-        <p v-if="status.config_revision" class="tuning-revision">
-          {{ t.dualSense.tuningRevision.replace('{revision}', status.config_revision) }}
-        </p>
+        <div class="tuning-heading">
+          <div>
+            <span class="section-label">{{ t.dualSense.tuningTitle }}</span>
+            <p class="tuning-hint">{{ t.dualSense.tuningHint }}</p>
+          </div>
+          <div v-if="status.config_revision" class="tuning-revision">
+            <strong>{{ t.dualSense.tuningRevision.replace('{revision}', status.config_revision) }}</strong>
+            <small>{{ t.dualSense.tuningRevisionTip }}</small>
+          </div>
+        </div>
+        <div class="tuning-presets" role="group" :aria-label="t.dualSense.tuningPresetTitle">
+          <span>{{ t.dualSense.tuningPresetTitle }}</span>
+          <div>
+            <button type="button" class="tuning-preset" :disabled="controlsBusy" @click="applyDefaultPreset">
+              <strong>{{ t.dualSense.tuningPresetDefault }}</strong>
+              <small>{{ t.dualSense.tuningPresetDefaultTip }}</small>
+            </button>
+            <button type="button" class="tuning-preset" :disabled="controlsBusy" @click="applyErmPreset">
+              <strong>{{ t.dualSense.tuningPresetErm }}</strong>
+              <small>{{ t.dualSense.tuningPresetErmTip }}</small>
+            </button>
+          </div>
+        </div>
         <div class="tuning-grid">
           <label class="tuning-field">
             <span>{{ t.dualSense.tuningStrength }}</span>
@@ -133,25 +151,13 @@
             />
           </label>
         </div>
-        <div class="tuning-actions">
-          <el-button text class="menu-action menu-action-secondary" :disabled="controlsBusy" @click="applyDefaultPreset">
-            <span class="action-bracket" aria-hidden="true">[</span>
-            <span>{{ t.dualSense.tuningPresetDefault }}</span>
-            <span class="action-bracket" aria-hidden="true">]</span>
-          </el-button>
-          <el-button text class="menu-action menu-action-secondary" :disabled="controlsBusy" @click="applyErmPreset">
-            <span class="action-bracket" aria-hidden="true">[</span>
-            <span>{{ t.dualSense.tuningPresetErm }}</span>
-            <span class="action-bracket" aria-hidden="true">]</span>
-          </el-button>
+        <div class="tuning-save-row">
           <el-button
-            text class="menu-action menu-action-primary"
-            :loading="tuningSaving" :disabled="controlsBusy"
+            type="primary" class="tuning-save-button"
+            :loading="tuningSaving" :disabled="controlsBusy || !tuningDirty"
             @click="saveTuning"
           >
-            <span class="action-bracket" aria-hidden="true">[</span>
             <span>{{ t.dualSense.tuningSave }}</span>
-            <span class="action-bracket" aria-hidden="true">]</span>
           </el-button>
         </div>
       </section>
@@ -217,7 +223,11 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { dualsense } from '../tauri-adapter.js'
 import { dualSenseErrorCode, friendlyDualSenseError } from '../composables/dualsenseErrors.js'
-import { dualSenseConfigUiState } from '../composables/dualsenseConfigSync.js'
+import {
+  dualSenseConfigReadable,
+  dualSenseConfigUiState,
+  mergeDualSenseStatus,
+} from '../composables/dualsenseConfigSync.js'
 import { useI18n } from '../desktop/i18n/index.js'
 
 const { t } = useI18n()
@@ -244,7 +254,7 @@ const status = ref({
   usbip_version_valid: false, reboot_recommended: false,
   standard_profile: false, composite_profile: false, in_use: false,
   legacy_strength: 1, legacy_curve: 0.5, legacy_noise_gate: 0.02,
-  config_revision: 0,
+  config_revision: 0, config_readable: false,
   error_code: '', detail: '',
 })
 let pollTimer
@@ -326,16 +336,21 @@ const refresh = async (quiet = false) => {
   try {
     const result = await dualsense.getStatus()
     if (result.success) {
-      status.value = result.data
+      const configReadable = dualSenseConfigReadable(result.data)
+      status.value = mergeDualSenseStatus(status.value, result.data)
       statusKnown.value = true
-      enabled.value = result.data.enabled
-      audioHaptics.value = result.data.audio_haptics
-      if (!preserveTuning) {
-        legacyStrength.value = result.data.legacy_strength
-        legacyCurve.value = result.data.legacy_curve
-        legacyNoiseGate.value = result.data.legacy_noise_gate
+      if (configReadable) {
+        enabled.value = result.data.enabled
+        audioHaptics.value = result.data.audio_haptics
+        if (!preserveTuning) {
+          legacyStrength.value = result.data.legacy_strength
+          legacyCurve.value = result.data.legacy_curve
+          legacyNoiseGate.value = result.data.legacy_noise_gate
+        }
+        refreshed = true
+      } else if (!quiet) {
+        showError(result.data.detail || result.data.error_code, 'status')
       }
-      refreshed = true
     } else if (!quiet) {
       showError(result.message, 'status')
     }
@@ -394,7 +409,8 @@ const saveSettings = async () => {
   saving.value = true
   let result = await dualsense.setConfig(requestedEnabled, requestedAudioHaptics)
   let refreshedAfterFailure = false
-  if (!result.success && dualSenseErrorCode(result.message) === 'DS5-CFG-003') {
+  const firstErrorCode = result.success ? '' : dualSenseErrorCode(result.message)
+  if (!result.success && ['DS5-CFG-001', 'DS5-CFG-003'].includes(firstErrorCode)) {
     saving.value = false
     refreshedAfterFailure = await refresh(true)
     const canRetry = refreshedAfterFailure
@@ -422,6 +438,7 @@ const saveSettings = async () => {
   }
   saving.value = false
   status.value = result.data
+  statusKnown.value = true
   const uiState = dualSenseConfigUiState(result.data, preserveTuning)
   enabled.value = uiState.enabled
   audioHaptics.value = uiState.audioHaptics
@@ -465,7 +482,7 @@ const saveTuning = async () => {
   status.value.legacy_curve = result.data.legacy_curve
   status.value.legacy_noise_gate = result.data.legacy_noise_gate
   status.value.config_revision = result.data.revision
-  ElMessage.success(t.value.dualSense.tuningSaved.replace('{revision}', result.data.revision))
+  ElMessage.success(t.value.dualSense.tuningSaved)
 }
 
 const test = async (profile) => {
@@ -616,11 +633,34 @@ onUnmounted(() => {
 }
 .test-section { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; margin-top: 26px; p { margin: 5px 0 0; max-width: 680px; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.55; } }
 .tuning-section { margin-top: 26px; }
-.tuning-hint { margin: 0 0 12px; max-width: 680px; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.55; }
-.tuning-revision { margin: -5px 0 12px; color: var(--el-color-success); font-size: 12px; }
+.tuning-heading { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; }
+.tuning-hint { margin: 0 0 14px; max-width: 620px; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.55; }
+.tuning-revision { flex: 0 1 280px; margin: 0; text-align: right; strong, small { display: block; } strong { color: var(--el-color-success); font-size: 12px; font-weight: 500; } small { margin-top: 4px; color: var(--el-text-color-secondary); font-size: 11px; line-height: 1.4; } }
+.tuning-presets { margin-bottom: 18px; padding: 12px; border: 1px solid var(--el-border-color-lighter); background: var(--el-fill-color-extra-light); }
+.tuning-presets > span { display: block; margin-bottom: 8px; color: var(--el-text-color-secondary); font-size: 12px; letter-spacing: .05em; }
+.tuning-presets > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.tuning-preset {
+  display: grid;
+  gap: 3px;
+  min-height: 54px;
+  padding: 8px 11px;
+  border: 1px solid var(--el-border-color);
+  color: var(--el-text-color-primary);
+  background: var(--el-fill-color-blank);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .12s ease, background .12s ease, transform .12s ease;
+  strong { font-size: 13px; font-weight: 600; }
+  small { color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.45; }
+  &:hover, &:focus-visible { border-color: var(--el-color-primary); background: var(--el-color-primary-light-9); transform: translateY(-1px); }
+  &:focus-visible { outline: 1px dashed var(--el-color-primary); outline-offset: 2px; }
+  &:disabled { opacity: .55; cursor: not-allowed; transform: none; }
+}
 .tuning-grid { display: flex; flex-wrap: wrap; gap: 22px; }
 .tuning-field { display: grid; gap: 6px; font-size: 13px; color: var(--el-text-color-regular); }
-.tuning-actions { display: flex; gap: 8px; margin-top: 14px; }
+.tuning-save-row { display: flex; justify-content: flex-end; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--el-border-color-lighter); }
+.tuning-save-button { min-width: 140px; min-height: 36px; font-weight: 600; }
 .test-actions { justify-content: flex-start; }
 .controller-meta-action { flex: 0 0 100%; }
 .controller-meta-action :deep(.el-button) { margin-left: 0; }
@@ -668,5 +708,9 @@ onUnmounted(() => {
   .enable-control { justify-self: stretch; }
   .status-actions, .test-actions { justify-content: flex-start; }
   .profile-option { grid-template-columns: 16px minmax(0, 1fr) auto; padding-inline: 6px; }
+  .tuning-heading { display: block; }
+  .tuning-revision { margin: -6px 0 12px; text-align: left; }
+  .tuning-presets > div { grid-template-columns: 1fr; }
+  .tuning-save-button { width: 100%; }
 }
 </style>

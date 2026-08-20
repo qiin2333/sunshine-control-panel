@@ -107,6 +107,7 @@ pub struct DualSenseStatus {
     pub legacy_curve: f64,
     pub legacy_noise_gate: f64,
     pub config_revision: u64,
+    pub config_readable: bool,
     pub component_version: String,
     pub runtime_version: String,
     pub install_path: String,
@@ -691,6 +692,7 @@ fn local_uninstalled_status() -> DualSenseStatus {
         legacy_curve: 0.5,
         legacy_noise_gate: 0.020,
         config_revision: 0,
+        config_readable: false,
         component_version: String::new(),
         runtime_version: String::new(),
         install_path: active_dir().to_string_lossy().to_string(),
@@ -795,6 +797,7 @@ async fn dualsense_get_status_with_config(
 ) -> Result<DualSenseStatus, String> {
     let (settings, config_revision, config_error) =
         resolve_core_config(confirmed, get_core_ds5_settings).await;
+    let config_readable = config_error.is_empty();
     let executable = sidecar_path();
     let installed = executable.is_file();
     let in_use = has_active_session().await;
@@ -844,6 +847,7 @@ async fn dualsense_get_status_with_config(
         legacy_curve: settings.ds5_legacy_haptics_curve,
         legacy_noise_gate: settings.ds5_legacy_haptics_noise_gate,
         config_revision,
+        config_readable,
         component_version: installed
             .then_some(COMPONENT_VERSION)
             .unwrap_or_default()
@@ -1893,6 +1897,7 @@ mod tests {
         assert!(!status.installed);
         assert!(!status.enabled);
         assert!(status.audio_haptics);
+        assert!(!status.config_readable);
         assert!(!status.in_use);
     }
 

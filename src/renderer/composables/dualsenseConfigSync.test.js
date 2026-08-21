@@ -10,6 +10,7 @@ import {
 const response = {
   enabled: true,
   audio_haptics: false,
+  genshin_compatibility: false,
   legacy_strength: 1.4,
   legacy_curve: 0.7,
   legacy_noise_gate: 0.008,
@@ -20,6 +21,7 @@ test('keeps locally edited tuning out of a non-tuning save response', () => {
   assert.deepEqual(dualSenseConfigUiState(response, true), {
     enabled: true,
     audioHaptics: false,
+    genshinCompatibility: false,
     tuning: null,
   })
 })
@@ -28,6 +30,7 @@ test('synchronizes tuning from Core when there are no local edits', () => {
   assert.deepEqual(dualSenseConfigUiState(response), {
     enabled: true,
     audioHaptics: false,
+    genshinCompatibility: false,
     tuning: {
       strength: 1.4,
       curve: 0.7,
@@ -46,6 +49,7 @@ test('preserves confirmed config when a status refresh cannot read Core settings
     ...response,
     enabled: false,
     audio_haptics: true,
+    genshin_compatibility: true,
     legacy_strength: 1,
     legacy_curve: 0.5,
     legacy_noise_gate: 0.02,
@@ -60,6 +64,7 @@ test('preserves confirmed config when a status refresh cannot read Core settings
     ...incoming,
     enabled: true,
     audio_haptics: false,
+    genshin_compatibility: false,
     legacy_strength: 1.4,
     legacy_curve: 0.7,
     legacy_noise_gate: 0.008,

@@ -1,6 +1,7 @@
 export const dualSenseConfigUiState = (data, preserveTuning = false) => ({
   enabled: data.enabled,
   audioHaptics: data.audio_haptics,
+  genshinCompatibility: data.genshin_compatibility ?? false,
   tuning: preserveTuning
     ? null
     : {
@@ -19,6 +20,7 @@ export const mergeDualSenseStatus = (current, incoming) => {
     ...incoming,
     enabled: current.enabled,
     audio_haptics: current.audio_haptics,
+    genshin_compatibility: current.genshin_compatibility,
     legacy_strength: current.legacy_strength,
     legacy_curve: current.legacy_curve,
     legacy_noise_gate: current.legacy_noise_gate,

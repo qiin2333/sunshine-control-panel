@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::Emitter;
 
-const COMPONENT_VERSION: &str = "1.0.0";
+const COMPONENT_VERSION: &str = "1.1.0";
 const PROTOCOL_VERSION: u32 = 1;
 const HIDMAESTRO_VERSION: &str = "v1.6.1";
 const HIDMAESTRO_URL: &str =
@@ -101,7 +101,11 @@ pub struct DualSenseStatus {
     pub verified: bool,
     pub enabled: bool,
     pub audio_haptics: bool,
+    pub genshin_compatibility: bool,
+    pub genshin_compatibility_available: bool,
     pub component_version: String,
+    pub available_component_version: String,
+    pub update_available: bool,
     pub runtime_version: String,
     pub install_path: String,
     pub sidecar_path: String,
@@ -160,8 +164,19 @@ struct ProbeResult {
     runtime_version: String,
     standard: bool,
     composite: bool,
+    genshin_compatibility_identity: bool,
     driver_installed: bool,
     usbip_available: bool,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct InstalledComponentManifest {
+    component_version: String,
+    hidmaestro_version: String,
+    sha256: String,
+    protocol: u32,
+    sidecar_file: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -193,6 +208,26 @@ fn active_dir() -> PathBuf {
 
 fn sidecar_path() -> PathBuf {
     active_dir().join(SIDECAR_EXE)
+}
+
+fn installed_component_manifest() -> Option<InstalledComponentManifest> {
+    let contents = fs::read(active_dir().join("component.json")).ok()?;
+    serde_json::from_slice(&contents).ok()
+}
+
+fn component_needs_update(
+    manifest: Option<&InstalledComponentManifest>,
+    genshin_compatibility_available: bool,
+) -> bool {
+    let Some(manifest) = manifest else {
+        return true;
+    };
+    manifest.component_version != COMPONENT_VERSION
+        || manifest.hidmaestro_version != HIDMAESTRO_VERSION
+        || !manifest.sha256.eq_ignore_ascii_case(HIDMAESTRO_SHA256)
+        || manifest.protocol != PROTOCOL_VERSION
+        || manifest.sidecar_file != SIDECAR_EXE
+        || !genshin_compatibility_available
 }
 
 fn config_path() -> PathBuf {
@@ -461,6 +496,7 @@ fn component_state(
     verified: bool,
     transport_available: bool,
     in_use: bool,
+    update_available: bool,
 ) -> &'static str {
     if in_use && installed {
         "in_use"
@@ -468,6 +504,8 @@ fn component_state(
         "not_installed"
     } else if !verified {
         "repair_required"
+    } else if update_available {
+        "update_available"
     } else if !transport_available {
         "transport_missing"
     } else {
@@ -478,9 +516,15 @@ fn component_state(
 fn validate_requested_profile(
     enabled: bool,
     audio_haptics: bool,
+    genshin_compatibility: bool,
     usbip_available: bool,
 ) -> Result<(), String> {
-    if enabled && audio_haptics && !usbip_available {
+    if genshin_compatibility && (!enabled || !audio_haptics) {
+        Err(
+            "DS5-RUN-004: Genshin compatibility mode requires enabled four-channel haptics"
+                .to_string(),
+        )
+    } else if enabled && audio_haptics && !usbip_available {
         Err(
             "DS5-RUN-003: four-channel haptics requires the USB/IP transport; disable audio haptics or repair the transport"
                 .to_string(),
@@ -515,6 +559,7 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
     let enabled = config_bool("ds5_enabled", false)
         && read_config_value("gamepad").is_some_and(|gamepad| gamepad.eq_ignore_ascii_case("ds5"));
     let audio_haptics = config_bool("ds5_audio_haptics", false);
+    let genshin_compatibility = config_bool("ds5_genshin_compatibility", false);
     let probe = if installed {
         let probe_executable = executable.clone();
         Some(
@@ -541,7 +586,16 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
     let usbip_version = installed_usbip_version().unwrap_or_default();
     let usbip_version_valid = pinned_usbip_installed(Some(usbip_version.as_str()));
     let usbip_available = result.usbip_available && usbip_version_valid;
-    let state = component_state(installed, verified, usbip_available, in_use);
+    let manifest = installed.then(installed_component_manifest).flatten();
+    let update_available = installed
+        && component_needs_update(manifest.as_ref(), result.genshin_compatibility_identity);
+    let state = component_state(
+        installed,
+        verified,
+        usbip_available,
+        in_use,
+        update_available,
+    );
 
     Ok(DualSenseStatus {
         state: state.to_string(),
@@ -549,10 +603,14 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
         verified,
         enabled,
         audio_haptics,
-        component_version: installed
-            .then_some(COMPONENT_VERSION)
-            .unwrap_or_default()
-            .to_string(),
+        genshin_compatibility,
+        genshin_compatibility_available: result.genshin_compatibility_identity,
+        component_version: manifest
+            .as_ref()
+            .map(|manifest| manifest.component_version.clone())
+            .unwrap_or_default(),
+        available_component_version: COMPONENT_VERSION.to_string(),
+        update_available,
         runtime_version: result.runtime_version,
         install_path: active_dir().to_string_lossy().to_string(),
         sidecar_path: executable.to_string_lossy().to_string(),
@@ -781,6 +839,7 @@ async fn ensure_pinned_usbip(
 async fn apply_config(
     enabled: bool,
     audio_haptics: bool,
+    genshin_compatibility: bool,
     executable: Option<&Path>,
     sync_gamepad_selection: bool,
 ) -> Result<(), String> {
@@ -799,6 +858,10 @@ async fn apply_config(
     config.insert(
         "ds5_audio_haptics".to_string(),
         serde_json::json!(audio_haptics),
+    );
+    config.insert(
+        "ds5_genshin_compatibility".to_string(),
+        serde_json::json!(genshin_compatibility),
     );
     config.insert(
         "ds5_sidecar_path".to_string(),
@@ -841,6 +904,7 @@ async fn dualsense_install_impl(
 ) -> Result<DualSenseStatus, String> {
     let previous_enabled = config_bool("ds5_enabled", false);
     let previous_audio_haptics = config_bool("ds5_audio_haptics", false);
+    let previous_genshin_compatibility = config_bool("ds5_genshin_compatibility", false);
     report_progress(progress, "preparing", 1);
     let source = sidecar_source_dir()?;
     let root = component_root();
@@ -950,6 +1014,7 @@ async fn dualsense_install_impl(
     if let Err(config_error) = apply_config(
         previous_enabled,
         previous_audio_haptics,
+        previous_genshin_compatibility,
         Some(&sidecar_path()),
         false,
     )
@@ -1336,6 +1401,7 @@ pub async fn dualsense_install(app: tauri::AppHandle) -> Result<DualSenseStatus,
 pub async fn dualsense_set_config(
     enabled: bool,
     audio_haptics: bool,
+    genshin_compatibility: bool,
 ) -> Result<DualSenseStatus, String> {
     let _operation = COMPONENT_OPERATION.try_lock().map_err(|_| {
         "DS5-RUN-002: another DualSense component operation is still running".to_string()
@@ -1349,11 +1415,30 @@ pub async fn dualsense_set_config(
         let usbip_version = installed_usbip_version();
         let usbip_available =
             probe.usbip_available && pinned_usbip_installed(usbip_version.as_deref());
-        validate_requested_profile(enabled, audio_haptics, usbip_available)?;
+        if genshin_compatibility && !probe.genshin_compatibility_identity {
+            return Err(
+                "DS5-PROTO-001: the installed sidecar does not support Genshin compatibility mode"
+                    .to_string(),
+            );
+        }
+        validate_requested_profile(
+            enabled,
+            audio_haptics,
+            genshin_compatibility,
+            usbip_available,
+        )?;
+    } else {
+        validate_requested_profile(enabled, audio_haptics, genshin_compatibility, false)?;
     }
     tokio::time::timeout(
         CONFIG_APPLY_TIMEOUT,
-        apply_config(enabled, audio_haptics, Some(&sidecar_path()), true),
+        apply_config(
+            enabled,
+            audio_haptics,
+            genshin_compatibility,
+            Some(&sidecar_path()),
+            true,
+        ),
     )
     .await
     .map_err(|_| {
@@ -1437,7 +1522,7 @@ pub async fn dualsense_self_test(profile: String) -> Result<serde_json::Value, S
 }
 
 async fn dualsense_uninstall_impl() -> Result<DualSenseStatus, String> {
-    apply_config(false, true, None, true).await?;
+    apply_config(false, true, false, None, true).await?;
     let root = component_root();
     if root.exists() {
         fs::remove_dir_all(&root)
@@ -1472,22 +1557,31 @@ mod tests {
         read_limited_elevated_line, wait_for_elevated_pipe_connection,
     };
     use super::{
-        UsbipInstallResult, apply_gamepad_selection, classify_usbip_installer_exit_code,
-        component_state, component_test_failure, pinned_usbip_installed,
-        validate_requested_profile,
+        InstalledComponentManifest, UsbipInstallResult, apply_gamepad_selection,
+        classify_usbip_installer_exit_code, component_needs_update, component_state,
+        component_test_failure, pinned_usbip_installed, validate_requested_profile,
     };
     use std::process::Command;
 
     #[test]
     fn composite_profile_requires_usbip() {
-        let error = validate_requested_profile(true, true, false).unwrap_err();
+        let error = validate_requested_profile(true, true, false, false).unwrap_err();
         assert!(error.starts_with("DS5-RUN-003:"));
     }
 
     #[test]
     fn hid_only_profile_remains_available_without_usbip() {
-        assert!(validate_requested_profile(true, false, false).is_ok());
-        assert!(validate_requested_profile(false, true, false).is_ok());
+        assert!(validate_requested_profile(true, false, false, false).is_ok());
+        assert!(validate_requested_profile(false, true, false, false).is_ok());
+    }
+
+    #[test]
+    fn genshin_compatibility_requires_enabled_composite_profile() {
+        assert!(validate_requested_profile(true, true, true, true).is_ok());
+        let error = validate_requested_profile(true, false, true, true).unwrap_err();
+        assert!(error.starts_with("DS5-RUN-004:"));
+        let error = validate_requested_profile(false, true, true, true).unwrap_err();
+        assert!(error.starts_with("DS5-RUN-004:"));
     }
 
     #[test]
@@ -1505,14 +1599,44 @@ mod tests {
 
     #[test]
     fn component_state_prioritizes_stream_ownership_and_recovery() {
-        assert_eq!(component_state(true, true, true, true), "in_use");
-        assert_eq!(component_state(false, false, false, true), "not_installed");
-        assert_eq!(component_state(true, false, true, false), "repair_required");
+        assert_eq!(component_state(true, true, true, true, true), "in_use");
         assert_eq!(
-            component_state(true, true, false, false),
+            component_state(false, false, false, true, false),
+            "not_installed"
+        );
+        assert_eq!(
+            component_state(true, false, true, false, true),
+            "repair_required"
+        );
+        assert_eq!(
+            component_state(true, true, true, false, true),
+            "update_available"
+        );
+        assert_eq!(
+            component_state(true, true, false, false, false),
             "transport_missing"
         );
-        assert_eq!(component_state(true, true, true, false), "ready");
+        assert_eq!(component_state(true, true, true, false, false), "ready");
+    }
+
+    #[test]
+    fn component_update_requires_current_manifest_and_capability() {
+        let current = InstalledComponentManifest {
+            component_version: super::COMPONENT_VERSION.to_string(),
+            hidmaestro_version: super::HIDMAESTRO_VERSION.to_string(),
+            sha256: super::HIDMAESTRO_SHA256.to_uppercase(),
+            protocol: super::PROTOCOL_VERSION,
+            sidecar_file: super::SIDECAR_EXE.to_string(),
+        };
+        assert!(!component_needs_update(Some(&current), true));
+        assert!(component_needs_update(Some(&current), false));
+        assert!(component_needs_update(None, true));
+
+        let outdated = InstalledComponentManifest {
+            component_version: "1.0.0".to_string(),
+            ..current
+        };
+        assert!(component_needs_update(Some(&outdated), true));
     }
 
     #[test]

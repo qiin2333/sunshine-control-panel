@@ -387,14 +387,18 @@ const install = async (packagePath = null) => {
 
 const installFromPackage = async () => {
   if (controlsBusy.value) return
-  const selected = await open({
-    multiple: false,
-    directory: false,
-    title: t.value.dualSense.selectLocalPackage,
-    filters: [{ name: t.value.dualSense.componentPackage, extensions: ['zip'] }],
-  })
-  if (typeof selected === 'string' && selected) {
-    await install(selected)
+  try {
+    const selected = await open({
+      multiple: false,
+      directory: false,
+      title: t.value.dualSense.selectLocalPackage,
+      filters: [{ name: t.value.dualSense.componentPackage, extensions: ['zip'] }],
+    })
+    if (typeof selected === 'string' && selected) {
+      await install(selected)
+    }
+  } catch (error) {
+    showError(error, 'packagePicker')
   }
 }
 

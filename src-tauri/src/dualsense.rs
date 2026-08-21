@@ -98,6 +98,13 @@ impl ElevatedOperation {
 struct TemporaryPackageFile(PathBuf);
 
 #[cfg(target_os = "windows")]
+impl TemporaryPackageFile {
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+#[cfg(target_os = "windows")]
 impl Drop for TemporaryPackageFile {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);
@@ -313,8 +320,8 @@ fn sidecar_package_manifest() -> Result<SidecarPackageManifest, String> {
 }
 
 #[cfg(target_os = "windows")]
-fn local_sidecar_package_cache_path(token: uuid::Uuid) -> PathBuf {
-    std::env::temp_dir().join(format!("sunshine-ds5-sidecar-{token}.zip"))
+fn local_sidecar_package_handoff_path(token: uuid::Uuid) -> PathBuf {
+    component_root().join(format!("handoff-{token}.partial.zip"))
 }
 
 fn installed_component_manifest() -> Option<InstalledComponentManifest> {
@@ -1166,6 +1173,7 @@ async fn dualsense_install_impl(
         .is_none()
         .then(manually_placed_sidecar_package)
         .flatten();
+    let using_discovered_package = discovered_package.is_some();
     let local_sidecar_package = local_sidecar_package.or(discovered_package.as_deref());
     let bundled_source = if local_sidecar_package.is_none() {
         sidecar_source_dir().ok()
@@ -1200,6 +1208,9 @@ async fn dualsense_install_impl(
     let install_result: Result<UsbipInstallResult, String> = async {
         let usbip_install_result = ensure_pinned_usbip(progress, &client, &root).await?;
         if let Some(manifest) = package_manifest.as_ref() {
+            if using_discovered_package {
+                report_progress(progress, "sidecar_local", 12);
+            }
             acquire_sidecar_package(
                 &client,
                 manifest,
@@ -1274,7 +1285,11 @@ async fn dualsense_install_impl(
                 "hidmaestro_version": HIDMAESTRO_VERSION,
                 "source": HIDMAESTRO_URL,
                 "sha256": HIDMAESTRO_SHA256,
-                "sidecar_source": package_manifest.as_ref().map(|manifest| manifest.download_url.as_str()).unwrap_or("bundled"),
+                "sidecar_source": if using_discovered_package {
+                    "discovered-local"
+                } else {
+                    package_manifest.as_ref().map(|manifest| manifest.download_url.as_str()).unwrap_or("bundled")
+                },
                 "sidecar_package_sha256": package_manifest.as_ref().map(|manifest| manifest.sha256.as_str()).unwrap_or_default(),
                 "protocol": PROTOCOL_VERSION,
                 "sidecar_file": SIDECAR_EXE,
@@ -1382,6 +1397,56 @@ async fn connect_elevated_pipe(
 }
 
 #[cfg(target_os = "windows")]
+async fn receive_local_sidecar_package<R>(
+    reader: &mut R,
+    token: uuid::Uuid,
+) -> Result<TemporaryPackageFile, String>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut encoded_size = [0u8; std::mem::size_of::<u64>()];
+    reader
+        .read_exact(&mut encoded_size)
+        .await
+        .map_err(|error| {
+            format!("DS5-PKG-002: unable to receive the selected component package size: {error}")
+        })?;
+    let size = u64::from_le_bytes(encoded_size);
+    if size == 0 || size > MAX_SIDECAR_PACKAGE_BYTES {
+        return Err("DS5-PKG-002: the selected component package is invalid".to_string());
+    }
+
+    let root = component_root();
+    fs::create_dir_all(&root).map_err(|error| {
+        format!("DS5-PKG-002: unable to prepare the component directory: {error}")
+    })?;
+    let package = TemporaryPackageFile(local_sidecar_package_handoff_path(token));
+    let mut output = tokio::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(package.path())
+        .await
+        .map_err(|error| {
+            format!("DS5-PKG-002: unable to create the component handoff file: {error}")
+        })?;
+    let mut limited = reader.take(size);
+    let copied = tokio::io::copy(&mut limited, &mut output)
+        .await
+        .map_err(|error| {
+            format!("DS5-PKG-002: unable to receive the selected component package: {error}")
+        })?;
+    if copied != size {
+        return Err("DS5-PKG-002: the selected component package transfer ended early".to_string());
+    }
+    output.flush().await.map_err(|error| {
+        format!("DS5-PKG-002: unable to finish the component package transfer: {error}")
+    })?;
+    Ok(package)
+}
+
+#[cfg(target_os = "windows")]
 async fn run_elevated_helper(operation: ElevatedOperation, token: uuid::Uuid) -> i32 {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -1389,14 +1454,6 @@ async fn run_elevated_helper(operation: ElevatedOperation, token: uuid::Uuid) ->
         return 3;
     };
     let (mut pipe_reader, mut pipe_writer) = tokio::io::split(pipe);
-    // The parent never sends application data. EOF means that it timed out or
-    // failed, so terminate this elevated helper. Long-running child processes
-    // are job-bound and terminate when Windows closes this process's handles.
-    let disconnect_watcher = tokio::spawn(async move {
-        let mut control = [0u8; 1];
-        let _ = pipe_reader.read(&mut control).await;
-        std::process::exit(5);
-    });
     let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<ElevatedMessage>();
     let writer = tokio::spawn(async move {
         while let Some(message) = receiver.recv().await {
@@ -1411,6 +1468,21 @@ async fn run_elevated_helper(operation: ElevatedOperation, token: uuid::Uuid) ->
             .shutdown()
             .await
             .map_err(|error| error.to_string())
+    });
+    let local_package = if operation == ElevatedOperation::InstallLocal {
+        receive_local_sidecar_package(&mut pipe_reader, token)
+            .await
+            .map(Some)
+    } else {
+        Ok(None)
+    };
+    // After the optional package handoff, EOF means that the parent timed out
+    // or failed. Long-running child processes are job-bound and terminate when
+    // Windows closes this process's handles.
+    let disconnect_watcher = tokio::spawn(async move {
+        let mut control = [0u8; 1];
+        let _ = pipe_reader.read(&mut control).await;
+        std::process::exit(5);
     });
 
     let progress_sender = sender.clone();
@@ -1428,13 +1500,15 @@ async fn run_elevated_helper(operation: ElevatedOperation, token: uuid::Uuid) ->
         ensure_no_active_session().await?;
         match operation {
             ElevatedOperation::Install | ElevatedOperation::InstallLocal => {
-                let local_package = (operation == ElevatedOperation::InstallLocal)
-                    .then(|| local_sidecar_package_cache_path(token));
-                let result = dualsense_install_impl(&progress, local_package.as_deref()).await;
-                if let Some(path) = local_package {
-                    let _ = fs::remove_file(path);
-                }
-                serde_json::to_value(result?).map_err(|error| error.to_string())
+                let local_package = local_package?;
+                serde_json::to_value(
+                    dualsense_install_impl(
+                        &progress,
+                        local_package.as_ref().map(TemporaryPackageFile::path),
+                    )
+                    .await?,
+                )
+                .map_err(|error| error.to_string())
             }
             ElevatedOperation::TestStandard => {
                 dualsense_self_test_impl("standard".to_string()).await
@@ -1591,26 +1665,25 @@ async fn run_elevated_operation(
     operation: ElevatedOperation,
     selected_package: Option<&Path>,
 ) -> Result<serde_json::Value, String> {
-    use tokio::io::BufReader;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::windows::named_pipe::ServerOptions;
 
     let token = uuid::Uuid::new_v4();
-    let _temporary_package = if operation == ElevatedOperation::InstallLocal {
+    let mut local_package = if operation == ElevatedOperation::InstallLocal {
         let source = selected_package.ok_or_else(|| {
             "DS5-PKG-002: no local DualSense component package was selected".to_string()
         })?;
-        let metadata = fs::metadata(source).map_err(|error| {
+        let file = tokio::fs::File::open(source).await.map_err(|error| {
             format!("DS5-PKG-002: unable to open the selected component package: {error}")
+        })?;
+        let metadata = file.metadata().await.map_err(|error| {
+            format!("DS5-PKG-002: unable to inspect the selected component package: {error}")
         })?;
         if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_SIDECAR_PACKAGE_BYTES
         {
             return Err("DS5-PKG-002: the selected component package is invalid".to_string());
         }
-        let destination = local_sidecar_package_cache_path(token);
-        fs::copy(source, &destination).map_err(|error| {
-            format!("DS5-PKG-002: unable to prepare the selected component package: {error}")
-        })?;
-        Some(TemporaryPackageFile(destination))
+        Some((file, metadata.len()))
     } else {
         if selected_package.is_some() {
             return Err("DS5-PKG-002: a local package is not valid for this operation".to_string());
@@ -1618,7 +1691,7 @@ async fn run_elevated_operation(
         None
     };
     let pipe_name = elevated_pipe_name(token);
-    let server = ServerOptions::new()
+    let mut server = ServerOptions::new()
         .access_inbound(true)
         .access_outbound(true)
         .first_pipe_instance(true)
@@ -1645,6 +1718,29 @@ async fn run_elevated_operation(
 
     wait_for_elevated_pipe_connection(server.connect(), &mut helper_exit).await?;
     drop(helper_exit);
+    if let Some((file, size)) = local_package.take() {
+        server
+            .write_all(&size.to_le_bytes())
+            .await
+            .map_err(|error| {
+                format!("DS5-PKG-002: unable to transfer the selected component package: {error}")
+            })?;
+        let mut limited = file.take(size);
+        let copied = tokio::io::copy(&mut limited, &mut server)
+            .await
+            .map_err(|error| {
+                format!("DS5-PKG-002: unable to transfer the selected component package: {error}")
+            })?;
+        if copied != size {
+            return Err(
+                "DS5-PKG-002: the selected component package changed while it was being transferred"
+                    .to_string(),
+            );
+        }
+        server.flush().await.map_err(|error| {
+            format!("DS5-PKG-002: unable to finish the component package transfer: {error}")
+        })?;
+    }
 
     let receive = async move {
         let mut reader = BufReader::new(server);

@@ -991,6 +991,7 @@ export const zh = {
       transport_installing: '正在安装 USB/IP 0.9.7.7 传输驱动',
       sidecar_downloading: '正在下载 Sunshine Sidecar 组件包',
       sidecar_verifying: '正在校验 Sunshine Sidecar 组件包',
+      sidecar_local: '正在使用匹配的本地 Sunshine Sidecar 组件包',
       downloading: '正在下载 HIDMaestro 安装包',
       verifying: '正在校验并安全解压发布包',
       probing: '正在检查组件和设备模式',
@@ -1086,6 +1087,7 @@ export const zh = {
       contexts: {
         status: { fallback: '无法读取 DualSense 状态，请刷新后重试。' },
         install: { fallback: 'DualSense 组件未能安装。请检查网络，并在提示时允许管理员权限后重试。' },
+        packagePicker: { fallback: '无法选择本地组件包，请重新打开文件选择器后再试。' },
         config: { fallback: 'DualSense 设置未能保存，已恢复当前状态，请稍后重试。' },
         test: {
           'DS5-PKG-003': '测试设备未能启动。请先点击“修复组件”；如果刚安装 USB/IP，可重启 Windows 后再试。',

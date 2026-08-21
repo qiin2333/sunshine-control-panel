@@ -110,6 +110,24 @@
         </div>
       </section>
 
+      <section v-if="status.verified" class="compatibility-section" :aria-label="t.dualSense.gameCompatibility">
+        <span class="section-label">{{ t.dualSense.gameCompatibility }}</span>
+        <div class="compatibility-option">
+          <span class="option-copy">
+            <strong>{{ t.dualSense.genshinMode }}</strong>
+            <small>{{ status.genshin_compatibility_available ? t.dualSense.genshinModeTip : t.dualSense.genshinModeUnavailable }}</small>
+          </span>
+          <el-checkbox
+            v-model="genshinCompatibility"
+            :disabled="!status.genshin_compatibility_available || !enabled || !audioHaptics || status.in_use || controlsBusy"
+            @change="setGenshinCompatibility"
+          >{{ genshinCompatibility ? t.dualSense.enabledLabel : t.dualSense.disabledLabel }}</el-checkbox>
+        </div>
+        <p v-if="genshinCompatibility" class="compatibility-notice">
+          <span aria-hidden="true">!</span>{{ t.dualSense.genshinModeActive }}
+        </p>
+      </section>
+
       <section v-if="status.verified" class="test-section">
         <div>
           <strong>{{ t.dualSense.validateMode }}</strong>
@@ -184,12 +202,15 @@ const operationProgress = ref(0)
 const operationStageKey = ref('preparing')
 const enabled = ref(false)
 const audioHaptics = ref(false)
+const genshinCompatibility = ref(false)
 const testCompleted = ref(false)
 const expandedSections = ref([])
 const rebootRecommended = ref(false)
 const status = ref({
   state: 'loading', installed: false, verified: false, enabled: false,
-  audio_haptics: false, driver_installed: false, usbip_available: false, usbip_version: '',
+  audio_haptics: false, genshin_compatibility: false,
+  genshin_compatibility_available: false,
+  driver_installed: false, usbip_available: false, usbip_version: '',
   usbip_version_valid: false, reboot_recommended: false,
   standard_profile: false, composite_profile: false, in_use: false,
   error_code: '', detail: '',
@@ -272,6 +293,7 @@ const refresh = async (quiet = false) => {
       statusKnown.value = true
       enabled.value = result.data.enabled
       audioHaptics.value = result.data.audio_haptics
+      genshinCompatibility.value = result.data.genshin_compatibility ?? false
       refreshed = true
     } else if (!quiet) {
       showError(result.message, 'status')
@@ -307,6 +329,7 @@ const install = async () => {
   statusKnown.value = true
   enabled.value = result.data.enabled
   audioHaptics.value = result.data.audio_haptics
+  genshinCompatibility.value = result.data.genshin_compatibility ?? false
   rebootRecommended.value = result.data.reboot_recommended
   ElMessage.success(t.value.dualSense.installSuccess)
   if (result.data.reboot_recommended) {
@@ -320,12 +343,19 @@ const saveSettings = async () => {
   if (refreshing.value || operation.value || saving.value) {
     enabled.value = status.value.enabled
     audioHaptics.value = status.value.audio_haptics
+    genshinCompatibility.value = status.value.genshin_compatibility ?? false
     return
   }
   const requestedEnabled = enabled.value
   const requestedAudioHaptics = audioHaptics.value
+  const requestedGenshinCompatibility = requestedEnabled && requestedAudioHaptics && genshinCompatibility.value
+  genshinCompatibility.value = requestedGenshinCompatibility
   saving.value = true
-  let result = await dualsense.setConfig(requestedEnabled, requestedAudioHaptics)
+  let result = await dualsense.setConfig(
+    requestedEnabled,
+    requestedAudioHaptics,
+    requestedGenshinCompatibility,
+  )
   let refreshedAfterFailure = false
   if (!result.success && dualSenseErrorCode(result.message) === 'DS5-CFG-003') {
     saving.value = false
@@ -337,8 +367,13 @@ const saveSettings = async () => {
     if (canRetry) {
       enabled.value = requestedEnabled
       audioHaptics.value = requestedAudioHaptics
+      genshinCompatibility.value = requestedGenshinCompatibility
       saving.value = true
-      result = await dualsense.setConfig(requestedEnabled, requestedAudioHaptics)
+      result = await dualsense.setConfig(
+        requestedEnabled,
+        requestedAudioHaptics,
+        requestedGenshinCompatibility,
+      )
       refreshedAfterFailure = false
     }
   }
@@ -350,6 +385,7 @@ const saveSettings = async () => {
     if (!refreshedAfterFailure) {
       enabled.value = status.value.enabled
       audioHaptics.value = status.value.audio_haptics
+      genshinCompatibility.value = status.value.genshin_compatibility ?? false
     }
     return showError(result.message, 'config')
   }
@@ -357,13 +393,21 @@ const saveSettings = async () => {
   status.value = result.data
   enabled.value = result.data.enabled
   audioHaptics.value = result.data.audio_haptics
+  genshinCompatibility.value = result.data.genshin_compatibility ?? false
   ElMessage.success(t.value.dualSense.configSuccess)
 }
 
 const setAudioHaptics = async (enabled) => {
   if (controlsBusy.value || audioHaptics.value === enabled) return
   audioHaptics.value = enabled
+  if (!enabled) genshinCompatibility.value = false
   testCompleted.value = false
+  await saveSettings()
+}
+
+const setGenshinCompatibility = async (value) => {
+  if (controlsBusy.value) return
+  genshinCompatibility.value = Boolean(value)
   await saveSettings()
 }
 
@@ -513,6 +557,23 @@ onUnmounted(() => {
   strong { font-weight: 500; }
   small { margin-top: 4px; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.55; }
 }
+.compatibility-section { margin-top: 26px; }
+.compatibility-option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 24px;
+  align-items: center;
+  padding: 4px 12px;
+}
+.compatibility-notice {
+  display: flex;
+  gap: 9px;
+  margin: 10px 12px 0;
+  color: var(--el-color-warning-dark-2);
+  font-size: 13px;
+  line-height: 1.55;
+  span { flex: 0 0 auto; font-family: 'PixelMplus12', 'Courier New', monospace; font-weight: 700; }
+}
 .test-section { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; margin-top: 26px; p { margin: 5px 0 0; max-width: 680px; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.55; } }
 .test-actions { justify-content: flex-start; }
 .controller-meta-action { flex: 0 0 100%; }
@@ -561,5 +622,6 @@ onUnmounted(() => {
   .enable-control { justify-self: stretch; }
   .status-actions, .test-actions { justify-content: flex-start; }
   .profile-option { grid-template-columns: 16px minmax(0, 1fr) auto; padding-inline: 6px; }
+  .compatibility-option { grid-template-columns: 1fr; gap: 8px; padding-inline: 6px; }
 }
 </style>

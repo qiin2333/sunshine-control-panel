@@ -105,9 +105,10 @@ export const dualsense = {
   getStatus: () => wrapResult('dualsense_get_status'),
   install: () => wrapResult('dualsense_install'),
   uninstall: () => wrapResult('dualsense_uninstall'),
-  setConfig: (enabled, audioHaptics) => wrapResult('dualsense_set_config', {
+  setConfig: (enabled, audioHaptics, genshinCompatibility) => wrapResult('dualsense_set_config', {
     enabled: !!enabled,
     audioHaptics: !!audioHaptics,
+    genshinCompatibility: !!genshinCompatibility,
   }),
   selfTest: (profile) => wrapResult('dualsense_self_test', { profile }),
 }

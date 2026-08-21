@@ -131,7 +131,7 @@
           </span>
           <el-checkbox
             v-model="genshinCompatibility"
-            :disabled="!status.genshin_compatibility_available || !enabled || !audioHaptics || status.in_use || controlsBusy"
+            :disabled="!status.genshin_compatibility_available || !status.usbip_available || !enabled || !audioHaptics || status.in_use || controlsBusy"
             @change="setGenshinCompatibility"
           >{{ genshinCompatibility ? t.dualSense.enabledLabel : t.dualSense.disabledLabel }}</el-checkbox>
         </div>

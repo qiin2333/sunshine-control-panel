@@ -204,6 +204,7 @@ struct InstalledComponentManifest {
     sha256: String,
     protocol: u32,
     sidecar_file: String,
+    sidecar_sha256: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -850,6 +851,41 @@ fn validate_sidecar_runtime_metadata(directory: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_component_backup(directory: &Path) -> Result<(), String> {
+    let manifest: InstalledComponentManifest = serde_json::from_slice(
+        &fs::read(directory.join("component.json"))
+            .map_err(|error| format!("backup component manifest is missing: {error}"))?,
+    )
+    .map_err(|error| format!("backup component manifest is invalid: {error}"))?;
+    if manifest.protocol != PROTOCOL_VERSION || manifest.sidecar_file != SIDECAR_EXE {
+        return Err("backup component protocol or sidecar does not match Sunshine".to_string());
+    }
+
+    let runtime_metadata: SidecarRuntimeMetadata = serde_json::from_slice(
+        &fs::read(directory.join("runtime.json"))
+            .map_err(|error| format!("backup runtime metadata is missing: {error}"))?,
+    )
+    .map_err(|error| format!("backup runtime metadata is invalid: {error}"))?;
+    if runtime_metadata.component_version != manifest.component_version
+        || runtime_metadata.protocol != PROTOCOL_VERSION
+        || runtime_metadata.target != SIDECAR_PACKAGE_TARGET
+    {
+        return Err("backup runtime metadata does not match its component manifest".to_string());
+    }
+
+    let sidecar_hash = sha256_file(&directory.join(SIDECAR_EXE))?;
+    if manifest.sidecar_sha256.len() != 64
+        || !sidecar_hash.eq_ignore_ascii_case(&manifest.sidecar_sha256)
+    {
+        return Err("backup sidecar integrity check failed".to_string());
+    }
+    let hidmaestro_hash = sha256_file(&directory.join("HIDMaestro.Core.dll"))?;
+    if manifest.sha256.len() != 64 || !hidmaestro_hash.eq_ignore_ascii_case(&manifest.sha256) {
+        return Err("backup HIDMaestro integrity check failed".to_string());
+    }
+    Ok(())
+}
+
 fn extract_sidecar_package(
     archive_path: &Path,
     staging: &Path,
@@ -1224,10 +1260,25 @@ fn rollback_activated_component(
         if !backup.exists() {
             return Err("previous component backup is missing".to_string());
         }
+        validate_component_backup(backup)?;
         fs::rename(backup, active)
             .map_err(|error| format!("unable to restore previous component: {error}"))?;
     }
     Ok(())
+}
+
+fn install_error_after_rollback(
+    error: String,
+    active: &Path,
+    backup: &Path,
+    had_previous: bool,
+) -> String {
+    match rollback_activated_component(active, backup, had_previous) {
+        Ok(()) => format!("{error}; activated component was rolled back"),
+        Err(rollback_error) => {
+            format!("{error}; component rollback also failed: {rollback_error}")
+        }
+    }
 }
 
 async fn dualsense_install_impl(
@@ -1416,18 +1467,25 @@ async fn dualsense_install_impl(
         if config_error.starts_with("DS5-CFG-002:") {
             return Err(config_error);
         }
-        let rollback_result = rollback_activated_component(&active, &backup, had_previous);
-        return match rollback_result {
-            Ok(()) => Err(format!(
-                "{config_error}; activated component was rolled back"
-            )),
-            Err(rollback_error) => Err(format!(
-                "{config_error}; component rollback also failed: {rollback_error}"
-            )),
-        };
+        return Err(install_error_after_rollback(
+            config_error,
+            &active,
+            &backup,
+            had_previous,
+        ));
     }
     report_progress(progress, "complete", 100);
-    let mut status = dualsense_get_status().await?;
+    let mut status = match dualsense_get_status().await {
+        Ok(status) => status,
+        Err(status_error) => {
+            return Err(install_error_after_rollback(
+                status_error,
+                &active,
+                &backup,
+                had_previous,
+            ));
+        }
+    };
     if !status.verified {
         let verification_error = if status.detail.is_empty() {
             "DS5-PKG-003: the installed component did not pass the final capability check"
@@ -1435,14 +1493,12 @@ async fn dualsense_install_impl(
         } else {
             status.detail
         };
-        return match rollback_activated_component(&active, &backup, had_previous) {
-            Ok(()) => Err(format!(
-                "{verification_error}; activated component was rolled back"
-            )),
-            Err(rollback_error) => Err(format!(
-                "{verification_error}; component rollback also failed: {rollback_error}"
-            )),
-        };
+        return Err(install_error_after_rollback(
+            verification_error,
+            &active,
+            &backup,
+            had_previous,
+        ));
     }
     status.reboot_recommended = reboot_recommended;
     Ok(status)
@@ -2080,6 +2136,35 @@ mod tests {
     use std::io::Write as _;
     use std::process::Command;
 
+    fn write_valid_component(directory: &std::path::Path, marker: &[u8]) {
+        std::fs::create_dir_all(directory).unwrap();
+        std::fs::write(directory.join(super::SIDECAR_EXE), marker).unwrap();
+        std::fs::write(directory.join("HIDMaestro.Core.dll"), marker).unwrap();
+        std::fs::write(
+            directory.join("runtime.json"),
+            serde_json::json!({
+                "component_version": "1.0.0",
+                "protocol": super::PROTOCOL_VERSION,
+                "target": super::SIDECAR_PACKAGE_TARGET,
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            directory.join("component.json"),
+            serde_json::json!({
+                "component_version": "1.0.0",
+                "hidmaestro_version": "1.6.1",
+                "sha256": sha256_file(&directory.join("HIDMaestro.Core.dll")).unwrap(),
+                "protocol": super::PROTOCOL_VERSION,
+                "sidecar_file": super::SIDECAR_EXE,
+                "sidecar_sha256": sha256_file(&directory.join(super::SIDECAR_EXE)).unwrap(),
+            })
+            .to_string(),
+        )
+        .unwrap();
+    }
+
     #[test]
     fn composite_profile_requires_usbip() {
         let error = validate_requested_profile(true, true, false, false).unwrap_err();
@@ -2144,6 +2229,7 @@ mod tests {
             sha256: super::HIDMAESTRO_SHA256.to_uppercase(),
             protocol: super::PROTOCOL_VERSION,
             sidecar_file: super::SIDECAR_EXE.to_string(),
+            sidecar_sha256: "a".repeat(64),
         };
         assert!(!component_update_available(Some(&current)));
         assert!(component_matches_current_runtime(Some(&current), true));
@@ -2264,14 +2350,13 @@ mod tests {
         let active = root.join("active");
         let backup = root.join("previous");
         std::fs::create_dir_all(&active).unwrap();
-        std::fs::create_dir_all(&backup).unwrap();
         std::fs::write(active.join("runtime.txt"), b"failed").unwrap();
-        std::fs::write(backup.join("runtime.txt"), b"previous").unwrap();
+        write_valid_component(&backup, b"previous");
 
         rollback_activated_component(&active, &backup, true).unwrap();
 
         assert_eq!(
-            std::fs::read(active.join("runtime.txt")).unwrap(),
+            std::fs::read(active.join(super::SIDECAR_EXE)).unwrap(),
             b"previous"
         );
         assert!(!backup.exists());
@@ -2289,6 +2374,23 @@ mod tests {
         rollback_activated_component(&active, &backup, false).unwrap();
 
         assert!(!active.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn final_verification_rollback_rejects_a_corrupt_backup() {
+        let root = std::env::temp_dir().join(format!("sunshine-ds5-test-{}", uuid::Uuid::new_v4()));
+        let active = root.join("active");
+        let backup = root.join("previous");
+        std::fs::create_dir_all(&active).unwrap();
+        write_valid_component(&backup, b"previous");
+        std::fs::write(backup.join(super::SIDECAR_EXE), b"tampered").unwrap();
+
+        let error = rollback_activated_component(&active, &backup, true).unwrap_err();
+
+        assert!(error.contains("backup sidecar integrity check failed"));
+        assert!(!active.exists());
+        assert!(backup.exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 

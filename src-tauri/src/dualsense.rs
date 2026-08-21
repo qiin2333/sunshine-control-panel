@@ -591,6 +591,12 @@ fn run_probe(executable: &Path) -> Result<ProbeResult, String> {
     if !result.standard || !result.composite {
         return Err("DS5-PKG-003: required DualSense profiles are unavailable".to_string());
     }
+    if !result.genshin_compatibility_identity {
+        return Err(
+            "DS5-PROTO-001: the sidecar runtime does not support Genshin compatibility mode"
+                .to_string(),
+        );
+    }
     Ok(result)
 }
 
@@ -807,6 +813,7 @@ fn sidecar_source_dir() -> Result<PathBuf, String> {
 }
 
 fn copy_runtime_files(source: &Path, destination: &Path) -> Result<(), String> {
+    validate_sidecar_runtime_metadata(source)?;
     for entry in fs::read_dir(source).map_err(|error| error.to_string())? {
         let entry = entry.map_err(|error| error.to_string())?;
         if entry
@@ -824,6 +831,21 @@ fn copy_runtime_files(source: &Path, destination: &Path) -> Result<(), String> {
             fs::copy(entry.path(), destination.join(entry.file_name()))
                 .map_err(|error| format!("DS5-PKG-002: unable to copy sidecar runtime: {error}"))?;
         }
+    }
+    Ok(())
+}
+
+fn validate_sidecar_runtime_metadata(directory: &Path) -> Result<(), String> {
+    let runtime_metadata: SidecarRuntimeMetadata =
+        serde_json::from_slice(&fs::read(directory.join("runtime.json")).map_err(|error| {
+            format!("DS5-PKG-002: sidecar runtime metadata is missing: {error}")
+        })?)
+        .map_err(|error| format!("DS5-PKG-002: invalid sidecar runtime metadata: {error}"))?;
+    if runtime_metadata.component_version != COMPONENT_VERSION
+        || runtime_metadata.protocol != PROTOCOL_VERSION
+        || runtime_metadata.target != SIDECAR_PACKAGE_TARGET
+    {
+        return Err("DS5-PKG-002: sidecar runtime metadata does not match Sunshine".to_string());
     }
     Ok(())
 }
@@ -891,17 +913,7 @@ fn extract_sidecar_package(
     if !staging.join(SIDECAR_EXE).is_file() {
         return Err("DS5-PKG-002: sidecar executable is missing from the package".to_string());
     }
-    let runtime_metadata: SidecarRuntimeMetadata =
-        serde_json::from_slice(&fs::read(staging.join("runtime.json")).map_err(|error| {
-            format!("DS5-PKG-002: sidecar runtime metadata is missing: {error}")
-        })?)
-        .map_err(|error| format!("DS5-PKG-002: invalid sidecar runtime metadata: {error}"))?;
-    if runtime_metadata.component_version != COMPONENT_VERSION
-        || runtime_metadata.protocol != PROTOCOL_VERSION
-        || runtime_metadata.target != SIDECAR_PACKAGE_TARGET
-    {
-        return Err("DS5-PKG-002: sidecar runtime metadata does not match Sunshine".to_string());
-    }
+    validate_sidecar_runtime_metadata(staging)?;
     Ok(())
 }
 
@@ -1214,13 +1226,18 @@ async fn dualsense_install_impl(
     let using_discovered_package = discovered_package.is_some();
     let using_selected_package = local_sidecar_package.is_some();
     let local_sidecar_package = local_sidecar_package.or(discovered_package.as_deref());
-    let bundled_source = if local_sidecar_package.is_none() {
-        sidecar_source_dir().ok()
+    let manifest_available = sidecar_package_manifest_path()
+        .try_exists()
+        .map_err(|error| {
+            format!("DS5-PKG-002: unable to inspect the DualSense package manifest: {error}")
+        })?;
+    let package_manifest = if local_sidecar_package.is_some() || manifest_available {
+        Some(sidecar_package_manifest()?)
     } else {
         None
     };
-    let package_manifest = if bundled_source.is_none() {
-        Some(sidecar_package_manifest()?)
+    let bundled_source = if package_manifest.is_none() {
+        Some(sidecar_source_dir()?)
     } else {
         None
     };
@@ -1406,6 +1423,14 @@ async fn dualsense_install_impl(
     }
     report_progress(progress, "complete", 100);
     let mut status = dualsense_get_status().await?;
+    if !status.verified {
+        return Err(if status.detail.is_empty() {
+            "DS5-PKG-003: the installed component did not pass the final capability check"
+                .to_string()
+        } else {
+            status.detail
+        });
+    }
     status.reboot_recommended = reboot_recommended;
     Ok(status)
 }
@@ -2035,8 +2060,9 @@ mod tests {
         InstalledComponentManifest, SidecarPackageManifest, UsbipInstallResult,
         apply_gamepad_selection, classify_usbip_installer_exit_code,
         component_matches_current_runtime, component_state, component_test_failure,
-        component_update_available, extract_sidecar_package, pinned_usbip_installed, sha256_file,
-        validate_requested_profile, validate_sidecar_package_manifest,
+        component_update_available, copy_runtime_files, extract_sidecar_package,
+        pinned_usbip_installed, sha256_file, validate_requested_profile,
+        validate_sidecar_package_manifest,
     };
     use std::io::Write as _;
     use std::process::Command;
@@ -2190,6 +2216,32 @@ mod tests {
         extract_sidecar_package(&archive_path, &staging, &manifest).unwrap();
         assert!(staging.join(super::SIDECAR_EXE).is_file());
         assert!(staging.join("runtime.json").is_file());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bundled_runtime_rejects_stale_component_metadata() {
+        let root = std::env::temp_dir().join(format!("sunshine-ds5-test-{}", uuid::Uuid::new_v4()));
+        let source = root.join("source");
+        let destination = root.join("destination");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&destination).unwrap();
+        std::fs::write(source.join(super::SIDECAR_EXE), b"MZ-test").unwrap();
+        std::fs::write(
+            source.join("runtime.json"),
+            serde_json::json!({
+                "component_version": "1.0.0-build-runtime",
+                "protocol": super::PROTOCOL_VERSION,
+                "target": super::SIDECAR_PACKAGE_TARGET,
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let error = copy_runtime_files(&source, &destination).unwrap_err();
+
+        assert!(error.contains("runtime metadata does not match Sunshine"));
+        assert!(!destination.join(super::SIDECAR_EXE).exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 

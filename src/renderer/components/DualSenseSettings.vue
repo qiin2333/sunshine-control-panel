@@ -75,6 +75,17 @@
           >
             <el-icon><Refresh /></el-icon>{{ t.dualSense.refresh }}
           </el-button>
+          <el-button
+            v-if="statusKnown && (!status.installed || !status.verified || status.update_available)"
+            text
+            class="menu-action menu-action-secondary"
+            :disabled="loading || status.in_use || controlsBusy"
+            @click="installFromPackage"
+          >
+            <span class="action-bracket" aria-hidden="true">[</span>
+            <span>{{ t.dualSense.installLocalPackage }}</span>
+            <span class="action-bracket" aria-hidden="true">]</span>
+          </el-button>
         </div>
       </section>
 
@@ -199,8 +210,10 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
+import { open } from '@tauri-apps/plugin-dialog'
 import { dualsense } from '../tauri-adapter.js'
 import { dualSenseErrorCode, friendlyDualSenseError } from '../composables/dualsenseErrors.js'
+import { installSelectedDualSensePackage } from '../composables/dualsenseInstallFlow.js'
 import { useI18n } from '../desktop/i18n/index.js'
 
 const { t } = useI18n()
@@ -329,14 +342,20 @@ const refresh = async (quiet = false) => {
   return refreshed
 }
 
-const install = async () => {
+const install = async (packagePath = null) => {
   if (controlsBusy.value) return
+  packagePath = typeof packagePath === 'string' ? packagePath : null
   const upgrading = Boolean(status.value.installed && status.value.update_available)
+  const localPackage = Boolean(packagePath)
   operation.value = 'confirm-install'
   try {
     await ElMessageBox.confirm(
-      upgrading ? t.value.dualSense.updateConfirm : t.value.dualSense.installConfirm,
-      upgrading ? t.value.dualSense.updateTitle : t.value.dualSense.installTitle,
+      localPackage
+        ? t.value.dualSense.localInstallConfirm
+        : upgrading ? t.value.dualSense.updateConfirm : t.value.dualSense.installConfirm,
+      localPackage
+        ? t.value.dualSense.localInstallTitle
+        : upgrading ? t.value.dualSense.updateTitle : t.value.dualSense.installTitle,
       {
         type: 'warning',
         confirmButtonText: upgrading ? t.value.dualSense.update : t.value.dualSense.install,
@@ -348,7 +367,7 @@ const install = async () => {
   }
   operation.value = 'install'
   operationProgress.value = 0
-  const result = await dualsense.install()
+  const result = await dualsense.install(packagePath)
   if (!result.success) {
     operation.value = ''
     await refresh(true)
@@ -366,6 +385,25 @@ const install = async () => {
     ElMessage.warning(status.value.usbip_available
       ? t.value.dualSense.restartSuggestedAvailable
       : t.value.dualSense.restartSuggestedUnavailable)
+  }
+}
+
+const installFromPackage = async () => {
+  if (controlsBusy.value) return
+  let selected
+  try {
+    selected = await open({
+      multiple: false,
+      directory: false,
+      title: t.value.dualSense.selectLocalPackage,
+      filters: [{ name: t.value.dualSense.componentPackage, extensions: ['zip'] }],
+    })
+  } catch (error) {
+    showError(error, 'packagePicker')
+    return
+  }
+  if (typeof selected === 'string' && selected) {
+    await installSelectedDualSensePackage({ packagePath: selected, installPackage: install })
   }
 }
 

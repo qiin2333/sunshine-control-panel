@@ -35,7 +35,7 @@ const MAX_EXTRACTED_BYTES: u64 = 200 * 1024 * 1024;
 const MAX_ARCHIVE_FILES: usize = 256;
 const SIDECAR_EXE: &str = "Sunshine.Ds5Sidecar.exe";
 const SIDECAR_PACKAGE_MANIFEST: &str = "ds5-sidecar-package.json";
-const SIDECAR_PACKAGE_ASSET: &str = "Sunshine.Ds5Sidecar.Windows-x64.zip";
+const SIDECAR_PACKAGE_ASSET: &str = "Sunshine.Ds5Sidecar.x64.zip";
 const SIDECAR_PACKAGE_TARGET: &str = "win-x64-self-contained";
 const SIDECAR_PACKAGE_LICENSE: &str = "GPL-3.0-only";
 const MAX_SIDECAR_PACKAGE_BYTES: u64 = 160 * 1024 * 1024;
@@ -493,21 +493,25 @@ fn installed_component_manifest() -> Option<InstalledComponentManifest> {
     serde_json::from_slice(&contents).ok()
 }
 
-fn component_needs_update(
+fn component_update_available(manifest: Option<&InstalledComponentManifest>) -> bool {
+    manifest.is_some_and(|manifest| manifest.component_version != COMPONENT_VERSION)
+}
+
+fn component_matches_current_runtime(
     manifest: Option<&InstalledComponentManifest>,
     genshin_compatibility_available: bool,
     audio_policy_violation_available: bool,
 ) -> bool {
     let Some(manifest) = manifest else {
-        return true;
+        return false;
     };
-    manifest.component_version != COMPONENT_VERSION
-        || manifest.hidmaestro_version != HIDMAESTRO_VERSION
-        || !manifest.sha256.eq_ignore_ascii_case(HIDMAESTRO_SHA256)
-        || manifest.protocol != PROTOCOL_VERSION
-        || manifest.sidecar_file != SIDECAR_EXE
-        || !genshin_compatibility_available
-        || !audio_policy_violation_available
+    manifest.component_version == COMPONENT_VERSION
+        && manifest.hidmaestro_version == HIDMAESTRO_VERSION
+        && manifest.sha256.eq_ignore_ascii_case(HIDMAESTRO_SHA256)
+        && manifest.protocol == PROTOCOL_VERSION
+        && manifest.sidecar_file == SIDECAR_EXE
+        && genshin_compatibility_available
+        && audio_policy_violation_available
 }
 
 async fn read_core_ds5_response(
@@ -1018,7 +1022,7 @@ async fn dualsense_get_status_with_config(
     } else {
         None
     };
-    let (verified, result, mut error_code, mut detail) = match probe {
+    let (probe_succeeded, result, mut error_code, mut detail) = match probe {
         Some(Ok(result)) => (true, result, String::new(), String::new()),
         Some(Err(detail)) => {
             let code = detail
@@ -1042,12 +1046,17 @@ async fn dualsense_get_status_with_config(
     let usbip_version_valid = pinned_usbip_installed(Some(usbip_version.as_str()));
     let usbip_available = result.usbip_available && usbip_version_valid;
     let manifest = installed.then(installed_component_manifest).flatten();
-    let update_available = installed
-        && component_needs_update(
-            manifest.as_ref(),
-            result.genshin_compatibility_identity,
-            result.audio_policy_violation,
-        );
+    let update_available = installed && component_update_available(manifest.as_ref());
+    let matches_current_runtime = component_matches_current_runtime(
+        manifest.as_ref(),
+        result.genshin_compatibility_identity,
+        result.audio_policy_violation,
+    );
+    let verified = probe_succeeded && (update_available || matches_current_runtime);
+    if probe_succeeded && !update_available && !matches_current_runtime {
+        error_code = "DS5-PROTO-001".to_string();
+        detail = "DS5-PROTO-001: the installed component metadata or capabilities do not match this Control Panel build".to_string();
+    }
     let state = component_state(
         installed,
         verified,
@@ -2265,9 +2274,10 @@ pub async fn dualsense_uninstall() -> Result<DualSenseStatus, String> {
 mod tests {
     use super::{
         clamp_tuning, classify_usbip_installer_exit_code, component_state, component_test_failure,
-        component_needs_update, core_ds5_http_error, extract_sidecar_package,
-        local_uninstalled_status, pinned_usbip_installed, require_entity_tag, resolve_core_config,
-        sha256_file, update_config_fields, update_tuning_fields,
+        component_matches_current_runtime, component_update_available, core_ds5_http_error,
+        extract_sidecar_package, local_uninstalled_status, pinned_usbip_installed,
+        require_entity_tag, resolve_core_config, sha256_file, update_config_fields,
+        update_tuning_fields,
         validate_core_ds5_response, validate_requested_profile, validate_strong_entity_tag,
         validate_sidecar_package_manifest, CoreDualSenseResponse, CoreDualSenseSettings,
         InstalledComponentManifest, SidecarPackageManifest, UsbipInstallResult,
@@ -2338,7 +2348,7 @@ mod tests {
     }
 
     #[test]
-    fn component_update_requires_current_manifest_and_capability() {
+    fn component_status_separates_updates_from_same_version_repairs() {
         let current = InstalledComponentManifest {
             component_version: super::COMPONENT_VERSION.to_string(),
             hidmaestro_version: super::HIDMAESTRO_VERSION.to_string(),
@@ -2346,16 +2356,19 @@ mod tests {
             protocol: super::PROTOCOL_VERSION,
             sidecar_file: super::SIDECAR_EXE.to_string(),
         };
-        assert!(!component_needs_update(Some(&current), true, true));
-        assert!(component_needs_update(Some(&current), false, true));
-        assert!(component_needs_update(Some(&current), true, false));
-        assert!(component_needs_update(None, true, true));
+        assert!(!component_update_available(Some(&current)));
+        assert!(component_matches_current_runtime(Some(&current), true, true));
+        assert!(!component_matches_current_runtime(Some(&current), false, true));
+        assert!(!component_matches_current_runtime(Some(&current), true, false));
+        assert!(!component_update_available(None));
+        assert!(!component_matches_current_runtime(None, true, true));
 
         let outdated = InstalledComponentManifest {
             component_version: "1.0.0".to_string(),
             ..current
         };
-        assert!(component_needs_update(Some(&outdated), true, true));
+        assert!(component_update_available(Some(&outdated)));
+        assert!(!component_matches_current_runtime(Some(&outdated), true, true));
     }
 
     #[test]

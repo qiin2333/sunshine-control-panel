@@ -82,7 +82,9 @@
             :disabled="loading || status.in_use || controlsBusy"
             @click="installFromPackage"
           >
-            [ {{ t.dualSense.installLocalPackage }} ]
+            <span class="action-bracket" aria-hidden="true">[</span>
+            <span>{{ t.dualSense.installLocalPackage }}</span>
+            <span class="action-bracket" aria-hidden="true">]</span>
           </el-button>
         </div>
       </section>
@@ -211,6 +213,7 @@ import { Refresh } from '@element-plus/icons-vue'
 import { open } from '@tauri-apps/plugin-dialog'
 import { dualsense } from '../tauri-adapter.js'
 import { dualSenseErrorCode, friendlyDualSenseError } from '../composables/dualsenseErrors.js'
+import { installSelectedDualSensePackage } from '../composables/dualsenseInstallFlow.js'
 import { useI18n } from '../desktop/i18n/index.js'
 
 const { t } = useI18n()
@@ -387,18 +390,20 @@ const install = async (packagePath = null) => {
 
 const installFromPackage = async () => {
   if (controlsBusy.value) return
+  let selected
   try {
-    const selected = await open({
+    selected = await open({
       multiple: false,
       directory: false,
       title: t.value.dualSense.selectLocalPackage,
       filters: [{ name: t.value.dualSense.componentPackage, extensions: ['zip'] }],
     })
-    if (typeof selected === 'string' && selected) {
-      await install(selected)
-    }
   } catch (error) {
     showError(error, 'packagePicker')
+    return
+  }
+  if (typeof selected === 'string' && selected) {
+    await installSelectedDualSensePackage({ packagePath: selected, installPackage: install })
   }
 }
 

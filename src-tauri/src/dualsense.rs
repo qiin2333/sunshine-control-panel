@@ -35,6 +35,7 @@ const SIDECAR_EXE: &str = "Sunshine.Ds5Sidecar.exe";
 const SIDECAR_PACKAGE_MANIFEST: &str = "ds5-sidecar-package.json";
 const SIDECAR_PACKAGE_ASSET: &str = "Sunshine.Ds5Sidecar.Windows-x64.zip";
 const SIDECAR_PACKAGE_TARGET: &str = "win-x64-self-contained";
+const SIDECAR_PACKAGE_LICENSE: &str = "GPL-3.0-only";
 const MAX_SIDECAR_PACKAGE_BYTES: u64 = 160 * 1024 * 1024;
 const CONFIG_APPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 #[cfg(target_os = "windows")]
@@ -211,6 +212,7 @@ struct SidecarPackageManifest {
     component_version: String,
     protocol: u32,
     target: String,
+    license: String,
     asset_name: String,
     download_url: String,
     sha256: String,
@@ -280,6 +282,7 @@ fn validate_sidecar_package_manifest(
         || manifest.component_version != COMPONENT_VERSION
         || manifest.protocol != PROTOCOL_VERSION
         || manifest.target != SIDECAR_PACKAGE_TARGET
+        || manifest.license != SIDECAR_PACKAGE_LICENSE
         || manifest.asset_name != SIDECAR_PACKAGE_ASSET
         || !valid_digest
         || manifest.size == 0
@@ -322,6 +325,31 @@ fn sidecar_package_manifest() -> Result<SidecarPackageManifest, String> {
 #[cfg(target_os = "windows")]
 fn local_sidecar_package_handoff_path(token: uuid::Uuid) -> PathBuf {
     component_root().join(format!("handoff-{token}.partial.zip"))
+}
+
+fn purge_stale_handoff_packages(root: &Path, current_package: Option<&Path>) {
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if current_package.is_some_and(|current| current == path) {
+            continue;
+        }
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_file() {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if name.starts_with("handoff-") && name.ends_with(".partial.zip") {
+            let _ = fs::remove_file(path);
+        }
+    }
 }
 
 fn installed_component_manifest() -> Option<InstalledComponentManifest> {
@@ -1174,6 +1202,7 @@ async fn dualsense_install_impl(
         .then(manually_placed_sidecar_package)
         .flatten();
     let using_discovered_package = discovered_package.is_some();
+    let using_selected_package = local_sidecar_package.is_some();
     let local_sidecar_package = local_sidecar_package.or(discovered_package.as_deref());
     let bundled_source = if local_sidecar_package.is_none() {
         sidecar_source_dir().ok()
@@ -1193,6 +1222,7 @@ async fn dualsense_install_impl(
         fs::remove_dir_all(&staging).map_err(|error| error.to_string())?;
     }
     fs::create_dir(&staging).map_err(|error| error.to_string())?;
+    purge_stale_handoff_packages(&root, local_sidecar_package);
     let archive_path = root.join(format!("{operation}-hidmaestro.partial"));
     let sidecar_archive_path = root.join(format!("{operation}-sidecar.partial.zip"));
     let active = active_dir();
@@ -1287,6 +1317,8 @@ async fn dualsense_install_impl(
                 "sha256": HIDMAESTRO_SHA256,
                 "sidecar_source": if using_discovered_package {
                     "discovered-local"
+                } else if using_selected_package {
+                    "selected-local"
                 } else {
                     package_manifest.as_ref().map(|manifest| manifest.download_url.as_str()).unwrap_or("bundled")
                 },
@@ -2081,6 +2113,7 @@ mod tests {
             component_version: super::COMPONENT_VERSION.to_string(),
             protocol: super::PROTOCOL_VERSION,
             target: super::SIDECAR_PACKAGE_TARGET.to_string(),
+            license: super::SIDECAR_PACKAGE_LICENSE.to_string(),
             asset_name: super::SIDECAR_PACKAGE_ASSET.to_string(),
             download_url: format!(
                 "https://github.com/AlkaidLab/foundation-sunshine/releases/download/v1/{}",
@@ -2093,9 +2126,15 @@ mod tests {
 
         let untrusted = SidecarPackageManifest {
             download_url: format!("https://example.com/{}", super::SIDECAR_PACKAGE_ASSET),
-            ..manifest
+            ..manifest.clone()
         };
         assert!(validate_sidecar_package_manifest(untrusted).is_err());
+
+        let wrong_license = SidecarPackageManifest {
+            license: "MIT".to_string(),
+            ..manifest
+        };
+        assert!(validate_sidecar_package_manifest(wrong_license).is_err());
     }
 
     #[test]
@@ -2128,6 +2167,7 @@ mod tests {
             component_version: super::COMPONENT_VERSION.to_string(),
             protocol: super::PROTOCOL_VERSION,
             target: super::SIDECAR_PACKAGE_TARGET.to_string(),
+            license: super::SIDECAR_PACKAGE_LICENSE.to_string(),
             asset_name: super::SIDECAR_PACKAGE_ASSET.to_string(),
             download_url: String::new(),
             sha256: sha256_file(&archive_path).unwrap(),
@@ -2136,6 +2176,27 @@ mod tests {
         extract_sidecar_package(&archive_path, &staging, &manifest).unwrap();
         assert!(staging.join(super::SIDECAR_EXE).is_file());
         assert!(staging.join("runtime.json").is_file());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn stale_handoff_cleanup_preserves_current_and_unrelated_entries() {
+        let root = std::env::temp_dir().join(format!("sunshine-ds5-test-{}", uuid::Uuid::new_v4()));
+        let stale = root.join("handoff-stale.partial.zip");
+        let current = root.join("handoff-current.partial.zip");
+        let unrelated = root.join("other.partial.zip");
+        let matching_directory = root.join("handoff-directory.partial.zip");
+        std::fs::create_dir_all(&matching_directory).unwrap();
+        std::fs::write(&stale, b"stale").unwrap();
+        std::fs::write(&current, b"current").unwrap();
+        std::fs::write(&unrelated, b"unrelated").unwrap();
+
+        super::purge_stale_handoff_packages(&root, Some(&current));
+
+        assert!(!stale.exists());
+        assert!(current.is_file());
+        assert!(unrelated.is_file());
+        assert!(matching_directory.is_dir());
         std::fs::remove_dir_all(root).unwrap();
     }
 

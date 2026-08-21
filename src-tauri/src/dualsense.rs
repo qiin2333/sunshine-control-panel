@@ -1,14 +1,16 @@
 //! Optional DualSense component lifecycle.
 //!
 //! HIDMaestro is downloaded from its pinned upstream release and verified before
-//! extraction. The Sunshine-owned sidecar is only copied from the installed
-//! Sunshine package (or an explicit development override), keeping third-party
-//! runtime and first-party process ownership separate.
+//! extraction. The Sunshine-owned sidecar is acquired from a release asset
+//! pinned by the installed Sunshine manifest, from a matching user-selected
+//! package, or from an explicit development override. This keeps the optional
+//! self-contained .NET runtime out of the main Sunshine package.
 
 use futures_util::StreamExt;
 use once_cell::sync::{Lazy, OnceCell};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -30,6 +32,10 @@ const MAX_USBIP_INSTALLER_BYTES: u64 = 48 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES: u64 = 200 * 1024 * 1024;
 const MAX_ARCHIVE_FILES: usize = 256;
 const SIDECAR_EXE: &str = "Sunshine.Ds5Sidecar.exe";
+const SIDECAR_PACKAGE_MANIFEST: &str = "ds5-sidecar-package.json";
+const SIDECAR_PACKAGE_ASSET: &str = "Sunshine.Ds5Sidecar.Windows-x64.zip";
+const SIDECAR_PACKAGE_TARGET: &str = "win-x64-self-contained";
+const MAX_SIDECAR_PACKAGE_BYTES: u64 = 160 * 1024 * 1024;
 const CONFIG_APPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 #[cfg(target_os = "windows")]
 const ELEVATED_DS5_ARG: &str = "--elevated-dualsense";
@@ -45,9 +51,10 @@ static ELEVATED_HELPER_JOB: OnceCell<std::os::windows::io::OwnedHandle> = OnceCe
 type ProgressReporter<'a> = dyn Fn(&str, u32) + Send + Sync + 'a;
 
 #[cfg(target_os = "windows")]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ElevatedOperation {
     Install,
+    InstallLocal,
     TestStandard,
     TestComposite,
     Uninstall,
@@ -58,6 +65,7 @@ impl ElevatedOperation {
     fn as_arg(self) -> &'static str {
         match self {
             Self::Install => "install",
+            Self::InstallLocal => "install-local",
             Self::TestStandard => "test-standard",
             Self::TestComposite => "test-composite",
             Self::Uninstall => "uninstall",
@@ -67,6 +75,7 @@ impl ElevatedOperation {
     fn parse(value: &str) -> Option<Self> {
         match value {
             "install" => Some(Self::Install),
+            "install-local" => Some(Self::InstallLocal),
             "test-standard" => Some(Self::TestStandard),
             "test-composite" => Some(Self::TestComposite),
             "uninstall" => Some(Self::Uninstall),
@@ -78,10 +87,20 @@ impl ElevatedOperation {
         match self {
             // Installation can include two downloads and a driver installer,
             // each with its own ten-minute timeout.
-            Self::Install => std::time::Duration::from_secs(35 * 60),
+            Self::Install | Self::InstallLocal => std::time::Duration::from_secs(35 * 60),
             Self::TestStandard | Self::TestComposite => std::time::Duration::from_secs(90),
             Self::Uninstall => std::time::Duration::from_secs(120),
         }
+    }
+}
+
+#[cfg(target_os = "windows")]
+struct TemporaryPackageFile(PathBuf);
+
+#[cfg(target_os = "windows")]
+impl Drop for TemporaryPackageFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
     }
 }
 
@@ -179,6 +198,25 @@ struct InstalledComponentManifest {
     sidecar_file: String,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+struct SidecarPackageManifest {
+    schema: u32,
+    component_version: String,
+    protocol: u32,
+    target: String,
+    asset_name: String,
+    download_url: String,
+    sha256: String,
+    size: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct SidecarRuntimeMetadata {
+    component_version: String,
+    protocol: u32,
+    target: String,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum UsbipInstallResult {
     Ready,
@@ -208,6 +246,75 @@ fn active_dir() -> PathBuf {
 
 fn sidecar_path() -> PathBuf {
     active_dir().join(SIDECAR_EXE)
+}
+
+fn sidecar_package_manifest_path() -> PathBuf {
+    PathBuf::from(crate::sunshine::get_sunshine_install_path())
+        .join("tools")
+        .join(SIDECAR_PACKAGE_MANIFEST)
+}
+
+fn manually_placed_sidecar_package() -> Option<PathBuf> {
+    let sunshine_root = PathBuf::from(crate::sunshine::get_sunshine_install_path());
+    [
+        sunshine_root.join(SIDECAR_PACKAGE_ASSET),
+        sunshine_root.join("tools").join(SIDECAR_PACKAGE_ASSET),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+}
+
+fn validate_sidecar_package_manifest(
+    manifest: SidecarPackageManifest,
+) -> Result<SidecarPackageManifest, String> {
+    let valid_digest =
+        manifest.sha256.len() == 64 && manifest.sha256.bytes().all(|byte| byte.is_ascii_hexdigit());
+    if manifest.schema != 1
+        || manifest.component_version != COMPONENT_VERSION
+        || manifest.protocol != PROTOCOL_VERSION
+        || manifest.target != SIDECAR_PACKAGE_TARGET
+        || manifest.asset_name != SIDECAR_PACKAGE_ASSET
+        || !valid_digest
+        || manifest.size == 0
+        || manifest.size > MAX_SIDECAR_PACKAGE_BYTES
+    {
+        return Err("DS5-PKG-002: the DualSense package manifest is invalid".to_string());
+    }
+    if !manifest.download_url.is_empty() {
+        let url = url::Url::parse(&manifest.download_url)
+            .map_err(|_| "DS5-PKG-002: the DualSense package URL is invalid".to_string())?;
+        let valid_url = url.scheme() == "https"
+            && url.host_str() == Some("github.com")
+            && url
+                .path()
+                .starts_with("/AlkaidLab/foundation-sunshine/releases/download/")
+            && url
+                .path_segments()
+                .and_then(Iterator::last)
+                .is_some_and(|name| name == SIDECAR_PACKAGE_ASSET);
+        if !valid_url {
+            return Err("DS5-PKG-002: the DualSense package URL is not trusted".to_string());
+        }
+    }
+    Ok(manifest)
+}
+
+fn sidecar_package_manifest() -> Result<SidecarPackageManifest, String> {
+    let path = sidecar_package_manifest_path();
+    let contents = fs::read(&path).map_err(|error| {
+        format!(
+            "DS5-PKG-002: the DualSense package manifest is missing ({}): {error}",
+            path.display()
+        )
+    })?;
+    let manifest = serde_json::from_slice(&contents)
+        .map_err(|error| format!("DS5-PKG-002: invalid DualSense package manifest: {error}"))?;
+    validate_sidecar_package_manifest(manifest)
+}
+
+#[cfg(target_os = "windows")]
+fn local_sidecar_package_cache_path(token: uuid::Uuid) -> PathBuf {
+    std::env::temp_dir().join(format!("sunshine-ds5-sidecar-{token}.zip"))
 }
 
 fn installed_component_manifest() -> Option<InstalledComponentManifest> {
@@ -676,6 +783,154 @@ fn copy_runtime_files(source: &Path, destination: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn extract_sidecar_package(
+    archive_path: &Path,
+    staging: &Path,
+    manifest: &SidecarPackageManifest,
+) -> Result<(), String> {
+    let metadata = fs::metadata(archive_path)
+        .map_err(|error| format!("DS5-PKG-002: unable to inspect sidecar package: {error}"))?;
+    if metadata.len() != manifest.size {
+        return Err(format!(
+            "DS5-PKG-001: expected sidecar package size {}, got {}",
+            manifest.size,
+            metadata.len()
+        ));
+    }
+    let actual = sha256_file(archive_path)?;
+    if !actual.eq_ignore_ascii_case(&manifest.sha256) {
+        return Err(format!(
+            "DS5-PKG-001: expected sidecar SHA-256 {}, got {actual}",
+            manifest.sha256
+        ));
+    }
+
+    let mut archive =
+        zip::ZipArchive::new(File::open(archive_path).map_err(|error| error.to_string())?)
+            .map_err(|error| format!("DS5-PKG-002: invalid sidecar package: {error}"))?;
+    if archive.len() > MAX_ARCHIVE_FILES {
+        return Err("DS5-PKG-002: sidecar package contains too many files".to_string());
+    }
+    let mut extracted_bytes = 0u64;
+    let mut names = HashSet::new();
+    for index in 0..archive.len() {
+        let mut item = archive.by_index(index).map_err(|error| error.to_string())?;
+        if item.is_dir() {
+            continue;
+        }
+        extracted_bytes = extracted_bytes.saturating_add(item.size());
+        if extracted_bytes > MAX_EXTRACTED_BYTES {
+            return Err("DS5-PKG-002: sidecar package exceeds the extraction limit".to_string());
+        }
+        let Some(relative) = item.enclosed_name() else {
+            return Err("DS5-PKG-002: sidecar package contains an unsafe path".to_string());
+        };
+        if relative.components().count() != 1 {
+            return Err("DS5-PKG-002: sidecar package must contain only root files".to_string());
+        }
+        let Some(name) = relative.file_name().and_then(|name| name.to_str()) else {
+            return Err("DS5-PKG-002: sidecar package contains an invalid file name".to_string());
+        };
+        if name.eq_ignore_ascii_case("HIDMaestro.Core.dll") {
+            return Err(
+                "DS5-PKG-002: sidecar package must not bundle HIDMaestro.Core.dll".to_string(),
+            );
+        }
+        if !names.insert(name.to_ascii_lowercase()) {
+            return Err("DS5-PKG-002: sidecar package contains duplicate files".to_string());
+        }
+        let mut output = File::create(staging.join(name)).map_err(|error| error.to_string())?;
+        std::io::copy(&mut item, &mut output).map_err(|error| error.to_string())?;
+    }
+
+    if !staging.join(SIDECAR_EXE).is_file() {
+        return Err("DS5-PKG-002: sidecar executable is missing from the package".to_string());
+    }
+    let runtime_metadata: SidecarRuntimeMetadata =
+        serde_json::from_slice(&fs::read(staging.join("runtime.json")).map_err(|error| {
+            format!("DS5-PKG-002: sidecar runtime metadata is missing: {error}")
+        })?)
+        .map_err(|error| format!("DS5-PKG-002: invalid sidecar runtime metadata: {error}"))?;
+    if runtime_metadata.component_version != COMPONENT_VERSION
+        || runtime_metadata.protocol != PROTOCOL_VERSION
+        || runtime_metadata.target != SIDECAR_PACKAGE_TARGET
+    {
+        return Err("DS5-PKG-002: sidecar runtime metadata does not match Sunshine".to_string());
+    }
+    Ok(())
+}
+
+async fn acquire_sidecar_package(
+    client: &reqwest::Client,
+    manifest: &SidecarPackageManifest,
+    local_package: Option<&Path>,
+    destination: &Path,
+    progress: &ProgressReporter<'_>,
+) -> Result<(), String> {
+    if let Some(source) = local_package {
+        let metadata = fs::metadata(source).map_err(|error| {
+            format!("DS5-PKG-002: unable to open the selected sidecar package: {error}")
+        })?;
+        if !metadata.is_file() || metadata.len() != manifest.size {
+            return Err(
+                "DS5-PKG-005: the selected component package does not match this Sunshine build"
+                    .to_string(),
+            );
+        }
+        report_progress(progress, "sidecar_verifying", 18);
+        tokio::fs::copy(source, destination)
+            .await
+            .map_err(|error| format!("DS5-PKG-002: unable to stage sidecar package: {error}"))?;
+        let actual = sha256_file(destination)?;
+        if !actual.eq_ignore_ascii_case(&manifest.sha256) {
+            return Err(format!(
+                "DS5-PKG-005: selected package SHA-256 does not match (got {actual})"
+            ));
+        }
+        return Ok(());
+    }
+
+    if manifest.download_url.is_empty() {
+        return Err(
+            "DS5-PKG-001: this development build has no Sidecar download URL; select the matching local component package"
+                .to_string(),
+        );
+    }
+    report_progress(progress, "sidecar_downloading", 12);
+    let response = client
+        .get(&manifest.download_url)
+        .send()
+        .await
+        .map_err(|error| format!("DS5-PKG-001: sidecar download failed: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("DS5-PKG-001: sidecar download failed: {error}"))?;
+    let total_size = response.content_length();
+    if total_size.is_some_and(|size| size != manifest.size) {
+        return Err("DS5-PKG-001: sidecar download size does not match the manifest".to_string());
+    }
+    let mut output = File::create(destination).map_err(|error| error.to_string())?;
+    let mut downloaded = 0u64;
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk =
+            chunk.map_err(|error| format!("DS5-PKG-001: sidecar download failed: {error}"))?;
+        downloaded = downloaded.saturating_add(chunk.len() as u64);
+        if downloaded > manifest.size || downloaded > MAX_SIDECAR_PACKAGE_BYTES {
+            return Err("DS5-PKG-001: sidecar download exceeds the manifest size".to_string());
+        }
+        output
+            .write_all(&chunk)
+            .map_err(|error| error.to_string())?;
+        let value = 12 + (downloaded.saturating_mul(24) / manifest.size).min(24) as u32;
+        report_progress(progress, "sidecar_downloading", value);
+    }
+    drop(output);
+    if downloaded != manifest.size {
+        return Err("DS5-PKG-001: sidecar download ended before the expected size".to_string());
+    }
+    Ok(())
+}
+
 fn extract_verified_package(archive_path: &Path, staging: &Path) -> Result<(), String> {
     let mut archive_file = File::open(archive_path).map_err(|error| error.to_string())?;
     let mut digest = Sha256::new();
@@ -901,12 +1156,27 @@ async fn apply_config(
 
 async fn dualsense_install_impl(
     progress: &ProgressReporter<'_>,
+    local_sidecar_package: Option<&Path>,
 ) -> Result<DualSenseStatus, String> {
     let previous_enabled = config_bool("ds5_enabled", false);
     let previous_audio_haptics = config_bool("ds5_audio_haptics", false);
     let previous_genshin_compatibility = config_bool("ds5_genshin_compatibility", false);
     report_progress(progress, "preparing", 1);
-    let source = sidecar_source_dir()?;
+    let discovered_package = local_sidecar_package
+        .is_none()
+        .then(manually_placed_sidecar_package)
+        .flatten();
+    let local_sidecar_package = local_sidecar_package.or(discovered_package.as_deref());
+    let bundled_source = if local_sidecar_package.is_none() {
+        sidecar_source_dir().ok()
+    } else {
+        None
+    };
+    let package_manifest = if bundled_source.is_none() {
+        Some(sidecar_package_manifest()?)
+    } else {
+        None
+    };
     let root = component_root();
     fs::create_dir_all(&root).map_err(|error| error.to_string())?;
     let operation = format!("staging-{}", std::process::id());
@@ -915,7 +1185,8 @@ async fn dualsense_install_impl(
         fs::remove_dir_all(&staging).map_err(|error| error.to_string())?;
     }
     fs::create_dir(&staging).map_err(|error| error.to_string())?;
-    let archive_path = root.join(format!("{operation}.partial"));
+    let archive_path = root.join(format!("{operation}-hidmaestro.partial"));
+    let sidecar_archive_path = root.join(format!("{operation}-sidecar.partial.zip"));
     let active = active_dir();
     let backup = root.join("previous");
     let had_previous = active.exists();
@@ -928,6 +1199,30 @@ async fn dualsense_install_impl(
 
     let install_result: Result<UsbipInstallResult, String> = async {
         let usbip_install_result = ensure_pinned_usbip(progress, &client, &root).await?;
+        if let Some(manifest) = package_manifest.as_ref() {
+            acquire_sidecar_package(
+                &client,
+                manifest,
+                local_sidecar_package,
+                &sidecar_archive_path,
+                progress,
+            )
+            .await?;
+            report_progress(progress, "sidecar_verifying", 36);
+            let archive = sidecar_archive_path.clone();
+            let destination = staging.clone();
+            let manifest = manifest.clone();
+            tokio::task::spawn_blocking(move || {
+                extract_sidecar_package(&archive, &destination, &manifest)
+            })
+            .await
+            .map_err(|error| format!("DS5-PKG-002: sidecar extraction task failed: {error}"))??;
+        } else if let Some(source) = bundled_source.as_ref() {
+            copy_runtime_files(source, &staging)?;
+        } else {
+            return Err("DS5-PKG-002: no DualSense sidecar source is available".to_string());
+        }
+
         let response = client
             .get(HIDMAESTRO_URL)
             .send()
@@ -935,7 +1230,7 @@ async fn dualsense_install_impl(
             .map_err(|error| format!("DS5-PKG-001: download failed: {error}"))?
             .error_for_status()
             .map_err(|error| format!("DS5-PKG-001: download failed: {error}"))?;
-        report_progress(progress, "downloading", 12);
+        report_progress(progress, "downloading", 38);
         let total_size = response.content_length();
         if total_size.is_some_and(|size| size > MAX_ARCHIVE_BYTES) {
             return Err("DS5-PKG-002: release archive exceeds the download limit".to_string());
@@ -953,20 +1248,19 @@ async fn dualsense_install_impl(
                 .write_all(&chunk)
                 .map_err(|error| error.to_string())?;
             if let Some(total) = total_size.filter(|total| *total != 0) {
-                let download_progress = (downloaded * 60 / total).min(60) as u32;
-                report_progress(progress, "downloading", 12 + download_progress);
+                let download_progress = (downloaded * 34 / total).min(34) as u32;
+                report_progress(progress, "downloading", 38 + download_progress);
             }
         }
         drop(output);
 
-        report_progress(progress, "verifying", 76);
+        report_progress(progress, "verifying", 74);
         let archive = archive_path.clone();
         let destination = staging.clone();
         tokio::task::spawn_blocking(move || extract_verified_package(&archive, &destination))
             .await
             .map_err(|error| error.to_string())??;
-        copy_runtime_files(&source, &staging)?;
-        report_progress(progress, "probing", 88);
+        report_progress(progress, "probing", 86);
         let probe_executable = staging.join(SIDECAR_EXE);
         let probe_path = probe_executable.clone();
         tokio::task::spawn_blocking(move || run_probe(&probe_path))
@@ -980,6 +1274,8 @@ async fn dualsense_install_impl(
                 "hidmaestro_version": HIDMAESTRO_VERSION,
                 "source": HIDMAESTRO_URL,
                 "sha256": HIDMAESTRO_SHA256,
+                "sidecar_source": package_manifest.as_ref().map(|manifest| manifest.download_url.as_str()).unwrap_or("bundled"),
+                "sidecar_package_sha256": package_manifest.as_ref().map(|manifest| manifest.sha256.as_str()).unwrap_or_default(),
                 "protocol": PROTOCOL_VERSION,
                 "sidecar_file": SIDECAR_EXE,
                 "sidecar_sha256": sidecar_sha256
@@ -1007,6 +1303,7 @@ async fn dualsense_install_impl(
     }
     .await;
     let _ = fs::remove_file(&archive_path);
+    let _ = fs::remove_file(&sidecar_archive_path);
     if install_result.is_err() {
         let _ = fs::remove_dir_all(&staging);
     }
@@ -1130,9 +1427,14 @@ async fn run_elevated_helper(operation: ElevatedOperation, token: uuid::Uuid) ->
         }
         ensure_no_active_session().await?;
         match operation {
-            ElevatedOperation::Install => {
-                serde_json::to_value(dualsense_install_impl(&progress).await?)
-                    .map_err(|error| error.to_string())
+            ElevatedOperation::Install | ElevatedOperation::InstallLocal => {
+                let local_package = (operation == ElevatedOperation::InstallLocal)
+                    .then(|| local_sidecar_package_cache_path(token));
+                let result = dualsense_install_impl(&progress, local_package.as_deref()).await;
+                if let Some(path) = local_package {
+                    let _ = fs::remove_file(path);
+                }
+                serde_json::to_value(result?).map_err(|error| error.to_string())
             }
             ElevatedOperation::TestStandard => {
                 dualsense_self_test_impl("standard".to_string()).await
@@ -1287,11 +1589,34 @@ where
 async fn run_elevated_operation(
     app: Option<&tauri::AppHandle>,
     operation: ElevatedOperation,
+    selected_package: Option<&Path>,
 ) -> Result<serde_json::Value, String> {
     use tokio::io::BufReader;
     use tokio::net::windows::named_pipe::ServerOptions;
 
     let token = uuid::Uuid::new_v4();
+    let _temporary_package = if operation == ElevatedOperation::InstallLocal {
+        let source = selected_package.ok_or_else(|| {
+            "DS5-PKG-002: no local DualSense component package was selected".to_string()
+        })?;
+        let metadata = fs::metadata(source).map_err(|error| {
+            format!("DS5-PKG-002: unable to open the selected component package: {error}")
+        })?;
+        if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_SIDECAR_PACKAGE_BYTES
+        {
+            return Err("DS5-PKG-002: the selected component package is invalid".to_string());
+        }
+        let destination = local_sidecar_package_cache_path(token);
+        fs::copy(source, &destination).map_err(|error| {
+            format!("DS5-PKG-002: unable to prepare the selected component package: {error}")
+        })?;
+        Some(TemporaryPackageFile(destination))
+    } else {
+        if selected_package.is_some() {
+            return Err("DS5-PKG-002: a local package is not valid for this operation".to_string());
+        }
+        None
+    };
     let pipe_name = elevated_pipe_name(token);
     let server = ServerOptions::new()
         .access_inbound(true)
@@ -1379,21 +1704,33 @@ async fn run_elevated_operation(
 }
 
 #[tauri::command]
-pub async fn dualsense_install(app: tauri::AppHandle) -> Result<DualSenseStatus, String> {
+pub async fn dualsense_install(
+    app: tauri::AppHandle,
+    package_path: Option<String>,
+) -> Result<DualSenseStatus, String> {
     let _operation = COMPONENT_OPERATION.try_lock().map_err(|_| {
         "DS5-RUN-002: another DualSense component operation is still running".to_string()
     })?;
     ensure_no_active_session().await?;
+    let selected_package = package_path
+        .filter(|path| !path.trim().is_empty())
+        .map(PathBuf::from);
     #[cfg(target_os = "windows")]
     {
-        let data = run_elevated_operation(Some(&app), ElevatedOperation::Install).await?;
+        let operation = if selected_package.is_some() {
+            ElevatedOperation::InstallLocal
+        } else {
+            ElevatedOperation::Install
+        };
+        let data =
+            run_elevated_operation(Some(&app), operation, selected_package.as_deref()).await?;
         return serde_json::from_value(data)
             .map_err(|error| format!("DS5-PKG-003: invalid administrator result: {error}"));
     }
     #[cfg(not(target_os = "windows"))]
     {
         let progress = |stage: &str, value: u32| emit_progress(&app, stage, value);
-        dualsense_install_impl(&progress).await
+        dualsense_install_impl(&progress, selected_package.as_deref()).await
     }
 }
 
@@ -1513,7 +1850,7 @@ pub async fn dualsense_self_test(profile: String) -> Result<serde_json::Value, S
         } else {
             ElevatedOperation::TestStandard
         };
-        return run_elevated_operation(None, operation).await;
+        return run_elevated_operation(None, operation, None).await;
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -1539,7 +1876,7 @@ pub async fn dualsense_uninstall() -> Result<DualSenseStatus, String> {
     ensure_no_active_session().await?;
     #[cfg(target_os = "windows")]
     {
-        let data = run_elevated_operation(None, ElevatedOperation::Uninstall).await?;
+        let data = run_elevated_operation(None, ElevatedOperation::Uninstall, None).await?;
         return serde_json::from_value(data)
             .map_err(|error| format!("DS5-PKG-003: invalid administrator result: {error}"));
     }
@@ -1557,10 +1894,12 @@ mod tests {
         read_limited_elevated_line, wait_for_elevated_pipe_connection,
     };
     use super::{
-        InstalledComponentManifest, UsbipInstallResult, apply_gamepad_selection,
-        classify_usbip_installer_exit_code, component_needs_update, component_state,
-        component_test_failure, pinned_usbip_installed, validate_requested_profile,
+        InstalledComponentManifest, SidecarPackageManifest, UsbipInstallResult,
+        apply_gamepad_selection, classify_usbip_installer_exit_code, component_needs_update,
+        component_state, component_test_failure, extract_sidecar_package, pinned_usbip_installed,
+        sha256_file, validate_requested_profile, validate_sidecar_package_manifest,
     };
+    use std::io::Write as _;
     use std::process::Command;
 
     #[test]
@@ -1640,6 +1979,71 @@ mod tests {
     }
 
     #[test]
+    fn sidecar_package_manifest_requires_pinned_release_asset() {
+        let manifest = SidecarPackageManifest {
+            schema: 1,
+            component_version: super::COMPONENT_VERSION.to_string(),
+            protocol: super::PROTOCOL_VERSION,
+            target: super::SIDECAR_PACKAGE_TARGET.to_string(),
+            asset_name: super::SIDECAR_PACKAGE_ASSET.to_string(),
+            download_url: format!(
+                "https://github.com/AlkaidLab/foundation-sunshine/releases/download/v1/{}",
+                super::SIDECAR_PACKAGE_ASSET
+            ),
+            sha256: "a".repeat(64),
+            size: 1024,
+        };
+        assert!(validate_sidecar_package_manifest(manifest.clone()).is_ok());
+
+        let untrusted = SidecarPackageManifest {
+            download_url: format!("https://example.com/{}", super::SIDECAR_PACKAGE_ASSET),
+            ..manifest
+        };
+        assert!(validate_sidecar_package_manifest(untrusted).is_err());
+    }
+
+    #[test]
+    fn sidecar_package_extracts_only_matching_runtime() {
+        let root = std::env::temp_dir().join(format!("sunshine-ds5-test-{}", uuid::Uuid::new_v4()));
+        let archive_path = root.join("sidecar.zip");
+        let staging = root.join("staging");
+        std::fs::create_dir_all(&staging).unwrap();
+        let file = std::fs::File::create(&archive_path).unwrap();
+        let mut archive = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        archive.start_file(super::SIDECAR_EXE, options).unwrap();
+        archive.write_all(b"MZ-test").unwrap();
+        archive.start_file("runtime.json", options).unwrap();
+        archive
+            .write_all(
+                serde_json::json!({
+                    "component_version": super::COMPONENT_VERSION,
+                    "protocol": super::PROTOCOL_VERSION,
+                    "target": super::SIDECAR_PACKAGE_TARGET,
+                })
+                .to_string()
+                .as_bytes(),
+            )
+            .unwrap();
+        archive.finish().unwrap();
+
+        let manifest = SidecarPackageManifest {
+            schema: 1,
+            component_version: super::COMPONENT_VERSION.to_string(),
+            protocol: super::PROTOCOL_VERSION,
+            target: super::SIDECAR_PACKAGE_TARGET.to_string(),
+            asset_name: super::SIDECAR_PACKAGE_ASSET.to_string(),
+            download_url: String::new(),
+            sha256: sha256_file(&archive_path).unwrap(),
+            size: std::fs::metadata(&archive_path).unwrap().len(),
+        };
+        extract_sidecar_package(&archive_path, &staging, &manifest).unwrap();
+        assert!(staging.join(super::SIDECAR_EXE).is_file());
+        assert!(staging.join("runtime.json").is_file());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn enabling_dualsense_selects_the_ds5_gamepad_backend() {
         let mut config = serde_json::Map::new();
         config.insert("gamepad".to_string(), serde_json::json!("auto"));
@@ -1678,6 +2082,10 @@ mod tests {
         assert!(matches!(
             ElevatedOperation::parse("install"),
             Some(ElevatedOperation::Install)
+        ));
+        assert!(matches!(
+            ElevatedOperation::parse("install-local"),
+            Some(ElevatedOperation::InstallLocal)
         ));
         assert!(matches!(
             ElevatedOperation::parse("test-standard"),

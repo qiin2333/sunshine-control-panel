@@ -1211,6 +1211,25 @@ async fn apply_config(
     Ok(())
 }
 
+fn rollback_activated_component(
+    active: &Path,
+    backup: &Path,
+    had_previous: bool,
+) -> Result<(), String> {
+    if active.exists() {
+        fs::remove_dir_all(active)
+            .map_err(|error| format!("unable to remove failed active component: {error}"))?;
+    }
+    if had_previous {
+        if !backup.exists() {
+            return Err("previous component backup is missing".to_string());
+        }
+        fs::rename(backup, active)
+            .map_err(|error| format!("unable to restore previous component: {error}"))?;
+    }
+    Ok(())
+}
+
 async fn dualsense_install_impl(
     progress: &ProgressReporter<'_>,
     local_sidecar_package: Option<&Path>,
@@ -1397,21 +1416,7 @@ async fn dualsense_install_impl(
         if config_error.starts_with("DS5-CFG-002:") {
             return Err(config_error);
         }
-        let rollback_result = (|| -> Result<(), String> {
-            if active.exists() {
-                fs::remove_dir_all(&active).map_err(|error| {
-                    format!("unable to remove failed active component: {error}")
-                })?;
-            }
-            if had_previous {
-                if !backup.exists() {
-                    return Err("previous component backup is missing".to_string());
-                }
-                fs::rename(&backup, &active)
-                    .map_err(|error| format!("unable to restore previous component: {error}"))?;
-            }
-            Ok(())
-        })();
+        let rollback_result = rollback_activated_component(&active, &backup, had_previous);
         return match rollback_result {
             Ok(()) => Err(format!(
                 "{config_error}; activated component was rolled back"
@@ -1424,12 +1429,20 @@ async fn dualsense_install_impl(
     report_progress(progress, "complete", 100);
     let mut status = dualsense_get_status().await?;
     if !status.verified {
-        return Err(if status.detail.is_empty() {
+        let verification_error = if status.detail.is_empty() {
             "DS5-PKG-003: the installed component did not pass the final capability check"
                 .to_string()
         } else {
             status.detail
-        });
+        };
+        return match rollback_activated_component(&active, &backup, had_previous) {
+            Ok(()) => Err(format!(
+                "{verification_error}; activated component was rolled back"
+            )),
+            Err(rollback_error) => Err(format!(
+                "{verification_error}; component rollback also failed: {rollback_error}"
+            )),
+        };
     }
     status.reboot_recommended = reboot_recommended;
     Ok(status)
@@ -2061,8 +2074,8 @@ mod tests {
         apply_gamepad_selection, classify_usbip_installer_exit_code,
         component_matches_current_runtime, component_state, component_test_failure,
         component_update_available, copy_runtime_files, extract_sidecar_package,
-        pinned_usbip_installed, sha256_file, validate_requested_profile,
-        validate_sidecar_package_manifest,
+        pinned_usbip_installed, rollback_activated_component, sha256_file,
+        validate_requested_profile, validate_sidecar_package_manifest,
     };
     use std::io::Write as _;
     use std::process::Command;
@@ -2242,6 +2255,40 @@ mod tests {
 
         assert!(error.contains("runtime metadata does not match Sunshine"));
         assert!(!destination.join(super::SIDECAR_EXE).exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn final_verification_rollback_restores_the_previous_component() {
+        let root = std::env::temp_dir().join(format!("sunshine-ds5-test-{}", uuid::Uuid::new_v4()));
+        let active = root.join("active");
+        let backup = root.join("previous");
+        std::fs::create_dir_all(&active).unwrap();
+        std::fs::create_dir_all(&backup).unwrap();
+        std::fs::write(active.join("runtime.txt"), b"failed").unwrap();
+        std::fs::write(backup.join("runtime.txt"), b"previous").unwrap();
+
+        rollback_activated_component(&active, &backup, true).unwrap();
+
+        assert_eq!(
+            std::fs::read(active.join("runtime.txt")).unwrap(),
+            b"previous"
+        );
+        assert!(!backup.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn final_verification_rollback_removes_a_failed_first_install() {
+        let root = std::env::temp_dir().join(format!("sunshine-ds5-test-{}", uuid::Uuid::new_v4()));
+        let active = root.join("active");
+        let backup = root.join("previous");
+        std::fs::create_dir_all(&active).unwrap();
+        std::fs::write(active.join("runtime.txt"), b"failed").unwrap();
+
+        rollback_activated_component(&active, &backup, false).unwrap();
+
+        assert!(!active.exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 

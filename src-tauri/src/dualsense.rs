@@ -33,7 +33,7 @@ const MAX_EXTRACTED_BYTES: u64 = 200 * 1024 * 1024;
 const MAX_ARCHIVE_FILES: usize = 256;
 const SIDECAR_EXE: &str = "Sunshine.Ds5Sidecar.exe";
 const SIDECAR_PACKAGE_MANIFEST: &str = "ds5-sidecar-package.json";
-const SIDECAR_PACKAGE_ASSET: &str = "Sunshine.Ds5Sidecar.Windows-x64.zip";
+const SIDECAR_PACKAGE_ASSET: &str = "Sunshine.Ds5Sidecar.x64.zip";
 const SIDECAR_PACKAGE_TARGET: &str = "win-x64-self-contained";
 const SIDECAR_PACKAGE_LICENSE: &str = "GPL-3.0-only";
 const MAX_SIDECAR_PACKAGE_BYTES: u64 = 160 * 1024 * 1024;
@@ -357,19 +357,23 @@ fn installed_component_manifest() -> Option<InstalledComponentManifest> {
     serde_json::from_slice(&contents).ok()
 }
 
-fn component_needs_update(
+fn component_update_available(manifest: Option<&InstalledComponentManifest>) -> bool {
+    manifest.is_some_and(|manifest| manifest.component_version != COMPONENT_VERSION)
+}
+
+fn component_matches_current_runtime(
     manifest: Option<&InstalledComponentManifest>,
     genshin_compatibility_available: bool,
 ) -> bool {
     let Some(manifest) = manifest else {
-        return true;
+        return false;
     };
-    manifest.component_version != COMPONENT_VERSION
-        || manifest.hidmaestro_version != HIDMAESTRO_VERSION
-        || !manifest.sha256.eq_ignore_ascii_case(HIDMAESTRO_SHA256)
-        || manifest.protocol != PROTOCOL_VERSION
-        || manifest.sidecar_file != SIDECAR_EXE
-        || !genshin_compatibility_available
+    manifest.component_version == COMPONENT_VERSION
+        && manifest.hidmaestro_version == HIDMAESTRO_VERSION
+        && manifest.sha256.eq_ignore_ascii_case(HIDMAESTRO_SHA256)
+        && manifest.protocol == PROTOCOL_VERSION
+        && manifest.sidecar_file == SIDECAR_EXE
+        && genshin_compatibility_available
 }
 
 fn config_path() -> PathBuf {
@@ -713,7 +717,7 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
     } else {
         None
     };
-    let (verified, result, error_code, detail) = match probe {
+    let (probe_succeeded, result, mut error_code, mut detail) = match probe {
         Some(Ok(result)) => (true, result, String::new(), String::new()),
         Some(Err(detail)) => {
             let code = detail
@@ -729,8 +733,14 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
     let usbip_version_valid = pinned_usbip_installed(Some(usbip_version.as_str()));
     let usbip_available = result.usbip_available && usbip_version_valid;
     let manifest = installed.then(installed_component_manifest).flatten();
-    let update_available = installed
-        && component_needs_update(manifest.as_ref(), result.genshin_compatibility_identity);
+    let update_available = installed && component_update_available(manifest.as_ref());
+    let matches_current_runtime =
+        component_matches_current_runtime(manifest.as_ref(), result.genshin_compatibility_identity);
+    let verified = probe_succeeded && (update_available || matches_current_runtime);
+    if probe_succeeded && !update_available && !matches_current_runtime {
+        error_code = "DS5-PROTO-001".to_string();
+        detail = "DS5-PROTO-001: the installed component metadata or capabilities do not match this Control Panel build".to_string();
+    }
     let state = component_state(
         installed,
         verified,
@@ -2023,9 +2033,10 @@ mod tests {
     };
     use super::{
         InstalledComponentManifest, SidecarPackageManifest, UsbipInstallResult,
-        apply_gamepad_selection, classify_usbip_installer_exit_code, component_needs_update,
-        component_state, component_test_failure, extract_sidecar_package, pinned_usbip_installed,
-        sha256_file, validate_requested_profile, validate_sidecar_package_manifest,
+        apply_gamepad_selection, classify_usbip_installer_exit_code,
+        component_matches_current_runtime, component_state, component_test_failure,
+        component_update_available, extract_sidecar_package, pinned_usbip_installed, sha256_file,
+        validate_requested_profile, validate_sidecar_package_manifest,
     };
     use std::io::Write as _;
     use std::process::Command;
@@ -2087,7 +2098,7 @@ mod tests {
     }
 
     #[test]
-    fn component_update_requires_current_manifest_and_capability() {
+    fn component_status_separates_updates_from_same_version_repairs() {
         let current = InstalledComponentManifest {
             component_version: super::COMPONENT_VERSION.to_string(),
             hidmaestro_version: super::HIDMAESTRO_VERSION.to_string(),
@@ -2095,15 +2106,18 @@ mod tests {
             protocol: super::PROTOCOL_VERSION,
             sidecar_file: super::SIDECAR_EXE.to_string(),
         };
-        assert!(!component_needs_update(Some(&current), true));
-        assert!(component_needs_update(Some(&current), false));
-        assert!(component_needs_update(None, true));
+        assert!(!component_update_available(Some(&current)));
+        assert!(component_matches_current_runtime(Some(&current), true));
+        assert!(!component_matches_current_runtime(Some(&current), false));
+        assert!(!component_update_available(None));
+        assert!(!component_matches_current_runtime(None, true));
 
         let outdated = InstalledComponentManifest {
             component_version: "1.0.0".to_string(),
             ..current
         };
-        assert!(component_needs_update(Some(&outdated), true));
+        assert!(component_update_available(Some(&outdated)));
+        assert!(!component_matches_current_runtime(Some(&outdated), true));
     }
 
     #[test]

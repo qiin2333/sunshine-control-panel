@@ -104,6 +104,8 @@ pub struct DualSenseStatus {
     pub genshin_compatibility: bool,
     pub genshin_compatibility_available: bool,
     pub component_version: String,
+    pub available_component_version: String,
+    pub update_available: bool,
     pub runtime_version: String,
     pub install_path: String,
     pub sidecar_path: String,
@@ -167,6 +169,16 @@ struct ProbeResult {
     usbip_available: bool,
 }
 
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct InstalledComponentManifest {
+    component_version: String,
+    hidmaestro_version: String,
+    sha256: String,
+    protocol: u32,
+    sidecar_file: String,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum UsbipInstallResult {
     Ready,
@@ -196,6 +208,26 @@ fn active_dir() -> PathBuf {
 
 fn sidecar_path() -> PathBuf {
     active_dir().join(SIDECAR_EXE)
+}
+
+fn installed_component_manifest() -> Option<InstalledComponentManifest> {
+    let contents = fs::read(active_dir().join("component.json")).ok()?;
+    serde_json::from_slice(&contents).ok()
+}
+
+fn component_needs_update(
+    manifest: Option<&InstalledComponentManifest>,
+    genshin_compatibility_available: bool,
+) -> bool {
+    let Some(manifest) = manifest else {
+        return true;
+    };
+    manifest.component_version != COMPONENT_VERSION
+        || manifest.hidmaestro_version != HIDMAESTRO_VERSION
+        || !manifest.sha256.eq_ignore_ascii_case(HIDMAESTRO_SHA256)
+        || manifest.protocol != PROTOCOL_VERSION
+        || manifest.sidecar_file != SIDECAR_EXE
+        || !genshin_compatibility_available
 }
 
 fn config_path() -> PathBuf {
@@ -464,6 +496,7 @@ fn component_state(
     verified: bool,
     transport_available: bool,
     in_use: bool,
+    update_available: bool,
 ) -> &'static str {
     if in_use && installed {
         "in_use"
@@ -471,6 +504,8 @@ fn component_state(
         "not_installed"
     } else if !verified {
         "repair_required"
+    } else if update_available {
+        "update_available"
     } else if !transport_available {
         "transport_missing"
     } else {
@@ -551,7 +586,16 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
     let usbip_version = installed_usbip_version().unwrap_or_default();
     let usbip_version_valid = pinned_usbip_installed(Some(usbip_version.as_str()));
     let usbip_available = result.usbip_available && usbip_version_valid;
-    let state = component_state(installed, verified, usbip_available, in_use);
+    let manifest = installed.then(installed_component_manifest).flatten();
+    let update_available = installed
+        && component_needs_update(manifest.as_ref(), result.genshin_compatibility_identity);
+    let state = component_state(
+        installed,
+        verified,
+        usbip_available,
+        in_use,
+        update_available,
+    );
 
     Ok(DualSenseStatus {
         state: state.to_string(),
@@ -561,10 +605,12 @@ pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
         audio_haptics,
         genshin_compatibility,
         genshin_compatibility_available: result.genshin_compatibility_identity,
-        component_version: installed
-            .then_some(COMPONENT_VERSION)
-            .unwrap_or_default()
-            .to_string(),
+        component_version: manifest
+            .as_ref()
+            .map(|manifest| manifest.component_version.clone())
+            .unwrap_or_default(),
+        available_component_version: COMPONENT_VERSION.to_string(),
+        update_available,
         runtime_version: result.runtime_version,
         install_path: active_dir().to_string_lossy().to_string(),
         sidecar_path: executable.to_string_lossy().to_string(),
@@ -1511,9 +1557,9 @@ mod tests {
         read_limited_elevated_line, wait_for_elevated_pipe_connection,
     };
     use super::{
-        UsbipInstallResult, apply_gamepad_selection, classify_usbip_installer_exit_code,
-        component_state, component_test_failure, pinned_usbip_installed,
-        validate_requested_profile,
+        InstalledComponentManifest, UsbipInstallResult, apply_gamepad_selection,
+        classify_usbip_installer_exit_code, component_needs_update, component_state,
+        component_test_failure, pinned_usbip_installed, validate_requested_profile,
     };
     use std::process::Command;
 
@@ -1553,14 +1599,44 @@ mod tests {
 
     #[test]
     fn component_state_prioritizes_stream_ownership_and_recovery() {
-        assert_eq!(component_state(true, true, true, true), "in_use");
-        assert_eq!(component_state(false, false, false, true), "not_installed");
-        assert_eq!(component_state(true, false, true, false), "repair_required");
+        assert_eq!(component_state(true, true, true, true, true), "in_use");
         assert_eq!(
-            component_state(true, true, false, false),
+            component_state(false, false, false, true, false),
+            "not_installed"
+        );
+        assert_eq!(
+            component_state(true, false, true, false, true),
+            "repair_required"
+        );
+        assert_eq!(
+            component_state(true, true, true, false, true),
+            "update_available"
+        );
+        assert_eq!(
+            component_state(true, true, false, false, false),
             "transport_missing"
         );
-        assert_eq!(component_state(true, true, true, false), "ready");
+        assert_eq!(component_state(true, true, true, false, false), "ready");
+    }
+
+    #[test]
+    fn component_update_requires_current_manifest_and_capability() {
+        let current = InstalledComponentManifest {
+            component_version: super::COMPONENT_VERSION.to_string(),
+            hidmaestro_version: super::HIDMAESTRO_VERSION.to_string(),
+            sha256: super::HIDMAESTRO_SHA256.to_uppercase(),
+            protocol: super::PROTOCOL_VERSION,
+            sidecar_file: super::SIDECAR_EXE.to_string(),
+        };
+        assert!(!component_needs_update(Some(&current), true));
+        assert!(component_needs_update(Some(&current), false));
+        assert!(component_needs_update(None, true));
+
+        let outdated = InstalledComponentManifest {
+            component_version: "1.0.0".to_string(),
+            ..current
+        };
+        assert!(component_needs_update(Some(&outdated), true));
     }
 
     #[test]

@@ -55,6 +55,18 @@
             <span class="action-bracket" aria-hidden="true">]</span>
           </el-button>
           <el-button
+            v-else-if="statusKnown && status.update_available"
+            text
+            class="menu-action menu-action-warning"
+            :loading="operation === 'install'"
+            :disabled="loading || status.in_use || controlsBusy"
+            @click="install"
+          >
+            <span class="action-bracket" aria-hidden="true">[</span>
+            <span>{{ t.dualSense.update }}</span>
+            <span class="action-bracket" aria-hidden="true">]</span>
+          </el-button>
+          <el-button
             text
             class="menu-action menu-action-secondary"
             :loading="loading"
@@ -210,6 +222,7 @@ const status = ref({
   state: 'loading', installed: false, verified: false, enabled: false,
   audio_haptics: false, genshin_compatibility: false,
   genshin_compatibility_available: false,
+  component_version: '', available_component_version: '', update_available: false,
   driver_installed: false, usbip_available: false, usbip_version: '',
   usbip_version_valid: false, reboot_recommended: false,
   standard_profile: false, composite_profile: false, in_use: false,
@@ -230,12 +243,19 @@ const nextAction = computed(() => {
   return {
     not_installed: t.value.dualSense.nextNotInstalled,
     repair_required: t.value.dualSense.nextRepair,
+    update_available: t.value.dualSense.nextUpdate,
     transport_missing: t.value.dualSense.nextTransport,
     in_use: t.value.dualSense.nextInUse,
   }[status.value.state] || t.value.dualSense.nextRepair
 })
 
-const overallVersion = computed(() => status.value.component_version || status.value.runtime_version || status.value.error_code)
+const overallVersion = computed(() => {
+  if (status.value.update_available) {
+    const installedVersion = status.value.component_version || t.value.dualSense.unknownVersion
+    return `${installedVersion} → ${status.value.available_component_version}`
+  }
+  return status.value.component_version || status.value.runtime_version || status.value.error_code
+})
 const canTestAudioHaptics = computed(() => status.value.composite_profile && status.value.usbip_available)
 const usbTransportDetail = computed(() => {
   if (!status.value.usbip_version_valid) return t.value.dualSense.pinnedTransportRequired
@@ -243,13 +263,17 @@ const usbTransportDetail = computed(() => {
   if (!status.value.installed) return t.value.dualSense.transportCheckPending
   return t.value.dualSense.transportProbeFailed
 })
-const showNotice = computed(() => rebootRecommended.value || ['not_installed', 'repair_required', 'transport_missing', 'in_use'].includes(status.value.state))
+const showNotice = computed(() => rebootRecommended.value || ['not_installed', 'repair_required', 'update_available', 'transport_missing', 'in_use'].includes(status.value.state))
 const healthRows = computed(() => [
   {
     label: t.value.dualSense.component,
-    state: status.value.verified ? t.value.dualSense.available : t.value.dualSense.unavailable,
-    detail: status.value.component_version || status.value.error_code,
-    tone: status.value.verified ? 'ok' : status.value.installed ? 'bad' : '',
+    state: status.value.update_available
+      ? t.value.dualSense.updateAvailable
+      : status.value.verified ? t.value.dualSense.available : t.value.dualSense.unavailable,
+    detail: status.value.update_available
+      ? `${status.value.component_version || t.value.dualSense.unknownVersion} → ${status.value.available_component_version}`
+      : status.value.component_version || status.value.error_code,
+    tone: status.value.update_available ? 'warn' : status.value.verified ? 'ok' : status.value.installed ? 'bad' : '',
   },
   {
     label: t.value.dualSense.runtime,
@@ -307,11 +331,17 @@ const refresh = async (quiet = false) => {
 
 const install = async () => {
   if (controlsBusy.value) return
+  const upgrading = Boolean(status.value.installed && status.value.update_available)
   operation.value = 'confirm-install'
   try {
-    await ElMessageBox.confirm(t.value.dualSense.installConfirm, t.value.dualSense.installTitle, {
-      type: 'warning', confirmButtonText: t.value.dualSense.install,
-    })
+    await ElMessageBox.confirm(
+      upgrading ? t.value.dualSense.updateConfirm : t.value.dualSense.installConfirm,
+      upgrading ? t.value.dualSense.updateTitle : t.value.dualSense.installTitle,
+      {
+        type: 'warning',
+        confirmButtonText: upgrading ? t.value.dualSense.update : t.value.dualSense.install,
+      },
+    )
   } catch {
     operation.value = ''
     return
@@ -331,7 +361,7 @@ const install = async () => {
   audioHaptics.value = result.data.audio_haptics
   genshinCompatibility.value = result.data.genshin_compatibility ?? false
   rebootRecommended.value = result.data.reboot_recommended
-  ElMessage.success(t.value.dualSense.installSuccess)
+  ElMessage.success(upgrading ? t.value.dualSense.updateSuccess : t.value.dualSense.installSuccess)
   if (result.data.reboot_recommended) {
     ElMessage.warning(status.value.usbip_available
       ? t.value.dualSense.restartSuggestedAvailable
@@ -523,7 +553,7 @@ onUnmounted(() => {
 .status-version { color: var(--el-text-color-secondary); font-size: 13px; }
 .status-dot { width: 8px; height: 8px; flex: 0 0 auto; background: var(--el-text-color-placeholder); }
 .state-ready .status-dot { background: var(--el-color-success); box-shadow: 0 0 0 3px var(--el-color-success-light-8); }
-.state-transport_missing .status-dot, .state-in_use .status-dot { background: var(--el-color-warning); box-shadow: 0 0 0 3px var(--el-color-warning-light-8); }
+.state-update_available .status-dot, .state-transport_missing .status-dot, .state-in_use .status-dot { background: var(--el-color-warning); box-shadow: 0 0 0 3px var(--el-color-warning-light-8); }
 .state-repair_required .status-dot { background: var(--el-color-danger); box-shadow: 0 0 0 3px var(--el-color-danger-light-8); }
 .operation-card { padding: 0 0 20px; div { display: flex; justify-content: space-between; margin-bottom: 7px; color: var(--el-text-color-secondary); font-size: 13px; } }
 .notice { margin: 0 0 20px; padding-inline: 0; border-radius: 0; background: transparent; }

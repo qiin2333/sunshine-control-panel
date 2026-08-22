@@ -1584,6 +1584,7 @@ async fn dualsense_install_impl(
     let sidecar_archive_path = root.join(format!("{operation}-sidecar.partial.zip"));
     let active = active_dir();
     let backup = root.join("previous");
+    let had_previous = active.exists();
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(10))
         .timeout(std::time::Duration::from_secs(600))

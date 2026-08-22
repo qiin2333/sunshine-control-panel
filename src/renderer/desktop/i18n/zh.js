@@ -1076,7 +1076,8 @@ export const zh = {
     tuningPresetTitle: '快速预设',
     tuningPresetDefaultTip: '恢复标准的触觉映射参数。',
     tuningPresetErmTip: '优化传统 ERM 振动的响应。',
-    tuningSave: '保存微调',
+    tuningSave: '保存',
+    tuningUnsaved: '未保存',
     tuningSaved: '触觉微调已保存并立即生效。',
     errors: {
       unknown: '操作未完成，请重试。如果问题持续，请点击“修复组件”。',

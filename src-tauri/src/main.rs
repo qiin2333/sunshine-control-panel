@@ -226,6 +226,7 @@ fn main() {
             vigem::install_vigem_driver,
             vigem::uninstall_vigem_driver,
             dualsense::dualsense_get_status,
+            dualsense::dualsense_log_panel_opened,
             dualsense::dualsense_install,
             dualsense::dualsense_uninstall,
             dualsense::dualsense_set_config,

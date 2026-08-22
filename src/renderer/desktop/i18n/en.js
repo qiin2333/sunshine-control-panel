@@ -1078,8 +1078,6 @@ Output only one short sentence, no explanation. Reply in English.`,
     tuningPresetErmTip: 'Tune the response for traditional ERM rumble.',
     tuningSave: 'Save tuning',
     tuningSaved: 'Haptics tuning was saved and applied immediately.',
-    tuningRevision: 'Current config version {revision}',
-    tuningRevisionTip: 'This version increases when settings change and prevents different windows from overwriting each other.',
     errors: {
       unknown: 'The operation could not be completed. Try again. If the problem continues, select “Repair component”.',
       codes: {

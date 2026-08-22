@@ -103,6 +103,7 @@ export const vigem = {
 
 export const dualsense = {
   getStatus: () => wrapResult('dualsense_get_status'),
+  logPanelOpened: () => wrapResult('dualsense_log_panel_opened'),
   install: (packagePath = null) => wrapResult('dualsense_install', { packagePath }),
   uninstall: () => wrapResult('dualsense_uninstall'),
   setConfig: (enabled, audioHaptics, genshinCompatibility) => wrapResult('dualsense_set_config', {

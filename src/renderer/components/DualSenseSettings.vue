@@ -149,10 +149,6 @@
             <span class="section-label">{{ t.dualSense.tuningTitle }}</span>
             <p class="tuning-hint">{{ t.dualSense.tuningHint }}</p>
           </div>
-          <div v-if="status.config_revision" class="tuning-revision">
-            <strong>{{ t.dualSense.tuningRevision.replace('{revision}', status.config_revision) }}</strong>
-            <small>{{ t.dualSense.tuningRevisionTip }}</small>
-          </div>
         </div>
         <div class="tuning-presets" role="group" :aria-label="t.dualSense.tuningPresetTitle">
           <span>{{ t.dualSense.tuningPresetTitle }}</span>
@@ -317,6 +313,7 @@ const status = ref({
 })
 let pollTimer
 let unlistenProgress
+let statusRefreshGeneration = 0
 
 const controlsBusy = computed(() => refreshing.value || saving.value || tuningSaving.value || Boolean(operation.value))
 const tuningDirty = computed(() =>
@@ -397,15 +394,23 @@ const showError = (message, context = 'generic') => {
   ElMessage.error(friendlyDualSenseError(message, t.value.dualSense.errors, context))
 }
 
-const refresh = async (quiet = false) => {
+const invalidateStatusRefresh = () => {
+  statusRefreshGeneration += 1
+}
+
+const refresh = async (quiet = false, blockControls = true) => {
   if (controlsBusy.value) return false
+  const refreshGeneration = ++statusRefreshGeneration
   if (!quiet) operationError.value = ''
   const preserveTuning = quiet && tuningDirty.value
-  refreshing.value = true
-  if (!quiet) loading.value = true
+  if (blockControls) {
+    refreshing.value = true
+    if (!quiet) loading.value = true
+  }
   let refreshed = false
   try {
     const result = await dualsense.getStatus()
+    if (refreshGeneration !== statusRefreshGeneration) return false
     if (result.success) {
       const configReadable = dualSenseConfigReadable(result.data)
       status.value = mergeDualSenseStatus(status.value, result.data)
@@ -427,8 +432,10 @@ const refresh = async (quiet = false) => {
       showError(result.message, 'status')
     }
   } finally {
-    loading.value = false
-    refreshing.value = false
+    if (blockControls) {
+      loading.value = false
+      refreshing.value = false
+    }
   }
   return refreshed
 }
@@ -456,6 +463,7 @@ const install = async (packagePath = null) => {
     operation.value = ''
     return
   }
+  invalidateStatusRefresh()
   operation.value = 'install'
   operationError.value = ''
   operationProgress.value = 0
@@ -513,6 +521,7 @@ const saveSettings = async () => {
     genshinCompatibility.value = status.value.genshin_compatibility ?? false
     return
   }
+  invalidateStatusRefresh()
   const requestedEnabled = enabled.value
   const requestedAudioHaptics = audioHaptics.value
   const requestedGenshinCompatibility = requestedEnabled && requestedAudioHaptics && genshinCompatibility.value
@@ -596,6 +605,7 @@ const applyDefaultPreset = () => {
 
 const saveTuning = async () => {
   if (controlsBusy.value) return
+  invalidateStatusRefresh()
   operationError.value = ''
   tuningSaving.value = true
   const result = await dualsense.setHapticsTuning(
@@ -620,6 +630,7 @@ const setGenshinCompatibility = async (value) => {
 
 const test = async (profile) => {
   if (controlsBusy.value) return
+  invalidateStatusRefresh()
   operationError.value = ''
   operation.value = profile
   const result = await dualsense.selfTest(profile)
@@ -641,6 +652,7 @@ const uninstall = async () => {
     operation.value = ''
     return
   }
+  invalidateStatusRefresh()
   operation.value = 'uninstall'
   operationError.value = ''
   const result = await dualsense.uninstall()
@@ -661,10 +673,11 @@ onMounted(async () => {
   } catch {
     // Browser-only renderer previews do not provide the Tauri event bridge.
   }
+  void dualsense.logPanelOpened()
   await refresh()
   pollTimer = window.setInterval(() => {
     if (controlsBusy.value) return
-    refresh(true)
+    refresh(true, false)
   }, 30000)
 })
 onUnmounted(() => {
@@ -787,7 +800,6 @@ onUnmounted(() => {
 .tuning-section { margin-top: 26px; }
 .tuning-heading { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; }
 .tuning-hint { margin: 0 0 14px; max-width: 620px; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.55; }
-.tuning-revision { flex: 0 1 280px; margin: 0; text-align: right; strong, small { display: block; } strong { color: var(--el-color-success); font-size: 12px; font-weight: 500; } small { margin-top: 4px; color: var(--el-text-color-secondary); font-size: 11px; line-height: 1.4; } }
 .tuning-presets { margin-bottom: 18px; padding: 12px; border: 1px solid var(--el-border-color-lighter); background: var(--el-fill-color-extra-light); }
 .tuning-presets > span { display: block; margin-bottom: 8px; color: var(--el-text-color-secondary); font-size: 12px; letter-spacing: .05em; }
 .tuning-presets > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
@@ -861,7 +873,6 @@ onUnmounted(() => {
   .status-actions, .test-actions { justify-content: flex-start; }
   .profile-option { grid-template-columns: 16px minmax(0, 1fr) auto; padding-inline: 6px; }
   .tuning-heading { display: block; }
-  .tuning-revision { margin: -6px 0 12px; text-align: left; }
   .tuning-presets > div { grid-template-columns: 1fr; }
   .tuning-save-button { width: 100%; }
   .compatibility-option { grid-template-columns: 1fr; gap: 8px; padding-inline: 6px; }

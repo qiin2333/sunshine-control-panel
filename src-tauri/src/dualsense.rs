@@ -7,7 +7,7 @@
 //! self-contained .NET runtime out of the main Sunshine package.
 
 use futures_util::StreamExt;
-use log::warn;
+use log::{info, warn};
 use once_cell::sync::{Lazy, OnceCell};
 use reqwest::header::HeaderValue;
 use serde::{Deserialize, Serialize};
@@ -17,6 +17,7 @@ use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::Emitter;
 
 const COMPONENT_VERSION: &str = "1.2.0";
@@ -48,6 +49,18 @@ const MAX_ELEVATED_MESSAGE_BYTES: usize = 64 * 1024;
 const ELEVATION_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 static COMPONENT_OPERATION: Lazy<tokio::sync::Mutex<()>> =
     Lazy::new(|| tokio::sync::Mutex::new(()));
+static LAST_OBSERVED_CONFIG_REVISION: AtomicU64 = AtomicU64::new(0);
+
+fn observe_config_revision(revision: u64) {
+    if revision == 0 {
+        return;
+    }
+
+    let previous = LAST_OBSERVED_CONFIG_REVISION.swap(revision, Ordering::Relaxed);
+    if previous != 0 && previous != revision {
+        info!("DualSense configuration revision changed: {previous} -> {revision}");
+    }
+}
 #[cfg(target_os = "windows")]
 static ELEVATED_HELPER_JOB: OnceCell<std::os::windows::io::OwnedHandle> = OnceCell::new();
 
@@ -975,6 +988,7 @@ pub async fn dualsense_set_haptics_tuning(
     update_tuning_fields(&mut settings, strength, curve, noise_gate);
     let entity_tag = require_entity_tag(snapshot.entity_tag)?;
     let applied = save_core_ds5_settings(settings, entity_tag).await?.response;
+    observe_config_revision(applied.revision);
     Ok(DualSenseTuningResult {
         legacy_strength: applied.settings.ds5_legacy_haptics_strength,
         legacy_curve: applied.settings.ds5_legacy_haptics_curve,
@@ -1015,6 +1029,9 @@ async fn dualsense_get_status_with_config(
     let (settings, config_revision, config_error) =
         resolve_core_config(confirmed, get_core_ds5_settings).await;
     let config_readable = config_error.is_empty();
+    if config_readable {
+        observe_config_revision(config_revision);
+    }
     let executable = sidecar_path();
     let installed = executable.is_file();
     let in_use = has_active_session().await;
@@ -1110,6 +1127,11 @@ async fn dualsense_get_status_with_config(
 #[tauri::command]
 pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
     dualsense_get_status_with_config(None).await
+}
+
+#[tauri::command]
+pub fn dualsense_log_panel_opened() {
+    info!("DualSense settings panel opened");
 }
 
 fn sidecar_source_dir() -> Result<PathBuf, String> {

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  dualSenseConfigMatches,
   dualSenseConfigReadable,
   dualSenseConfigUiState,
   mergeDualSenseStatus,
@@ -37,6 +38,24 @@ test('synchronizes tuning from Core when there are no local edits', () => {
       noiseGate: 0.008,
     },
   })
+})
+
+test('recognizes a requested switch state after an ambiguous save response', () => {
+  assert.equal(dualSenseConfigMatches(response, {
+    enabled: true,
+    audioHaptics: false,
+    genshinCompatibility: false,
+  }), true)
+  assert.equal(dualSenseConfigMatches(response, {
+    enabled: false,
+    audioHaptics: false,
+    genshinCompatibility: false,
+  }), false)
+  assert.equal(dualSenseConfigMatches({ ...response, config_readable: false }, {
+    enabled: true,
+    audioHaptics: false,
+    genshinCompatibility: false,
+  }), false)
 })
 
 test('preserves confirmed config when a status refresh cannot read Core settings', () => {

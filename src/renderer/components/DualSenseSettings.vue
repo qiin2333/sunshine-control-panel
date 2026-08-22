@@ -274,6 +274,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { dualsense } from '../tauri-adapter.js'
 import { dualSenseErrorCode, friendlyDualSenseError } from '../composables/dualsenseErrors.js'
 import {
+  dualSenseConfigMatches,
   dualSenseConfigReadable,
   dualSenseConfigUiState,
   mergeDualSenseStatus,
@@ -547,6 +548,11 @@ const saveSettings = async () => {
   const requestedEnabled = enabled.value
   const requestedAudioHaptics = audioHaptics.value
   const requestedGenshinCompatibility = requestedEnabled && requestedAudioHaptics && genshinCompatibility.value
+  const requestedConfig = {
+    enabled: requestedEnabled,
+    audioHaptics: requestedAudioHaptics,
+    genshinCompatibility: requestedGenshinCompatibility,
+  }
   genshinCompatibility.value = requestedGenshinCompatibility
   const preserveTuning = tuningDirty.value
   operationError.value = ''
@@ -562,6 +568,10 @@ const saveSettings = async () => {
   if (!result.success && ['DS5-CFG-001', 'DS5-CFG-003'].includes(firstErrorCode)) {
     saving.value = false
     refreshedAfterFailure = await refresh(true)
+    if (refreshedAfterFailure && dualSenseConfigMatches(status.value, requestedConfig)) {
+      ElMessage.success(t.value.dualSense.configSuccess)
+      return
+    }
     const canRetry = refreshedAfterFailure
       && !status.value.in_use
       && (!requestedEnabled || status.value.verified)
@@ -584,6 +594,10 @@ const saveSettings = async () => {
     saving.value = false
     if (!refreshedAfterFailure) {
       refreshedAfterFailure = await refresh(true)
+    }
+    if (refreshedAfterFailure && dualSenseConfigMatches(status.value, requestedConfig)) {
+      ElMessage.success(t.value.dualSense.configSuccess)
+      return
     }
     if (!refreshedAfterFailure) {
       enabled.value = status.value.enabled

@@ -13,6 +13,12 @@ export const dualSenseConfigUiState = (data, preserveTuning = false) => ({
 
 export const dualSenseConfigReadable = (data) => data?.config_readable === true
 
+export const dualSenseConfigMatches = (data, requested) =>
+  dualSenseConfigReadable(data)
+  && data.enabled === requested.enabled
+  && data.audio_haptics === requested.audioHaptics
+  && (data.genshin_compatibility ?? false) === requested.genshinCompatibility
+
 export const mergeDualSenseStatus = (current, incoming) => {
   if (dualSenseConfigReadable(incoming)) return incoming
 

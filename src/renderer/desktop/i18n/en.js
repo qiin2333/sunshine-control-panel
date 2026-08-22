@@ -974,7 +974,7 @@ Output only one short sentence, no explanation. Reply in English.`,
 
   dualSense: {
     title: 'DualSense Emulation',
-    experimental: 'Optional experimental component',
+    experimental: '[Experimental]',
     intro: 'Manage the virtual DualSense controller Sunshine creates while streaming.',
     states: {
       not_installed: 'Not installed',

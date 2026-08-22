@@ -974,7 +974,7 @@ export const zh = {
 
   dualSense: {
     title: 'DualSense 模拟',
-    experimental: '实验性可选组件',
+    experimental: '[实验性功能]',
     intro: '管理 Sunshine 在串流时创建的虚拟 DualSense 手柄。',
     states: {
       not_installed: '未安装',

@@ -3,10 +3,12 @@
     <header class="page-header">
       <div class="page-title-group">
         <p class="eyebrow">{{ t.controllers.eyebrow }}</p>
-        <h1>{{ t.controllers.title }}</h1>
+        <div class="controllers-title-row">
+          <h1>{{ t.controllers.title }}</h1>
+          <el-tag class="experimental-tag" effect="plain">{{ t.dualSense.experimental }}</el-tag>
+        </div>
         <p>{{ t.controllers.intro }}</p>
       </div>
-      <el-tag class="pixel-tag" effect="plain">{{ t.dualSense.experimental }}</el-tag>
     </header>
 
     <article class="component-panel" :class="`state-${status.state}`">
@@ -35,7 +37,7 @@
             text
             class="menu-action menu-action-primary"
             :loading="operation === 'install'"
-            :disabled="loading || status.in_use || controlsBusy"
+            :disabled="status.in_use || controlsBusy"
             @click="install"
           >
             <span class="action-bracket" aria-hidden="true">[</span>
@@ -47,7 +49,7 @@
             text
             class="menu-action menu-action-warning"
             :loading="operation === 'install'"
-            :disabled="loading || status.in_use || controlsBusy"
+            :disabled="status.in_use || controlsBusy"
             @click="install"
           >
             <span class="action-bracket" aria-hidden="true">[</span>
@@ -59,7 +61,7 @@
             text
             class="menu-action menu-action-warning"
             :loading="operation === 'install'"
-            :disabled="loading || status.in_use || controlsBusy"
+            :disabled="status.in_use || controlsBusy"
             @click="install"
           >
             <span class="action-bracket" aria-hidden="true">[</span>
@@ -69,8 +71,8 @@
           <el-button
             text
             class="menu-action menu-action-secondary"
-            :loading="loading"
-            :disabled="controlsBusy"
+            :loading="refreshing"
+            :disabled="refreshing || controlsBusy"
             @click="refresh()"
           >
             <el-icon><Refresh /></el-icon>{{ t.dualSense.refresh }}
@@ -79,7 +81,7 @@
             v-if="statusKnown && (!status.installed || !status.verified || status.update_available)"
             text
             class="menu-action menu-action-secondary"
-            :disabled="loading || status.in_use || controlsBusy"
+            :disabled="status.in_use || controlsBusy"
             @click="installFromPackage"
           >
             <span class="action-bracket" aria-hidden="true">[</span>
@@ -281,7 +283,6 @@ import { useI18n } from '../desktop/i18n/index.js'
 
 const { t } = useI18n()
 const emit = defineEmits(['open-controller-meta'])
-const loading = ref(true)
 const statusKnown = ref(false)
 const saving = ref(false)
 const refreshing = ref(false)
@@ -314,8 +315,10 @@ const status = ref({
 let pollTimer
 let unlistenProgress
 let statusRefreshGeneration = 0
+let statusRefreshPromise = null
+const STATUS_REFRESH_WAIT_TIMEOUT_MS = 5000
 
-const controlsBusy = computed(() => refreshing.value || saving.value || tuningSaving.value || Boolean(operation.value))
+const controlsBusy = computed(() => saving.value || tuningSaving.value || Boolean(operation.value))
 const tuningDirty = computed(() =>
   legacyStrength.value !== status.value.legacy_strength
   || legacyCurve.value !== status.value.legacy_curve
@@ -398,18 +401,38 @@ const invalidateStatusRefresh = () => {
   statusRefreshGeneration += 1
 }
 
-const refresh = async (quiet = false, blockControls = true) => {
-  if (controlsBusy.value) return false
+const waitForStatusRefresh = async () => {
+  const pending = statusRefreshPromise
+  if (!pending) return true
+
+  let timeoutId
+  try {
+    return await Promise.race([
+      pending.then(() => true),
+      new Promise((resolve) => {
+        timeoutId = window.setTimeout(() => resolve(false), STATUS_REFRESH_WAIT_TIMEOUT_MS)
+      }),
+    ])
+  } finally {
+    if (timeoutId !== undefined) window.clearTimeout(timeoutId)
+  }
+}
+
+const refresh = async (quiet = false) => {
+  if (controlsBusy.value || refreshing.value || (quiet && statusRefreshPromise)) return false
+  if (!quiet && statusRefreshPromise) {
+    await waitForStatusRefresh()
+    if (controlsBusy.value || refreshing.value || statusRefreshPromise) return false
+  }
   const refreshGeneration = ++statusRefreshGeneration
   if (!quiet) operationError.value = ''
   const preserveTuning = quiet && tuningDirty.value
-  if (blockControls) {
-    refreshing.value = true
-    if (!quiet) loading.value = true
-  }
+  if (!quiet) refreshing.value = true
   let refreshed = false
+  const request = dualsense.getStatus()
+  statusRefreshPromise = request
   try {
-    const result = await dualsense.getStatus()
+    const result = await request
     if (refreshGeneration !== statusRefreshGeneration) return false
     if (result.success) {
       const configReadable = dualSenseConfigReadable(result.data)
@@ -432,10 +455,8 @@ const refresh = async (quiet = false, blockControls = true) => {
       showError(result.message, 'status')
     }
   } finally {
-    if (blockControls) {
-      loading.value = false
-      refreshing.value = false
-    }
+    if (statusRefreshPromise === request) statusRefreshPromise = null
+    if (!quiet) refreshing.value = false
   }
   return refreshed
 }
@@ -467,6 +488,7 @@ const install = async (packagePath = null) => {
   operation.value = 'install'
   operationError.value = ''
   operationProgress.value = 0
+  await waitForStatusRefresh()
   const result = await dualsense.install(packagePath)
   if (!result.success) {
     operation.value = ''
@@ -515,7 +537,7 @@ const installFromPackage = async () => {
 }
 
 const saveSettings = async () => {
-  if (refreshing.value || operation.value || saving.value) {
+  if (operation.value || saving.value) {
     enabled.value = status.value.enabled
     audioHaptics.value = status.value.audio_haptics
     genshinCompatibility.value = status.value.genshin_compatibility ?? false
@@ -529,6 +551,7 @@ const saveSettings = async () => {
   const preserveTuning = tuningDirty.value
   operationError.value = ''
   saving.value = true
+  await waitForStatusRefresh()
   let result = await dualsense.setConfig(
     requestedEnabled,
     requestedAudioHaptics,
@@ -608,6 +631,7 @@ const saveTuning = async () => {
   invalidateStatusRefresh()
   operationError.value = ''
   tuningSaving.value = true
+  await waitForStatusRefresh()
   const result = await dualsense.setHapticsTuning(
     legacyStrength.value, legacyCurve.value, legacyNoiseGate.value)
   tuningSaving.value = false
@@ -633,6 +657,7 @@ const test = async (profile) => {
   invalidateStatusRefresh()
   operationError.value = ''
   operation.value = profile
+  await waitForStatusRefresh()
   const result = await dualsense.selfTest(profile)
   operation.value = ''
   if (!result.success) return showError(result.message, 'test')
@@ -655,6 +680,7 @@ const uninstall = async () => {
   invalidateStatusRefresh()
   operation.value = 'uninstall'
   operationError.value = ''
+  await waitForStatusRefresh()
   const result = await dualsense.uninstall()
   operation.value = ''
   if (!result.success) return showError(result.message, 'uninstall')
@@ -676,11 +702,11 @@ onMounted(async () => {
   void dualsense.logPanelOpened()
   await refresh()
   pollTimer = window.setInterval(() => {
-    if (controlsBusy.value) return
-    refresh(true, false)
+    refresh(true)
   }, 30000)
 })
 onUnmounted(() => {
+  invalidateStatusRefresh()
   window.clearInterval(pollTimer)
   unlistenProgress?.()
 })
@@ -698,15 +724,16 @@ onUnmounted(() => {
 }
 .page-header { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; margin-bottom: 34px; }
 .page-title-group {
-  h1 { margin: 0 0 7px; font-size: 24px; font-weight: 500; }
+  h1 { margin: 0; font-size: 24px; font-weight: 500; }
   > p:last-child { margin: 0; color: var(--el-text-color-secondary); font-size: 15px; line-height: 1.6; }
 }
+.controllers-title-row { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
 .eyebrow { font-family: 'PixelMplus12', 'Courier New', monospace; }
 .eyebrow, .section-label { color: var(--el-text-color-secondary); letter-spacing: .1em; }
 .eyebrow { font-size: 12px; }
 .section-label { font-size: 13px; }
 .eyebrow { margin: 0 0 7px; }
-.pixel-tag { border: 0; border-radius: 0; color: var(--el-color-primary); background: transparent; font-size: 13px; letter-spacing: .05em; }
+.experimental-tag { border-radius: 0; color: var(--el-color-danger); border-color: var(--el-color-danger-light-5); background: var(--el-color-danger-light-9); font-size: 12px; letter-spacing: .04em; }
 .component-panel { max-width: 820px; margin: 0 auto; padding: 8px; }
 .title-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 32px; margin-bottom: 24px; }
 .title-row {

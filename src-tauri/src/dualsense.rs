@@ -170,8 +170,8 @@ pub struct DualSenseStatus {
 
 #[cfg(target_os = "windows")]
 fn installed_usbip_version() -> Option<String> {
-    use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY};
     use winreg::RegKey;
+    use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY};
 
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     let uninstall = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
@@ -337,9 +337,7 @@ fn validate_core_ds5_response(
     )) {
         return Err("DS5-CFG-001: Sunshine returned invalid DualSense values".to_string());
     }
-    if values.ds5_genshin_compatibility
-        && (!values.ds5_enabled || !values.ds5_audio_haptics)
-    {
+    if values.ds5_genshin_compatibility && (!values.ds5_enabled || !values.ds5_audio_haptics) {
         return Err("DS5-CFG-001: Sunshine returned invalid DualSense values".to_string());
     }
     Ok(result)
@@ -714,14 +712,14 @@ fn run_with_timeout(
 /// Bind the elevated helper and all children it launches to one lifetime job.
 fn bind_elevated_helper_lifetime() -> Result<(), String> {
     use std::os::windows::io::{AsRawHandle, FromRawHandle};
-    use windows::core::PCWSTR;
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        SetInformationJobObject,
     };
     use windows::Win32::System::Threading::GetCurrentProcess;
+    use windows::core::PCWSTR;
 
     ELEVATED_HELPER_JOB
         .get_or_try_init(|| unsafe {
@@ -1936,11 +1934,7 @@ async fn run_elevated_helper(operation: ElevatedOperation, token: uuid::Uuid) ->
         Ok(Ok(())) => {}
         Ok(Err(_)) | Err(_) => return 4,
     }
-    if succeeded {
-        0
-    } else {
-        1
-    }
+    if succeeded { 0 } else { 1 }
 }
 
 /// Handle a narrowly allowlisted elevated DualSense operation before Tauri or
@@ -2265,12 +2259,7 @@ pub async fn dualsense_set_config(
     }
     let snapshot = get_core_ds5_settings().await?;
     let mut settings = snapshot.response.settings;
-    update_config_fields(
-        &mut settings,
-        enabled,
-        audio_haptics,
-        genshin_compatibility,
-    );
+    update_config_fields(&mut settings, enabled, audio_haptics, genshin_compatibility);
     let entity_tag = require_entity_tag(snapshot.entity_tag)?;
     let applied = tokio::time::timeout(
         CONFIG_APPLY_TIMEOUT,
@@ -2407,19 +2396,20 @@ pub async fn dualsense_uninstall() -> Result<DualSenseStatus, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        clamp_tuning, classify_usbip_installer_exit_code, component_state, component_test_failure,
-        component_matches_current_runtime, component_update_available, core_ds5_http_error,
-        copy_runtime_files, extract_sidecar_package, local_uninstalled_status,
+        CoreDualSenseResponse, CoreDualSenseSettings, InstalledComponentManifest,
+        SidecarPackageManifest, UsbipInstallResult, clamp_tuning,
+        classify_usbip_installer_exit_code, component_matches_current_runtime, component_state,
+        component_test_failure, component_update_available, copy_runtime_files,
+        core_ds5_http_error, extract_sidecar_package, local_uninstalled_status,
         pinned_usbip_installed, require_entity_tag, resolve_core_config,
         rollback_activated_component, sha256_file, update_config_fields, update_tuning_fields,
-        validate_core_ds5_response, validate_requested_profile, validate_strong_entity_tag,
-        validate_sidecar_package_manifest, CoreDualSenseResponse, CoreDualSenseSettings,
-        InstalledComponentManifest, SidecarPackageManifest, UsbipInstallResult,
+        validate_core_ds5_response, validate_requested_profile, validate_sidecar_package_manifest,
+        validate_strong_entity_tag,
     };
     #[cfg(target_os = "windows")]
     use super::{
-        elevated_pipe_name, read_limited_elevated_line, wait_for_elevated_pipe_connection,
-        ElevatedMessage, ElevatedOperation, MAX_ELEVATED_MESSAGE_BYTES,
+        ElevatedMessage, ElevatedOperation, MAX_ELEVATED_MESSAGE_BYTES, elevated_pipe_name,
+        read_limited_elevated_line, wait_for_elevated_pipe_connection,
     };
     use reqwest::header::HeaderValue;
     use std::io::Write as _;
@@ -2521,9 +2511,21 @@ mod tests {
             sidecar_sha256: "a".repeat(64),
         };
         assert!(!component_update_available(Some(&current)));
-        assert!(component_matches_current_runtime(Some(&current), true, true));
-        assert!(!component_matches_current_runtime(Some(&current), false, true));
-        assert!(!component_matches_current_runtime(Some(&current), true, false));
+        assert!(component_matches_current_runtime(
+            Some(&current),
+            true,
+            true
+        ));
+        assert!(!component_matches_current_runtime(
+            Some(&current),
+            false,
+            true
+        ));
+        assert!(!component_matches_current_runtime(
+            Some(&current),
+            true,
+            false
+        ));
         assert!(!component_update_available(None));
         assert!(!component_matches_current_runtime(None, true, true));
 
@@ -2532,7 +2534,11 @@ mod tests {
             ..current
         };
         assert!(component_update_available(Some(&outdated)));
-        assert!(!component_matches_current_runtime(Some(&outdated), true, true));
+        assert!(!component_matches_current_runtime(
+            Some(&outdated),
+            true,
+            true
+        ));
     }
 
     #[test]
@@ -2744,28 +2750,36 @@ mod tests {
         let oversized_text = format!("\"{}\"", "x".repeat(512));
         let oversized = HeaderValue::from_bytes(oversized_text.as_bytes()).unwrap();
         assert!(validate_strong_entity_tag(oversized).is_err());
-        assert!(require_entity_tag(None)
-            .unwrap_err()
-            .starts_with("DS5-CFG-007:"));
+        assert!(
+            require_entity_tag(None)
+                .unwrap_err()
+                .starts_with("DS5-CFG-007:")
+        );
     }
 
     #[test]
     fn conditional_update_errors_keep_stable_user_facing_codes() {
-        assert!(core_ds5_http_error(
-            Some("ds5_precondition_failed"),
-            reqwest::StatusCode::PRECONDITION_FAILED,
-        )
-        .starts_with("DS5-CFG-006:"));
-        assert!(core_ds5_http_error(
-            Some("ds5_precondition_required"),
-            reqwest::StatusCode::from_u16(428).unwrap(),
-        )
-        .starts_with("DS5-CFG-007:"));
-        assert!(core_ds5_http_error(
-            Some("ds5_if_match_invalid"),
-            reqwest::StatusCode::BAD_REQUEST,
-        )
-        .starts_with("DS5-CFG-007:"));
+        assert!(
+            core_ds5_http_error(
+                Some("ds5_precondition_failed"),
+                reqwest::StatusCode::PRECONDITION_FAILED,
+            )
+            .starts_with("DS5-CFG-006:")
+        );
+        assert!(
+            core_ds5_http_error(
+                Some("ds5_precondition_required"),
+                reqwest::StatusCode::from_u16(428).unwrap(),
+            )
+            .starts_with("DS5-CFG-007:")
+        );
+        assert!(
+            core_ds5_http_error(
+                Some("ds5_if_match_invalid"),
+                reqwest::StatusCode::BAD_REQUEST,
+            )
+            .starts_with("DS5-CFG-007:")
+        );
     }
 
     #[tokio::test]

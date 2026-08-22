@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::Emitter;
 
-const COMPONENT_VERSION: &str = "1.1.0";
+const COMPONENT_VERSION: &str = "1.2.0";
 const PROTOCOL_VERSION: u32 = 1;
 const HIDMAESTRO_VERSION: &str = "v1.6.2";
 const HIDMAESTRO_URL: &str =

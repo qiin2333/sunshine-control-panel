@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  createLatestIntentQueue,
   dualSenseConfigMatches,
   dualSenseConfigReadable,
   dualSenseConfigUiState,
@@ -56,6 +57,29 @@ test('recognizes a requested switch state after an ambiguous save response', () 
     audioHaptics: false,
     genshinCompatibility: false,
   }), false)
+})
+
+test('serializes config saves and keeps only the latest pending intent', async () => {
+  const observed = []
+  let releaseFirst
+  const firstBlocked = new Promise((resolve) => {
+    releaseFirst = resolve
+  })
+  const queue = createLatestIntentQueue(async (intent) => {
+    observed.push(intent)
+    if (intent === 'enable') await firstBlocked
+  })
+
+  const first = queue.submit('enable')
+  queue.submit('disable')
+  queue.submit('enable-latest')
+  assert.equal(queue.hasPending(), true)
+  assert.equal(queue.peekPending(), 'enable-latest')
+
+  releaseFirst()
+  await first
+  assert.deepEqual(observed, ['enable', 'enable-latest'])
+  assert.equal(queue.hasPending(), false)
 })
 
 test('preserves confirmed config when a status refresh cannot read Core settings', () => {

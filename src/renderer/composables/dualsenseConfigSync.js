@@ -19,6 +19,33 @@ export const dualSenseConfigMatches = (data, requested) =>
   && data.audio_haptics === requested.audioHaptics
   && (data.genshin_compatibility ?? false) === requested.genshinCompatibility
 
+export const createLatestIntentQueue = (run) => {
+  let active = null
+  let pending
+  const state = {
+    hasPending: () => pending !== undefined,
+    peekPending: () => pending,
+  }
+
+  const submit = (intent) => {
+    pending = intent
+    if (!active) {
+      active = (async () => {
+        while (pending !== undefined) {
+          const current = pending
+          pending = undefined
+          await run(current, state)
+        }
+      })().finally(() => {
+        active = null
+      })
+    }
+    return active
+  }
+
+  return { submit, ...state }
+}
+
 export const mergeDualSenseStatus = (current, incoming) => {
   if (dualSenseConfigReadable(incoming)) return incoming
 

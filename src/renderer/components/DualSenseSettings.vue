@@ -20,7 +20,7 @@
         <el-checkbox
           v-model="enabled"
           class="enable-control"
-          :disabled="!status.verified || status.in_use || controlsBusy"
+          :disabled="!status.verified || status.in_use || configControlsBusy"
           @change="saveSettings"
         >{{ saving ? t.dualSense.saving : t.dualSense.enableShort }}</el-checkbox>
       </section>
@@ -132,7 +132,7 @@
             :class="{ 'is-selected': audioHaptics }"
             role="checkbox"
             :aria-checked="audioHaptics"
-            :disabled="status.in_use || controlsBusy || (!status.usbip_available && !audioHaptics)"
+            :disabled="status.in_use || configControlsBusy || (!status.usbip_available && !audioHaptics)"
             @click="setAudioHaptics(!audioHaptics)"
           >
             <span class="selection-cursor" aria-hidden="true">▶</span>
@@ -202,7 +202,7 @@
           </span>
           <el-checkbox
             v-model="genshinCompatibility"
-            :disabled="!status.genshin_compatibility_available || !status.usbip_available || !enabled || !audioHaptics || status.in_use || controlsBusy"
+            :disabled="!status.genshin_compatibility_available || !status.usbip_available || !enabled || !audioHaptics || status.in_use || configControlsBusy"
             @change="setGenshinCompatibility"
           >{{ genshinCompatibility ? t.dualSense.enabledLabel : t.dualSense.disabledLabel }}</el-checkbox>
         </div>
@@ -274,6 +274,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { dualsense } from '../tauri-adapter.js'
 import { dualSenseErrorCode, friendlyDualSenseError } from '../composables/dualsenseErrors.js'
 import {
+  createLatestIntentQueue,
   dualSenseConfigMatches,
   dualSenseConfigReadable,
   dualSenseConfigUiState,
@@ -320,6 +321,7 @@ let statusRefreshPromise = null
 const STATUS_REFRESH_WAIT_TIMEOUT_MS = 5000
 
 const controlsBusy = computed(() => saving.value || tuningSaving.value || Boolean(operation.value))
+const configControlsBusy = computed(() => tuningSaving.value || Boolean(operation.value))
 const tuningDirty = computed(() =>
   legacyStrength.value !== status.value.legacy_strength
   || legacyCurve.value !== status.value.legacy_curve
@@ -419,8 +421,8 @@ const waitForStatusRefresh = async () => {
   }
 }
 
-const refresh = async (quiet = false) => {
-  if (controlsBusy.value || refreshing.value || (quiet && statusRefreshPromise)) return false
+const refresh = async (quiet = false, allowBusy = false) => {
+  if ((!allowBusy && controlsBusy.value) || refreshing.value || (quiet && statusRefreshPromise)) return false
   if (!quiet && statusRefreshPromise) {
     await waitForStatusRefresh()
     if (controlsBusy.value || refreshing.value || statusRefreshPromise) return false
@@ -537,26 +539,19 @@ const installFromPackage = async () => {
   }
 }
 
-const saveSettings = async () => {
-  if (operation.value || saving.value) {
-    enabled.value = status.value.enabled
-    audioHaptics.value = status.value.audio_haptics
-    genshinCompatibility.value = status.value.genshin_compatibility ?? false
-    return
-  }
+const applyConfigControls = (requested) => {
+  enabled.value = requested.enabled
+  audioHaptics.value = requested.audioHaptics
+  genshinCompatibility.value = requested.genshinCompatibility
+}
+
+const persistConfigIntent = async (requestedConfig, queue) => {
   invalidateStatusRefresh()
-  const requestedEnabled = enabled.value
-  const requestedAudioHaptics = audioHaptics.value
-  const requestedGenshinCompatibility = requestedEnabled && requestedAudioHaptics && genshinCompatibility.value
-  const requestedConfig = {
-    enabled: requestedEnabled,
-    audioHaptics: requestedAudioHaptics,
-    genshinCompatibility: requestedGenshinCompatibility,
-  }
-  genshinCompatibility.value = requestedGenshinCompatibility
+  const requestedEnabled = requestedConfig.enabled
+  const requestedAudioHaptics = requestedConfig.audioHaptics
+  const requestedGenshinCompatibility = requestedConfig.genshinCompatibility
   const preserveTuning = tuningDirty.value
   operationError.value = ''
-  saving.value = true
   await waitForStatusRefresh()
   let result = await dualsense.setConfig(
     requestedEnabled,
@@ -564,24 +559,23 @@ const saveSettings = async () => {
     requestedGenshinCompatibility,
   )
   let refreshedAfterFailure = false
+  if (!result.success && queue.hasPending()) {
+    return { success: false, preserveTuning, message: result.message }
+  }
   const firstErrorCode = result.success ? '' : dualSenseErrorCode(result.message)
   if (!result.success && ['DS5-CFG-001', 'DS5-CFG-003'].includes(firstErrorCode)) {
-    saving.value = false
-    refreshedAfterFailure = await refresh(true)
+    refreshedAfterFailure = await refresh(true, true)
+    applyConfigControls(queue.peekPending() ?? requestedConfig)
     if (refreshedAfterFailure && dualSenseConfigMatches(status.value, requestedConfig)) {
-      ElMessage.success(t.value.dualSense.configSuccess)
-      return
+      return { success: true, preserveTuning }
     }
     const canRetry = refreshedAfterFailure
+      && !queue.hasPending()
       && !status.value.in_use
       && (!requestedEnabled || status.value.verified)
       && (!requestedEnabled || !requestedAudioHaptics || status.value.usbip_available)
       && (!requestedGenshinCompatibility || status.value.genshin_compatibility_available)
     if (canRetry) {
-      enabled.value = requestedEnabled
-      audioHaptics.value = requestedAudioHaptics
-      genshinCompatibility.value = requestedGenshinCompatibility
-      saving.value = true
       result = await dualsense.setConfig(
         requestedEnabled,
         requestedAudioHaptics,
@@ -591,25 +585,45 @@ const saveSettings = async () => {
     }
   }
   if (!result.success) {
-    saving.value = false
-    if (!refreshedAfterFailure) {
-      refreshedAfterFailure = await refresh(true)
+    if (!refreshedAfterFailure && !queue.hasPending()) {
+      refreshedAfterFailure = await refresh(true, true)
+      applyConfigControls(queue.peekPending() ?? requestedConfig)
     }
     if (refreshedAfterFailure && dualSenseConfigMatches(status.value, requestedConfig)) {
-      ElMessage.success(t.value.dualSense.configSuccess)
-      return
+      return { success: true, preserveTuning }
     }
-    if (!refreshedAfterFailure) {
-      enabled.value = status.value.enabled
-      audioHaptics.value = status.value.audio_haptics
-      genshinCompatibility.value = status.value.genshin_compatibility ?? false
-    }
-    return showError(result.message, 'config')
+    return { success: false, preserveTuning, message: result.message }
   }
-  saving.value = false
   status.value = result.data
   statusKnown.value = true
-  const uiState = dualSenseConfigUiState(result.data, preserveTuning)
+  return { success: true, preserveTuning }
+}
+
+const configSaveQueue = createLatestIntentQueue(async (requestedConfig, queue) => {
+  saving.value = true
+  applyConfigControls(requestedConfig)
+  let outcome
+  try {
+    outcome = await persistConfigIntent(requestedConfig, queue)
+  } catch (error) {
+    outcome = { success: false, preserveTuning: tuningDirty.value, message: error }
+  }
+  const pending = queue.peekPending()
+  if (pending) {
+    applyConfigControls(pending)
+    return
+  }
+
+  saving.value = false
+  if (!outcome.success) {
+    enabled.value = status.value.enabled
+    audioHaptics.value = status.value.audio_haptics
+    genshinCompatibility.value = status.value.genshin_compatibility ?? false
+    showError(outcome.message, 'config')
+    return
+  }
+
+  const uiState = dualSenseConfigUiState(status.value, outcome.preserveTuning)
   enabled.value = uiState.enabled
   audioHaptics.value = uiState.audioHaptics
   genshinCompatibility.value = uiState.genshinCompatibility
@@ -619,10 +633,29 @@ const saveSettings = async () => {
     legacyNoiseGate.value = uiState.tuning.noiseGate
   }
   ElMessage.success(t.value.dualSense.configSuccess)
+})
+
+const saveSettings = async () => {
+  if (operation.value || tuningSaving.value) {
+    enabled.value = status.value.enabled
+    audioHaptics.value = status.value.audio_haptics
+    genshinCompatibility.value = status.value.genshin_compatibility ?? false
+    return
+  }
+  const requestedEnabled = enabled.value
+  const requestedAudioHaptics = audioHaptics.value
+  const requestedGenshinCompatibility = requestedEnabled && requestedAudioHaptics && genshinCompatibility.value
+  const requestedConfig = {
+    enabled: requestedEnabled,
+    audioHaptics: requestedAudioHaptics,
+    genshinCompatibility: requestedGenshinCompatibility,
+  }
+  applyConfigControls(requestedConfig)
+  await configSaveQueue.submit(requestedConfig)
 }
 
 const setAudioHaptics = async (enabled) => {
-  if (controlsBusy.value || audioHaptics.value === enabled) return
+  if (operation.value || tuningSaving.value || (audioHaptics.value === enabled && !saving.value)) return
   audioHaptics.value = enabled
   if (!enabled) genshinCompatibility.value = false
   testCompleted.value = false
@@ -661,7 +694,10 @@ const saveTuning = async () => {
 }
 
 const setGenshinCompatibility = async (value) => {
-  if (controlsBusy.value) return
+  if (operation.value || tuningSaving.value) {
+    genshinCompatibility.value = status.value.genshin_compatibility ?? false
+    return
+  }
   genshinCompatibility.value = Boolean(value)
   await saveSettings()
 }

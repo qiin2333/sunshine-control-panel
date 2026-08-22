@@ -97,10 +97,20 @@
       <el-alert
         v-if="showNotice"
         class="notice"
-        type="warning"
+        :type="status.state === 'in_use' ? 'error' : 'warning'"
         :title="nextAction"
         :closable="false"
         show-icon
+      />
+
+      <el-alert
+        v-if="operationError"
+        class="notice"
+        type="error"
+        :title="t.dualSense.technicalDetails"
+        :description="operationError"
+        show-icon
+        @close="operationError = ''"
       />
 
       <section v-if="status.verified" class="profile-section" :aria-label="t.dualSense.profileTitle">
@@ -282,6 +292,7 @@ const refreshing = ref(false)
 const operation = ref('')
 const operationProgress = ref(0)
 const operationStageKey = ref('preparing')
+const operationError = ref('')
 const enabled = ref(false)
 const audioHaptics = ref(false)
 const genshinCompatibility = ref(false)
@@ -381,12 +392,14 @@ const healthRows = computed(() => [
   },
 ])
 
-const showError = (message, context = 'generic') => ElMessage.error(
-  friendlyDualSenseError(message, t.value.dualSense.errors, context),
-)
+const showError = (message, context = 'generic') => {
+  operationError.value = String(message || '')
+  ElMessage.error(friendlyDualSenseError(message, t.value.dualSense.errors, context))
+}
 
 const refresh = async (quiet = false) => {
   if (controlsBusy.value) return false
+  if (!quiet) operationError.value = ''
   const preserveTuning = quiet && tuningDirty.value
   refreshing.value = true
   if (!quiet) loading.value = true
@@ -444,6 +457,7 @@ const install = async (packagePath = null) => {
     return
   }
   operation.value = 'install'
+  operationError.value = ''
   operationProgress.value = 0
   const result = await dualsense.install(packagePath)
   if (!result.success) {
@@ -464,6 +478,7 @@ const install = async (packagePath = null) => {
     legacyNoiseGate.value = result.data.legacy_noise_gate
   }
   rebootRecommended.value = result.data.reboot_recommended
+  operationError.value = ''
   ElMessage.success(upgrading ? t.value.dualSense.updateSuccess : t.value.dualSense.installSuccess)
   if (result.data.reboot_recommended) {
     ElMessage.warning(status.value.usbip_available
@@ -503,6 +518,7 @@ const saveSettings = async () => {
   const requestedGenshinCompatibility = requestedEnabled && requestedAudioHaptics && genshinCompatibility.value
   genshinCompatibility.value = requestedGenshinCompatibility
   const preserveTuning = tuningDirty.value
+  operationError.value = ''
   saving.value = true
   let result = await dualsense.setConfig(
     requestedEnabled,
@@ -580,6 +596,7 @@ const applyDefaultPreset = () => {
 
 const saveTuning = async () => {
   if (controlsBusy.value) return
+  operationError.value = ''
   tuningSaving.value = true
   const result = await dualsense.setHapticsTuning(
     legacyStrength.value, legacyCurve.value, legacyNoiseGate.value)
@@ -603,6 +620,7 @@ const setGenshinCompatibility = async (value) => {
 
 const test = async (profile) => {
   if (controlsBusy.value) return
+  operationError.value = ''
   operation.value = profile
   const result = await dualsense.selfTest(profile)
   operation.value = ''
@@ -624,6 +642,7 @@ const uninstall = async () => {
     return
   }
   operation.value = 'uninstall'
+  operationError.value = ''
   const result = await dualsense.uninstall()
   operation.value = ''
   if (!result.success) return showError(result.message, 'uninstall')

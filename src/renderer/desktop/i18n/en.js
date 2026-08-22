@@ -1084,7 +1084,7 @@ Output only one short sentence, no explanation. Reply in English.`,
       unknown: 'The operation could not be completed. Try again. If the problem continues, select “Repair component”.',
       codes: {
         'DS5-PKG-001': 'The component download or integrity check failed. Check your network and try again.',
-        'DS5-PKG-002': 'Component files are missing or cannot be written. Select “Repair component” and approve the administrator prompt.',
+        'DS5-PKG-002': 'Component installation did not complete. Review the error details below and try again.',
         'DS5-PKG-003': 'The DualSense component could not start or pass its checks. Select “Repair component”, then try again.',
         'DS5-PKG-004': 'Administrator permission was denied, or the installer could not start. Try again and approve the Windows prompt.',
         'DS5-PKG-005': 'The selected local package does not match this Sunshine build. Download the DualSense component ZIP from the same Sunshine release.',

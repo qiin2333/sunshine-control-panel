@@ -481,7 +481,7 @@ fn read_sidecar_package_manifest(path: &Path) -> Result<SidecarPackageManifest, 
         )
     })?;
     let mut contents = Vec::new();
-    file.by_ref()
+    Read::by_ref(&mut file)
         .take(MAX_SIDECAR_PACKAGE_MANIFEST_BYTES + 1)
         .read_to_end(&mut contents)
         .map_err(|error| {

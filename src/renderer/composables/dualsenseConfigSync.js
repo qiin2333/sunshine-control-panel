@@ -19,6 +19,20 @@ export const dualSenseConfigMatches = (data, requested) =>
   && data.audio_haptics === requested.audioHaptics
   && (data.genshin_compatibility ?? false) === requested.genshinCompatibility
 
+export const dualSenseConfigAfterInstall = (status, wasInstalled = false) => wasInstalled
+  ? null
+  : {
+      enabled: true,
+      audioHaptics: Boolean(status?.usbip_available && status?.composite_profile),
+      genshinCompatibility: false,
+    }
+
+export const dualSenseConfigAfterUninstall = () => ({
+  enabled: false,
+  audioHaptics: true,
+  genshinCompatibility: false,
+})
+
 export const createLatestIntentQueue = (run, { debounceMs = 0 } = {}) => {
   let active = null
   let pending

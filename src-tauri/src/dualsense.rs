@@ -1442,6 +1442,7 @@ async fn acquire_sidecar_package(
         let value = 12 + (downloaded.saturating_mul(24) / manifest.size).min(24) as u32;
         report_progress(progress, "sidecar_downloading", value);
     }
+    output.flush().await.map_err(|error| error.to_string())?;
     drop(output);
     if downloaded != manifest.size {
         return Err("DS5-PKG-001: sidecar download ended before the expected size".to_string());
@@ -1554,6 +1555,10 @@ async fn ensure_pinned_usbip(
                 .await
                 .map_err(|error| error.to_string())?;
         }
+        output
+            .flush()
+            .await
+            .map_err(|error| error.to_string())?;
         drop(output);
 
         let actual = sha256_file(&installer_path)?;
@@ -1755,6 +1760,10 @@ async fn dualsense_install_impl(
                 report_progress(progress, "downloading", 38 + download_progress);
             }
         }
+        output
+            .flush()
+            .await
+            .map_err(|error| error.to_string())?;
         drop(output);
 
         report_progress(progress, "verifying", 74);

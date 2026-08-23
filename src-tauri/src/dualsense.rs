@@ -259,6 +259,18 @@ struct CoreDualSenseSnapshot {
     entity_tag: Option<HeaderValue>,
 }
 
+#[derive(Debug)]
+enum CoreDualSenseResponseError {
+    Transfer(reqwest::Error),
+    Message(String),
+}
+
+impl From<String> for CoreDualSenseResponseError {
+    fn from(message: String) -> Self {
+        Self::Message(message)
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct DualSenseTuningResult {
     legacy_strength: f64,
@@ -530,7 +542,7 @@ fn component_matches_current_runtime(
 
 async fn read_core_ds5_response(
     mut response: reqwest::Response,
-) -> Result<CoreDualSenseSnapshot, String> {
+) -> Result<CoreDualSenseSnapshot, CoreDualSenseResponseError> {
     const MAX_RESPONSE_BYTES: usize = 64 * 1024;
     let status = response.status();
     let entity_tag = response.headers().get(reqwest::header::ETAG).cloned();
@@ -538,7 +550,9 @@ async fn read_core_ds5_response(
         .content_length()
         .is_some_and(|size| size > MAX_RESPONSE_BYTES as u64)
     {
-        return Err("DS5-CFG-001: DualSense configuration response is too large".to_string());
+        return Err("DS5-CFG-001: DualSense configuration response is too large"
+            .to_string()
+            .into());
     }
     let mut bytes = Vec::with_capacity(
         response
@@ -549,16 +563,12 @@ async fn read_core_ds5_response(
     while let Some(chunk) = response
         .chunk()
         .await
-        .map_err(|error| {
-            warn!(
-                "Unable to read the DualSense configuration response: {}",
-                error.without_url()
-            );
-            "DS5-CFG-001: unable to read DualSense configuration".to_string()
-        })?
+        .map_err(CoreDualSenseResponseError::Transfer)?
     {
         if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
-            return Err("DS5-CFG-001: DualSense configuration response is too large".to_string());
+            return Err("DS5-CFG-001: DualSense configuration response is too large"
+                .to_string()
+                .into());
         }
         bytes.extend_from_slice(&chunk);
     }
@@ -566,10 +576,12 @@ async fn read_core_ds5_response(
         let error_code = serde_json::from_slice::<serde_json::Value>(&bytes)
             .ok()
             .and_then(|body| body.get("error_code")?.as_str().map(str::to_owned));
-        return Err(core_ds5_http_error(error_code.as_deref(), status));
+        return Err(core_ds5_http_error(error_code.as_deref(), status).into());
     }
     let result: CoreDualSenseResponse = serde_json::from_slice(&bytes).map_err(|error| {
-        format!("DS5-CFG-001: invalid DualSense configuration response: {error}")
+        CoreDualSenseResponseError::Message(format!(
+            "DS5-CFG-001: invalid DualSense configuration response: {error}"
+        ))
     })?;
     let result = validate_core_ds5_response(result)?;
     let entity_tag = entity_tag.map(validate_strong_entity_tag).transpose()?;
@@ -584,15 +596,16 @@ async fn get_core_ds5_settings() -> Result<CoreDualSenseSnapshot, String> {
         warn!("Unable to resolve the Sunshine address for DualSense configuration");
         "DS5-CFG-001: unable to read DualSense configuration".to_string()
     })?;
-    let endpoint = format!(
-        "{}/api/dualsense/config",
-        base_url.trim_end_matches('/')
-    );
+    let endpoint = format!("{}/api/dualsense/config", base_url.trim_end_matches('/'));
     let client = crate::sunshine::create_https_client()?;
     for attempt in 1..=CORE_CONFIG_READ_ATTEMPTS {
-        match client.get(&endpoint).send().await {
-            Ok(response) => return read_core_ds5_response(response).await,
-            Err(error) => {
+        let response = match client.get(&endpoint).send().await {
+            Ok(response) => read_core_ds5_response(response).await,
+            Err(error) => Err(CoreDualSenseResponseError::Transfer(error)),
+        };
+        match response {
+            Ok(snapshot) => return Ok(snapshot),
+            Err(CoreDualSenseResponseError::Transfer(error)) => {
                 let timed_out = error.is_timeout();
                 warn!(
                     "Unable to query DualSense configuration (attempt {attempt}/{CORE_CONFIG_READ_ATTEMPTS}): {}",
@@ -604,6 +617,7 @@ async fn get_core_ds5_settings() -> Result<CoreDualSenseSnapshot, String> {
                     break;
                 }
             }
+            Err(CoreDualSenseResponseError::Message(message)) => return Err(message),
         }
     }
     Err("DS5-CFG-001: unable to read DualSense configuration".to_string())
@@ -633,9 +647,19 @@ async fn save_core_ds5_settings(
             );
             "DS5-CFG-003: unable to save DualSense configuration".to_string()
         })?;
-    read_core_ds5_response(response)
-        .await
-        .map_err(|error| error.replacen("DS5-CFG-001:", "DS5-CFG-003:", 1))
+    read_core_ds5_response(response).await.map_err(|error| {
+        let message = match error {
+            CoreDualSenseResponseError::Transfer(error) => {
+                warn!(
+                    "Unable to read the saved DualSense configuration response: {}",
+                    error.without_url()
+                );
+                "DS5-CFG-001: unable to read DualSense configuration".to_string()
+            }
+            CoreDualSenseResponseError::Message(message) => message,
+        };
+        message.replacen("DS5-CFG-001:", "DS5-CFG-003:", 1)
+    })
 }
 
 fn sha256_file(path: &Path) -> Result<String, String> {

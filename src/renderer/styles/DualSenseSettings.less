@@ -1,0 +1,392 @@
+// ========================================
+// DualSense 控制器页 — 像素风设计令牌与样式
+// 设计稿 v3：仅 HUD 保留像素窗锚点，
+// 其余分区为「像素标题 + 横线」，控件保留
+// 块状按钮 / 方角描边的物理感。
+// ========================================
+
+@font-face {
+  // Fusion Pixel 12px proportional（OFL）补齐 PixelMplus12 缺失的简中字库
+  font-family: 'FusionPixel';
+  src: url('/fonts/fusion-pixel-12px-proportional-zh_hans.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+
+@ds5-pixel-font: 'FusionPixel', 'PixelMplus12', 'YouYuan', 'Courier New', monospace;
+
+.ds5-page {
+  // —— 像素菜单令牌：浅色 = Gura 蓝 ——
+  --pix-font: @ds5-pixel-font;
+  --ds5-primary: #4a9eff;
+  --ds5-primary-deep: #3b7fcc;
+  --ds5-window-line: #4a9eff;
+  --ds5-window-fill: rgba(255, 255, 255, .93);
+  --ds5-window-shadow: rgba(74, 158, 255, .22);
+  --ds5-hover-fill: rgba(74, 158, 255, .1);
+
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 34px 30px 60px;
+  color: var(--el-text-color-primary);
+  font-family: 'Microsoft YaHei UI', 'Noto Sans SC', sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+
+  // —— Element Plus 主色梯度对齐像素令牌 ——
+  --el-color-primary: var(--ds5-primary);
+  --el-color-primary-dark-2: var(--ds5-primary-deep);
+  --el-color-primary-light-3: #7ab8ff;
+  --el-color-primary-light-5: #a2d2ff;
+  --el-color-primary-light-7: rgba(162, 210, 255, .45);
+  --el-color-primary-light-8: rgba(162, 210, 255, .3);
+  --el-color-primary-light-9: #e6f2ff;
+}
+
+:global([data-bs-theme='dark']) .ds5-page {
+  // —— 像素菜单令牌：暗色 = 莫兰迪 ——
+  --ds5-primary: #d4a5a5;
+  --ds5-primary-deep: #a98383;
+  --ds5-window-line: #8b6f5e;
+  --ds5-window-fill: rgba(45, 38, 40, .96);
+  --ds5-window-shadow: rgba(0, 0, 0, .45);
+  --ds5-hover-fill: rgba(212, 165, 165, .12);
+
+  --el-color-primary: var(--ds5-primary);
+  --el-color-primary-dark-2: var(--ds5-primary-deep);
+  --el-color-primary-light-3: rgba(212, 165, 165, .55);
+  --el-color-primary-light-5: rgba(212, 165, 165, .4);
+  --el-color-primary-light-7: rgba(212, 165, 165, .26);
+  --el-color-primary-light-8: rgba(212, 165, 165, .18);
+  --el-color-primary-light-9: rgba(212, 165, 165, .12);
+
+  --el-bg-color-overlay: rgba(61, 50, 53, .72);
+  --el-fill-color-blank: rgba(255, 255, 255, .055);
+  --el-fill-color-light: rgba(255, 255, 255, .055);
+  --el-fill-color-lighter: rgba(255, 255, 255, .035);
+  --el-fill-color-extra-light: rgba(255, 255, 255, .025);
+  --el-text-color-primary: #f0dfc3;
+  --el-text-color-regular: #d6c3a7;
+  --el-text-color-secondary: #b9aca8;
+  --el-text-color-placeholder: #9d9494;
+  --el-border-color: rgba(230, 213, 184, .22);
+  --el-border-color-lighter: rgba(230, 213, 184, .11);
+  --el-border-color-extra-light: rgba(230, 213, 184, .08);
+  --el-color-success-light-8: rgba(103, 194, 58, .18);
+  --el-color-success-light-9: rgba(103, 194, 58, .11);
+  --el-color-warning-light-8: rgba(230, 162, 60, .2);
+  --el-color-warning-light-9: rgba(230, 162, 60, .12);
+  --el-color-warning-dark-2: #f0bd70;
+  --el-color-danger-light-8: rgba(245, 108, 108, .19);
+  color: var(--el-text-color-primary);
+}
+
+// ============ 页头 ============
+.ds5-eyebrow {
+  margin: 0 0 8px;
+  color: var(--el-text-color-secondary);
+  font-family: var(--pix-font);
+  font-size: 12px;
+  letter-spacing: .35em;
+  text-transform: uppercase;
+}
+.ds5-title-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 7px; }
+.ds5-title-row h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: .02em; }
+.ds5-tag-exp {
+  border: 2px solid var(--el-color-danger);
+  color: var(--el-color-danger);
+  background: transparent;
+  font-family: var(--pix-font);
+  font-size: 11px;
+  letter-spacing: .06em;
+}
+.ds5-intro { margin: 0; color: var(--el-text-color-secondary); font-size: 14px; }
+
+// ============ HUD 像素窗（页面唯一锚点） ============
+.ds5-window {
+  position: relative;
+  margin-top: 30px;
+  padding: 24px 22px 20px;
+  border: 2px solid var(--ds5-window-line);
+  background: var(--ds5-window-fill);
+  box-shadow: 0 6px 0 var(--ds5-window-shadow);
+}
+.ds5-window-tab {
+  position: absolute;
+  top: -13px;
+  left: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 12px;
+  border: 2px solid var(--ds5-window-line);
+  border-bottom-color: var(--ds5-window-fill);
+  background: var(--ds5-window-fill);
+  color: var(--ds5-primary);
+  font-family: var(--pix-font);
+  font-size: 13px;
+  letter-spacing: .12em;
+  box-shadow: 0 -3px 0 var(--ds5-window-shadow);
+}
+.ds5-hud-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+  padding-bottom: 14px;
+  border-bottom: 2px dashed color-mix(in srgb, var(--ds5-window-line) 45%, transparent);
+}
+.ds5-hud-state { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.ds5-status-dot {
+  width: 10px; height: 10px;
+  flex: 0 0 auto;
+  background: var(--el-text-color-placeholder);
+}
+.state-ready .ds5-status-dot { background: var(--el-color-success); box-shadow: 0 0 0 3px var(--el-color-success-light-8); }
+.state-update_available .ds5-status-dot,
+.state-transport_missing .ds5-status-dot,
+.state-in_use .ds5-status-dot { background: var(--el-color-warning); box-shadow: 0 0 0 3px var(--el-color-warning-light-8); }
+.state-repair_required .ds5-status-dot { background: var(--el-color-danger); box-shadow: 0 0 0 3px var(--el-color-danger-light-8); }
+.ds5-hud-label { font-family: var(--pix-font); font-size: 15px; font-weight: 400; letter-spacing: .1em; }
+.ds5-hud-version { color: var(--el-text-color-secondary); font-family: var(--pix-font); font-size: 12px; letter-spacing: .05em; }
+.ds5-hud-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+
+// 方括号文本操作（低权重动作）
+.ds5-page :deep(.el-button.ds5-action) {
+  min-height: 30px;
+  margin: 0;
+  padding: 3px 2px;
+  border: 0;
+  background: transparent;
+  font-family: var(--pix-font);
+  font-weight: 400;
+  box-shadow: none;
+  transition: color .12s ease;
+  &::before { content: '['; opacity: .7; margin-right: 4px; }
+  &::after { content: ']'; opacity: .7; margin-left: 4px; }
+  &.el-button--primary { color: var(--ds5-primary); }
+  &.el-button--warning { color: var(--el-color-warning-dark-2, var(--el-color-warning)); }
+  &:not(.el-button--primary):not(.el-button--warning) { color: var(--el-text-color-secondary); }
+  &:hover, &:focus-visible { background: transparent; }
+  &:focus-visible { outline: 1px dashed currentColor; outline-offset: 3px; }
+  &.is-disabled { background: transparent; }
+}
+
+// ============ 窗内标题行 + 启用开关 ============
+.ds5-headline {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 24px;
+  flex-wrap: wrap;
+  padding-top: 16px;
+  p { margin: 0; max-width: 560px; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.5; }
+}
+.ds5-enable-control { font-size: 14px; font-weight: 500; }
+
+// ============ 分区条目（像素标题 + 横线） ============
+.ds5-section { margin-top: 36px; }
+.ds5-section-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.ds5-section-label {
+  color: var(--ds5-primary);
+  font-family: var(--pix-font);
+  font-size: 13px;
+  letter-spacing: .12em;
+  white-space: nowrap;
+}
+.ds5-section-rule { flex: 1; height: 2px; background: var(--ds5-window-line); opacity: .55; }
+
+// ============ 模式菜单列表 ============
+.ds5-mode-list { margin: 0; }
+.ds5-mode-option {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  min-height: 58px;
+  padding: 13px 10px;
+  border: 0;
+  border-bottom: 2px dashed color-mix(in srgb, var(--ds5-window-line) 50%, transparent);
+  color: var(--el-text-color-secondary);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  &.is-static { cursor: default; }
+  &:disabled { cursor: not-allowed; opacity: .55; }
+  &.is-selected {
+    color: var(--el-text-color-primary);
+    background: var(--ds5-hover-fill);
+    box-shadow: inset 5px 0 0 var(--ds5-primary);
+  }
+  strong { font-size: 14px; font-weight: 600; }
+  small { display: block; margin-top: 2px; color: var(--el-text-color-secondary); font-size: 12.5px; line-height: 1.5; }
+}
+.ds5-mode-option:first-child { border-top: 2px dashed color-mix(in srgb, var(--ds5-window-line) 50%, transparent); }
+.ds5-mode-cursor { color: var(--ds5-primary); font-family: var(--pix-font); visibility: hidden; }
+.ds5-mode-option.is-selected .ds5-mode-cursor { visibility: visible; animation: ds5-cursor-blink 1.2s steps(1) infinite; }
+@keyframes ds5-cursor-blink { 50% { opacity: .25; } }
+
+// 键帽状态片
+.ds5-kbd {
+  min-width: 64px;
+  padding: 3px 8px;
+  border: 2px solid var(--ds5-window-line);
+  color: var(--el-text-color-secondary);
+  background: var(--el-fill-color-blank);
+  font-family: var(--pix-font);
+  font-size: 11px;
+  letter-spacing: .06em;
+  text-align: center;
+}
+.ds5-mode-option.is-selected .ds5-kbd { border-color: var(--ds5-primary); color: var(--ds5-primary); }
+
+// ============ 触觉微调 ============
+.ds5-tuning-hint { margin: 0 0 14px; max-width: 620px; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.55; }
+.ds5-mini-label { color: var(--el-text-color-secondary); font-family: var(--pix-font); font-size: 11px; letter-spacing: .18em; }
+.ds5-preset-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 8px; }
+.ds5-preset {
+  display: grid;
+  gap: 3px;
+  min-height: 54px;
+  padding: 9px 12px;
+  border: 2px solid var(--ds5-window-line);
+  color: var(--el-text-color-primary);
+  background: var(--el-fill-color-blank);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 3px 0 var(--ds5-window-shadow);
+  transition: transform .1s ease, box-shadow .1s ease, border-color .1s ease;
+  strong { font-size: 13px; font-weight: 600; }
+  small { color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.45; }
+  &:hover, &:focus-visible { border-color: var(--ds5-primary); transform: translateY(-2px); box-shadow: 0 5px 0 var(--ds5-window-shadow); }
+  &:focus-visible { outline: 1px dashed var(--ds5-primary); outline-offset: 2px; }
+  &:disabled { opacity: .55; cursor: not-allowed; transform: none; box-shadow: 0 3px 0 var(--ds5-window-shadow); }
+}
+.ds5-tuning-fields { display: flex; flex-wrap: wrap; gap: 26px; margin-top: 18px; }
+.ds5-tuning-field { display: grid; gap: 7px; font-size: 13px; color: var(--el-text-color-regular);
+  > span { color: var(--el-text-color-secondary); font-family: var(--pix-font); font-size: 11px; letter-spacing: .18em; }
+}
+.ds5-save-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 20px; }
+.ds5-save-button { min-width: 140px; min-height: 36px; font-weight: 600; }
+.ds5-unsaved-tag { font-weight: 600; }
+
+// ============ 块状按钮（EP 覆写：方角 + 硬投影） ============
+.ds5-page :deep(.el-button:not(.is-text):not(.is-link)) {
+  border-radius: 0 !important;
+  border-width: 2px;
+  font-weight: 700;
+  box-shadow: 0 4px 0 var(--ds5-primary-deep);
+  transition: transform .1s ease, box-shadow .1s ease, background-color .12s ease, border-color .12s ease, color .12s ease;
+}
+.ds5-page :deep(.el-button--primary:not(.is-text):not(.is-link)) { border: 2px solid var(--ds5-primary-deep) !important; }
+.ds5-page :deep(.el-button:not(.is-text):not(.is-link):not(.is-disabled):hover) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 0 var(--ds5-primary-deep);
+}
+.ds5-page :deep(.el-button:not(.is-text):not(.is-link):not(.is-disabled):active) {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 var(--ds5-primary-deep);
+}
+.ds5-page :deep(.el-button:not(.is-text):not(.is-link).is-disabled) {
+  transform: none;
+  box-shadow: 0 4px 0 var(--el-border-color-lighter);
+}
+.ds5-test-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 14px; }
+.ds5-test-actions :deep(.ds5-test-button) { min-width: 180px; min-height: 38px; margin: 0; }
+
+// ============ 数值步进器（方角 + 像素数值） ============
+.ds5-page :deep(.el-input__wrapper) { border-radius: 0; box-shadow: 0 0 0 2px var(--el-border-color) inset; }
+.ds5-page :deep(.el-input__wrapper.is-focus) { box-shadow: 0 0 0 2px var(--ds5-primary) inset; }
+.ds5-page :deep(.el-input-number__decrease),
+.ds5-page :deep(.el-input-number__increase) { border-radius: 0; background: var(--el-fill-color-light); }
+.ds5-page :deep(.el-input__inner) { font-family: var(--pix-font); font-weight: 400; }
+
+// ============ 标签 / 复选框 / 进度条方角化 ============
+.ds5-page :deep(.el-tag) { border-radius: 0; border-width: 2px; }
+.ds5-page :deep(.el-checkbox__inner) { border-radius: 0; }
+.ds5-page :deep(.el-progress-bar__outer),
+.ds5-page :deep(.el-progress-bar__inner) { border-radius: 0; }
+
+// ============ 兼容性 ============
+.ds5-compat-row { display: flex; justify-content: space-between; align-items: center; gap: 24px; flex-wrap: wrap; }
+.ds5-compat-notice {
+  display: flex;
+  gap: 9px;
+  margin: 10px 0 0;
+  color: var(--el-color-warning-dark-2, var(--el-color-warning));
+  font-size: 13px;
+  line-height: 1.55;
+  span { flex: 0 0 auto; font-family: var(--pix-font); font-weight: 700; }
+}
+
+// ============ 提示条 ============
+.ds5-notice { margin: 14px 0 0; padding-inline: 0; background: transparent; }
+
+// ============ 组件状态折叠 ============
+.ds5-details-collapse {
+  margin-top: 0;
+  border: 0;
+  :deep(.el-collapse-item__header) {
+    border: 0;
+    color: var(--el-text-color-secondary);
+    background: transparent;
+    font-family: var(--pix-font);
+    font-size: 12px;
+    letter-spacing: .14em;
+    // 折叠头自身充当分区标题：后接同款像素横线
+    &::after { content: ''; flex: 1; height: 2px; margin-left: 12px; background: var(--ds5-window-line); opacity: .55; }
+  }
+  :deep(.el-collapse-item__wrap) { border: 0; background: transparent; }
+  :deep(.el-collapse-item__content) { padding-bottom: 0; color: inherit; }
+}
+.ds5-health-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(110px, auto) minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+  min-height: 44px;
+  padding: 9px 6px;
+  border-top: 2px dashed color-mix(in srgb, var(--ds5-window-line) 40%, transparent);
+  font-size: 13px;
+}
+.ds5-health-row:first-child { border-top: 0; }
+.ds5-health-key { color: var(--el-text-color-secondary); }
+.ds5-health-state { display: flex; align-items: center; gap: 7px; font-family: var(--pix-font); font-size: 12px; letter-spacing: .06em;
+  i { width: 8px; height: 8px; background: var(--el-text-color-placeholder); }
+  i.ok { background: var(--el-color-success); }
+  i.busy { background: var(--el-color-primary); }
+  i.warn { background: var(--el-color-warning); }
+  i.bad { background: var(--el-color-danger); }
+}
+.ds5-health-detail { min-width: 0; color: var(--el-text-color-secondary); font-size: 12px; text-align: right; overflow-wrap: anywhere; }
+.ds5-panel-footer { display: grid; gap: 8px; padding: 14px 6px 0; color: var(--el-text-color-secondary); font-size: 13px; overflow-wrap: anywhere;
+  details summary { cursor: pointer; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+}
+
+// ============ 安装进度卡 ============
+.ds5-operation-card { padding: 14px 0 0;
+  div { display: flex; justify-content: space-between; margin-bottom: 7px; color: var(--el-text-color-secondary); font-size: 13px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds5-page :deep(.el-button), .ds5-preset { transition: none; }
+  .ds5-mode-option.is-selected .ds5-mode-cursor { animation: none; }
+}
+
+@media (max-width: 760px) {
+  .ds5-page { padding: 22px 14px 40px; }
+  .ds5-preset-row { grid-template-columns: 1fr; }
+  .ds5-health-row { grid-template-columns: minmax(0, 1fr) minmax(0, auto); gap: 8px; }
+  .ds5-health-detail { grid-column: 1 / -1; text-align: left; }
+}
+@media (max-width: 600px) {
+  .ds5-page-header { flex-direction: column; }
+  .ds5-hud-row, .ds5-headline, .ds5-compat-row { flex-direction: column; align-items: flex-start; }
+  .ds5-mode-option { grid-template-columns: 16px minmax(0, 1fr) auto; padding-inline: 4px; }
+  .ds5-tuning-fields { gap: 16px; }
+}

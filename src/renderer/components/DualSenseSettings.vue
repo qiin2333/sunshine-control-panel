@@ -22,7 +22,7 @@
           class="enable-control"
           :disabled="!status.verified || status.in_use || componentControlsBusy"
           @change="saveSettings"
-        >{{ saving ? t.dualSense.saving : t.dualSense.enableShort }}</el-checkbox>
+        >{{ t.dualSense.enableShort }}</el-checkbox>
       </section>
 
       <section class="status-row" aria-live="polite">
@@ -140,7 +140,7 @@
               <strong>{{ t.dualSense.nativeModeShort }}</strong>
               <small>{{ status.usbip_available ? t.dualSense.nativeModeTip : t.dualSense.nativeUnavailable }}</small>
             </span>
-            <kbd>{{ saving ? t.dualSense.saving : (audioHaptics ? t.dualSense.enabledLabel : t.dualSense.disabledLabel) }}</kbd>
+            <kbd>{{ audioHaptics ? t.dualSense.enabledLabel : t.dualSense.disabledLabel }}</kbd>
           </button>
         </div>
       </section>
@@ -254,9 +254,9 @@
             </div>
           </div>
           <footer class="panel-footer">
-            <details v-if="status.detail">
+            <details v-if="safeStatusDetail">
               <summary>{{ status.error_code || t.dualSense.technicalDetails }}</summary>
-              <pre>{{ status.detail }}</pre>
+              <pre>{{ safeStatusDetail }}</pre>
             </details>
             <el-button
               v-if="status.installed"
@@ -279,7 +279,11 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { open } from '@tauri-apps/plugin-dialog'
 import { dualsense } from '../tauri-adapter.js'
-import { dualSenseErrorCode, friendlyDualSenseError } from '../composables/dualsenseErrors.js'
+import {
+  dualSenseErrorCode,
+  friendlyDualSenseError,
+  safeDualSenseTechnicalError,
+} from '../composables/dualsenseErrors.js'
 import {
   createLatestIntentQueue,
   dualSenseConfigMatches,
@@ -327,6 +331,7 @@ let statusRefreshGeneration = 0
 let statusRefreshPromise = null
 let tuningSavePromise = null
 const STATUS_REFRESH_WAIT_TIMEOUT_MS = 5000
+const CONFIG_SAVE_DEBOUNCE_MS = 300
 
 const controlsBusy = computed(() => saving.value || tuningSaving.value || Boolean(operation.value))
 const componentControlsBusy = computed(() => Boolean(operation.value))
@@ -335,6 +340,9 @@ const tuningDirty = computed(() =>
   || legacyCurve.value !== status.value.legacy_curve
   || legacyNoiseGate.value !== status.value.legacy_noise_gate)
 const stateLabel = computed(() => t.value.dualSense.states[status.value.state] || status.value.state)
+const safeStatusDetail = computed(() => status.value.detail
+  ? safeDualSenseTechnicalError(status.value.detail)
+  : '')
 const operationStage = computed(() => t.value.dualSense.stages[operationStageKey.value] || operationStageKey.value)
 const nextAction = computed(() => {
   if (rebootRecommended.value) {
@@ -404,7 +412,7 @@ const healthRows = computed(() => [
 ])
 
 const showError = (message, context = 'generic') => {
-  operationError.value = String(message || '')
+  operationError.value = safeDualSenseTechnicalError(message)
   ElMessage.error(friendlyDualSenseError(message, t.value.dualSense.errors, context))
 }
 
@@ -559,7 +567,6 @@ const applyConfigControls = (requested) => {
 }
 
 const persistConfigIntent = async (requestedConfig, queue) => {
-  invalidateStatusRefresh()
   const requestedEnabled = requestedConfig.enabled
   const requestedAudioHaptics = requestedConfig.audioHaptics
   const requestedGenshinCompatibility = requestedConfig.genshinCompatibility
@@ -648,7 +655,7 @@ const configSaveQueue = createLatestIntentQueue(async (requestedConfig, queue) =
     legacyNoiseGate.value = uiState.tuning.noiseGate
   }
   ElMessage.success(t.value.dualSense.configSuccess)
-})
+}, { debounceMs: CONFIG_SAVE_DEBOUNCE_MS })
 
 const saveSettings = async () => {
   if (operation.value) {
@@ -665,6 +672,9 @@ const saveSettings = async () => {
     audioHaptics: requestedAudioHaptics,
     genshinCompatibility: requestedGenshinCompatibility,
   }
+  invalidateStatusRefresh()
+  operationError.value = ''
+  saving.value = true
   applyConfigControls(requestedConfig)
   await configSaveQueue.submit(requestedConfig)
 }

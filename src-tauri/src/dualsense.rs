@@ -41,6 +41,8 @@ const SIDECAR_PACKAGE_TARGET: &str = "win-x64-self-contained";
 const SIDECAR_PACKAGE_LICENSE: &str = "GPL-3.0-only";
 const MAX_SIDECAR_PACKAGE_BYTES: u64 = 160 * 1024 * 1024;
 const CONFIG_APPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const CORE_CONFIG_READ_ATTEMPTS: usize = 3;
+const CORE_CONFIG_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(75);
 #[cfg(target_os = "windows")]
 const ELEVATED_DS5_ARG: &str = "--elevated-dualsense";
 #[cfg(target_os = "windows")]
@@ -547,7 +549,13 @@ async fn read_core_ds5_response(
     while let Some(chunk) = response
         .chunk()
         .await
-        .map_err(|error| format!("DS5-CFG-001: unable to read DualSense configuration: {error}"))?
+        .map_err(|error| {
+            warn!(
+                "Unable to read the DualSense configuration response: {}",
+                error.without_url()
+            );
+            "DS5-CFG-001: unable to read DualSense configuration".to_string()
+        })?
     {
         if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
             return Err("DS5-CFG-001: DualSense configuration response is too large".to_string());
@@ -572,23 +580,43 @@ async fn read_core_ds5_response(
 }
 
 async fn get_core_ds5_settings() -> Result<CoreDualSenseSnapshot, String> {
-    let base_url = crate::sunshine::get_sunshine_url().await?;
-    let response = crate::sunshine::create_https_client()?
-        .get(format!(
-            "{}/api/dualsense/config",
-            base_url.trim_end_matches('/')
-        ))
-        .send()
-        .await
-        .map_err(|error| format!("DS5-CFG-001: unable to read DualSense configuration: {error}"))?;
-    read_core_ds5_response(response).await
+    let base_url = crate::sunshine::get_sunshine_url().await.map_err(|_| {
+        warn!("Unable to resolve the Sunshine address for DualSense configuration");
+        "DS5-CFG-001: unable to read DualSense configuration".to_string()
+    })?;
+    let endpoint = format!(
+        "{}/api/dualsense/config",
+        base_url.trim_end_matches('/')
+    );
+    let client = crate::sunshine::create_https_client()?;
+    for attempt in 1..=CORE_CONFIG_READ_ATTEMPTS {
+        match client.get(&endpoint).send().await {
+            Ok(response) => return read_core_ds5_response(response).await,
+            Err(error) => {
+                let timed_out = error.is_timeout();
+                warn!(
+                    "Unable to query DualSense configuration (attempt {attempt}/{CORE_CONFIG_READ_ATTEMPTS}): {}",
+                    error.without_url()
+                );
+                if attempt < CORE_CONFIG_READ_ATTEMPTS && !timed_out {
+                    tokio::time::sleep(CORE_CONFIG_RETRY_DELAY * attempt as u32).await;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    Err("DS5-CFG-001: unable to read DualSense configuration".to_string())
 }
 
 async fn save_core_ds5_settings(
     settings: CoreDualSenseSettings,
     entity_tag: HeaderValue,
 ) -> Result<CoreDualSenseSnapshot, String> {
-    let base_url = crate::sunshine::get_sunshine_url().await?;
+    let base_url = crate::sunshine::get_sunshine_url().await.map_err(|_| {
+        warn!("Unable to resolve the Sunshine address for DualSense configuration");
+        "DS5-CFG-003: unable to save DualSense configuration".to_string()
+    })?;
     let response = crate::sunshine::create_https_client()?
         .post(format!(
             "{}/api/dualsense/config",
@@ -598,7 +626,13 @@ async fn save_core_ds5_settings(
         .json(&settings)
         .send()
         .await
-        .map_err(|error| format!("DS5-CFG-003: unable to save DualSense configuration: {error}"))?;
+        .map_err(|error| {
+            warn!(
+                "Unable to save DualSense configuration: {}",
+                error.without_url()
+            );
+            "DS5-CFG-003: unable to save DualSense configuration".to_string()
+        })?;
     read_core_ds5_response(response)
         .await
         .map_err(|error| error.replacen("DS5-CFG-001:", "DS5-CFG-003:", 1))

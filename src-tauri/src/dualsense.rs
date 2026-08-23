@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::Emitter;
+use tokio::io::AsyncWriteExt;
 
 const COMPONENT_VERSION: &str = "1.2.0";
 const PROTOCOL_VERSION: u32 = 1;
@@ -39,6 +40,7 @@ const SIDECAR_PACKAGE_MANIFEST: &str = "ds5-sidecar-package.json";
 const SIDECAR_PACKAGE_ASSET: &str = "Sunshine.Ds5Sidecar.x64.zip";
 const SIDECAR_PACKAGE_TARGET: &str = "win-x64-self-contained";
 const SIDECAR_PACKAGE_LICENSE: &str = "GPL-3.0-only";
+const MAX_SIDECAR_PACKAGE_MANIFEST_BYTES: u64 = 64 * 1024;
 const MAX_SIDECAR_PACKAGE_BYTES: u64 = 160 * 1024 * 1024;
 const CONFIG_APPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 const CORE_CONFIG_READ_ATTEMPTS: usize = 3;
@@ -471,17 +473,33 @@ fn validate_sidecar_package_manifest(
     Ok(manifest)
 }
 
-fn sidecar_package_manifest() -> Result<SidecarPackageManifest, String> {
-    let path = sidecar_package_manifest_path();
-    let contents = fs::read(&path).map_err(|error| {
+fn read_sidecar_package_manifest(path: &Path) -> Result<SidecarPackageManifest, String> {
+    let mut file = File::open(path).map_err(|error| {
         format!(
             "DS5-PKG-002: the DualSense package manifest is missing ({}): {error}",
             path.display()
         )
     })?;
+    let mut contents = Vec::new();
+    file.by_ref()
+        .take(MAX_SIDECAR_PACKAGE_MANIFEST_BYTES + 1)
+        .read_to_end(&mut contents)
+        .map_err(|error| {
+            format!(
+                "DS5-PKG-002: unable to read the DualSense package manifest ({}): {error}",
+                path.display()
+            )
+        })?;
+    if contents.len() as u64 > MAX_SIDECAR_PACKAGE_MANIFEST_BYTES {
+        return Err("DS5-PKG-002: the DualSense package manifest is too large".to_string());
+    }
     let manifest = serde_json::from_slice(&contents)
         .map_err(|error| format!("DS5-PKG-002: invalid DualSense package manifest: {error}"))?;
     validate_sidecar_package_manifest(manifest)
+}
+
+fn sidecar_package_manifest() -> Result<SidecarPackageManifest, String> {
+    read_sidecar_package_manifest(&sidecar_package_manifest_path())
 }
 
 #[cfg(target_os = "windows")]
@@ -1405,7 +1423,9 @@ async fn acquire_sidecar_package(
     if total_size.is_some_and(|size| size != manifest.size) {
         return Err("DS5-PKG-001: sidecar download size does not match the manifest".to_string());
     }
-    let mut output = File::create(destination).map_err(|error| error.to_string())?;
+    let mut output = tokio::fs::File::create(destination)
+        .await
+        .map_err(|error| error.to_string())?;
     let mut downloaded = 0u64;
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
@@ -1417,6 +1437,7 @@ async fn acquire_sidecar_package(
         }
         output
             .write_all(&chunk)
+            .await
             .map_err(|error| error.to_string())?;
         let value = 12 + (downloaded.saturating_mul(24) / manifest.size).min(24) as u32;
         report_progress(progress, "sidecar_downloading", value);
@@ -1514,7 +1535,9 @@ async fn ensure_pinned_usbip(
             return Err("DS5-DRV-001: USB/IP installer exceeds the download limit".to_string());
         }
 
-        let mut output = File::create(&installer_path).map_err(|error| error.to_string())?;
+        let mut output = tokio::fs::File::create(&installer_path)
+            .await
+            .map_err(|error| error.to_string())?;
         let mut downloaded = 0u64;
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
@@ -1528,6 +1551,7 @@ async fn ensure_pinned_usbip(
             }
             output
                 .write_all(&chunk)
+                .await
                 .map_err(|error| error.to_string())?;
         }
         drop(output);
@@ -1711,7 +1735,9 @@ async fn dualsense_install_impl(
         if total_size.is_some_and(|size| size > MAX_ARCHIVE_BYTES) {
             return Err("DS5-PKG-002: release archive exceeds the download limit".to_string());
         }
-        let mut output = File::create(&archive_path).map_err(|error| error.to_string())?;
+        let mut output = tokio::fs::File::create(&archive_path)
+            .await
+            .map_err(|error| error.to_string())?;
         let mut downloaded = 0u64;
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
@@ -1722,6 +1748,7 @@ async fn dualsense_install_impl(
             }
             output
                 .write_all(&chunk)
+                .await
                 .map_err(|error| error.to_string())?;
             if let Some(total) = total_size.filter(|total| *total != 0) {
                 let download_progress = (downloaded * 34 / total).min(34) as u32;
@@ -2459,10 +2486,10 @@ mod tests {
         classify_usbip_installer_exit_code, component_matches_current_runtime, component_state,
         component_test_failure, component_update_available, copy_runtime_files,
         core_ds5_http_error, extract_sidecar_package, local_uninstalled_status,
-        pinned_usbip_installed, require_entity_tag, resolve_core_config,
-        rollback_activated_component, sha256_file, update_config_fields, update_tuning_fields,
-        validate_core_ds5_response, validate_requested_profile, validate_sidecar_package_manifest,
-        validate_strong_entity_tag,
+        pinned_usbip_installed, read_sidecar_package_manifest, require_entity_tag,
+        resolve_core_config, rollback_activated_component, sha256_file, update_config_fields,
+        update_tuning_fields, validate_core_ds5_response, validate_requested_profile,
+        validate_sidecar_package_manifest, validate_strong_entity_tag,
     };
     #[cfg(target_os = "windows")]
     use super::{
@@ -2628,6 +2655,39 @@ mod tests {
             ..manifest
         };
         assert!(validate_sidecar_package_manifest(wrong_license).is_err());
+    }
+
+    #[test]
+    fn sidecar_package_manifest_read_is_bounded() {
+        let root = std::env::temp_dir().join(format!("sunshine-ds5-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let manifest_path = root.join("manifest.json");
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_vec(&serde_json::json!({
+                "schema": 1,
+                "component_version": super::COMPONENT_VERSION,
+                "protocol": super::PROTOCOL_VERSION,
+                "target": super::SIDECAR_PACKAGE_TARGET,
+                "license": super::SIDECAR_PACKAGE_LICENSE,
+                "asset_name": super::SIDECAR_PACKAGE_ASSET,
+                "download_url": "",
+                "sha256": "a".repeat(64),
+                "size": 1024,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(read_sidecar_package_manifest(&manifest_path).is_ok());
+
+        std::fs::write(
+            &manifest_path,
+            vec![b'x'; super::MAX_SIDECAR_PACKAGE_MANIFEST_BYTES as usize + 1],
+        )
+        .unwrap();
+        let error = read_sidecar_package_manifest(&manifest_path).unwrap_err();
+        assert!(error.contains("manifest is too large"));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

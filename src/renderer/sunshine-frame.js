@@ -5,6 +5,7 @@ import 'element-plus/theme-chalk/el-message.css'
 import 'element-plus/theme-chalk/el-overlay.css'
 import 'element-plus/theme-chalk/el-message-box.css'
 import 'element-plus/theme-chalk/el-notification.css'
+import './styles/element-theme.less'  // Element Plus 深色 token，需早于各页面覆盖
 import './styles/dialog.less'  // 导入对话框样式
 // 导入 Tauri polyfill
 import './tauri-polyfill.js'

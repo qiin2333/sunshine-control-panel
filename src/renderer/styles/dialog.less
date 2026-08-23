@@ -48,21 +48,27 @@ body[data-bs-theme="dark"],
     }
   }
 
-  .el-button {
-    border-radius: 8px !important;
-    padding: 8px 16px !important;
-    font-weight: 500 !important;
+  // 只作用于对话框内部：这些 !important 以前挂在 [data-bs-theme] 下的裸
+  // .el-button 上，会盖掉所有页面自己的按钮样式（控制器页的方括号文本操作
+  // 就被强行渲染成了圆角实心按钮）。
+  .el-dialog,
+  .el-message-box {
+    .el-button {
+      border-radius: 8px !important;
+      padding: 8px 16px !important;
+      font-weight: 500 !important;
 
-    &.el-button--primary {
-      background: #d4a5a5 !important;
-      color: #2d2628 !important;
-      border: none !important;
-    }
+      &.el-button--primary {
+        background: #d4a5a5 !important;
+        color: #2d2628 !important;
+        border: none !important;
+      }
 
-    &.el-button--default {
-      background: rgba(212, 165, 165, 0.2) !important;
-      color: #e6d5b8 !important;
-      border: 1px solid rgba(212, 165, 165, 0.3) !important;
+      &.el-button--default {
+        background: rgba(212, 165, 165, 0.2) !important;
+        color: #e6d5b8 !important;
+        border: 1px solid rgba(212, 165, 165, 0.3) !important;
+      }
     }
   }
 
@@ -144,21 +150,24 @@ body[data-bs-theme="light"],
     }
   }
 
-  .el-button {
-    border-radius: 8px !important;
-    padding: 8px 16px !important;
-    font-weight: 500 !important;
+  .el-dialog,
+  .el-message-box {
+    .el-button {
+      border-radius: 8px !important;
+      padding: 8px 16px !important;
+      font-weight: 500 !important;
 
-    &.el-button--primary {
-      background: #4a9eff !important;
-      color: white !important;
-      border: none !important;
-    }
+      &.el-button--primary {
+        background: #4a9eff !important;
+        color: white !important;
+        border: none !important;
+      }
 
-    &.el-button--default {
-      background: rgba(74, 158, 255, 0.1) !important;
-      color: #3a7ed5 !important;
-      border: 1px solid rgba(74, 158, 255, 0.3) !important;
+      &.el-button--default {
+        background: rgba(74, 158, 255, 0.1) !important;
+        color: #3a7ed5 !important;
+        border: 1px solid rgba(74, 158, 255, 0.3) !important;
+      }
     }
   }
 

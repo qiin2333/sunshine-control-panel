@@ -15,7 +15,12 @@
 
 @ds5-pixel-font: 'FusionPixel', 'PixelMplus12', 'YouYuan', 'Courier New', monospace;
 
-.ds5-page {
+// 主题令牌两块都走 :global()：`:global(x) y` 的写法会丢弃括号外的选择器，
+// 深色块因此只会编译成 `[data-bs-theme='dark']` 挂到 <html> 上，只能靠继承
+// 传给 .ds5-page，于是被直接命中元素的浅色块整体压过 —— 页面就成了
+// 「莫兰迪文字 + Gura 蓝描边 + 近白窗底」的深浅混搭。
+// 这样写让两块权重明确：:global(.ds5-page) 低于 :global([...dark] .ds5-page)。
+:global(.ds5-page) {
   // —— 像素菜单令牌：浅色 = Gura 蓝 ——
   --pix-font: @ds5-pixel-font;
   --ds5-primary: #4a9eff;
@@ -24,14 +29,6 @@
   --ds5-window-fill: rgba(255, 255, 255, .93);
   --ds5-window-shadow: rgba(74, 158, 255, .22);
   --ds5-hover-fill: rgba(74, 158, 255, .1);
-
-  max-width: 860px;
-  margin: 0 auto;
-  padding: 34px 30px 60px;
-  color: var(--el-text-color-primary);
-  font-family: 'Microsoft YaHei UI', 'Noto Sans SC', sans-serif;
-  font-size: 14px;
-  line-height: 1.6;
 
   // —— Element Plus 主色梯度对齐像素令牌 ——
   --el-color-primary: var(--ds5-primary);
@@ -43,7 +40,17 @@
   --el-color-primary-light-9: #e6f2ff;
 }
 
-:global([data-bs-theme='dark']) .ds5-page {
+.ds5-page {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 34px 30px 60px;
+  color: var(--el-text-color-primary);
+  font-family: 'Microsoft YaHei UI', 'Noto Sans SC', sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+:global([data-bs-theme='dark'] .ds5-page) {
   // —— 像素菜单令牌：暗色 = 莫兰迪 ——
   --ds5-primary: #d4a5a5;
   --ds5-primary-deep: #a98383;
@@ -52,6 +59,7 @@
   --ds5-window-shadow: rgba(0, 0, 0, .45);
   --ds5-hover-fill: rgba(212, 165, 165, .12);
 
+  // 只保留本页特有的主色梯度，其余深色 token 由 styles/element-theme.less 统一提供
   --el-color-primary: var(--ds5-primary);
   --el-color-primary-dark-2: var(--ds5-primary-deep);
   --el-color-primary-light-3: rgba(212, 165, 165, .55);
@@ -59,26 +67,6 @@
   --el-color-primary-light-7: rgba(212, 165, 165, .26);
   --el-color-primary-light-8: rgba(212, 165, 165, .18);
   --el-color-primary-light-9: rgba(212, 165, 165, .12);
-
-  --el-bg-color-overlay: rgba(61, 50, 53, .72);
-  --el-fill-color-blank: rgba(255, 255, 255, .055);
-  --el-fill-color-light: rgba(255, 255, 255, .055);
-  --el-fill-color-lighter: rgba(255, 255, 255, .035);
-  --el-fill-color-extra-light: rgba(255, 255, 255, .025);
-  --el-text-color-primary: #f0dfc3;
-  --el-text-color-regular: #d6c3a7;
-  --el-text-color-secondary: #b9aca8;
-  --el-text-color-placeholder: #9d9494;
-  --el-border-color: rgba(230, 213, 184, .22);
-  --el-border-color-lighter: rgba(230, 213, 184, .11);
-  --el-border-color-extra-light: rgba(230, 213, 184, .08);
-  --el-color-success-light-8: rgba(103, 194, 58, .18);
-  --el-color-success-light-9: rgba(103, 194, 58, .11);
-  --el-color-warning-light-8: rgba(230, 162, 60, .2);
-  --el-color-warning-light-9: rgba(230, 162, 60, .12);
-  --el-color-warning-dark-2: #f0bd70;
-  --el-color-danger-light-8: rgba(245, 108, 108, .19);
-  color: var(--el-text-color-primary);
 }
 
 // ============ 页头 ============

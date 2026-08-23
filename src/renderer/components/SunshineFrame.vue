@@ -6,7 +6,13 @@
           <div class="loading-container">
             <img src="../public/gura-pix.png" class="loading-image" alt="Loading" />
             <div class="loading-text">
-              <p>正在准备 {{ currentPath }} ...</p>
+              <template v-if="proxyHealthFailed">
+                <p class="proxy-health-error">{{ t.sunshineFrame.proxyUnavailable }}</p>
+                <button class="proxy-health-retry" type="button" @click="retryProxyHealthCheck">
+                  {{ t.sunshineFrame.retry }}
+                </button>
+              </template>
+              <p v-else>{{ t.sunshineFrame.preparing.replace('{path}', currentPath) }}</p>
             </div>
           </div>
         </div>
@@ -30,9 +36,12 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { invoke } from '@tauri-apps/api/core'
 import { sunshine } from '@/tauri-adapter.js'
+import { checkLocalProxyHealth } from '../utils/proxyHealth.js'
+import { useI18n } from '../desktop/i18n/index.js'
 import SidebarMenu from './SidebarMenu.vue'
 
 invoke('main_panel_loading').catch(() => {})
+const { t } = useI18n()
 
 // Refs
 const loading = ref(true)
@@ -40,6 +49,7 @@ const sunshineUrl = ref('')
 const currentPath = ref('/')
 const sunshineIframe = ref(null)
 const sidebarMenuRef = ref(null)
+const proxyHealthFailed = ref(false)
 
 // State
 let pollTimer = null
@@ -50,6 +60,7 @@ let visibilityHandlerRef = null
 let proxyBase = '' // 代理服务器基础 URL，用于恢复 iframe 到正确页面
 let loadedFrameRevealTimer = null
 let awaitingAppReady = true
+let localProxyVerified = false
 
 // Constants
 const ALLOWED_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']
@@ -120,6 +131,20 @@ const refreshProxyTarget = async () => {
   if (!refreshedTarget) {
     console.warn('[SunshineFrame] refresh proxy target failed')
   }
+}
+
+const verifyLocalProxy = async () => {
+  try {
+    const healthCheck = await invoke('get_proxy_health_check')
+    return checkLocalProxyHealth(healthCheck)
+  } catch (error) {
+    console.warn('[SunshineFrame] local proxy health check failed:', error)
+    return false
+  }
+}
+
+const retryProxyHealthCheck = () => {
+  window.location.reload()
 }
 
 // Navigation handler
@@ -400,9 +425,18 @@ onMounted(async () => {
 
   try {
     await invoke('wait_for_proxy_ready')
-    await refreshProxyTarget()
     const proxyBaseUrl = await sunshine.getProxyUrl()
     proxyBase = proxyBaseUrl
+
+    if (!await verifyLocalProxy()) {
+      proxyHealthFailed.value = true
+      sunshineUrl.value = 'about:blank'
+      await invoke('main_panel_ready').catch(() => {})
+      return
+    }
+    localProxyVerified = true
+    await refreshProxyTarget()
+
     const cmdLineUrl = await sunshine.getCommandLineUrl()
 
     messageHandler = createMessageHandler()
@@ -451,6 +485,12 @@ onMounted(async () => {
     await invoke('main_panel_ready')
   } catch (error) {
     console.error('初始化失败:', error)
+    if (!localProxyVerified) {
+      proxyHealthFailed.value = true
+      sunshineUrl.value = 'about:blank'
+      await invoke('main_panel_ready').catch(() => {})
+      return
+    }
     try {
       sunshineUrl.value = (await sunshine.getProxyUrl()) + '/'
     } catch {
@@ -573,6 +613,27 @@ const onLoad = () => {
     margin: 12px 0;
     animation: pulse 2s ease-in-out infinite;
   }
+
+  .proxy-health-error {
+    animation: none;
+    color: #f2c8c8;
+    font-size: 15px;
+    transform: none;
+  }
+}
+
+.proxy-health-retry {
+  margin-top: 12px;
+  padding: 8px 18px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 6px;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.16);
+  }
 }
 
 @keyframes pulse {
@@ -608,6 +669,10 @@ const onLoad = () => {
 :global(html[data-bs-theme='light'] .loading-text) {
   color: @gura-blue;
   text-shadow: 1px 1px 3px rgba(74, 158, 255, 0.2);
+}
+
+:global(html[data-bs-theme='light'] .proxy-health-error) {
+  color: #8f3434;
 }
 </style>
 

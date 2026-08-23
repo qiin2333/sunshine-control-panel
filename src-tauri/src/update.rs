@@ -199,35 +199,29 @@ fn is_new_version_available(current: &str, latest: &str) -> bool {
     false
 }
 
-/// 查找最适合的下载资源（优先Windows安装包）
+fn is_full_sunshine_windows_installer(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    if !lower.starts_with("sunshine") {
+        return false;
+    }
+
+    let normalized: String = lower
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .collect();
+    let supported_extension = lower.ends_with(".exe") || lower.ends_with(".msi");
+
+    supported_extension && normalized.contains("windowsinstaller")
+}
+
+/// 查找完整 Sunshine Windows 安装包。
 fn find_best_download_asset(
     assets: &[GitHubAsset],
 ) -> (Option<String>, Option<String>, Option<u64>) {
-    // 优先选择Windows安装包
-    for asset in assets {
-        let name = asset.name.to_lowercase();
-        let is_gui_component = name.contains("sunshine-gui-setup")
-            || name.contains("sunshine-gui-overlay")
-            || name == "sunshine-gui.exe";
-        if !is_gui_component
-            && (name.contains("windows") || name.ends_with(".msi") || name.ends_with(".exe"))
-        {
-            return (
-                Some(asset.browser_download_url.clone()),
-                Some(asset.name.clone()),
-                (asset.size > 0).then_some(asset.size),
-            );
-        }
-    }
-
-    // 没有标准 Windows 安装包时，只允许回退到非 GUI 组件资产。
-    // GUI 组件有独立安装生命周期，不能被完整 Sunshine 更新器误装。
-    if let Some(asset) = assets.iter().find(|asset| {
-        let name = asset.name.to_lowercase();
-        !name.contains("sunshine-gui-setup")
-            && !name.contains("sunshine-gui-overlay")
-            && name != "sunshine-gui.exe"
-    }) {
+    if let Some(asset) = assets
+        .iter()
+        .find(|asset| is_full_sunshine_windows_installer(&asset.name))
+    {
         (
             Some(asset.browser_download_url.clone()),
             Some(asset.name.clone()),
@@ -632,7 +626,7 @@ mod component_installer_tests {
                 size: 10,
             },
             GitHubAsset {
-                name: "Sunshine-Windows-1.2.3.exe".to_string(),
+                name: "Sunshine.v1.2.3.WindowsInstaller.exe".to_string(),
                 browser_download_url: "https://example.invalid/full".to_string(),
                 size: 20,
             },
@@ -640,8 +634,58 @@ mod component_installer_tests {
 
         let (url, name, size) = find_best_download_asset(&assets);
         assert_eq!(url.as_deref(), Some("https://example.invalid/full"));
-        assert_eq!(name.as_deref(), Some("Sunshine-Windows-1.2.3.exe"));
+        assert_eq!(
+            name.as_deref(),
+            Some("Sunshine.v1.2.3.WindowsInstaller.exe")
+        );
         assert_eq!(size, Some(20));
+    }
+
+    #[test]
+    fn full_update_asset_ignores_sidecar_and_portable_archives() {
+        let assets = vec![
+            GitHubAsset {
+                name: "Sunshine.Ds5Sidecar.Windows-x64.zip".to_string(),
+                browser_download_url: "https://example.invalid/sidecar".to_string(),
+                size: 10,
+            },
+            GitHubAsset {
+                name: "Sunshine.v1.2.3.WindowsPortable.zip".to_string(),
+                browser_download_url: "https://example.invalid/portable".to_string(),
+                size: 20,
+            },
+            GitHubAsset {
+                name: "Sunshine.v1.2.3.WindowsInstaller.exe".to_string(),
+                browser_download_url: "https://example.invalid/installer".to_string(),
+                size: 30,
+            },
+        ];
+
+        let (url, name, size) = find_best_download_asset(&assets);
+        assert_eq!(url.as_deref(), Some("https://example.invalid/installer"));
+        assert_eq!(
+            name.as_deref(),
+            Some("Sunshine.v1.2.3.WindowsInstaller.exe")
+        );
+        assert_eq!(size, Some(30));
+    }
+
+    #[test]
+    fn full_update_returns_none_without_an_installer() {
+        let assets = vec![
+            GitHubAsset {
+                name: "checksums.json".to_string(),
+                browser_download_url: "https://example.invalid/checksums".to_string(),
+                size: 10,
+            },
+            GitHubAsset {
+                name: "Sunshine.Ds5Sidecar.Windows-x64.zip".to_string(),
+                browser_download_url: "https://example.invalid/sidecar".to_string(),
+                size: 20,
+            },
+        ];
+
+        assert_eq!(find_best_download_asset(&assets), (None, None, None));
     }
 
     #[test]

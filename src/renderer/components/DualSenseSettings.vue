@@ -3,10 +3,12 @@
     <header class="page-header">
       <div class="page-title-group">
         <p class="eyebrow">{{ t.controllers.eyebrow }}</p>
-        <h1>{{ t.controllers.title }}</h1>
+        <div class="controllers-title-row">
+          <h1>{{ t.controllers.title }}</h1>
+          <el-tag class="experimental-tag" effect="plain">{{ t.dualSense.experimental }}</el-tag>
+        </div>
         <p>{{ t.controllers.intro }}</p>
       </div>
-      <el-tag class="pixel-tag" effect="plain">{{ t.dualSense.experimental }}</el-tag>
     </header>
 
     <article class="component-panel" :class="`state-${status.state}`">
@@ -18,7 +20,7 @@
         <el-checkbox
           v-model="enabled"
           class="enable-control"
-          :disabled="!status.verified || status.in_use || controlsBusy"
+          :disabled="!status.verified || status.in_use || componentControlsBusy"
           @change="saveSettings"
         >{{ saving ? t.dualSense.saving : t.dualSense.enableShort }}</el-checkbox>
       </section>
@@ -35,7 +37,7 @@
             text
             class="menu-action menu-action-primary"
             :loading="operation === 'install'"
-            :disabled="loading || status.in_use || controlsBusy"
+            :disabled="status.in_use || controlsBusy"
             @click="install"
           >
             <span class="action-bracket" aria-hidden="true">[</span>
@@ -47,7 +49,7 @@
             text
             class="menu-action menu-action-warning"
             :loading="operation === 'install'"
-            :disabled="loading || status.in_use || controlsBusy"
+            :disabled="status.in_use || controlsBusy"
             @click="install"
           >
             <span class="action-bracket" aria-hidden="true">[</span>
@@ -59,7 +61,7 @@
             text
             class="menu-action menu-action-warning"
             :loading="operation === 'install'"
-            :disabled="loading || status.in_use || controlsBusy"
+            :disabled="status.in_use || controlsBusy"
             @click="install"
           >
             <span class="action-bracket" aria-hidden="true">[</span>
@@ -69,8 +71,8 @@
           <el-button
             text
             class="menu-action menu-action-secondary"
-            :loading="loading"
-            :disabled="controlsBusy"
+            :loading="refreshing"
+            :disabled="refreshing || controlsBusy"
             @click="refresh()"
           >
             <el-icon><Refresh /></el-icon>{{ t.dualSense.refresh }}
@@ -79,7 +81,7 @@
             v-if="statusKnown && (!status.installed || !status.verified || status.update_available)"
             text
             class="menu-action menu-action-secondary"
-            :disabled="loading || status.in_use || controlsBusy"
+            :disabled="status.in_use || controlsBusy"
             @click="installFromPackage"
           >
             <span class="action-bracket" aria-hidden="true">[</span>
@@ -97,10 +99,20 @@
       <el-alert
         v-if="showNotice"
         class="notice"
-        type="warning"
+        :type="status.state === 'in_use' ? 'error' : 'warning'"
         :title="nextAction"
         :closable="false"
         show-icon
+      />
+
+      <el-alert
+        v-if="operationError"
+        class="notice"
+        type="error"
+        :title="t.dualSense.technicalDetails"
+        :description="operationError"
+        show-icon
+        @close="operationError = ''"
       />
 
       <section v-if="status.verified" class="profile-section" :aria-label="t.dualSense.profileTitle">
@@ -120,7 +132,7 @@
             :class="{ 'is-selected': audioHaptics }"
             role="checkbox"
             :aria-checked="audioHaptics"
-            :disabled="status.in_use || controlsBusy || (!status.usbip_available && !audioHaptics)"
+            :disabled="status.in_use || componentControlsBusy || (!status.usbip_available && !audioHaptics)"
             @click="setAudioHaptics(!audioHaptics)"
           >
             <span class="selection-cursor" aria-hidden="true">▶</span>
@@ -133,6 +145,57 @@
         </div>
       </section>
 
+      <section v-if="status.verified" class="tuning-section" :aria-label="t.dualSense.tuningTitle">
+        <div class="tuning-heading">
+          <div>
+            <span class="section-label">{{ t.dualSense.tuningTitle }}</span>
+            <p class="tuning-hint">{{ t.dualSense.tuningHint }}</p>
+          </div>
+        </div>
+        <div class="tuning-presets" role="group" :aria-label="t.dualSense.tuningPresetTitle">
+          <span>{{ t.dualSense.tuningPresetTitle }}</span>
+          <div>
+            <button type="button" class="tuning-preset" :disabled="componentControlsBusy" @click="applyDefaultPreset">
+              <strong>{{ t.dualSense.tuningPresetDefault }}</strong>
+              <small>{{ t.dualSense.tuningPresetDefaultTip }}</small>
+            </button>
+            <button type="button" class="tuning-preset" :disabled="componentControlsBusy" @click="applyErmPreset">
+              <strong>{{ t.dualSense.tuningPresetErm }}</strong>
+              <small>{{ t.dualSense.tuningPresetErmTip }}</small>
+            </button>
+          </div>
+        </div>
+        <div class="tuning-grid">
+          <label class="tuning-field">
+            <span>{{ t.dualSense.tuningStrength }}</span>
+            <el-input-number v-model="legacyStrength" :min="0.1" :max="4" :step="0.05" size="small" :disabled="componentControlsBusy" />
+          </label>
+          <label class="tuning-field">
+            <span>{{ t.dualSense.tuningCurve }}</span>
+            <el-input-number v-model="legacyCurve" :min="0.3" :max="2" :step="0.05" size="small" :disabled="componentControlsBusy" />
+          </label>
+          <label class="tuning-field">
+            <span>{{ t.dualSense.tuningGate }}</span>
+            <el-input-number
+              v-model="legacyNoiseGate" :min="0.002" :max="0.06"
+              :step="0.002" :precision="3" size="small" :disabled="componentControlsBusy"
+            />
+          </label>
+        </div>
+        <div class="tuning-save-row">
+          <el-button
+            type="primary" class="tuning-save-button"
+            :loading="tuningSaving" :disabled="controlsBusy || !tuningDirty"
+            @click="saveTuning"
+          >
+            <span>{{ t.dualSense.tuningSave }}</span>
+          </el-button>
+          <el-tag v-if="tuningDirty" class="tuning-unsaved-tag" type="danger" effect="plain">
+            {{ t.dualSense.tuningUnsaved }}
+          </el-tag>
+        </div>
+      </section>
+
       <section v-if="status.verified" class="compatibility-section" :aria-label="t.dualSense.gameCompatibility">
         <span class="section-label">{{ t.dualSense.gameCompatibility }}</span>
         <div class="compatibility-option">
@@ -142,7 +205,7 @@
           </span>
           <el-checkbox
             v-model="genshinCompatibility"
-            :disabled="!status.genshin_compatibility_available || !status.usbip_available || !enabled || !audioHaptics || status.in_use || controlsBusy"
+            :disabled="!status.genshin_compatibility_available || !status.usbip_available || !enabled || !audioHaptics || status.in_use || componentControlsBusy"
             @change="setGenshinCompatibility"
           >{{ genshinCompatibility ? t.dualSense.enabledLabel : t.dualSense.disabledLabel }}</el-checkbox>
         </div>
@@ -158,17 +221,21 @@
         </div>
         <div class="test-actions">
           <el-button
-            text
+            type="primary"
+            plain
+            class="test-action-button"
             :loading="operation === 'standard'"
             :disabled="status.in_use || controlsBusy || !status.standard_profile"
             @click="test('standard')"
-          >[ {{ t.dualSense.testStandard }} ]</el-button>
+          >{{ t.dualSense.testStandard }}</el-button>
           <el-button
-            text
+            type="primary"
+            plain
+            class="test-action-button"
             :loading="operation === 'composite'"
             :disabled="status.in_use || controlsBusy || !canTestAudioHaptics"
             @click="test('composite')"
-          >[ {{ t.dualSense.testComposite }} ]</el-button>
+          >{{ t.dualSense.testComposite }}</el-button>
           <div v-if="testCompleted" class="controller-meta-action">
             <el-button text type="success" @click="emit('open-controller-meta')">
               [ {{ t.dualSense.openControllerMeta }} ]
@@ -213,21 +280,32 @@ import { Refresh } from '@element-plus/icons-vue'
 import { open } from '@tauri-apps/plugin-dialog'
 import { dualsense } from '../tauri-adapter.js'
 import { dualSenseErrorCode, friendlyDualSenseError } from '../composables/dualsenseErrors.js'
+import {
+  createLatestIntentQueue,
+  dualSenseConfigMatches,
+  dualSenseConfigReadable,
+  dualSenseConfigUiState,
+  mergeDualSenseStatus,
+} from '../composables/dualsenseConfigSync.js'
 import { installSelectedDualSensePackage } from '../composables/dualsenseInstallFlow.js'
 import { useI18n } from '../desktop/i18n/index.js'
 
 const { t } = useI18n()
 const emit = defineEmits(['open-controller-meta'])
-const loading = ref(true)
 const statusKnown = ref(false)
 const saving = ref(false)
 const refreshing = ref(false)
 const operation = ref('')
 const operationProgress = ref(0)
 const operationStageKey = ref('preparing')
+const operationError = ref('')
 const enabled = ref(false)
 const audioHaptics = ref(false)
 const genshinCompatibility = ref(false)
+const legacyStrength = ref(1)
+const legacyCurve = ref(0.5)
+const legacyNoiseGate = ref(0.02)
+const tuningSaving = ref(false)
 const testCompleted = ref(false)
 const expandedSections = ref([])
 const rebootRecommended = ref(false)
@@ -239,12 +317,23 @@ const status = ref({
   driver_installed: false, usbip_available: false, usbip_version: '',
   usbip_version_valid: false, reboot_recommended: false,
   standard_profile: false, composite_profile: false, in_use: false,
+  legacy_strength: 1, legacy_curve: 0.5, legacy_noise_gate: 0.02,
+  config_revision: 0, config_readable: false,
   error_code: '', detail: '',
 })
 let pollTimer
 let unlistenProgress
+let statusRefreshGeneration = 0
+let statusRefreshPromise = null
+let tuningSavePromise = null
+const STATUS_REFRESH_WAIT_TIMEOUT_MS = 5000
 
-const controlsBusy = computed(() => refreshing.value || saving.value || Boolean(operation.value))
+const controlsBusy = computed(() => saving.value || tuningSaving.value || Boolean(operation.value))
+const componentControlsBusy = computed(() => Boolean(operation.value))
+const tuningDirty = computed(() =>
+  legacyStrength.value !== status.value.legacy_strength
+  || legacyCurve.value !== status.value.legacy_curve
+  || legacyNoiseGate.value !== status.value.legacy_noise_gate)
 const stateLabel = computed(() => t.value.dualSense.states[status.value.state] || status.value.state)
 const operationStage = computed(() => t.value.dualSense.stages[operationStageKey.value] || operationStageKey.value)
 const nextAction = computed(() => {
@@ -314,30 +403,76 @@ const healthRows = computed(() => [
   },
 ])
 
-const showError = (message, context = 'generic') => ElMessage.error(
-  friendlyDualSenseError(message, t.value.dualSense.errors, context),
-)
+const showError = (message, context = 'generic') => {
+  operationError.value = String(message || '')
+  ElMessage.error(friendlyDualSenseError(message, t.value.dualSense.errors, context))
+}
 
-const refresh = async (quiet = false) => {
-  if (controlsBusy.value) return false
-  refreshing.value = true
-  if (!quiet) loading.value = true
-  let refreshed = false
+const invalidateStatusRefresh = () => {
+  statusRefreshGeneration += 1
+}
+
+const waitForStatusRefresh = async () => {
+  const pending = statusRefreshPromise
+  if (!pending) return true
+
+  let timeoutId
   try {
-    const result = await dualsense.getStatus()
+    return await Promise.race([
+      pending.then(() => true),
+      new Promise((resolve) => {
+        timeoutId = window.setTimeout(() => resolve(false), STATUS_REFRESH_WAIT_TIMEOUT_MS)
+      }),
+    ])
+  } finally {
+    if (timeoutId !== undefined) window.clearTimeout(timeoutId)
+  }
+}
+
+const waitForTuningSave = async () => {
+  const pending = tuningSavePromise
+  if (pending) await pending
+}
+
+const refresh = async (quiet = false, allowBusy = false) => {
+  if ((!allowBusy && controlsBusy.value) || refreshing.value || (quiet && statusRefreshPromise)) return false
+  if (!quiet && statusRefreshPromise) {
+    await waitForStatusRefresh()
+    if (controlsBusy.value || refreshing.value || statusRefreshPromise) return false
+  }
+  const refreshGeneration = ++statusRefreshGeneration
+  if (!quiet) operationError.value = ''
+  const preserveTuning = quiet && tuningDirty.value
+  if (!quiet) refreshing.value = true
+  let refreshed = false
+  const request = dualsense.getStatus()
+  statusRefreshPromise = request
+  try {
+    const result = await request
+    if (refreshGeneration !== statusRefreshGeneration) return false
     if (result.success) {
-      status.value = result.data
+      const configReadable = dualSenseConfigReadable(result.data)
+      status.value = mergeDualSenseStatus(status.value, result.data)
       statusKnown.value = true
-      enabled.value = result.data.enabled
-      audioHaptics.value = result.data.audio_haptics
-      genshinCompatibility.value = result.data.genshin_compatibility ?? false
-      refreshed = true
+      if (configReadable) {
+        enabled.value = result.data.enabled
+        audioHaptics.value = result.data.audio_haptics
+        genshinCompatibility.value = result.data.genshin_compatibility ?? false
+        if (!preserveTuning) {
+          legacyStrength.value = result.data.legacy_strength
+          legacyCurve.value = result.data.legacy_curve
+          legacyNoiseGate.value = result.data.legacy_noise_gate
+        }
+        refreshed = true
+      } else if (!quiet) {
+        showError(result.data.detail || result.data.error_code, 'status')
+      }
     } else if (!quiet) {
       showError(result.message, 'status')
     }
   } finally {
-    loading.value = false
-    refreshing.value = false
+    if (statusRefreshPromise === request) statusRefreshPromise = null
+    if (!quiet) refreshing.value = false
   }
   return refreshed
 }
@@ -365,8 +500,11 @@ const install = async (packagePath = null) => {
     operation.value = ''
     return
   }
+  invalidateStatusRefresh()
   operation.value = 'install'
+  operationError.value = ''
   operationProgress.value = 0
+  await waitForStatusRefresh()
   const result = await dualsense.install(packagePath)
   if (!result.success) {
     operation.value = ''
@@ -374,12 +512,19 @@ const install = async (packagePath = null) => {
     return showError(result.message, 'install')
   }
   operation.value = ''
-  status.value = result.data
+  const configReadable = dualSenseConfigReadable(result.data)
+  status.value = mergeDualSenseStatus(status.value, result.data)
   statusKnown.value = true
-  enabled.value = result.data.enabled
-  audioHaptics.value = result.data.audio_haptics
-  genshinCompatibility.value = result.data.genshin_compatibility ?? false
+  if (configReadable) {
+    enabled.value = result.data.enabled
+    audioHaptics.value = result.data.audio_haptics
+    genshinCompatibility.value = result.data.genshin_compatibility ?? false
+    legacyStrength.value = result.data.legacy_strength
+    legacyCurve.value = result.data.legacy_curve
+    legacyNoiseGate.value = result.data.legacy_noise_gate
+  }
   rebootRecommended.value = result.data.reboot_recommended
+  operationError.value = ''
   ElMessage.success(upgrading ? t.value.dualSense.updateSuccess : t.value.dualSense.installSuccess)
   if (result.data.reboot_recommended) {
     ElMessage.warning(status.value.usbip_available
@@ -407,36 +552,45 @@ const installFromPackage = async () => {
   }
 }
 
-const saveSettings = async () => {
-  if (refreshing.value || operation.value || saving.value) {
-    enabled.value = status.value.enabled
-    audioHaptics.value = status.value.audio_haptics
-    genshinCompatibility.value = status.value.genshin_compatibility ?? false
-    return
-  }
-  const requestedEnabled = enabled.value
-  const requestedAudioHaptics = audioHaptics.value
-  const requestedGenshinCompatibility = requestedEnabled && requestedAudioHaptics && genshinCompatibility.value
-  genshinCompatibility.value = requestedGenshinCompatibility
-  saving.value = true
+const applyConfigControls = (requested) => {
+  enabled.value = requested.enabled
+  audioHaptics.value = requested.audioHaptics
+  genshinCompatibility.value = requested.genshinCompatibility
+}
+
+const persistConfigIntent = async (requestedConfig, queue) => {
+  invalidateStatusRefresh()
+  const requestedEnabled = requestedConfig.enabled
+  const requestedAudioHaptics = requestedConfig.audioHaptics
+  const requestedGenshinCompatibility = requestedConfig.genshinCompatibility
+  const preserveTuning = tuningDirty.value
+  operationError.value = ''
+  await waitForStatusRefresh()
+  await waitForTuningSave()
+  if (queue.hasPending()) return { success: false, preserveTuning }
   let result = await dualsense.setConfig(
     requestedEnabled,
     requestedAudioHaptics,
     requestedGenshinCompatibility,
   )
   let refreshedAfterFailure = false
-  if (!result.success && dualSenseErrorCode(result.message) === 'DS5-CFG-003') {
-    saving.value = false
-    refreshedAfterFailure = await refresh(true)
+  if (!result.success && queue.hasPending()) {
+    return { success: false, preserveTuning, message: result.message }
+  }
+  const firstErrorCode = result.success ? '' : dualSenseErrorCode(result.message)
+  if (!result.success && ['DS5-CFG-001', 'DS5-CFG-003'].includes(firstErrorCode)) {
+    refreshedAfterFailure = await refresh(true, true)
+    applyConfigControls(queue.peekPending() ?? requestedConfig)
+    if (refreshedAfterFailure && dualSenseConfigMatches(status.value, requestedConfig)) {
+      return { success: true, preserveTuning }
+    }
     const canRetry = refreshedAfterFailure
+      && !queue.hasPending()
       && !status.value.in_use
       && (!requestedEnabled || status.value.verified)
       && (!requestedEnabled || !requestedAudioHaptics || status.value.usbip_available)
+      && (!requestedGenshinCompatibility || status.value.genshin_compatibility_available)
     if (canRetry) {
-      enabled.value = requestedEnabled
-      audioHaptics.value = requestedAudioHaptics
-      genshinCompatibility.value = requestedGenshinCompatibility
-      saving.value = true
       result = await dualsense.setConfig(
         requestedEnabled,
         requestedAudioHaptics,
@@ -446,42 +600,147 @@ const saveSettings = async () => {
     }
   }
   if (!result.success) {
-    saving.value = false
-    if (!refreshedAfterFailure) {
-      refreshedAfterFailure = await refresh(true)
+    if (!refreshedAfterFailure && !queue.hasPending()) {
+      refreshedAfterFailure = await refresh(true, true)
+      applyConfigControls(queue.peekPending() ?? requestedConfig)
     }
-    if (!refreshedAfterFailure) {
-      enabled.value = status.value.enabled
-      audioHaptics.value = status.value.audio_haptics
-      genshinCompatibility.value = status.value.genshin_compatibility ?? false
+    if (refreshedAfterFailure && dualSenseConfigMatches(status.value, requestedConfig)) {
+      return { success: true, preserveTuning }
     }
-    return showError(result.message, 'config')
+    return { success: false, preserveTuning, message: result.message }
   }
-  saving.value = false
   status.value = result.data
-  enabled.value = result.data.enabled
-  audioHaptics.value = result.data.audio_haptics
-  genshinCompatibility.value = result.data.genshin_compatibility ?? false
+  statusKnown.value = true
+  return { success: true, preserveTuning }
+}
+
+const configSaveQueue = createLatestIntentQueue(async (requestedConfig, queue) => {
+  saving.value = true
+  applyConfigControls(requestedConfig)
+  let outcome
+  try {
+    outcome = await persistConfigIntent(requestedConfig, queue)
+  } catch (error) {
+    outcome = { success: false, preserveTuning: tuningDirty.value, message: error }
+  }
+  const pending = queue.peekPending()
+  if (pending) {
+    applyConfigControls(pending)
+    return
+  }
+
+  saving.value = false
+  if (!outcome.success) {
+    enabled.value = status.value.enabled
+    audioHaptics.value = status.value.audio_haptics
+    genshinCompatibility.value = status.value.genshin_compatibility ?? false
+    showError(outcome.message, 'config')
+    return
+  }
+
+  const uiState = dualSenseConfigUiState(status.value, outcome.preserveTuning || tuningDirty.value)
+  enabled.value = uiState.enabled
+  audioHaptics.value = uiState.audioHaptics
+  genshinCompatibility.value = uiState.genshinCompatibility
+  if (uiState.tuning) {
+    legacyStrength.value = uiState.tuning.strength
+    legacyCurve.value = uiState.tuning.curve
+    legacyNoiseGate.value = uiState.tuning.noiseGate
+  }
   ElMessage.success(t.value.dualSense.configSuccess)
+})
+
+const saveSettings = async () => {
+  if (operation.value) {
+    enabled.value = status.value.enabled
+    audioHaptics.value = status.value.audio_haptics
+    genshinCompatibility.value = status.value.genshin_compatibility ?? false
+    return
+  }
+  const requestedEnabled = enabled.value
+  const requestedAudioHaptics = audioHaptics.value
+  const requestedGenshinCompatibility = requestedEnabled && requestedAudioHaptics && genshinCompatibility.value
+  const requestedConfig = {
+    enabled: requestedEnabled,
+    audioHaptics: requestedAudioHaptics,
+    genshinCompatibility: requestedGenshinCompatibility,
+  }
+  applyConfigControls(requestedConfig)
+  await configSaveQueue.submit(requestedConfig)
 }
 
 const setAudioHaptics = async (enabled) => {
-  if (controlsBusy.value || audioHaptics.value === enabled) return
+  if (operation.value || (audioHaptics.value === enabled && !saving.value)) return
   audioHaptics.value = enabled
   if (!enabled) genshinCompatibility.value = false
   testCompleted.value = false
   await saveSettings()
 }
 
-const setGenshinCompatibility = async (value) => {
+const applyErmPreset = () => {
+  legacyCurve.value = 0.5
+  legacyNoiseGate.value = 0.006
+}
+
+const applyDefaultPreset = () => {
+  legacyStrength.value = 1
+  legacyCurve.value = 0.5
+  legacyNoiseGate.value = 0.02
+}
+
+const saveTuning = async () => {
   if (controlsBusy.value) return
+  const requestedTuning = {
+    strength: legacyStrength.value,
+    curve: legacyCurve.value,
+    noiseGate: legacyNoiseGate.value,
+  }
+  invalidateStatusRefresh()
+  operationError.value = ''
+  tuningSaving.value = true
+  const saveOperation = (async () => {
+    await waitForStatusRefresh()
+    const result = await dualsense.setHapticsTuning(
+      requestedTuning.strength, requestedTuning.curve, requestedTuning.noiseGate)
+    if (!result.success) return showError(result.message, 'config')
+    const tuningChangedWhileSaving = legacyStrength.value !== requestedTuning.strength
+      || legacyCurve.value !== requestedTuning.curve
+      || legacyNoiseGate.value !== requestedTuning.noiseGate
+    if (!tuningChangedWhileSaving) {
+      legacyStrength.value = result.data.legacy_strength
+      legacyCurve.value = result.data.legacy_curve
+      legacyNoiseGate.value = result.data.legacy_noise_gate
+    }
+    status.value.legacy_strength = result.data.legacy_strength
+    status.value.legacy_curve = result.data.legacy_curve
+    status.value.legacy_noise_gate = result.data.legacy_noise_gate
+    status.value.config_revision = result.data.revision
+    if (!tuningChangedWhileSaving) ElMessage.success(t.value.dualSense.tuningSaved)
+  })()
+  tuningSavePromise = saveOperation
+  try {
+    await saveOperation
+  } finally {
+    if (tuningSavePromise === saveOperation) tuningSavePromise = null
+    tuningSaving.value = false
+  }
+}
+
+const setGenshinCompatibility = async (value) => {
+  if (operation.value) {
+    genshinCompatibility.value = status.value.genshin_compatibility ?? false
+    return
+  }
   genshinCompatibility.value = Boolean(value)
   await saveSettings()
 }
 
 const test = async (profile) => {
   if (controlsBusy.value) return
+  invalidateStatusRefresh()
+  operationError.value = ''
   operation.value = profile
+  await waitForStatusRefresh()
   const result = await dualsense.selfTest(profile)
   operation.value = ''
   if (!result.success) return showError(result.message, 'test')
@@ -501,7 +760,10 @@ const uninstall = async () => {
     operation.value = ''
     return
   }
+  invalidateStatusRefresh()
   operation.value = 'uninstall'
+  operationError.value = ''
+  await waitForStatusRefresh()
   const result = await dualsense.uninstall()
   operation.value = ''
   if (!result.success) return showError(result.message, 'uninstall')
@@ -520,13 +782,14 @@ onMounted(async () => {
   } catch {
     // Browser-only renderer previews do not provide the Tauri event bridge.
   }
+  void dualsense.logPanelOpened()
   await refresh()
   pollTimer = window.setInterval(() => {
-    if (controlsBusy.value) return
     refresh(true)
   }, 30000)
 })
 onUnmounted(() => {
+  invalidateStatusRefresh()
   window.clearInterval(pollTimer)
   unlistenProgress?.()
 })
@@ -544,15 +807,16 @@ onUnmounted(() => {
 }
 .page-header { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; margin-bottom: 34px; }
 .page-title-group {
-  h1 { margin: 0 0 7px; font-size: 24px; font-weight: 500; }
+  h1 { margin: 0; font-size: 24px; font-weight: 500; }
   > p:last-child { margin: 0; color: var(--el-text-color-secondary); font-size: 15px; line-height: 1.6; }
 }
+.controllers-title-row { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
 .eyebrow { font-family: 'PixelMplus12', 'Courier New', monospace; }
 .eyebrow, .section-label { color: var(--el-text-color-secondary); letter-spacing: .1em; }
 .eyebrow { font-size: 12px; }
 .section-label { font-size: 13px; }
 .eyebrow { margin: 0 0 7px; }
-.pixel-tag { border: 0; border-radius: 0; color: var(--el-color-primary); background: transparent; font-size: 13px; letter-spacing: .05em; }
+.experimental-tag { border-radius: 0; color: var(--el-color-danger); border-color: var(--el-color-danger-light-5); background: var(--el-color-danger-light-9); font-size: 12px; letter-spacing: .04em; }
 .component-panel { max-width: 820px; margin: 0 auto; padding: 8px; }
 .title-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 32px; margin-bottom: 24px; }
 .title-row {
@@ -643,7 +907,37 @@ onUnmounted(() => {
   span { flex: 0 0 auto; font-family: 'PixelMplus12', 'Courier New', monospace; font-weight: 700; }
 }
 .test-section { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; margin-top: 26px; p { margin: 5px 0 0; max-width: 680px; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.55; } }
-.test-actions { justify-content: flex-start; }
+.tuning-section { margin-top: 26px; }
+.tuning-heading { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; }
+.tuning-hint { margin: 0 0 14px; max-width: 620px; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.55; }
+.tuning-presets { margin-bottom: 18px; padding: 12px; border: 1px solid var(--el-border-color-lighter); background: var(--el-fill-color-extra-light); }
+.tuning-presets > span { display: block; margin-bottom: 8px; color: var(--el-text-color-secondary); font-size: 12px; letter-spacing: .05em; }
+.tuning-presets > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.tuning-preset {
+  display: grid;
+  gap: 3px;
+  min-height: 54px;
+  padding: 8px 11px;
+  border: 1px solid var(--el-border-color);
+  color: var(--el-text-color-primary);
+  background: var(--el-fill-color-blank);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .12s ease, background .12s ease, transform .12s ease;
+  strong { font-size: 13px; font-weight: 600; }
+  small { color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.45; }
+  &:hover, &:focus-visible { border-color: var(--el-color-primary); background: var(--el-color-primary-light-9); transform: translateY(-1px); }
+  &:focus-visible { outline: 1px dashed var(--el-color-primary); outline-offset: 2px; }
+  &:disabled { opacity: .55; cursor: not-allowed; transform: none; }
+}
+.tuning-grid { display: flex; flex-wrap: wrap; gap: 22px; }
+.tuning-field { display: grid; gap: 6px; font-size: 13px; color: var(--el-text-color-regular); }
+.tuning-save-row { display: flex; flex-wrap: wrap; justify-content: flex-start; align-items: center; gap: 10px; margin-top: 18px; padding-bottom: 18px; border-bottom: 1px solid var(--el-border-color-lighter); }
+.tuning-save-button { min-width: 140px; min-height: 36px; font-weight: 600; }
+.tuning-unsaved-tag { border-radius: 0; font-weight: 600; }
+.test-actions { justify-content: flex-start; gap: 12px; }
+.test-actions :deep(.test-action-button) { min-width: 180px; min-height: 38px; margin: 0; font-weight: 600; }
 .controller-meta-action { flex: 0 0 100%; }
 .controller-meta-action :deep(.el-button) { margin-left: 0; }
 .details-collapse { margin-top: 24px; border: 0; :deep(.el-collapse-item__header) { border: 0; color: var(--el-text-color-secondary); background: transparent; font-family: inherit; font-size: 14px; } :deep(.el-collapse-item__wrap) { border: 0; background: transparent; } :deep(.el-collapse-item__content) { padding-bottom: 0; color: inherit; font-family: inherit; } }
@@ -690,6 +984,8 @@ onUnmounted(() => {
   .enable-control { justify-self: stretch; }
   .status-actions, .test-actions { justify-content: flex-start; }
   .profile-option { grid-template-columns: 16px minmax(0, 1fr) auto; padding-inline: 6px; }
+  .tuning-heading { display: block; }
+  .tuning-presets > div { grid-template-columns: 1fr; }
   .compatibility-option { grid-template-columns: 1fr; gap: 8px; padding-inline: 6px; }
 }
 </style>

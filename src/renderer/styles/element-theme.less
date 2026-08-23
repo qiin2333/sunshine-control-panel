@@ -1,15 +1,16 @@
 // ========================================
 // Element Plus 主题变量层
 // ========================================
-//
 // Element Plus 的深色调色板挂在 `html.dark` 上（theme-chalk/dark/css-vars.css），
 // 而本应用用 `data-bs-theme` 切换主题，那份变量永远不会生效 —— 深色模式下组件
 // 读到的仍是 Element Plus 的浅色默认值。以前只能靠每个页面各写一份局部覆盖，
 // 漏掉的 token 就会静默回退到浅色，页面于是深浅混搭。
-//
 // 这里集中声明深色模式的整套 token。页面仍可在自己的作用域里继续覆盖
 // （权重更高），但不再需要为了「别变白」而重复声明一遍。
 // 浅色模式直接沿用 Element Plus 默认值，无需覆盖。
+// 未收录 --el-bg-color / --el-bg-color-page：本壳层里前者只被 .el-switch__action
+// （开关滑块，两套主题都应为白色）读取，后者无人读取；弹层与下拉走的是
+// --el-bg-color-overlay，对话框由 dialog.less 硬覆盖。
 
 @import './theme.less';
 

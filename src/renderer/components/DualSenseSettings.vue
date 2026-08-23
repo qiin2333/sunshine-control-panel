@@ -77,7 +77,7 @@
           class="ds5-enable-control"
           :disabled="!status.verified || status.in_use || componentControlsBusy"
           @change="saveSettings"
-        >{{ saving ? t.dualSense.saving : t.dualSense.enableShort }}</el-checkbox>
+        >{{ t.dualSense.enableShort }}</el-checkbox>
       </div>
     </article>
 
@@ -128,7 +128,7 @@
             <strong>{{ t.dualSense.nativeModeShort }}</strong>
             <small>{{ status.usbip_available ? t.dualSense.nativeModeTip : t.dualSense.nativeUnavailable }}</small>
           </span>
-          <span class="ds5-kbd">{{ saving ? t.dualSense.saving : (audioHaptics ? t.dualSense.enabledLabel : t.dualSense.disabledLabel) }}</span>
+          <span class="ds5-kbd">{{ audioHaptics ? t.dualSense.enabledLabel : t.dualSense.disabledLabel }}</span>
         </button>
       </div>
     </section>
@@ -243,9 +243,9 @@
             <span class="ds5-health-detail">{{ item.detail }}</span>
           </div>
           <footer class="ds5-panel-footer">
-            <details v-if="status.detail">
+            <details v-if="safeStatusDetail">
               <summary>{{ status.error_code || t.dualSense.technicalDetails }}</summary>
-              <pre>{{ status.detail }}</pre>
+              <pre>{{ safeStatusDetail }}</pre>
             </details>
             <el-button
               v-if="status.installed"
@@ -278,7 +278,7 @@ const {
   tuningSaving, tuningDirty, testCompleted, expandedSections,
   controlsBusy, componentControlsBusy,
   stateLabel, nextAction, overallVersion, canTestAudioHaptics,
-  showNotice, healthRows,
+  showNotice, healthRows, safeStatusDetail,
   install, installFromPackage, refresh,
   saveSettings, setAudioHaptics, setGenshinCompatibility,
   applyDefaultPreset, applyErmPreset, saveTuning,

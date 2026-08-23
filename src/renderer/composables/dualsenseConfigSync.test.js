@@ -3,6 +3,8 @@ import test from 'node:test'
 
 import {
   createLatestIntentQueue,
+  dualSenseConfigAfterInstall,
+  dualSenseConfigAfterUninstall,
   dualSenseConfigMatches,
   dualSenseConfigReadable,
   dualSenseConfigUiState,
@@ -59,6 +61,37 @@ test('recognizes a requested switch state after an ambiguous save response', () 
   }), false)
 })
 
+test('enables the available DualSense capabilities after a fresh install', () => {
+  assert.deepEqual(dualSenseConfigAfterInstall({
+    usbip_available: true,
+    composite_profile: true,
+  }), {
+    enabled: true,
+    audioHaptics: true,
+    genshinCompatibility: false,
+  })
+  assert.deepEqual(dualSenseConfigAfterInstall({
+    usbip_available: false,
+    composite_profile: true,
+  }), {
+    enabled: true,
+    audioHaptics: false,
+    genshinCompatibility: false,
+  })
+  assert.equal(dualSenseConfigAfterInstall({
+    usbip_available: true,
+    composite_profile: true,
+  }, true), null)
+})
+
+test('disables DualSense after component removal while restoring audio defaults', () => {
+  assert.deepEqual(dualSenseConfigAfterUninstall(), {
+    enabled: false,
+    audioHaptics: true,
+    genshinCompatibility: false,
+  })
+})
+
 test('serializes config saves and keeps only the latest pending intent', async () => {
   const observed = []
   let releaseFirst
@@ -80,6 +113,20 @@ test('serializes config saves and keeps only the latest pending intent', async (
   await first
   assert.deepEqual(observed, ['enable', 'enable-latest'])
   assert.equal(queue.hasPending(), false)
+})
+
+test('debounces rapid config changes before sending the latest intent', async () => {
+  const observed = []
+  const queue = createLatestIntentQueue(async (intent) => {
+    observed.push(intent)
+  }, { debounceMs: 5 })
+
+  const saving = queue.submit('enable')
+  queue.submit('disable')
+  queue.submit('enable-latest')
+
+  await saving
+  assert.deepEqual(observed, ['enable-latest'])
 })
 
 test('preserves confirmed config when a status refresh cannot read Core settings', () => {

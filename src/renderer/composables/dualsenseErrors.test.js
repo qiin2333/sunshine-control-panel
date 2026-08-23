@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { dualSenseErrorCode, friendlyDualSenseError } from './dualsenseErrors.js'
+import {
+  dualSenseErrorCode,
+  friendlyDualSenseError,
+  safeDualSenseTechnicalError,
+} from './dualsenseErrors.js'
 
 const messages = {
   unknown: 'Please try again.',
@@ -37,6 +41,19 @@ describe('DualSense user-facing errors', () => {
     assert.equal(
       friendlyDualSenseError('DS5-CFG-003: unable to save Sunshine configuration: connection reset', messages, 'config'),
       'Make sure Sunshine is running.',
+    )
+  })
+
+  it('removes request URLs and transport details from technical errors', () => {
+    assert.equal(
+      safeDualSenseTechnicalError(
+        'DS5-CFG-001: unable to read DualSense configuration: error sending request for url (https://example.invalid/api/dualsense/config)',
+      ),
+      'DS5-CFG-001: unable to read DualSense configuration',
+    )
+    assert.equal(
+      safeDualSenseTechnicalError('request failed for https://example.invalid/private'),
+      'DualSense operation failed',
     )
   })
 

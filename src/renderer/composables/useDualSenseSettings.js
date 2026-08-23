@@ -2,9 +2,15 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { open } from '@tauri-apps/plugin-dialog'
 import { dualsense } from '../tauri-adapter.js'
-import { dualSenseErrorCode, friendlyDualSenseError } from './dualsenseErrors.js'
+import {
+  dualSenseErrorCode,
+  friendlyDualSenseError,
+  safeDualSenseTechnicalError,
+} from './dualsenseErrors.js'
 import {
   createLatestIntentQueue,
+  dualSenseConfigAfterInstall,
+  dualSenseConfigAfterUninstall,
   dualSenseConfigMatches,
   dualSenseConfigReadable,
   dualSenseConfigUiState,
@@ -14,6 +20,7 @@ import { installSelectedDualSensePackage } from './dualsenseInstallFlow.js'
 import { useI18n } from '../desktop/i18n/index.js'
 
 const STATUS_REFRESH_WAIT_TIMEOUT_MS = 5000
+const CONFIG_SAVE_DEBOUNCE_MS = 300
 
 /**
  * DualSense 控制器页的全部状态与操作。
@@ -63,6 +70,9 @@ export function useDualSenseSettings() {
     || legacyCurve.value !== status.value.legacy_curve
     || legacyNoiseGate.value !== status.value.legacy_noise_gate)
   const stateLabel = computed(() => t.value.dualSense.states[status.value.state] || status.value.state)
+  const safeStatusDetail = computed(() => status.value.detail
+    ? safeDualSenseTechnicalError(status.value.detail)
+    : '')
   const operationStage = computed(() => t.value.dualSense.stages[operationStageKey.value] || operationStageKey.value)
   const nextAction = computed(() => {
     if (rebootRecommended.value) {
@@ -132,7 +142,7 @@ export function useDualSenseSettings() {
   ])
 
   const showError = (message, context = 'generic') => {
-    operationError.value = String(message || '')
+    operationError.value = safeDualSenseTechnicalError(message)
     ElMessage.error(friendlyDualSenseError(message, t.value.dualSense.errors, context))
   }
 
@@ -208,6 +218,7 @@ export function useDualSenseSettings() {
   const install = async (packagePath = null) => {
     if (controlsBusy.value) return
     packagePath = typeof packagePath === 'string' ? packagePath : null
+    const componentWasInstalled = status.value.installed
     const upgrading = Boolean(status.value.installed && status.value.update_available)
     const localPackage = Boolean(packagePath)
     operation.value = 'confirm-install'
@@ -240,6 +251,7 @@ export function useDualSenseSettings() {
       return showError(result.message, 'install')
     }
     operation.value = ''
+    rebootRecommended.value = result.data.reboot_recommended
     const configReadable = dualSenseConfigReadable(result.data)
     status.value = mergeDualSenseStatus(status.value, result.data)
     statusKnown.value = true
@@ -251,7 +263,15 @@ export function useDualSenseSettings() {
       legacyCurve.value = result.data.legacy_curve
       legacyNoiseGate.value = result.data.legacy_noise_gate
     }
-    rebootRecommended.value = result.data.reboot_recommended
+    const installedConfig = dualSenseConfigAfterInstall(result.data, componentWasInstalled)
+    if (installedConfig && !(await applyComponentConfig(installedConfig))) {
+      if (rebootRecommended.value) {
+        ElMessage.warning(result.data.usbip_available
+          ? t.value.dualSense.restartSuggestedAvailable
+          : t.value.dualSense.restartSuggestedUnavailable)
+      }
+      return
+    }
     operationError.value = ''
     ElMessage.success(upgrading ? t.value.dualSense.updateSuccess : t.value.dualSense.installSuccess)
     if (result.data.reboot_recommended) {
@@ -286,8 +306,49 @@ export function useDualSenseSettings() {
     genshinCompatibility.value = requested.genshinCompatibility
   }
 
-  const persistConfigIntent = async (requestedConfig, queue) => {
+  const restoreConfirmedConfigControls = () => {
+    enabled.value = status.value.enabled
+    audioHaptics.value = status.value.audio_haptics
+    genshinCompatibility.value = status.value.genshin_compatibility ?? false
+  }
+
+  const synchronizeConfirmedConfig = (preserveTuning) => {
+    const uiState = dualSenseConfigUiState(status.value, preserveTuning || tuningDirty.value)
+    enabled.value = uiState.enabled
+    audioHaptics.value = uiState.audioHaptics
+    genshinCompatibility.value = uiState.genshinCompatibility
+    if (uiState.tuning) {
+      legacyStrength.value = uiState.tuning.strength
+      legacyCurve.value = uiState.tuning.curve
+      legacyNoiseGate.value = uiState.tuning.noiseGate
+    }
+  }
+
+  const applyComponentConfig = async (requestedConfig) => {
+    const queue = {
+      hasPending: () => false,
+      peekPending: () => undefined,
+    }
     invalidateStatusRefresh()
+    saving.value = true
+    applyConfigControls(requestedConfig)
+    let outcome
+    try {
+      outcome = await persistConfigIntent(requestedConfig, queue)
+    } catch (error) {
+      outcome = { success: false, preserveTuning: tuningDirty.value, message: error }
+    }
+    saving.value = false
+    if (!outcome.success) {
+      restoreConfirmedConfigControls()
+      showError(outcome.message, 'config')
+      return false
+    }
+    synchronizeConfirmedConfig(outcome.preserveTuning)
+    return true
+  }
+
+  const persistConfigIntent = async (requestedConfig, queue) => {
     const requestedEnabled = requestedConfig.enabled
     const requestedAudioHaptics = requestedConfig.audioHaptics
     const requestedGenshinCompatibility = requestedConfig.genshinCompatibility
@@ -359,24 +420,13 @@ export function useDualSenseSettings() {
 
     saving.value = false
     if (!outcome.success) {
-      enabled.value = status.value.enabled
-      audioHaptics.value = status.value.audio_haptics
-      genshinCompatibility.value = status.value.genshin_compatibility ?? false
+      restoreConfirmedConfigControls()
       showError(outcome.message, 'config')
       return
     }
-
-    const uiState = dualSenseConfigUiState(status.value, outcome.preserveTuning || tuningDirty.value)
-    enabled.value = uiState.enabled
-    audioHaptics.value = uiState.audioHaptics
-    genshinCompatibility.value = uiState.genshinCompatibility
-    if (uiState.tuning) {
-      legacyStrength.value = uiState.tuning.strength
-      legacyCurve.value = uiState.tuning.curve
-      legacyNoiseGate.value = uiState.tuning.noiseGate
-    }
+    synchronizeConfirmedConfig(outcome.preserveTuning)
     ElMessage.success(t.value.dualSense.configSuccess)
-  })
+  }, { debounceMs: CONFIG_SAVE_DEBOUNCE_MS })
 
   const saveSettings = async () => {
     if (operation.value) {
@@ -393,6 +443,9 @@ export function useDualSenseSettings() {
       audioHaptics: requestedAudioHaptics,
       genshinCompatibility: requestedGenshinCompatibility,
     }
+    invalidateStatusRefresh()
+    operationError.value = ''
+    saving.value = true
     applyConfigControls(requestedConfig)
     await configSaveQueue.submit(requestedConfig)
   }
@@ -496,8 +549,10 @@ export function useDualSenseSettings() {
     operation.value = ''
     if (!result.success) return showError(result.message, 'uninstall')
     rebootRecommended.value = false
+    status.value = mergeDualSenseStatus(status.value, result.data)
+    statusKnown.value = true
+    if (!(await applyComponentConfig(dualSenseConfigAfterUninstall()))) return
     ElMessage.success(t.value.dualSense.uninstallSuccess)
-    await refresh()
   }
 
   onMounted(async () => {
@@ -530,7 +585,7 @@ export function useDualSenseSettings() {
     tuningSaving, tuningDirty, testCompleted, expandedSections,
     controlsBusy, componentControlsBusy,
     stateLabel, nextAction, overallVersion, canTestAudioHaptics,
-    showNotice, healthRows,
+    showNotice, healthRows, safeStatusDetail,
     install, installFromPackage, refresh,
     saveSettings, setAudioHaptics, setGenshinCompatibility,
     applyDefaultPreset, applyErmPreset, saveTuning,

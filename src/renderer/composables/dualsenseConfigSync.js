@@ -19,19 +19,45 @@ export const dualSenseConfigMatches = (data, requested) =>
   && data.audio_haptics === requested.audioHaptics
   && (data.genshin_compatibility ?? false) === requested.genshinCompatibility
 
-export const createLatestIntentQueue = (run) => {
+export const dualSenseConfigAfterInstall = (status, wasInstalled = false) => wasInstalled
+  ? null
+  : {
+      enabled: true,
+      audioHaptics: Boolean(status?.usbip_available && status?.composite_profile),
+      genshinCompatibility: false,
+    }
+
+export const dualSenseConfigAfterUninstall = () => ({
+  enabled: false,
+  audioHaptics: true,
+  genshinCompatibility: false,
+})
+
+export const createLatestIntentQueue = (run, { debounceMs = 0 } = {}) => {
   let active = null
   let pending
+  let intentVersion = 0
   const state = {
     hasPending: () => pending !== undefined,
     peekPending: () => pending,
   }
 
+  const waitForSettledIntent = async () => {
+    if (debounceMs <= 0) return
+    let observedVersion
+    do {
+      observedVersion = intentVersion
+      await new Promise((resolve) => setTimeout(resolve, debounceMs))
+    } while (observedVersion !== intentVersion)
+  }
+
   const submit = (intent) => {
     pending = intent
+    intentVersion += 1
     if (!active) {
       active = (async () => {
         while (pending !== undefined) {
+          if (debounceMs > 0) await waitForSettledIntent()
           const current = pending
           pending = undefined
           await run(current, state)

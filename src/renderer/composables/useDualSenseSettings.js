@@ -59,6 +59,7 @@ export function useDualSenseSettings() {
   })
   let pollTimer
   let unlistenProgress
+  let disposed = false
   let statusRefreshGeneration = 0
   let statusRefreshPromise = null
   let tuningSavePromise = null
@@ -244,7 +245,14 @@ export function useDualSenseSettings() {
     operationError.value = ''
     operationProgress.value = 0
     await waitForStatusRefresh()
-    const result = await dualsense.install(packagePath)
+    let result
+    try {
+      result = await dualsense.install(packagePath)
+    } catch (error) {
+      operation.value = ''
+      await refresh(true)
+      return showError(error, 'install')
+    }
     if (!result.success) {
       operation.value = ''
       await refresh(true)
@@ -398,7 +406,7 @@ export function useDualSenseSettings() {
       }
       return { success: false, preserveTuning, message: result.message }
     }
-    status.value = result.data
+    status.value = mergeDualSenseStatus(status.value, result.data)
     statusKnown.value = true
     return { success: true, preserveTuning }
   }
@@ -522,7 +530,13 @@ export function useDualSenseSettings() {
     operationError.value = ''
     operation.value = profile
     await waitForStatusRefresh()
-    const result = await dualsense.selfTest(profile)
+    let result
+    try {
+      result = await dualsense.selfTest(profile)
+    } catch (error) {
+      operation.value = ''
+      return showError(error, 'test')
+    }
     operation.value = ''
     if (!result.success) return showError(result.message, 'test')
     testCompleted.value = true
@@ -545,7 +559,13 @@ export function useDualSenseSettings() {
     operation.value = 'uninstall'
     operationError.value = ''
     await waitForStatusRefresh()
-    const result = await dualsense.uninstall()
+    let result
+    try {
+      result = await dualsense.uninstall()
+    } catch (error) {
+      operation.value = ''
+      return showError(error, 'uninstall')
+    }
     operation.value = ''
     if (!result.success) return showError(result.message, 'uninstall')
     rebootRecommended.value = false
@@ -558,20 +578,23 @@ export function useDualSenseSettings() {
   onMounted(async () => {
     try {
       const { listen } = await import('@tauri-apps/api/event')
-      unlistenProgress = await listen('dualsense-operation-progress', ({ payload }) => {
+      const unlisten = await listen('dualsense-operation-progress', ({ payload }) => {
         operationStageKey.value = payload?.stage || 'preparing'
         operationProgress.value = Number(payload?.progress || 0)
       })
+      if (disposed) unlisten()
+      else unlistenProgress = unlisten
     } catch {
       // Browser-only renderer previews do not provide the Tauri event bridge.
     }
-    void dualsense.logPanelOpened()
+    dualsense.logPanelOpened().catch(() => {})
     await refresh()
     pollTimer = window.setInterval(() => {
       refresh(true)
     }, 30000)
   })
   onUnmounted(() => {
+    disposed = true
     invalidateStatusRefresh()
     window.clearInterval(pollTimer)
     unlistenProgress?.()

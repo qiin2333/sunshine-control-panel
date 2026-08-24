@@ -1,6 +1,11 @@
 const CODE_PATTERN = /^(DS5-[A-Z]+-\d{3}):\s*/
+const TECHNICAL_MESSAGE_PATTERN = /^(DS5-[A-Z]+-\d{3}:\s*[^:\r\n]+)/
 
 export const dualSenseErrorCode = (message) => String(message || '').match(CODE_PATTERN)?.[1] || ''
+
+export const safeDualSenseTechnicalError = (message) =>
+  String(message || '').match(TECHNICAL_MESSAGE_PATTERN)?.[1]
+  || 'DualSense operation failed'
 
 export const friendlyDualSenseError = (message, messages, context = 'generic') => {
   const code = dualSenseErrorCode(message)

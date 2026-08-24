@@ -6,7 +6,6 @@
 //! package, or from an explicit development override. This keeps the optional
 //! self-contained .NET runtime out of the main Sunshine package.
 
-use futures_util::StreamExt;
 use log::{info, warn};
 use once_cell::sync::{Lazy, OnceCell};
 use reqwest::header::HeaderValue;
@@ -14,11 +13,15 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::Emitter;
+
+use crate::github_download::{
+    self, DEFAULT_IDLE_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT, DownloadAttemptPhase, DownloadRequest,
+};
 
 const COMPONENT_VERSION: &str = "1.2.0";
 const PROTOCOL_VERSION: u32 = 1;
@@ -39,8 +42,19 @@ const SIDECAR_PACKAGE_MANIFEST: &str = "ds5-sidecar-package.json";
 const SIDECAR_PACKAGE_ASSET: &str = "Sunshine.Ds5Sidecar.x64.zip";
 const SIDECAR_PACKAGE_TARGET: &str = "win-x64-self-contained";
 const SIDECAR_PACKAGE_LICENSE: &str = "GPL-3.0-only";
+const MAX_SIDECAR_PACKAGE_MANIFEST_BYTES: u64 = 64 * 1024;
 const MAX_SIDECAR_PACKAGE_BYTES: u64 = 160 * 1024 * 1024;
+const MAX_LOCAL_COMPONENT_PACKAGES: usize = 3;
+const MAX_LOCAL_COMPONENT_PACKAGE_BYTES: u64 = MAX_ARCHIVE_BYTES;
+const MAX_LOCAL_COMPONENT_TOTAL_BYTES: u64 =
+    MAX_SIDECAR_PACKAGE_BYTES + MAX_ARCHIVE_BYTES + MAX_USBIP_INSTALLER_BYTES;
+const COMPONENT_DOWNLOAD_OVERALL_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(30 * 60);
+const COMPONENT_FS_RETRY_ATTEMPTS: usize = 20;
+const COMPONENT_FS_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(200);
 const CONFIG_APPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const CORE_CONFIG_READ_ATTEMPTS: usize = 3;
+const CORE_CONFIG_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(75);
 #[cfg(target_os = "windows")]
 const ELEVATED_DS5_ARG: &str = "--elevated-dualsense";
 #[cfg(target_os = "windows")]
@@ -101,9 +115,9 @@ impl ElevatedOperation {
 
     fn timeout(self) -> std::time::Duration {
         match self {
-            // Installation can include two downloads and a driver installer,
-            // each with its own ten-minute timeout.
-            Self::Install | Self::InstallLocal => std::time::Duration::from_secs(35 * 60),
+            // Installation can include three component downloads with a shared
+            // thirty-minute budget each, followed by the USB/IP installer.
+            Self::Install | Self::InstallLocal => std::time::Duration::from_secs(110 * 60),
             Self::TestStandard | Self::TestComposite => std::time::Duration::from_secs(90),
             Self::Uninstall => std::time::Duration::from_secs(120),
         }
@@ -125,6 +139,20 @@ impl Drop for TemporaryPackageFile {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);
     }
+}
+
+#[derive(Clone, Default)]
+struct LocalComponentPackages {
+    sidecar: Option<PathBuf>,
+    hidmaestro: Option<PathBuf>,
+    usbip: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LocalComponentKind {
+    Sidecar,
+    Hidmaestro,
+    Usbip,
 }
 
 #[cfg(target_os = "windows")]
@@ -255,6 +283,18 @@ struct CoreDualSenseResponse {
 struct CoreDualSenseSnapshot {
     response: CoreDualSenseResponse,
     entity_tag: Option<HeaderValue>,
+}
+
+#[derive(Debug)]
+enum CoreDualSenseResponseError {
+    Transfer(reqwest::Error),
+    Message(String),
+}
+
+impl From<String> for CoreDualSenseResponseError {
+    fn from(message: String) -> Self {
+        Self::Message(message)
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -391,6 +431,53 @@ fn report_progress(progress: &ProgressReporter<'_>, stage: &str, value: u32) {
     progress(stage, value.min(100));
 }
 
+struct ComponentDownloadSpec<'a> {
+    url: &'a str,
+    destination: &'a Path,
+    expected_size: Option<u64>,
+    max_size: u64,
+    stage: &'a str,
+    progress_start: u32,
+    progress_span: u32,
+    error_code: &'a str,
+}
+
+async fn download_component_asset(
+    spec: ComponentDownloadSpec<'_>,
+    progress: &ProgressReporter<'_>,
+) -> Result<(), String> {
+    report_progress(progress, spec.stage, spec.progress_start);
+    let mut highest_progress = spec.progress_start;
+    github_download::download_to_file_with_fallbacks(
+        DownloadRequest {
+            url: spec.url,
+            destination: spec.destination,
+            expected_size: spec.expected_size,
+            max_size: Some(spec.max_size),
+            user_agent: "foundation-sunshine-dualsense-component",
+            connect_timeout: std::time::Duration::from_secs(10),
+            response_timeout: DEFAULT_RESPONSE_TIMEOUT,
+            idle_timeout: DEFAULT_IDLE_TIMEOUT,
+            overall_timeout: Some(COMPONENT_DOWNLOAD_OVERALL_TIMEOUT),
+        },
+        |event| {
+            if event.phase != DownloadAttemptPhase::Downloading || event.total == 0 {
+                return;
+            }
+            let value = spec.progress_start
+                + (event.downloaded.saturating_mul(spec.progress_span as u64) / event.total)
+                    .min(spec.progress_span as u64) as u32;
+            if value > highest_progress {
+                highest_progress = value;
+                report_progress(progress, spec.stage, value);
+            }
+        },
+    )
+    .await
+    .map(|_| ())
+    .map_err(|error| format!("{}: download failed: {error}", spec.error_code))
+}
+
 fn component_root() -> PathBuf {
     PathBuf::from(crate::sunshine::get_sunshine_install_path())
         .join("tools")
@@ -457,31 +544,108 @@ fn validate_sidecar_package_manifest(
     Ok(manifest)
 }
 
-fn sidecar_package_manifest() -> Result<SidecarPackageManifest, String> {
-    let path = sidecar_package_manifest_path();
-    let contents = fs::read(&path).map_err(|error| {
+fn read_sidecar_package_manifest(path: &Path) -> Result<SidecarPackageManifest, String> {
+    let mut file = File::open(path).map_err(|error| {
         format!(
             "DS5-PKG-002: the DualSense package manifest is missing ({}): {error}",
             path.display()
         )
     })?;
+    let mut contents = Vec::new();
+    Read::by_ref(&mut file)
+        .take(MAX_SIDECAR_PACKAGE_MANIFEST_BYTES + 1)
+        .read_to_end(&mut contents)
+        .map_err(|error| {
+            format!(
+                "DS5-PKG-002: unable to read the DualSense package manifest ({}): {error}",
+                path.display()
+            )
+        })?;
+    if contents.len() as u64 > MAX_SIDECAR_PACKAGE_MANIFEST_BYTES {
+        return Err("DS5-PKG-002: the DualSense package manifest is too large".to_string());
+    }
     let manifest = serde_json::from_slice(&contents)
         .map_err(|error| format!("DS5-PKG-002: invalid DualSense package manifest: {error}"))?;
     validate_sidecar_package_manifest(manifest)
 }
 
-#[cfg(target_os = "windows")]
-fn local_sidecar_package_handoff_path(token: uuid::Uuid) -> PathBuf {
-    component_root().join(format!("handoff-{token}.partial.zip"))
+fn sidecar_package_manifest() -> Result<SidecarPackageManifest, String> {
+    read_sidecar_package_manifest(&sidecar_package_manifest_path())
 }
 
-fn purge_stale_handoff_packages(root: &Path, current_package: Option<&Path>) {
+fn classify_local_component_packages<P>(
+    packages: impl IntoIterator<Item = P>,
+) -> Result<LocalComponentPackages, String>
+where
+    P: AsRef<Path>,
+{
+    let packages = packages.into_iter().collect::<Vec<_>>();
+    if packages.is_empty() {
+        return Ok(LocalComponentPackages::default());
+    }
+    let manifest_path = sidecar_package_manifest_path();
+    let sidecar_manifest = if manifest_path.try_exists().map_err(|error| {
+        format!("DS5-PKG-002: unable to inspect the DualSense package manifest: {error}")
+    })? {
+        Some(sidecar_package_manifest()?)
+    } else {
+        None
+    };
+    let mut classified = LocalComponentPackages::default();
+
+    for package in packages {
+        let package = package.as_ref();
+        let digest = sha256_file(package)?;
+        let Some(kind) = local_component_kind(
+            &digest,
+            sidecar_manifest
+                .as_ref()
+                .map(|manifest| manifest.sha256.as_str()),
+        ) else {
+            return Err(
+                "DS5-PKG-005: a selected local package does not match any component pinned by this Sunshine build"
+                    .to_string(),
+            );
+        };
+        let (slot, component) = match kind {
+            LocalComponentKind::Sidecar => (&mut classified.sidecar, "Sunshine Sidecar"),
+            LocalComponentKind::Hidmaestro => (&mut classified.hidmaestro, "HIDMaestro"),
+            LocalComponentKind::Usbip => (&mut classified.usbip, "USB/IP"),
+        };
+        if slot.replace(package.to_path_buf()).is_some() {
+            return Err(format!(
+                "DS5-PKG-005: more than one local {component} package was selected"
+            ));
+        }
+    }
+
+    Ok(classified)
+}
+
+fn local_component_kind(digest: &str, sidecar_digest: Option<&str>) -> Option<LocalComponentKind> {
+    if digest.eq_ignore_ascii_case(HIDMAESTRO_SHA256) {
+        Some(LocalComponentKind::Hidmaestro)
+    } else if digest.eq_ignore_ascii_case(USBIP_SHA256) {
+        Some(LocalComponentKind::Usbip)
+    } else if sidecar_digest.is_some_and(|expected| digest.eq_ignore_ascii_case(expected)) {
+        Some(LocalComponentKind::Sidecar)
+    } else {
+        None
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn local_component_package_handoff_path(root: &Path, token: uuid::Uuid, index: usize) -> PathBuf {
+    root.join(format!("handoff-{token}-{index}.partial"))
+}
+
+fn purge_stale_handoff_packages(root: &Path, current_packages: &[&Path]) {
     let Ok(entries) = fs::read_dir(root) else {
         return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if current_package.is_some_and(|current| current == path) {
+        if current_packages.iter().any(|current| **current == path) {
             continue;
         }
         let Ok(file_type) = entry.file_type() else {
@@ -494,7 +658,9 @@ fn purge_stale_handoff_packages(root: &Path, current_package: Option<&Path>) {
         let Some(name) = name.to_str() else {
             continue;
         };
-        if name.starts_with("handoff-") && name.ends_with(".partial.zip") {
+        if name.starts_with("handoff-")
+            && (name.ends_with(".partial") || name.ends_with(".partial.zip"))
+        {
             let _ = fs::remove_file(path);
         }
     }
@@ -528,7 +694,7 @@ fn component_matches_current_runtime(
 
 async fn read_core_ds5_response(
     mut response: reqwest::Response,
-) -> Result<CoreDualSenseSnapshot, String> {
+) -> Result<CoreDualSenseSnapshot, CoreDualSenseResponseError> {
     const MAX_RESPONSE_BYTES: usize = 64 * 1024;
     let status = response.status();
     let entity_tag = response.headers().get(reqwest::header::ETAG).cloned();
@@ -536,7 +702,9 @@ async fn read_core_ds5_response(
         .content_length()
         .is_some_and(|size| size > MAX_RESPONSE_BYTES as u64)
     {
-        return Err("DS5-CFG-001: DualSense configuration response is too large".to_string());
+        return Err("DS5-CFG-001: DualSense configuration response is too large"
+            .to_string()
+            .into());
     }
     let mut bytes = Vec::with_capacity(
         response
@@ -547,10 +715,12 @@ async fn read_core_ds5_response(
     while let Some(chunk) = response
         .chunk()
         .await
-        .map_err(|error| format!("DS5-CFG-001: unable to read DualSense configuration: {error}"))?
+        .map_err(CoreDualSenseResponseError::Transfer)?
     {
         if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
-            return Err("DS5-CFG-001: DualSense configuration response is too large".to_string());
+            return Err("DS5-CFG-001: DualSense configuration response is too large"
+                .to_string()
+                .into());
         }
         bytes.extend_from_slice(&chunk);
     }
@@ -558,10 +728,12 @@ async fn read_core_ds5_response(
         let error_code = serde_json::from_slice::<serde_json::Value>(&bytes)
             .ok()
             .and_then(|body| body.get("error_code")?.as_str().map(str::to_owned));
-        return Err(core_ds5_http_error(error_code.as_deref(), status));
+        return Err(core_ds5_http_error(error_code.as_deref(), status).into());
     }
     let result: CoreDualSenseResponse = serde_json::from_slice(&bytes).map_err(|error| {
-        format!("DS5-CFG-001: invalid DualSense configuration response: {error}")
+        CoreDualSenseResponseError::Message(format!(
+            "DS5-CFG-001: invalid DualSense configuration response: {error}"
+        ))
     })?;
     let result = validate_core_ds5_response(result)?;
     let entity_tag = entity_tag.map(validate_strong_entity_tag).transpose()?;
@@ -572,23 +744,45 @@ async fn read_core_ds5_response(
 }
 
 async fn get_core_ds5_settings() -> Result<CoreDualSenseSnapshot, String> {
-    let base_url = crate::sunshine::get_sunshine_url().await?;
-    let response = crate::sunshine::create_https_client()?
-        .get(format!(
-            "{}/api/dualsense/config",
-            base_url.trim_end_matches('/')
-        ))
-        .send()
-        .await
-        .map_err(|error| format!("DS5-CFG-001: unable to read DualSense configuration: {error}"))?;
-    read_core_ds5_response(response).await
+    let base_url = crate::sunshine::get_sunshine_url().await.map_err(|_| {
+        warn!("Unable to resolve the Sunshine address for DualSense configuration");
+        "DS5-CFG-001: unable to read DualSense configuration".to_string()
+    })?;
+    let endpoint = format!("{}/api/dualsense/config", base_url.trim_end_matches('/'));
+    let client = crate::sunshine::create_https_client()?;
+    for attempt in 1..=CORE_CONFIG_READ_ATTEMPTS {
+        let response = match client.get(&endpoint).send().await {
+            Ok(response) => read_core_ds5_response(response).await,
+            Err(error) => Err(CoreDualSenseResponseError::Transfer(error)),
+        };
+        match response {
+            Ok(snapshot) => return Ok(snapshot),
+            Err(CoreDualSenseResponseError::Transfer(error)) => {
+                let timed_out = error.is_timeout();
+                warn!(
+                    "Unable to query DualSense configuration (attempt {attempt}/{CORE_CONFIG_READ_ATTEMPTS}): {}",
+                    error.without_url()
+                );
+                if attempt < CORE_CONFIG_READ_ATTEMPTS && !timed_out {
+                    tokio::time::sleep(CORE_CONFIG_RETRY_DELAY * attempt as u32).await;
+                } else {
+                    break;
+                }
+            }
+            Err(CoreDualSenseResponseError::Message(message)) => return Err(message),
+        }
+    }
+    Err("DS5-CFG-001: unable to read DualSense configuration".to_string())
 }
 
 async fn save_core_ds5_settings(
     settings: CoreDualSenseSettings,
     entity_tag: HeaderValue,
 ) -> Result<CoreDualSenseSnapshot, String> {
-    let base_url = crate::sunshine::get_sunshine_url().await?;
+    let base_url = crate::sunshine::get_sunshine_url().await.map_err(|_| {
+        warn!("Unable to resolve the Sunshine address for DualSense configuration");
+        "DS5-CFG-003: unable to save DualSense configuration".to_string()
+    })?;
     let response = crate::sunshine::create_https_client()?
         .post(format!(
             "{}/api/dualsense/config",
@@ -598,10 +792,26 @@ async fn save_core_ds5_settings(
         .json(&settings)
         .send()
         .await
-        .map_err(|error| format!("DS5-CFG-003: unable to save DualSense configuration: {error}"))?;
-    read_core_ds5_response(response)
-        .await
-        .map_err(|error| error.replacen("DS5-CFG-001:", "DS5-CFG-003:", 1))
+        .map_err(|error| {
+            warn!(
+                "Unable to save DualSense configuration: {}",
+                error.without_url()
+            );
+            "DS5-CFG-003: unable to save DualSense configuration".to_string()
+        })?;
+    read_core_ds5_response(response).await.map_err(|error| {
+        let message = match error {
+            CoreDualSenseResponseError::Transfer(error) => {
+                warn!(
+                    "Unable to read the saved DualSense configuration response: {}",
+                    error.without_url()
+                );
+                "DS5-CFG-001: unable to read DualSense configuration".to_string()
+            }
+            CoreDualSenseResponseError::Message(message) => message,
+        };
+        message.replacen("DS5-CFG-001:", "DS5-CFG-003:", 1)
+    })
 }
 
 fn sha256_file(path: &Path) -> Result<String, String> {
@@ -1300,7 +1510,6 @@ fn extract_sidecar_package(
 }
 
 async fn acquire_sidecar_package(
-    client: &reqwest::Client,
     manifest: &SidecarPackageManifest,
     local_package: Option<&Path>,
     destination: &Path,
@@ -1336,38 +1545,20 @@ async fn acquire_sidecar_package(
         );
     }
     report_progress(progress, "sidecar_downloading", 12);
-    let response = client
-        .get(&manifest.download_url)
-        .send()
-        .await
-        .map_err(|error| format!("DS5-PKG-001: sidecar download failed: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("DS5-PKG-001: sidecar download failed: {error}"))?;
-    let total_size = response.content_length();
-    if total_size.is_some_and(|size| size != manifest.size) {
-        return Err("DS5-PKG-001: sidecar download size does not match the manifest".to_string());
-    }
-    let mut output = File::create(destination).map_err(|error| error.to_string())?;
-    let mut downloaded = 0u64;
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk =
-            chunk.map_err(|error| format!("DS5-PKG-001: sidecar download failed: {error}"))?;
-        downloaded = downloaded.saturating_add(chunk.len() as u64);
-        if downloaded > manifest.size || downloaded > MAX_SIDECAR_PACKAGE_BYTES {
-            return Err("DS5-PKG-001: sidecar download exceeds the manifest size".to_string());
-        }
-        output
-            .write_all(&chunk)
-            .map_err(|error| error.to_string())?;
-        let value = 12 + (downloaded.saturating_mul(24) / manifest.size).min(24) as u32;
-        report_progress(progress, "sidecar_downloading", value);
-    }
-    drop(output);
-    if downloaded != manifest.size {
-        return Err("DS5-PKG-001: sidecar download ended before the expected size".to_string());
-    }
-    Ok(())
+    download_component_asset(
+        ComponentDownloadSpec {
+            url: &manifest.download_url,
+            destination,
+            expected_size: Some(manifest.size),
+            max_size: MAX_SIDECAR_PACKAGE_BYTES,
+            stage: "sidecar_downloading",
+            progress_start: 12,
+            progress_span: 24,
+            error_code: "DS5-PKG-001",
+        },
+        progress,
+    )
+    .await
 }
 
 fn extract_verified_package(archive_path: &Path, staging: &Path) -> Result<(), String> {
@@ -1432,47 +1623,36 @@ fn extract_verified_package(archive_path: &Path, staging: &Path) -> Result<(), S
 #[cfg(target_os = "windows")]
 async fn ensure_pinned_usbip(
     progress: &ProgressReporter<'_>,
-    client: &reqwest::Client,
     component_root: &Path,
+    local_installer: Option<&Path>,
 ) -> Result<UsbipInstallResult, String> {
     if installed_usbip_version().as_deref() == Some(USBIP_VERSION) {
         return Ok(UsbipInstallResult::Ready);
     }
 
-    report_progress(progress, "transport_downloading", 3);
     let installer_path = component_root.join(format!("USBip-{USBIP_VERSION}-x64.partial.exe"));
     let download_result: Result<UsbipInstallResult, String> = async {
-        let response = client
-            .get(USBIP_URL)
-            .send()
-            .await
-            .map_err(|error| format!("DS5-DRV-001: USB/IP download failed: {error}"))?
-            .error_for_status()
-            .map_err(|error| format!("DS5-DRV-001: USB/IP download failed: {error}"))?;
-        if response
-            .content_length()
-            .is_some_and(|size| size > MAX_USBIP_INSTALLER_BYTES)
-        {
-            return Err("DS5-DRV-001: USB/IP installer exceeds the download limit".to_string());
+        if let Some(source) = local_installer {
+            report_progress(progress, "transport_local", 3);
+            tokio::fs::copy(source, &installer_path).await.map_err(|error| {
+                format!("DS5-DRV-001: unable to stage the local USB/IP installer: {error}")
+            })?;
+        } else {
+            download_component_asset(
+                ComponentDownloadSpec {
+                    url: USBIP_URL,
+                    destination: &installer_path,
+                    expected_size: None,
+                    max_size: MAX_USBIP_INSTALLER_BYTES,
+                    stage: "transport_downloading",
+                    progress_start: 3,
+                    progress_span: 6,
+                    error_code: "DS5-DRV-001",
+                },
+                progress,
+            )
+            .await?;
         }
-
-        let mut output = File::create(&installer_path).map_err(|error| error.to_string())?;
-        let mut downloaded = 0u64;
-        let mut stream = response.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk
-                .map_err(|error| format!("DS5-DRV-001: USB/IP download failed: {error}"))?;
-            downloaded = downloaded.saturating_add(chunk.len() as u64);
-            if downloaded > MAX_USBIP_INSTALLER_BYTES {
-                return Err(
-                    "DS5-DRV-001: USB/IP installer exceeds the download limit".to_string(),
-                );
-            }
-            output
-                .write_all(&chunk)
-                .map_err(|error| error.to_string())?;
-        }
-        drop(output);
 
         let actual = sha256_file(&installer_path)?;
         if actual != USBIP_SHA256 {
@@ -1524,8 +1704,8 @@ async fn ensure_pinned_usbip(
 #[cfg(not(target_os = "windows"))]
 async fn ensure_pinned_usbip(
     _progress: &ProgressReporter<'_>,
-    _client: &reqwest::Client,
     _component_root: &Path,
+    _local_installer: Option<&Path>,
 ) -> Result<UsbipInstallResult, String> {
     Ok(UsbipInstallResult::Ready)
 }
@@ -1536,46 +1716,127 @@ fn rollback_activated_component(
     had_previous: bool,
 ) -> Result<(), String> {
     if active.exists() {
-        fs::remove_dir_all(active)
-            .map_err(|error| format!("unable to remove failed active component: {error}"))?;
+        retry_component_fs_operation(|| fs::remove_dir_all(active)).map_err(|error| {
+            component_fs_error("unable to remove failed active component", &error)
+        })?;
     }
     if had_previous {
         if !backup.exists() {
             return Err("previous component backup is missing".to_string());
         }
         validate_component_backup(backup)?;
-        fs::rename(backup, active)
-            .map_err(|error| format!("unable to restore previous component: {error}"))?;
+        retry_component_fs_operation(|| fs::rename(backup, active))
+            .map_err(|error| component_fs_error("unable to restore previous component", &error))?;
     }
     Ok(())
 }
 
-fn install_error_after_rollback(
+fn retry_component_fs_operation<T>(
+    mut operation: impl FnMut() -> std::io::Result<T>,
+) -> std::io::Result<T> {
+    for attempt in 0..COMPONENT_FS_RETRY_ATTEMPTS {
+        match operation() {
+            Ok(value) => return Ok(value),
+            Err(error)
+                if attempt + 1 < COMPONENT_FS_RETRY_ATTEMPTS
+                    && is_transient_component_fs_error(&error) =>
+            {
+                std::thread::sleep(COMPONENT_FS_RETRY_DELAY);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("component filesystem retry loop always returns")
+}
+
+fn is_transient_component_fs_error(error: &std::io::Error) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        // ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION, and ERROR_LOCK_VIOLATION.
+        matches!(error.raw_os_error(), Some(5 | 32 | 33))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = error;
+        false
+    }
+}
+
+fn component_fs_error(action: &str, error: &std::io::Error) -> String {
+    match error.raw_os_error() {
+        Some(code) => format!("{action} (OS error {code}): {error}"),
+        None => format!("{action}: {error}"),
+    }
+}
+
+fn activate_staged_component(staging: &Path, active: &Path, backup: &Path) -> Result<(), String> {
+    if backup.exists() {
+        retry_component_fs_operation(|| fs::remove_dir_all(backup)).map_err(|error| {
+            format!(
+                "DS5-PKG-002: {}",
+                component_fs_error("unable to remove previous component backup", &error)
+            )
+        })?;
+    }
+    if active.exists() {
+        retry_component_fs_operation(|| fs::rename(active, backup)).map_err(|error| {
+            format!(
+                "DS5-PKG-002: {}",
+                component_fs_error("unable to back up the active component", &error)
+            )
+        })?;
+    }
+    if let Err(error) = retry_component_fs_operation(|| fs::rename(staging, active)) {
+        if backup.exists()
+            && let Err(rollback_error) = retry_component_fs_operation(|| fs::rename(backup, active))
+        {
+            warn!(
+                "DualSense activation rollback failed: {}",
+                component_fs_error("unable to restore previous component", &rollback_error)
+            );
+        }
+        return Err(format!(
+            "DS5-PKG-002: {}",
+            component_fs_error("unable to activate component", &error)
+        ));
+    }
+    Ok(())
+}
+
+async fn install_error_after_rollback(
     error: String,
     active: &Path,
     backup: &Path,
     had_previous: bool,
 ) -> String {
-    match rollback_activated_component(active, backup, had_previous) {
-        Ok(()) => format!("{error}; activated component was rolled back"),
-        Err(rollback_error) => {
+    let active = active.to_path_buf();
+    let backup = backup.to_path_buf();
+    match tokio::task::spawn_blocking(move || {
+        rollback_activated_component(&active, &backup, had_previous)
+    })
+    .await
+    {
+        Ok(Ok(())) => format!("{error}; activated component was rolled back"),
+        Ok(Err(rollback_error)) => {
             format!("{error}; component rollback also failed: {rollback_error}")
         }
+        Err(task_error) => format!("{error}; component rollback task failed: {task_error}"),
     }
 }
 
 async fn dualsense_install_impl(
     progress: &ProgressReporter<'_>,
-    local_sidecar_package: Option<&Path>,
+    local_packages: LocalComponentPackages,
 ) -> Result<DualSenseStatus, String> {
     report_progress(progress, "preparing", 1);
-    let discovered_package = local_sidecar_package
+    let selected_sidecar_package = local_packages.sidecar.as_deref();
+    let discovered_package = selected_sidecar_package
         .is_none()
         .then(manually_placed_sidecar_package)
         .flatten();
     let using_discovered_package = discovered_package.is_some();
-    let using_selected_package = local_sidecar_package.is_some();
-    let local_sidecar_package = local_sidecar_package.or(discovered_package.as_deref());
+    let using_selected_package = selected_sidecar_package.is_some();
+    let local_sidecar_package = selected_sidecar_package.or(discovered_package.as_deref());
     let manifest_available = sidecar_package_manifest_path()
         .try_exists()
         .map_err(|error| {
@@ -1596,30 +1857,41 @@ async fn dualsense_install_impl(
     let operation = format!("staging-{}", std::process::id());
     let staging = root.join(&operation);
     if staging.exists() {
-        fs::remove_dir_all(&staging).map_err(|error| error.to_string())?;
+        let stale_staging = staging.clone();
+        tokio::task::spawn_blocking(move || {
+            retry_component_fs_operation(|| fs::remove_dir_all(&stale_staging)).map_err(|error| {
+                format!(
+                    "DS5-PKG-002: {}",
+                    component_fs_error("unable to remove stale staging component", &error)
+                )
+            })
+        })
+        .await
+        .map_err(|error| format!("DS5-PKG-002: staging cleanup task failed: {error}"))??;
     }
     fs::create_dir(&staging).map_err(|error| error.to_string())?;
-    purge_stale_handoff_packages(&root, local_sidecar_package);
+    let current_handoff_packages = [
+        local_sidecar_package,
+        local_packages.hidmaestro.as_deref(),
+        local_packages.usbip.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    purge_stale_handoff_packages(&root, &current_handoff_packages);
     let archive_path = root.join(format!("{operation}-hidmaestro.partial"));
     let sidecar_archive_path = root.join(format!("{operation}-sidecar.partial.zip"));
     let active = active_dir();
     let backup = root.join("previous");
     let had_previous = active.exists();
-    let client = reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .timeout(std::time::Duration::from_secs(600))
-        .user_agent("foundation-sunshine-dualsense-component")
-        .build()
-        .map_err(|error| error.to_string())?;
-
     let install_result: Result<UsbipInstallResult, String> = async {
-        let usbip_install_result = ensure_pinned_usbip(progress, &client, &root).await?;
+        let usbip_install_result =
+            ensure_pinned_usbip(progress, &root, local_packages.usbip.as_deref()).await?;
         if let Some(manifest) = package_manifest.as_ref() {
             if using_discovered_package {
                 report_progress(progress, "sidecar_local", 12);
             }
             acquire_sidecar_package(
-                &client,
                 manifest,
                 local_sidecar_package,
                 &sidecar_archive_path,
@@ -1641,36 +1913,27 @@ async fn dualsense_install_impl(
             return Err("DS5-PKG-002: no DualSense sidecar source is available".to_string());
         }
 
-        let response = client
-            .get(HIDMAESTRO_URL)
-            .send()
-            .await
-            .map_err(|error| format!("DS5-PKG-001: download failed: {error}"))?
-            .error_for_status()
-            .map_err(|error| format!("DS5-PKG-001: download failed: {error}"))?;
-        report_progress(progress, "downloading", 38);
-        let total_size = response.content_length();
-        if total_size.is_some_and(|size| size > MAX_ARCHIVE_BYTES) {
-            return Err("DS5-PKG-002: release archive exceeds the download limit".to_string());
+        if let Some(source) = local_packages.hidmaestro.as_deref() {
+            report_progress(progress, "runtime_local", 38);
+            tokio::fs::copy(source, &archive_path).await.map_err(|error| {
+                format!("DS5-PKG-002: unable to stage the local HIDMaestro package: {error}")
+            })?;
+        } else {
+            download_component_asset(
+                ComponentDownloadSpec {
+                    url: HIDMAESTRO_URL,
+                    destination: &archive_path,
+                    expected_size: None,
+                    max_size: MAX_ARCHIVE_BYTES,
+                    stage: "downloading",
+                    progress_start: 38,
+                    progress_span: 34,
+                    error_code: "DS5-PKG-001",
+                },
+                progress,
+            )
+            .await?;
         }
-        let mut output = File::create(&archive_path).map_err(|error| error.to_string())?;
-        let mut downloaded = 0u64;
-        let mut stream = response.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|error| format!("DS5-PKG-001: download failed: {error}"))?;
-            downloaded = downloaded.saturating_add(chunk.len() as u64);
-            if downloaded > MAX_ARCHIVE_BYTES {
-                return Err("DS5-PKG-002: release archive exceeds the download limit".to_string());
-            }
-            output
-                .write_all(&chunk)
-                .map_err(|error| error.to_string())?;
-            if let Some(total) = total_size.filter(|total| *total != 0) {
-                let download_progress = (downloaded * 34 / total).min(34) as u32;
-                report_progress(progress, "downloading", 38 + download_progress);
-            }
-        }
-        drop(output);
 
         report_progress(progress, "verifying", 74);
         let archive = archive_path.clone();
@@ -1690,7 +1953,7 @@ async fn dualsense_install_impl(
             serde_json::to_vec_pretty(&serde_json::json!({
                 "component_version": COMPONENT_VERSION,
                 "hidmaestro_version": HIDMAESTRO_VERSION,
-                "source": HIDMAESTRO_URL,
+                "source": if local_packages.hidmaestro.is_some() { "selected-local" } else { HIDMAESTRO_URL },
                 "sha256": HIDMAESTRO_SHA256,
                 "sidecar_source": if using_discovered_package {
                     "discovered-local"
@@ -1708,20 +1971,18 @@ async fn dualsense_install_impl(
         )
         .map_err(|error| error.to_string())?;
 
-        if backup.exists() {
-            fs::remove_dir_all(&backup).map_err(|error| error.to_string())?;
-        }
-        if active.exists() {
-            fs::rename(&active, &backup).map_err(|error| error.to_string())?;
-        }
-        if let Err(error) = fs::rename(&staging, &active) {
-            if backup.exists() {
-                let _ = fs::rename(&backup, &active);
-            }
-            return Err(format!(
-                "DS5-PKG-002: unable to activate component: {error}"
-            ));
-        }
+        let activation_staging = staging.clone();
+        let activation_active = active.clone();
+        let activation_backup = backup.clone();
+        tokio::task::spawn_blocking(move || {
+            activate_staged_component(
+                &activation_staging,
+                &activation_active,
+                &activation_backup,
+            )
+        })
+        .await
+        .map_err(|error| format!("DS5-PKG-002: component activation task failed: {error}"))??;
         report_progress(progress, "activating", 96);
         Ok(usbip_install_result)
     }
@@ -1729,19 +1990,28 @@ async fn dualsense_install_impl(
     let _ = fs::remove_file(&archive_path);
     let _ = fs::remove_file(&sidecar_archive_path);
     if install_result.is_err() {
-        let _ = fs::remove_dir_all(&staging);
+        let failed_staging = staging.clone();
+        match tokio::task::spawn_blocking(move || {
+            retry_component_fs_operation(|| fs::remove_dir_all(&failed_staging))
+        })
+        .await
+        {
+            Ok(Err(error)) if error.kind() != std::io::ErrorKind::NotFound => warn!(
+                "Unable to clean the failed DualSense staging component: {}",
+                component_fs_error("cleanup failed", &error)
+            ),
+            Err(error) => warn!("DualSense staging cleanup task failed: {error}"),
+            _ => {}
+        }
     }
     let reboot_recommended = matches!(install_result?, UsbipInstallResult::RebootRecommended);
     report_progress(progress, "complete", 100);
     let mut status = match dualsense_get_status().await {
         Ok(status) => status,
         Err(status_error) => {
-            return Err(install_error_after_rollback(
-                status_error,
-                &active,
-                &backup,
-                had_previous,
-            ));
+            return Err(
+                install_error_after_rollback(status_error, &active, &backup, had_previous).await,
+            );
         }
     };
     if !status.verified {
@@ -1756,7 +2026,8 @@ async fn dualsense_install_impl(
             &active,
             &backup,
             had_previous,
-        ));
+        )
+        .await);
     }
     status.reboot_recommended = reboot_recommended;
     Ok(status)
@@ -1791,53 +2062,91 @@ async fn connect_elevated_pipe(
 }
 
 #[cfg(target_os = "windows")]
-async fn receive_local_sidecar_package<R>(
+async fn receive_local_component_packages<R>(
     reader: &mut R,
     token: uuid::Uuid,
-) -> Result<TemporaryPackageFile, String>
+) -> Result<Vec<TemporaryPackageFile>, String>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let root = component_root();
+    receive_local_component_packages_into(reader, token, &root).await
+}
+
+#[cfg(target_os = "windows")]
+async fn receive_local_component_packages_into<R>(
+    reader: &mut R,
+    token: uuid::Uuid,
+    root: &Path,
+) -> Result<Vec<TemporaryPackageFile>, String>
 where
     R: tokio::io::AsyncRead + Unpin,
 {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    let mut encoded_size = [0u8; std::mem::size_of::<u64>()];
+    let mut encoded_count = [0u8; 1];
     reader
-        .read_exact(&mut encoded_size)
+        .read_exact(&mut encoded_count)
         .await
         .map_err(|error| {
-            format!("DS5-PKG-002: unable to receive the selected component package size: {error}")
+            format!("DS5-PKG-002: unable to receive the local package count: {error}")
         })?;
-    let size = u64::from_le_bytes(encoded_size);
-    if size == 0 || size > MAX_SIDECAR_PACKAGE_BYTES {
-        return Err("DS5-PKG-002: the selected component package is invalid".to_string());
+    let count = usize::from(encoded_count[0]);
+    if count == 0 || count > MAX_LOCAL_COMPONENT_PACKAGES {
+        return Err("DS5-PKG-002: the number of selected local packages is invalid".to_string());
     }
 
-    let root = component_root();
-    fs::create_dir_all(&root).map_err(|error| {
+    fs::create_dir_all(root).map_err(|error| {
         format!("DS5-PKG-002: unable to prepare the component directory: {error}")
     })?;
-    let package = TemporaryPackageFile(local_sidecar_package_handoff_path(token));
-    let mut output = tokio::fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(package.path())
-        .await
-        .map_err(|error| {
-            format!("DS5-PKG-002: unable to create the component handoff file: {error}")
+    let mut packages = Vec::with_capacity(count);
+    let mut total_size = 0u64;
+    for index in 0..count {
+        let mut encoded_size = [0u8; std::mem::size_of::<u64>()];
+        reader
+            .read_exact(&mut encoded_size)
+            .await
+            .map_err(|error| {
+                format!("DS5-PKG-002: unable to receive local package {index} size: {error}")
+            })?;
+        let size = u64::from_le_bytes(encoded_size);
+        total_size = total_size.checked_add(size).ok_or_else(|| {
+            "DS5-PKG-002: the selected local packages exceed the transfer limit".to_string()
         })?;
-    let mut limited = reader.take(size);
-    let copied = tokio::io::copy(&mut limited, &mut output)
-        .await
-        .map_err(|error| {
-            format!("DS5-PKG-002: unable to receive the selected component package: {error}")
+        if size == 0
+            || size > MAX_LOCAL_COMPONENT_PACKAGE_BYTES
+            || total_size > MAX_LOCAL_COMPONENT_TOTAL_BYTES
+        {
+            return Err("DS5-PKG-002: a selected local package is invalid".to_string());
+        }
+
+        let package =
+            TemporaryPackageFile(local_component_package_handoff_path(root, token, index));
+        let mut output = tokio::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(package.path())
+            .await
+            .map_err(|error| {
+                format!("DS5-PKG-002: unable to create a component handoff file: {error}")
+            })?;
+        let mut limited = reader.take(size);
+        let copied = tokio::io::copy(&mut limited, &mut output)
+            .await
+            .map_err(|error| {
+                format!("DS5-PKG-002: unable to receive local package {index}: {error}")
+            })?;
+        if copied != size {
+            return Err(format!(
+                "DS5-PKG-002: local package {index} transfer ended early"
+            ));
+        }
+        output.flush().await.map_err(|error| {
+            format!("DS5-PKG-002: unable to finish local package {index} transfer: {error}")
         })?;
-    if copied != size {
-        return Err("DS5-PKG-002: the selected component package transfer ended early".to_string());
+        packages.push(package);
     }
-    output.flush().await.map_err(|error| {
-        format!("DS5-PKG-002: unable to finish the component package transfer: {error}")
-    })?;
-    Ok(package)
+    Ok(packages)
 }
 
 #[cfg(target_os = "windows")]
@@ -1863,12 +2172,10 @@ async fn run_elevated_helper(operation: ElevatedOperation, token: uuid::Uuid) ->
             .await
             .map_err(|error| error.to_string())
     });
-    let local_package = if operation == ElevatedOperation::InstallLocal {
-        receive_local_sidecar_package(&mut pipe_reader, token)
-            .await
-            .map(Some)
+    let local_packages = if operation == ElevatedOperation::InstallLocal {
+        receive_local_component_packages(&mut pipe_reader, token).await
     } else {
-        Ok(None)
+        Ok(Vec::new())
     };
     // After the optional package handoff, EOF means that the parent timed out
     // or failed. Long-running child processes are job-bound and terminate when
@@ -1894,15 +2201,24 @@ async fn run_elevated_helper(operation: ElevatedOperation, token: uuid::Uuid) ->
         ensure_no_active_session().await?;
         match operation {
             ElevatedOperation::Install | ElevatedOperation::InstallLocal => {
-                let local_package = local_package?;
-                serde_json::to_value(
-                    dualsense_install_impl(
-                        &progress,
-                        local_package.as_ref().map(TemporaryPackageFile::path),
-                    )
-                    .await?,
-                )
-                .map_err(|error| error.to_string())
+                let local_packages = local_packages?;
+                let classified = if local_packages.is_empty() {
+                    LocalComponentPackages::default()
+                } else {
+                    let package_paths = local_packages
+                        .iter()
+                        .map(|package| package.path().to_path_buf())
+                        .collect::<Vec<_>>();
+                    tokio::task::spawn_blocking(move || {
+                        classify_local_component_packages(package_paths)
+                    })
+                    .await
+                    .map_err(|error| {
+                        format!("DS5-PKG-002: local package classification task failed: {error}")
+                    })??
+                };
+                serde_json::to_value(dualsense_install_impl(&progress, classified).await?)
+                    .map_err(|error| error.to_string())
             }
             ElevatedOperation::TestStandard => {
                 dualsense_self_test_impl("standard".to_string()).await
@@ -2057,30 +2373,43 @@ where
 async fn run_elevated_operation(
     app: Option<&tauri::AppHandle>,
     operation: ElevatedOperation,
-    selected_package: Option<&Path>,
+    selected_packages: &[PathBuf],
 ) -> Result<serde_json::Value, String> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::windows::named_pipe::ServerOptions;
 
     let token = uuid::Uuid::new_v4();
-    let mut local_package = if operation == ElevatedOperation::InstallLocal {
-        let source = selected_package.ok_or_else(|| {
-            "DS5-PKG-002: no local DualSense component package was selected".to_string()
-        })?;
-        let file = tokio::fs::File::open(source).await.map_err(|error| {
-            format!("DS5-PKG-002: unable to open the selected component package: {error}")
-        })?;
-        let metadata = file.metadata().await.map_err(|error| {
-            format!("DS5-PKG-002: unable to inspect the selected component package: {error}")
-        })?;
-        if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_SIDECAR_PACKAGE_BYTES
-        {
-            return Err("DS5-PKG-002: the selected component package is invalid".to_string());
+    let mut local_packages = if operation == ElevatedOperation::InstallLocal {
+        if selected_packages.is_empty() || selected_packages.len() > MAX_LOCAL_COMPONENT_PACKAGES {
+            return Err(
+                "DS5-PKG-002: select between one and three local component packages".to_string(),
+            );
         }
-        Some((file, metadata.len()))
+        let mut total_size = 0u64;
+        let mut opened = Vec::with_capacity(selected_packages.len());
+        for source in selected_packages {
+            let file = tokio::fs::File::open(source).await.map_err(|error| {
+                format!("DS5-PKG-002: unable to open a selected component package: {error}")
+            })?;
+            let metadata = file.metadata().await.map_err(|error| {
+                format!("DS5-PKG-002: unable to inspect a selected component package: {error}")
+            })?;
+            total_size = total_size.checked_add(metadata.len()).ok_or_else(|| {
+                "DS5-PKG-002: the selected local packages exceed the transfer limit".to_string()
+            })?;
+            if !metadata.is_file()
+                || metadata.len() == 0
+                || metadata.len() > MAX_LOCAL_COMPONENT_PACKAGE_BYTES
+                || total_size > MAX_LOCAL_COMPONENT_TOTAL_BYTES
+            {
+                return Err("DS5-PKG-002: a selected component package is invalid".to_string());
+            }
+            opened.push((file, metadata.len()));
+        }
+        Some(opened)
     } else {
-        if selected_package.is_some() {
-            return Err("DS5-PKG-002: a local package is not valid for this operation".to_string());
+        if !selected_packages.is_empty() {
+            return Err("DS5-PKG-002: local packages are not valid for this operation".to_string());
         }
         None
     };
@@ -2112,27 +2441,35 @@ async fn run_elevated_operation(
 
     wait_for_elevated_pipe_connection(server.connect(), &mut helper_exit).await?;
     drop(helper_exit);
-    if let Some((file, size)) = local_package.take() {
+    if let Some(packages) = local_packages.take() {
         server
-            .write_all(&size.to_le_bytes())
+            .write_all(&[packages.len() as u8])
             .await
             .map_err(|error| {
-                format!("DS5-PKG-002: unable to transfer the selected component package: {error}")
+                format!("DS5-PKG-002: unable to transfer the local package count: {error}")
             })?;
-        let mut limited = file.take(size);
-        let copied = tokio::io::copy(&mut limited, &mut server)
-            .await
-            .map_err(|error| {
-                format!("DS5-PKG-002: unable to transfer the selected component package: {error}")
-            })?;
-        if copied != size {
-            return Err(
-                "DS5-PKG-002: the selected component package changed while it was being transferred"
+        for (file, size) in packages {
+            server
+                .write_all(&size.to_le_bytes())
+                .await
+                .map_err(|error| {
+                    format!("DS5-PKG-002: unable to transfer a selected component package: {error}")
+                })?;
+            let mut limited = file.take(size);
+            let copied = tokio::io::copy(&mut limited, &mut server)
+                .await
+                .map_err(|error| {
+                    format!("DS5-PKG-002: unable to transfer a selected component package: {error}")
+                })?;
+            if copied != size {
+                return Err(
+                    "DS5-PKG-002: a selected component package changed while it was being transferred"
                     .to_string(),
             );
+            }
         }
         server.flush().await.map_err(|error| {
-            format!("DS5-PKG-002: unable to finish the component package transfer: {error}")
+            format!("DS5-PKG-002: unable to finish the local package transfer: {error}")
         })?;
     }
 
@@ -2196,31 +2533,42 @@ async fn run_elevated_operation(
 #[tauri::command]
 pub async fn dualsense_install(
     app: tauri::AppHandle,
-    package_path: Option<String>,
+    package_paths: Vec<String>,
 ) -> Result<DualSenseStatus, String> {
     let _operation = COMPONENT_OPERATION.try_lock().map_err(|_| {
         "DS5-RUN-002: another DualSense component operation is still running".to_string()
     })?;
     ensure_no_active_session().await?;
-    let selected_package = package_path
+    let selected_packages = package_paths
+        .into_iter()
         .filter(|path| !path.trim().is_empty())
-        .map(PathBuf::from);
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    if selected_packages.len() > MAX_LOCAL_COMPONENT_PACKAGES {
+        return Err("DS5-PKG-002: select no more than three local component packages".to_string());
+    }
     #[cfg(target_os = "windows")]
     {
-        let operation = if selected_package.is_some() {
-            ElevatedOperation::InstallLocal
-        } else {
+        let operation = if selected_packages.is_empty() {
             ElevatedOperation::Install
+        } else {
+            ElevatedOperation::InstallLocal
         };
-        let data =
-            run_elevated_operation(Some(&app), operation, selected_package.as_deref()).await?;
+        let data = run_elevated_operation(Some(&app), operation, &selected_packages).await?;
         return serde_json::from_value(data)
             .map_err(|error| format!("DS5-PKG-003: invalid administrator result: {error}"));
     }
     #[cfg(not(target_os = "windows"))]
     {
         let progress = |stage: &str, value: u32| emit_progress(&app, stage, value);
-        dualsense_install_impl(&progress, selected_package.as_deref()).await
+        let local_packages = tokio::task::spawn_blocking(move || {
+            classify_local_component_packages(selected_packages)
+        })
+        .await
+        .map_err(|error| {
+            format!("DS5-PKG-002: local package classification task failed: {error}")
+        })??;
+        dualsense_install_impl(&progress, local_packages).await
     }
 }
 
@@ -2338,7 +2686,7 @@ pub async fn dualsense_self_test(profile: String) -> Result<serde_json::Value, S
         } else {
             ElevatedOperation::TestStandard
         };
-        return run_elevated_operation(None, operation, None).await;
+        return run_elevated_operation(None, operation, &[]).await;
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -2383,7 +2731,7 @@ pub async fn dualsense_uninstall() -> Result<DualSenseStatus, String> {
     ensure_no_active_session_for_uninstall().await?;
     #[cfg(target_os = "windows")]
     {
-        let data = run_elevated_operation(None, ElevatedOperation::Uninstall, None).await?;
+        let data = run_elevated_operation(None, ElevatedOperation::Uninstall, &[]).await?;
         return serde_json::from_value(data)
             .map_err(|error| format!("DS5-PKG-003: invalid administrator result: {error}"));
     }
@@ -2401,10 +2749,10 @@ mod tests {
         classify_usbip_installer_exit_code, component_matches_current_runtime, component_state,
         component_test_failure, component_update_available, copy_runtime_files,
         core_ds5_http_error, extract_sidecar_package, local_uninstalled_status,
-        pinned_usbip_installed, require_entity_tag, resolve_core_config,
-        rollback_activated_component, sha256_file, update_config_fields, update_tuning_fields,
-        validate_core_ds5_response, validate_requested_profile, validate_sidecar_package_manifest,
-        validate_strong_entity_tag,
+        pinned_usbip_installed, read_sidecar_package_manifest, require_entity_tag,
+        resolve_core_config, rollback_activated_component, sha256_file, update_config_fields,
+        update_tuning_fields, validate_core_ds5_response, validate_requested_profile,
+        validate_sidecar_package_manifest, validate_strong_entity_tag,
     };
     #[cfg(target_os = "windows")]
     use super::{
@@ -2573,6 +2921,39 @@ mod tests {
     }
 
     #[test]
+    fn sidecar_package_manifest_read_is_bounded() {
+        let root = std::env::temp_dir().join(format!("sunshine-ds5-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let manifest_path = root.join("manifest.json");
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_vec(&serde_json::json!({
+                "schema": 1,
+                "component_version": super::COMPONENT_VERSION,
+                "protocol": super::PROTOCOL_VERSION,
+                "target": super::SIDECAR_PACKAGE_TARGET,
+                "license": super::SIDECAR_PACKAGE_LICENSE,
+                "asset_name": super::SIDECAR_PACKAGE_ASSET,
+                "download_url": "",
+                "sha256": "a".repeat(64),
+                "size": 1024,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(read_sidecar_package_manifest(&manifest_path).is_ok());
+
+        std::fs::write(
+            &manifest_path,
+            vec![b'x'; super::MAX_SIDECAR_PACKAGE_MANIFEST_BYTES as usize + 1],
+        )
+        .unwrap();
+        let error = read_sidecar_package_manifest(&manifest_path).unwrap_err();
+        assert!(error.contains("manifest is too large"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn sidecar_package_extracts_only_matching_runtime() {
         let root = std::env::temp_dir().join(format!("sunshine-ds5-test-{}", uuid::Uuid::new_v4()));
         let archive_path = root.join("sidecar.zip");
@@ -2673,6 +3054,51 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn component_filesystem_operation_retries_windows_sharing_violations() {
+        let mut attempts = 0;
+
+        let result = super::retry_component_fs_operation(|| {
+            attempts += 1;
+            if attempts == 1 {
+                Err(std::io::Error::from_raw_os_error(32))
+            } else {
+                Ok("renamed")
+            }
+        })
+        .unwrap();
+
+        assert_eq!(result, "renamed");
+        assert_eq!(attempts, 2);
+    }
+
+    #[test]
+    fn component_filesystem_operation_does_not_retry_structural_errors() {
+        let mut attempts = 0;
+
+        let error = super::retry_component_fs_operation(|| {
+            attempts += 1;
+            Err::<(), _>(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "invalid destination",
+            ))
+        })
+        .unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert_eq!(attempts, 1);
+    }
+
+    #[test]
+    fn component_filesystem_error_includes_the_operating_system_code() {
+        let error = std::io::Error::from_raw_os_error(5);
+
+        let message = super::component_fs_error("unable to activate component", &error);
+
+        assert!(message.starts_with("unable to activate component (OS error 5):"));
+    }
+
     #[test]
     fn final_verification_rollback_rejects_a_corrupt_backup() {
         let root = std::env::temp_dir().join(format!("sunshine-ds5-test-{}", uuid::Uuid::new_v4()));
@@ -2693,22 +3119,69 @@ mod tests {
     #[test]
     fn stale_handoff_cleanup_preserves_current_and_unrelated_entries() {
         let root = std::env::temp_dir().join(format!("sunshine-ds5-test-{}", uuid::Uuid::new_v4()));
-        let stale = root.join("handoff-stale.partial.zip");
-        let current = root.join("handoff-current.partial.zip");
+        let stale = root.join("handoff-stale.partial");
+        let legacy_stale = root.join("handoff-legacy.partial.zip");
+        let current = root.join("handoff-current.partial");
         let unrelated = root.join("other.partial.zip");
         let matching_directory = root.join("handoff-directory.partial.zip");
         std::fs::create_dir_all(&matching_directory).unwrap();
         std::fs::write(&stale, b"stale").unwrap();
+        std::fs::write(&legacy_stale, b"legacy stale").unwrap();
         std::fs::write(&current, b"current").unwrap();
         std::fs::write(&unrelated, b"unrelated").unwrap();
 
-        super::purge_stale_handoff_packages(&root, Some(&current));
+        super::purge_stale_handoff_packages(&root, &[current.as_path()]);
 
         assert!(!stale.exists());
+        assert!(!legacy_stale.exists());
         assert!(current.is_file());
         assert!(unrelated.is_file());
         assert!(matching_directory.is_dir());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_component_hashes_are_identified_without_trusting_file_names() {
+        assert_eq!(
+            super::local_component_kind(super::HIDMAESTRO_SHA256, None),
+            Some(super::LocalComponentKind::Hidmaestro)
+        );
+        assert_eq!(
+            super::local_component_kind(super::USBIP_SHA256, None),
+            Some(super::LocalComponentKind::Usbip)
+        );
+        assert_eq!(
+            super::local_component_kind("aabbcc", Some("AABBCC")),
+            Some(super::LocalComponentKind::Sidecar)
+        );
+        assert_eq!(
+            super::local_component_kind("unknown", Some("sidecar")),
+            None
+        );
+    }
+
+    #[test]
+    fn online_install_does_not_require_a_local_package_manifest_for_classification() {
+        let packages =
+            super::classify_local_component_packages(std::iter::empty::<std::path::PathBuf>())
+                .unwrap();
+
+        assert!(packages.sidecar.is_none());
+        assert!(packages.hidmaestro.is_none());
+        assert!(packages.usbip.is_none());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn component_download_and_install_timeouts_cover_slow_release_assets() {
+        assert_eq!(
+            super::COMPONENT_DOWNLOAD_OVERALL_TIMEOUT,
+            std::time::Duration::from_secs(30 * 60)
+        );
+        assert_eq!(
+            super::ElevatedOperation::Install.timeout(),
+            std::time::Duration::from_secs(110 * 60)
+        );
     }
 
     #[test]
@@ -2925,6 +3398,40 @@ mod tests {
                 progress: 88
             } if stage == "probing"
         ));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    async fn elevated_ipc_receives_multiple_local_packages_with_bounded_framing() {
+        let root = std::env::temp_dir().join(format!("sunshine-ds5-test-{}", uuid::Uuid::new_v4()));
+        let token = uuid::Uuid::new_v4();
+        let contents = [
+            b"sidecar".as_slice(),
+            b"hidmaestro".as_slice(),
+            b"usbip".as_slice(),
+        ];
+        let mut encoded = vec![contents.len() as u8];
+        for content in contents {
+            encoded.extend_from_slice(&(content.len() as u64).to_le_bytes());
+            encoded.extend_from_slice(content);
+        }
+        let mut reader = encoded.as_slice();
+
+        let packages = super::receive_local_component_packages_into(&mut reader, token, &root)
+            .await
+            .unwrap();
+
+        assert_eq!(packages.len(), contents.len());
+        for (package, expected) in packages.iter().zip(contents) {
+            assert_eq!(std::fs::read(package.path()).unwrap(), expected);
+        }
+        let paths = packages
+            .iter()
+            .map(|package| package.path().to_path_buf())
+            .collect::<Vec<_>>();
+        drop(packages);
+        assert!(paths.iter().all(|path| !path.exists()));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(target_os = "windows")]

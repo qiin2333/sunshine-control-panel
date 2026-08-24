@@ -1,0 +1,77 @@
+// ========================================
+// Element Plus 主题变量层
+// ========================================
+// Element Plus 的深色调色板挂在 `html.dark` 上（theme-chalk/dark/css-vars.css），
+// 而本应用用 `data-bs-theme` 切换主题，那份变量永远不会生效 —— 深色模式下组件
+// 读到的仍是 Element Plus 的浅色默认值。以前只能靠每个页面各写一份局部覆盖，
+// 漏掉的 token 就会静默回退到浅色，页面于是深浅混搭。
+// 这里集中声明深色模式的整套 token。页面仍可在自己的作用域里继续覆盖
+// （权重更高），但不再需要为了「别变白」而重复声明一遍。
+// 浅色模式直接沿用 Element Plus 默认值，无需覆盖。
+// 未收录 --el-bg-color / --el-bg-color-page：本壳层里前者只被 .el-switch__action
+// （开关滑块，两套主题都应为白色）读取，后者无人读取；弹层与下拉走的是
+// --el-bg-color-overlay，对话框由 dialog.less 硬覆盖。
+
+@import './theme.less';
+
+[data-bs-theme='dark'] {
+  // 强调色：深色模式跟随莫兰迪红，与侧边栏、对话框一致
+  --el-color-primary: @morandi-red;
+  --el-color-primary-light-3: rgba(212, 165, 165, 0.55);
+  --el-color-primary-light-5: rgba(212, 165, 165, 0.38);
+  --el-color-primary-light-7: rgba(212, 165, 165, 0.28);
+  --el-color-primary-light-8: rgba(212, 165, 165, 0.2);
+  --el-color-primary-light-9: rgba(212, 165, 165, 0.12);
+  --el-color-primary-dark-2: #e0bcbc;
+
+  // 状态色：基色两套主题一致，只重算深色底上的浅色档与 hover 档
+  --el-color-success-light-3: rgba(103, 194, 58, 0.45);
+  --el-color-success-light-5: rgba(103, 194, 58, 0.34);
+  --el-color-success-light-8: rgba(103, 194, 58, 0.18);
+  --el-color-success-light-9: rgba(103, 194, 58, 0.11);
+  --el-color-success-dark-2: #85ce61;
+  --el-color-warning-light-3: rgba(230, 162, 60, 0.5);
+  --el-color-warning-light-5: rgba(230, 162, 60, 0.38);
+  --el-color-warning-light-8: rgba(230, 162, 60, 0.2);
+  --el-color-warning-light-9: rgba(230, 162, 60, 0.12);
+  --el-color-warning-dark-2: #f0bd70;
+  --el-color-danger-light-3: rgba(245, 108, 108, 0.48);
+  --el-color-danger-light-5: rgba(245, 108, 108, 0.36);
+  --el-color-danger-light-8: rgba(245, 108, 108, 0.19);
+  --el-color-danger-light-9: rgba(245, 108, 108, 0.11);
+  --el-color-danger-dark-2: #f78989;
+  --el-color-error-light-3: rgba(245, 108, 108, 0.48);
+  --el-color-error-light-5: rgba(245, 108, 108, 0.36);
+  --el-color-error-light-8: rgba(245, 108, 108, 0.19);
+  --el-color-error-light-9: rgba(245, 108, 108, 0.11);
+  --el-color-error-dark-2: #f78989;
+  --el-color-info-light-3: rgba(230, 213, 184, 0.3);
+  --el-color-info-light-5: rgba(230, 213, 184, 0.2);
+  --el-color-info-light-8: rgba(230, 213, 184, 0.14);
+  --el-color-info-light-9: rgba(230, 213, 184, 0.08);
+  --el-color-info-dark-2: #cbbfa8;
+
+  // 文字
+  --el-text-color-primary: #f0dfc3;
+  --el-text-color-regular: #d6c3a7;
+  --el-text-color-secondary: #b9aca8;
+  --el-text-color-placeholder: #9d9494;
+  --el-text-color-disabled: #8b8385;
+
+  // 描边
+  --el-border-color: rgba(230, 213, 184, 0.22);
+  --el-border-color-hover: rgba(230, 213, 184, 0.34);
+  --el-border-color-light: rgba(230, 213, 184, 0.16);
+  --el-border-color-lighter: rgba(230, 213, 184, 0.11);
+  --el-border-color-extra-light: rgba(230, 213, 184, 0.08);
+
+  // 填充
+  --el-bg-color-overlay: rgba(61, 50, 53, 0.72);
+  --el-fill-color: rgba(255, 255, 255, 0.075);
+  --el-fill-color-dark: rgba(255, 255, 255, 0.11);
+  --el-fill-color-blank: rgba(255, 255, 255, 0.055);
+  --el-fill-color-light: rgba(255, 255, 255, 0.055);
+  --el-fill-color-lighter: rgba(255, 255, 255, 0.035);
+  --el-fill-color-extra-light: rgba(255, 255, 255, 0.025);
+  --el-mask-color-extra-light: rgba(45, 38, 40, 0.3);
+}

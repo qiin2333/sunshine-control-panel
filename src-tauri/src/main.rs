@@ -13,6 +13,7 @@ mod file_mapping;
 mod file_transfer;
 mod fs_utils;
 mod game_session;
+mod github_download;
 mod hwinfo;
 mod logger;
 mod moonlight_web;

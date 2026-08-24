@@ -1,29 +1,46 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { installSelectedDualSensePackage } from './dualsenseInstallFlow.js'
+import { installSelectedDualSensePackages } from './dualsenseInstallFlow.js'
 
-test('installs the component from the package selected by the user', async () => {
-  const installedPaths = []
-  const result = await installSelectedDualSensePackage({
-    packagePath: 'C:\\Packages\\Sunshine.Ds5Sidecar.x64.zip',
-    installPackage: async (packagePath) => installedPaths.push(packagePath),
+test('installs the components from the packages selected by the user', async () => {
+  const installCalls = []
+  const packagePaths = [
+    'C:\\Packages\\Sunshine.Ds5Sidecar.x64.zip',
+    'C:\\Packages\\HIDMaestro-v1.6.2.zip',
+    'C:\\Packages\\USBip-0.9.7.7-x64.exe',
+  ]
+  const result = await installSelectedDualSensePackages({
+    packagePaths,
+    installPackages: async (selectedPaths) => installCalls.push(selectedPaths),
   })
 
   assert.deepEqual(result, {
     started: true,
-    packagePath: 'C:\\Packages\\Sunshine.Ds5Sidecar.x64.zip',
+    packagePaths,
   })
-  assert.deepEqual(installedPaths, ['C:\\Packages\\Sunshine.Ds5Sidecar.x64.zip'])
+  assert.deepEqual(installCalls, [packagePaths])
 })
 
 test('does not start installation when package selection is canceled', async () => {
   let installCalled = false
-  const result = await installSelectedDualSensePackage({
-    packagePath: null,
-    installPackage: async () => { installCalled = true },
+  const result = await installSelectedDualSensePackages({
+    packagePaths: null,
+    installPackages: async () => { installCalled = true },
   })
 
-  assert.deepEqual(result, { started: false, packagePath: null })
+  assert.deepEqual(result, { started: false, packagePaths: [] })
   assert.equal(installCalled, false)
+})
+
+test('deduplicates selected package paths before installation', async () => {
+  const packagePath = 'C:\\Packages\\HIDMaestro-v1.6.2.zip'
+  let installedPaths
+
+  await installSelectedDualSensePackages({
+    packagePaths: [packagePath, packagePath],
+    installPackages: async (selectedPaths) => { installedPaths = selectedPaths },
+  })
+
+  assert.deepEqual(installedPaths, [packagePath])
 })

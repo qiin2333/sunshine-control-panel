@@ -16,7 +16,7 @@ import {
   dualSenseConfigUiState,
   mergeDualSenseStatus,
 } from './dualsenseConfigSync.js'
-import { installSelectedDualSensePackage } from './dualsenseInstallFlow.js'
+import { installSelectedDualSensePackages } from './dualsenseInstallFlow.js'
 import { useI18n } from '../desktop/i18n/index.js'
 
 const STATUS_REFRESH_WAIT_TIMEOUT_MS = 5000
@@ -216,12 +216,14 @@ export function useDualSenseSettings() {
     return refreshed
   }
 
-  const install = async (packagePath = null) => {
+  const install = async (packagePaths = []) => {
     if (controlsBusy.value) return
-    packagePath = typeof packagePath === 'string' ? packagePath : null
+    packagePaths = Array.isArray(packagePaths)
+      ? packagePaths.filter((path) => typeof path === 'string' && path)
+      : []
     const componentWasInstalled = status.value.installed
     const upgrading = Boolean(status.value.installed && status.value.update_available)
-    const localPackage = Boolean(packagePath)
+    const localPackage = packagePaths.length > 0
     operation.value = 'confirm-install'
     try {
       await ElMessageBox.confirm(
@@ -247,7 +249,7 @@ export function useDualSenseSettings() {
     await waitForStatusRefresh()
     let result
     try {
-      result = await dualsense.install(packagePath)
+      result = await dualsense.install(packagePaths)
     } catch (error) {
       operation.value = ''
       await refresh(true)
@@ -294,18 +296,16 @@ export function useDualSenseSettings() {
     let selected
     try {
       selected = await open({
-        multiple: false,
+        multiple: true,
         directory: false,
         title: t.value.dualSense.selectLocalPackage,
-        filters: [{ name: t.value.dualSense.componentPackage, extensions: ['zip'] }],
+        filters: [{ name: t.value.dualSense.componentPackage, extensions: ['zip', 'exe'] }],
       })
     } catch (error) {
       showError(error, 'packagePicker')
       return
     }
-    if (typeof selected === 'string' && selected) {
-      await installSelectedDualSensePackage({ packagePath: selected, installPackage: install })
-    }
+    await installSelectedDualSensePackages({ packagePaths: selected, installPackages: install })
   }
 
   const applyConfigControls = (requested) => {

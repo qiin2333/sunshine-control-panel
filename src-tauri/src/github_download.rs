@@ -11,6 +11,7 @@ use std::fmt;
 use std::path::Path;
 use std::time::Duration;
 use tokio::io::{AsyncWriteExt, BufWriter};
+use tokio::time::Instant;
 
 pub(crate) const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const DEFAULT_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -28,6 +29,13 @@ const DOWNLOAD_PROXY_PREFIXES: &[(&str, &str)] = &[
 struct DownloadSource {
     name: &'static str,
     url: String,
+}
+
+#[derive(Clone, Copy)]
+enum DownloadClientPolicy {
+    HttpsOnly,
+    #[cfg(test)]
+    AllowHttpForTests,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,16 +124,21 @@ fn build_download_sources(original_url: &str) -> Result<Vec<DownloadSource>, Str
     Ok(sources)
 }
 
-fn create_download_client(request: &DownloadRequest<'_>) -> Result<reqwest::Client, String> {
-    let mut builder = reqwest::Client::builder()
+fn create_download_client(
+    request: &DownloadRequest<'_>,
+    policy: DownloadClientPolicy,
+) -> Result<reqwest::Client, String> {
+    let builder = reqwest::Client::builder()
         .connect_timeout(request.connect_timeout)
         .read_timeout(request.idle_timeout)
         .redirect(reqwest::redirect::Policy::limited(10))
         .no_gzip()
         .no_deflate();
-    if let Some(timeout) = request.overall_timeout {
-        builder = builder.timeout(timeout);
-    }
+    let builder = match policy {
+        DownloadClientPolicy::HttpsOnly => builder.https_only(true),
+        #[cfg(test)]
+        DownloadClientPolicy::AllowHttpForTests => builder,
+    };
     builder
         .build()
         .map_err(|error| format!("could not create download client: {error}"))
@@ -178,20 +191,29 @@ async fn request_source(
     client: &reqwest::Client,
     source: &DownloadSource,
     request: &DownloadRequest<'_>,
+    remaining_budget: Option<Duration>,
 ) -> Result<reqwest::Response, String> {
     let pending = client
         .get(&source.url)
         .header(reqwest::header::USER_AGENT, request.user_agent)
         .header(reqwest::header::ACCEPT, "application/octet-stream")
-        .header(reqwest::header::ACCEPT_ENCODING, "identity")
-        .send();
-    let response = match tokio::time::timeout(request.response_timeout, pending).await {
+        .header(reqwest::header::ACCEPT_ENCODING, "identity");
+    let pending = if let Some(timeout) = remaining_budget {
+        pending.timeout(timeout)
+    } else {
+        pending
+    }
+    .send();
+    let response_timeout = remaining_budget
+        .map(|remaining| request.response_timeout.min(remaining))
+        .unwrap_or(request.response_timeout);
+    let response = match tokio::time::timeout(response_timeout, pending).await {
         Ok(Ok(response)) => response,
         Ok(Err(error)) => return Err(format!("request failed: {error}")),
         Err(_) => {
             return Err(format!(
                 "server did not respond within {} seconds",
-                request.response_timeout.as_secs()
+                response_timeout.as_secs_f64()
             ));
         }
     };
@@ -208,12 +230,13 @@ async fn download_source_to_file<F>(
     client: &reqwest::Client,
     source: &DownloadSource,
     request: &DownloadRequest<'_>,
+    remaining_budget: Option<Duration>,
     on_progress: &mut F,
 ) -> Result<DownloadOutcome, String>
 where
     F: FnMut(DownloadProgress),
 {
-    let response = request_source(client, source, request).await?;
+    let response = request_source(client, source, request, remaining_budget).await?;
     let response_size = response.content_length();
     let total = request.expected_size.or(response_size).unwrap_or(0);
     on_progress(DownloadProgress {
@@ -303,24 +326,46 @@ where
         kind: DownloadErrorKind::Setup,
         detail,
     })?;
-    download_from_sources(request, &sources, on_progress).await
+    download_from_sources(
+        request,
+        &sources,
+        DownloadClientPolicy::HttpsOnly,
+        on_progress,
+    )
+    .await
 }
 
 async fn download_from_sources<F>(
     request: DownloadRequest<'_>,
     sources: &[DownloadSource],
+    client_policy: DownloadClientPolicy,
     mut on_progress: F,
 ) -> Result<DownloadOutcome, DownloadError>
 where
     F: FnMut(DownloadProgress),
 {
-    let client = create_download_client(&request).map_err(|detail| DownloadError {
-        kind: DownloadErrorKind::Setup,
-        detail,
-    })?;
+    let client =
+        create_download_client(&request, client_policy).map_err(|detail| DownloadError {
+            kind: DownloadErrorKind::Setup,
+            detail,
+        })?;
+    let overall_deadline = request
+        .overall_timeout
+        .map(|timeout| Instant::now() + timeout);
     let mut errors = Vec::new();
 
     for (index, source) in sources.iter().enumerate() {
+        let remaining_budget = match overall_deadline {
+            Some(deadline) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    errors.push("shared overall timeout expired".to_string());
+                    break;
+                }
+                Some(remaining)
+            }
+            None => None,
+        };
         on_progress(DownloadProgress {
             phase: if index == 0 {
                 DownloadAttemptPhase::Connecting
@@ -332,12 +377,29 @@ where
             total: request.expected_size.unwrap_or(0),
         });
         info!("Trying GitHub download source: {}", source.name);
-        match download_source_to_file(&client, source, &request, &mut on_progress).await {
+        let attempt = download_source_to_file(
+            &client,
+            source,
+            &request,
+            remaining_budget,
+            &mut on_progress,
+        );
+        let result = match remaining_budget {
+            Some(remaining) => match tokio::time::timeout(remaining, attempt).await {
+                Ok(result) => result,
+                Err(_) => Err("shared overall timeout expired during this source".to_string()),
+            },
+            None => attempt.await,
+        };
+        match result {
             Ok(outcome) => return Ok(outcome),
             Err(error) => {
                 warn!("GitHub download source {} failed: {}", source.name, error);
                 errors.push(format!("{}: {error}", source.name));
                 let _ = tokio::fs::remove_file(request.destination).await;
+                if overall_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                    break;
+                }
             }
         }
     }
@@ -404,8 +466,9 @@ mod tests {
             name: "html",
             url: format!("http://{address}/html"),
         };
-        let client = create_download_client(&request).unwrap();
-        let error = request_source(&client, &source, &request)
+        let client =
+            create_download_client(&request, DownloadClientPolicy::AllowHttpForTests).unwrap();
+        let error = request_source(&client, &source, &request, None)
             .await
             .unwrap_err();
         assert!(error.contains("response is not a release asset"));
@@ -455,15 +518,115 @@ mod tests {
             },
         ];
         let mut phases = Vec::new();
-        let outcome = download_from_sources(request, &sources, |progress| {
-            phases.push((progress.phase, progress.source));
-        })
+        let outcome = download_from_sources(
+            request,
+            &sources,
+            DownloadClientPolicy::AllowHttpForTests,
+            |progress| {
+                phases.push((progress.phase, progress.source));
+            },
+        )
         .await
         .unwrap();
 
         assert_eq!(outcome.source, "fallback");
         assert_eq!(tokio::fs::read(&destination).await.unwrap(), b"asset");
         assert!(phases.contains(&(DownloadAttemptPhase::Retrying, "fallback")));
+        let _ = tokio::fs::remove_file(&destination).await;
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn production_client_rejects_http_sources() {
+        let request = DownloadRequest {
+            url: "https://github.com/example/project/releases/download/v1/a.zip",
+            destination: Path::new("unused"),
+            expected_size: None,
+            max_size: None,
+            user_agent: "test",
+            connect_timeout: DEFAULT_CONNECT_TIMEOUT,
+            response_timeout: DEFAULT_RESPONSE_TIMEOUT,
+            idle_timeout: DEFAULT_IDLE_TIMEOUT,
+            overall_timeout: None,
+        };
+        let source = DownloadSource {
+            name: "insecure",
+            url: "http://127.0.0.1/asset".to_string(),
+        };
+        let client = create_download_client(&request, DownloadClientPolicy::HttpsOnly).unwrap();
+
+        assert!(
+            request_source(&client, &source, &request, None)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn overall_timeout_is_shared_across_source_attempts() {
+        let app = Router::new()
+            .route(
+                "/slow-fail",
+                get(|| async {
+                    tokio::time::sleep(Duration::from_millis(400)).await;
+                    StatusCode::BAD_GATEWAY
+                }),
+            )
+            .route(
+                "/slow-asset",
+                get(|| async {
+                    tokio::time::sleep(Duration::from_millis(400)).await;
+                    ([("content-type", "application/octet-stream")], "asset")
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let destination = std::env::temp_dir().join(format!(
+            "sunshine-github-download-deadline-test-{}-{}.partial",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let request = DownloadRequest {
+            url: "https://github.com/example/project/releases/download/v1/a.zip",
+            destination: &destination,
+            expected_size: Some(5),
+            max_size: Some(5),
+            user_agent: "test",
+            connect_timeout: Duration::from_secs(1),
+            response_timeout: Duration::from_secs(1),
+            idle_timeout: Duration::from_secs(1),
+            overall_timeout: Some(Duration::from_millis(500)),
+        };
+        let sources = [
+            DownloadSource {
+                name: "slow-broken",
+                url: format!("http://{address}/slow-fail"),
+            },
+            DownloadSource {
+                name: "slow-fallback",
+                url: format!("http://{address}/slow-asset"),
+            },
+        ];
+        let started = Instant::now();
+        let mut phases = Vec::new();
+        let error = download_from_sources(
+            request,
+            &sources,
+            DownloadClientPolicy::AllowHttpForTests,
+            |progress| phases.push((progress.phase, progress.source)),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("all download sources failed"));
+        assert!(phases.contains(&(DownloadAttemptPhase::Retrying, "slow-fallback")));
+        assert!(started.elapsed() < Duration::from_millis(650));
         let _ = tokio::fs::remove_file(&destination).await;
         server.abort();
     }

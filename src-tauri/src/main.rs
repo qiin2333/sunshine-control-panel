@@ -12,6 +12,7 @@ mod dualsense;
 mod file_mapping;
 mod file_transfer;
 mod fs_utils;
+mod game_session;
 mod github_download;
 mod hwinfo;
 mod logger;
@@ -164,7 +165,11 @@ fn main() {
             system::get_current_dpi,
             system::set_desktop_dpi,
             commands::open_tool_window,
-            commands::launch_app,
+            game_session::launch_game,
+            game_session::get_running_game,
+            game_session::stop_running_game,
+            game_session::get_game_stats,
+            game_session::focus_running_game,
             toolbar::create_toolbar_window,
             commands::fetch_speech_phrases,
             commands::fetch_remote_bytes,

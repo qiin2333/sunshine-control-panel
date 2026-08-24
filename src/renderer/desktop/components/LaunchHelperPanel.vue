@@ -5,7 +5,7 @@
     </Transition>
 
     <Transition name="slide">
-      <div v-if="open" class="helper-panel" @click.stop @keydown.escape="$emit('close')">
+      <div v-if="open" ref="panelRef" class="helper-panel" @click.stop @keydown.escape="$emit('close')">
         <div class="panel-header">
           <h2>{{ t.launchHelper.title }}</h2>
           <span class="app-name-tag">{{ appName }}</span>
@@ -147,6 +147,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { FolderOpened } from '@element-plus/icons-vue'
 import { useLaunchHelpers } from '../composables/useLaunchHelpers.js'
 import { isTauriRuntime } from '../composables/useTauri.js'
+import { useModalFocusScope } from '../composables/useFocusNav.js'
 import { useI18n } from '../i18n/index.js'
 import LaunchHelperIcon from './LaunchHelperIcon.vue'
 
@@ -158,6 +159,10 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['close', 'saved'])
+
+// 手柄导航只在栈顶作用域内移动，避免焦点跑到面板背后的卡片上
+const panelRef = ref(null)
+useModalFocusScope(panelRef, () => props.open)
 
 const { t } = useI18n()
 const lhText = computed(() => t.value.launchHelper)

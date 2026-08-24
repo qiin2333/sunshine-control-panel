@@ -103,8 +103,12 @@
 }
 
 // 手柄模式焦点样式
-.gamepad-active {
-  // 手柄激活时隐藏鼠标光标
+//
+// 标记挂在 <html> 上（DesktopApp 维护 data-fd-gamepad），而不是只挂在
+// .desktop-window 上：屏幕键盘、右键菜单、确认框都是 Teleport 到 body 的，
+// 挂在窗口上它们拿不到焦点环。
+html[data-fd-gamepad='true'] {
+  // 手柄激活时隐藏鼠标光标（光标模式下由 .gamepad-cursor 自己绘制）
   cursor: none;
 
   // 所有可聚焦元素的焦点环
@@ -116,6 +120,8 @@
 
   // 某些元素不适合 outline，用 box-shadow 代替
   .app-tile:focus,
+  .recent-tile:focus,
+  .app-list-item:focus,
   .nav-item:focus,
   .desktop-card:focus {
     outline: none;
@@ -140,11 +146,23 @@
       opacity: 1;
     }
   }
+
+  // 最近启动条
+  .recent-tile:focus {
+    transform: translateY(-4px);
+  }
+
+  // 焦点落在文本框上时提示「按 A 打开屏幕键盘」
+  input:focus,
+  textarea:focus {
+    caret-color: var(--fd-accent, #00fff5);
+  }
 }
 
 // 非手柄模式下隐藏焦点环（避免鼠标点击时出现）
-.desktop-app:not(.gamepad-active) {
-  *:focus {
+html:not([data-fd-gamepad='true']) {
+  .desktop-window *:focus,
+  .context-menu *:focus {
     outline: none;
   }
 }

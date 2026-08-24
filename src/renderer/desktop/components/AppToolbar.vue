@@ -12,6 +12,7 @@
         class="filter-tab"
         :class="{ active: activeFilter === tab.id }"
         tabindex="0"
+        :data-focus-key="'filter-' + tab.id"
         @click="$emit('update:activeFilter', tab.id)"
       >
         {{ tab.label }}
@@ -31,6 +32,9 @@
         :value="searchQuery"
         type="text"
         class="search-input"
+        data-focusable
+        data-focus-key="apps-search"
+        :aria-label="t.apps.searchPlaceholder"
         :placeholder="t.apps.searchPlaceholder"
         @input="$emit('update:searchQuery', $event.target.value)"
         @focus="searchFocused = true"

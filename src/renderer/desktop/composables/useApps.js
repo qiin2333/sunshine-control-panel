@@ -1,6 +1,8 @@
 import { ref, computed, watch } from 'vue'
 import { tauriInvoke } from './useTauri'
 import { useI18n } from '../i18n/index.js'
+import { bigScreenSettings } from './useBigScreenSettings.js'
+import { gameStats, launchTrackedGame, runningGame } from './useGameSession.js'
 
 const STORAGE_KEY = 'foundation-desktop-apps'
 const APP_LIST_REQUEST_TIMEOUT_MS = 10000
@@ -242,6 +244,12 @@ export function useApps() {
 
   const launchError = ref('')
 
+  /**
+   * 通过受跟踪的会话启动。
+   *
+   * 走 `launch_game` 而不是 `launch_app`：这样 prep-cmd 的 undo 会在游戏退出时执行、
+   * 大屏窗口会让位给游戏、库里也能看到「正在运行」和累计时长。
+   */
   async function launchApp(app) {
     launchError.value = ''
 
@@ -258,16 +266,13 @@ export function useApps() {
     addToRecent(app.name)
 
     try {
-      await tauriInvoke('launch_app', {
-        app,
-        cmd: app.cmd || '',
-        workingDir: app['working-dir'] || null,
-        elevated: app.elevated === true || app.elevated === 'true',
+      await launchTrackedGame(app, {
+        autoYield: bigScreenSettings.value.autoYieldOnLaunch,
+        coverUrl: getAppImageUrl(app) || '',
       })
     } catch (e) {
+      // 失败原因由启动过场层展示，这里只记录细节便于排查
       console.error('Failed to launch app:', e, '\ncmd:', app.cmd, '\nworking-dir:', app['working-dir'])
-      launchError.value = `${t.value.apps.launchFailed.replace('{name}', app.name).replace('{error}', e)}\ncmd: ${app.cmd}`
-      setTimeout(() => { launchError.value = '' }, 8000)
     } finally {
       setTimeout(() => { launchingApp.value = null }, 1500)
     }
@@ -292,6 +297,8 @@ export function useApps() {
     sortLabel,
     recentApps,
     displayApps,
+    gameStats,
+    runningGame,
     isFavorite,
     toggleFavorite,
     cycleSortMode,

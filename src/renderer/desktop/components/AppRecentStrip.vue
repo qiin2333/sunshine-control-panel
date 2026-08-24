@@ -4,7 +4,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="section-icon">
         <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
       </svg>
-      最近启动
+      {{ t.apps.recentSection }}
     </div>
     <div class="recent-strip">
       <div
@@ -12,6 +12,8 @@
         :key="'recent-' + app.name"
         class="recent-tile"
         tabindex="0"
+        :data-app-name="app.name"
+        :data-focus-key="'recent-' + app.name"
         @click="$emit('launch', app)"
         @keydown.enter="$emit('launch', app)"
         @contextmenu.prevent="$emit('contextmenu', $event, app)"
@@ -34,6 +36,10 @@
 </template>
 
 <script setup>
+import { useI18n } from '../i18n/index.js'
+
+const { t } = useI18n()
+
 defineProps({
   apps: { type: Array, required: true },
   getAppImageUrl: { type: Function, required: true },

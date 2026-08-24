@@ -45,18 +45,24 @@
               @change="handleFileSelect"
             />
             <!-- 提取的色板：点击切换强调色（Material You 取色选项） -->
-            <div v-if="wallpaperColors.length" class="color-palette">
+            <div
+              v-if="wallpaperColors.length"
+              class="color-palette"
+              role="group"
+              :aria-label="t.themeEditor.pickSeed"
+            >
               <button
                 v-for="(color, i) in wallpaperColors"
                 :key="i"
                 type="button"
                 class="palette-dot"
                 :class="{ selected: wallpaperSeeds[i] === activeWallpaperSeed }"
+                :aria-pressed="wallpaperSeeds[i] === activeWallpaperSeed"
                 data-focusable
                 :data-focus-key="'seed-' + i"
                 :style="{ background: `rgb(${color.map(Math.round).join(',')})` }"
                 :title="`rgb(${color.map(Math.round).join(', ')})`"
-                :aria-label="t.themeEditor.pickSeed + ' rgb(' + color.map(Math.round).join(', ') + ')'"
+                :aria-label="`rgb(${color.map(Math.round).join(', ')})`"
                 @click="$emit('applySeed', i)"
               ></button>
             </div>
@@ -590,14 +596,16 @@ function handleDrop(e) {
   padding: 0;
   transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 
-  &:hover,
-  &:focus-visible {
+  &:hover {
     transform: scale(1.3);
-    outline: none;
   }
 
+  // 焦点用 outline 表示：border-color 会被后面的 .selected 以相同特异性覆盖，
+  // 已选中项聚焦时会看不出焦点在哪；outline 层独立于两者
   &:focus-visible {
-    border-color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.6);
+    transform: scale(1.3);
+    outline: 2px solid rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.9);
+    outline-offset: 3px;
   }
 
   &.selected {

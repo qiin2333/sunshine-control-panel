@@ -380,11 +380,15 @@ export function useTheme() {
           themeVars.value = { ...getDefaultVars(), ...data.vars }
           activePreset.value = data.preset || 'custom'
         }
-        // 恢复色板候选与用户选中的种子（主题变量本身已随 vars 持久化）
+        // 恢复色板候选与用户选中的种子（主题变量本身已随 vars 持久化）。
+        // localStorage 是外部数据，逐项校验避免坏数据流进色板渲染
         if (Array.isArray(data.wallpaperSeeds)) {
-          wallpaperSeeds.value = data.wallpaperSeeds
-          activeWallpaperSeed.value = data.activeWallpaperSeed ?? null
-          wallpaperColors.value = candidatesToSwatches(data.wallpaperSeeds)
+          const seeds = data.wallpaperSeeds.filter(Number.isInteger)
+          wallpaperSeeds.value = seeds
+          activeWallpaperSeed.value = Number.isInteger(data.activeWallpaperSeed)
+            ? data.activeWallpaperSeed
+            : null
+          wallpaperColors.value = candidatesToSwatches(seeds)
         }
       } catch (e) {
         // fallback to default

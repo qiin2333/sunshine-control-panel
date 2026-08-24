@@ -85,6 +85,21 @@ test('多色壁纸产出多个候选，且全部是合法颜色', () => {
   }
 })
 
+test('色相丰富的壁纸能拿到满额 6 个候选（desired 必须走 options 对象传入）', () => {
+  // 0.2.7 的 Score.score(colors, options)：如果第二个参数误传数值，
+  // 展开后 desired 为 undefined，会静默落回默认 4 —— 这个测试钉住该回归
+  const colors = [
+    [225, 40, 40], [240, 140, 30], [240, 210, 60], [50, 180, 90],
+    [40, 160, 220], [90, 90, 235], [180, 70, 220], [230, 70, 150],
+  ]
+  const pixels = []
+  for (const color of colors) {
+    for (let i = 0; i < 150; i++) pixels.push(argbFromRgbTriple(color))
+  }
+  const { candidates } = extractSeedCandidates(pixels)
+  assert.equal(candidates.length, 6, `期望 6 个候选，实际 ${candidates.length}`)
+})
+
 test('imageDataToArgb 跳过透明像素并按 ARGB 打包', () => {
   // ImageData 是 RGBA 字节序
   const imageData = makeImageData([

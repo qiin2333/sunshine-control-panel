@@ -97,7 +97,8 @@ export function extractSeedCandidates(pixels) {
     return { seed: argbFromHex('#00fff5'), candidates: [] }
   }
   const quantized = QuantizerCelebi.quantize(pixels, MAX_COLORS)
-  const candidates = Score.score(quantized, DESIRED_CANDIDATES)
+  // 0.2.7 的签名是 (colors, options)；第二个参数传数值会被展开成 {0: n}，desired 落回默认 4
+  const candidates = Score.score(quantized, { desired: DESIRED_CANDIDATES })
   if (!candidates.length) {
     return { seed: argbFromHex('#00fff5'), candidates: [] }
   }

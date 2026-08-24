@@ -114,7 +114,6 @@ function reject() {
 
   &:hover,
   &:focus-visible {
-    outline: none;
     border-color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.4);
     color: var(--fd-text-primary, #fff);
   }

@@ -131,23 +131,3 @@ export function setCursorEnabled(enabled) {
     lastHovered = null
   }
 }
-
-export function toggleCursor() {
-  setCursorEnabled(!cursorEnabled.value)
-  return cursorEnabled.value
-}
-
-export function useGamepadCursor() {
-  return {
-    cursorEnabled,
-    cursorX,
-    cursorY,
-    moveCursor,
-    clickAtCursor,
-    contextMenuAtCursor,
-    scrollAtCursor,
-    toggleCursor,
-    setCursorEnabled,
-    elementAtCursor,
-  }
-}

@@ -21,16 +21,19 @@
     </template>
 
     <template #footer>
-      <RunningGameBar
-        :game="runningGame"
-        :elapsed="elapsedSeconds"
-        :stat="runningStat"
-        @resume="resumeGame"
-        @stop="confirmStopGame"
-      />
+      <!-- 两者都是底部居中的浮层，必须放在同一个 flex 列里堆叠。
+           各自绝对定位时会完全重叠，而运行条的 z-index 更高，会把按键提示整条盖掉
+           —— 而「游戏在跑 + 手柄模式」正是沙发场景下最常见的状态。 -->
+      <div class="desktop-footer-dock">
+        <RunningGameBar
+          :game="runningGame"
+          :elapsed="elapsedSeconds"
+          :stat="runningStat"
+          @resume="resumeGame"
+          @stop="confirmStopGame"
+        />
 
-      <div v-if="gamepadActive" class="gamepad-legend-dock">
-        <GamepadLegend :cursor-mode="cursorEnabled" />
+        <GamepadLegend v-if="gamepadActive" :cursor-mode="cursorEnabled" />
       </div>
     </template>
   </DesktopWindow>
@@ -441,6 +444,12 @@ function handleBack(deep) {
     rejectConfirm()
     return
   }
+  // 启动过场现在会压入焦点栈，所以 B 必须能关掉它，否则会把用户困在遮罩里。
+  // launching 是唯一不可取消的状态（进程已经起来了，取消没有意义）。
+  if (launchState.value && launchState.value.status !== 'launching') {
+    dismissLaunchState()
+    return
+  }
   if (focusScopeStack.value.length > 0 || themeEditorOpen.value || helperPanelOpen.value) {
     // DesktopApp 只关自己拥有的面板，其余转发给视图（右键菜单、封面选择器）
     if (themeEditorOpen.value) {
@@ -551,13 +560,23 @@ watch(gamepadActive, (active) => {
 </script>
 
 <style lang="less" scoped>
-.gamepad-legend-dock {
+.desktop-footer-dock {
   position: absolute;
   left: 50%;
-  bottom: 10px;
+  bottom: 12px;
   transform: translateX(-50%);
-  z-index: 850;
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100vw - 140px);
+  // 空档区不能吃掉点击；子元素各自恢复
   pointer-events: none;
+
+  > * {
+    pointer-events: auto;
+  }
 }
 
 .gamepad-cursor {

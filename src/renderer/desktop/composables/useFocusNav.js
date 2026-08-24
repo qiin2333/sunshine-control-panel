@@ -318,11 +318,6 @@ export function restoreFocus(viewKey, root = activeScopeRoot()) {
   return focusFirst(root)
 }
 
-export function clearFocusMemory(viewKey) {
-  if (viewKey === undefined) focusMemory.clear()
-  else focusMemory.delete(viewKey)
-}
-
 /**
  * 把一个模态框/抽屉接入焦点栈。
  *

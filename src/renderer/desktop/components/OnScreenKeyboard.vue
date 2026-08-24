@@ -340,7 +340,6 @@ function onKeydown(event) {
 
   &:hover,
   &:focus-visible {
-    outline: none;
     background: rgba(var(--fd-accent-rgb, 0, 255, 245), 0.16);
     border-color: rgba(var(--fd-accent-rgb, 0, 255, 245), 0.5);
     color: var(--fd-accent, #00fff5);

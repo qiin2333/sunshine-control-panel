@@ -1,7 +1,7 @@
 <template>
   <Teleport to="body">
     <Transition name="launch-overlay">
-      <div v-if="state" class="launch-overlay" :class="'status-' + state.status">
+      <div v-if="state" ref="overlayRef" class="launch-overlay" :class="'status-' + state.status">
         <div class="launch-card">
           <div class="launch-cover">
             <img v-if="state.coverUrl" :src="state.coverUrl" :alt="state.appName" />
@@ -48,8 +48,9 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { formatDuration } from '../composables/useGameSession.js'
+import { useModalFocusScope } from '../composables/useFocusNav.js'
 import { useI18n } from '../i18n/index.js'
 
 const { t } = useI18n()
@@ -59,6 +60,25 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['dismiss', 'stop'])
+
+// 这是一层吞点击的全屏遮罩，必须和其他弹层一样压入焦点栈：否则手柄导航会继续在
+// 遮罩背后的应用网格里走，而 conflict 态自己的「结束游戏 / 关闭」按钮反而够不到
+// —— teleport 出去的节点不在 .desktop-window 里，收集不到。
+const overlayRef = ref(null)
+useModalFocusScope(overlayRef, () => !!props.state)
+
+// launching 态没有任何按钮，作用域里无处可聚焦。主动把焦点从遮罩背后的卡片上移开，
+// 否则 A 键会点到被完全挡住的应用卡片。关闭时 popFocusScope 会把焦点还回去。
+watch(
+  () => props.state?.status,
+  async () => {
+    await nextTick()
+    const root = overlayRef.value
+    if (!root || root.querySelector('[data-focusable]')) return
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+  },
+  { immediate: true }
+)
 
 const glyph = computed(() => {
   switch (props.state?.status) {
@@ -284,7 +304,6 @@ const detail = computed(() => {
 
   &:hover,
   &:focus-visible {
-    outline: none;
     background: rgba(var(--fd-accent-rgb, 0, 255, 245), 0.2);
     border-color: var(--fd-accent, #00fff5);
   }

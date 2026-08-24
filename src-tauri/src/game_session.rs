@@ -37,10 +37,16 @@ const POLL_SLICE_MS: u32 = 400;
 const LAUNCHER_EXIT_GRACE: Duration = Duration::from_secs(30);
 
 /// How long to keep looking for the real game process after a shim exits.
-const ADOPT_SEARCH: Duration = Duration::from_secs(20);
+///
+/// Kept short on purpose: the adoption search also runs when the user genuinely
+/// quits within `LAUNCHER_EXIT_GRACE`, and every second here delays the undo
+/// steps and the window handoff. A shim re-execs almost immediately (Steam's
+/// restart, an anti-cheat launcher, a UAC self-elevation), so a few seconds is
+/// enough to catch the successor without punishing a real short session.
+const ADOPT_SEARCH: Duration = Duration::from_secs(3);
 
 /// Interval between adoption scans.
-const ADOPT_SCAN_INTERVAL: Duration = Duration::from_millis(750);
+const ADOPT_SCAN_INTERVAL: Duration = Duration::from_millis(250);
 
 // ===== Public payloads =====
 

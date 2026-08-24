@@ -66,15 +66,11 @@ const totalLabel = computed(() => {
 
 <style lang="less" scoped>
 .running-bar {
-  position: absolute;
-  left: 50%;
-  bottom: 18px;
-  transform: translateX(-50%);
-  z-index: 900;
+  // 定位交给 DesktopApp 的 .desktop-footer-dock，这样它能和按键提示条堆叠而不是重叠
   display: flex;
   align-items: center;
   gap: 18px;
-  max-width: calc(100vw - 140px);
+  max-width: 100%;
   padding: 10px 18px;
   border-radius: 14px;
   background: rgba(var(--fd-bg-secondary-rgb, 26, 26, 46), 0.94);
@@ -172,7 +168,6 @@ const totalLabel = computed(() => {
 
   &:hover,
   &:focus-visible {
-    outline: none;
     background: rgba(var(--fd-accent-rgb, 0, 255, 245), 0.18);
     border-color: var(--fd-accent, #00fff5);
   }
@@ -200,6 +195,6 @@ const totalLabel = computed(() => {
 .running-bar-enter-from,
 .running-bar-leave-to {
   opacity: 0;
-  transform: translateX(-50%) translateY(16px);
+  transform: translateY(16px);
 }
 </style>

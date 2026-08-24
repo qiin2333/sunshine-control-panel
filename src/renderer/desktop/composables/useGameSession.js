@@ -162,20 +162,6 @@ export async function stopTrackedGame() {
   }
 }
 
-/** 把大屏窗口拉回前台，用于「切回面板」。 */
-export async function focusShellWindow() {
-  try {
-    const { getCurrentWindow } = await import('@tauri-apps/api/window')
-    const window = getCurrentWindow()
-    await window.unminimize()
-    await window.show()
-    await window.setFocus()
-    return true
-  } catch {
-    return false
-  }
-}
-
 export async function initGameSession() {
   await Promise.all([refreshRunningGame(), refreshGameStats()])
   if (listenersReady) return
@@ -220,23 +206,4 @@ export function disposeGameSession() {
   unlistenLaunched = null
   unlistenExited = null
   listenersReady = false
-}
-
-export function useGameSession() {
-  return {
-    runningGame,
-    gameStats,
-    launchState,
-    elapsedSeconds,
-    formatDuration,
-    statFor,
-    launchTrackedGame,
-    stopTrackedGame,
-    focusShellWindow,
-    refreshGameStats,
-    refreshRunningGame,
-    dismissLaunchState,
-    initGameSession,
-    disposeGameSession,
-  }
 }

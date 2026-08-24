@@ -80,7 +80,6 @@ export const GAMEPAD_ACTION_EVENT = 'fd-gamepad-action'
  */
 export const gamepadActive = ref(false)
 export const gamepadConnected = ref(false)
-export const gamepadName = ref('')
 
 export function emitGamepadAction(action, detail = {}) {
   window.dispatchEvent(new CustomEvent(GAMEPAD_ACTION_EVENT, { detail: { action, ...detail } }))
@@ -108,8 +107,6 @@ export function useGamepad(options = {}) {
     isCursorMode = () => false,
     enabled = () => true,
   } = options
-
-  const padName = gamepadName
 
   let timerId = null
   let currentInterval = IDLE_POLL_INTERVAL_MS
@@ -269,10 +266,9 @@ export function useGamepad(options = {}) {
     return result
   }
 
-  function switchActivePad(index, pads) {
+  function switchActivePad(index) {
     if (activeIndex === index) return
     activeIndex = index
-    padName.value = pads.find((pad) => pad.index === index)?.id || ''
     // 换手柄时旧的按住状态不再有效
     stopAllRepeats()
     clearBackHold()
@@ -298,12 +294,12 @@ export function useGamepad(options = {}) {
 
     if (activeIndex === null || !pads.some((pad) => pad.index === activeIndex)) {
       const firstBusy = diffs.find((entry) => entry.edges.length > 0 || entry.moved)
-      switchActivePad((firstBusy?.pad || pads[0]).index, pads)
+      switchActivePad((firstBusy?.pad || pads[0]).index)
     } else {
       const challenger = diffs.find(
         (entry) => entry.pad.index !== activeIndex && (entry.edges.length > 0 || entry.moved)
       )
-      if (challenger) switchActivePad(challenger.pad.index, pads)
+      if (challenger) switchActivePad(challenger.pad.index)
     }
 
     const active = diffs.find((entry) => entry.pad.index === activeIndex)
@@ -367,9 +363,8 @@ export function useGamepad(options = {}) {
     if (wanted !== currentInterval) startPolling(wanted)
   }
 
-  function onGamepadConnected(event) {
+  function onGamepadConnected() {
     gamepadConnected.value = true
-    padName.value = event?.gamepad?.id || padName.value
     startPolling(POLL_INTERVAL_MS)
   }
 
@@ -417,9 +412,4 @@ export function useGamepad(options = {}) {
     clearBackHold()
   })
 
-  return {
-    gamepadActive,
-    gamepadConnected,
-    padName,
-  }
 }

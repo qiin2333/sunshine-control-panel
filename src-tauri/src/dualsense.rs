@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::Emitter;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncWriteExt, BufWriter};
 
 const COMPONENT_VERSION: &str = "1.2.0";
 const PROTOCOL_VERSION: u32 = 1;
@@ -42,6 +42,7 @@ const SIDECAR_PACKAGE_TARGET: &str = "win-x64-self-contained";
 const SIDECAR_PACKAGE_LICENSE: &str = "GPL-3.0-only";
 const MAX_SIDECAR_PACKAGE_MANIFEST_BYTES: u64 = 64 * 1024;
 const MAX_SIDECAR_PACKAGE_BYTES: u64 = 160 * 1024 * 1024;
+const COMPONENT_DOWNLOAD_BUFFER_BYTES: usize = 1024 * 1024;
 const CONFIG_APPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 const CORE_CONFIG_READ_ATTEMPTS: usize = 3;
 const CORE_CONFIG_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(75);
@@ -1423,9 +1424,10 @@ async fn acquire_sidecar_package(
     if total_size.is_some_and(|size| size != manifest.size) {
         return Err("DS5-PKG-001: sidecar download size does not match the manifest".to_string());
     }
-    let mut output = tokio::fs::File::create(destination)
+    let output = tokio::fs::File::create(destination)
         .await
         .map_err(|error| error.to_string())?;
+    let mut output = BufWriter::with_capacity(COMPONENT_DOWNLOAD_BUFFER_BYTES, output);
     let mut downloaded = 0u64;
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
@@ -1536,9 +1538,10 @@ async fn ensure_pinned_usbip(
             return Err("DS5-DRV-001: USB/IP installer exceeds the download limit".to_string());
         }
 
-        let mut output = tokio::fs::File::create(&installer_path)
+        let output = tokio::fs::File::create(&installer_path)
             .await
             .map_err(|error| error.to_string())?;
+        let mut output = BufWriter::with_capacity(COMPONENT_DOWNLOAD_BUFFER_BYTES, output);
         let mut downloaded = 0u64;
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
@@ -1740,9 +1743,10 @@ async fn dualsense_install_impl(
         if total_size.is_some_and(|size| size > MAX_ARCHIVE_BYTES) {
             return Err("DS5-PKG-002: release archive exceeds the download limit".to_string());
         }
-        let mut output = tokio::fs::File::create(&archive_path)
+        let output = tokio::fs::File::create(&archive_path)
             .await
             .map_err(|error| error.to_string())?;
+        let mut output = BufWriter::with_capacity(COMPONENT_DOWNLOAD_BUFFER_BYTES, output);
         let mut downloaded = 0u64;
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {

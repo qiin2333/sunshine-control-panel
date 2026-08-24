@@ -211,7 +211,7 @@ function loadImage(file) {
   })
 }
 
-// 从图片文件提取种子并生成 Material You 主题
+// 从图片文件提取种子（主题变量由 applySeedTheme 从种子推导）
 async function analyzeWallpaper(file) {
   const img = await loadImage(file)
 
@@ -224,7 +224,6 @@ async function analyzeWallpaper(file) {
   thumbCtx.drawImage(img, 0, 0, thumbCanvas.width, thumbCanvas.height)
   const imageData = thumbCtx.getImageData(0, 0, thumbCanvas.width, thumbCanvas.height)
   const { seed, candidates } = extractSeedCandidates(imageDataToArgb(imageData))
-  const theme = m3ThemeFromSeed(seed)
 
   // 大画布生成显示用壁纸（限制 1920px，JPEG 质量 0.75）
   const displayCanvas = document.createElement('canvas')
@@ -236,7 +235,7 @@ async function analyzeWallpaper(file) {
   displayCtx.drawImage(img, 0, 0, displayCanvas.width, displayCanvas.height)
   const dataUrl = displayCanvas.toDataURL('image/jpeg', 0.75)
 
-  return { dataUrl, theme, seed, seeds: candidates, colors: candidatesToSwatches(candidates) }
+  return { dataUrl, seed, seeds: candidates, colors: candidatesToSwatches(candidates) }
 }
 
 export function useTheme() {

@@ -17,11 +17,6 @@ function makeImageData(pixels) {
   return { data, width: pixels.length, height: 1 }
 }
 
-/** 全图单一颜色的像素集合（ARGB int）。 */
-function solidPixels([r, g, b], count = 16) {
-  return Array.from({ length: count }, () => argbFromRgbTriple([r, g, b]))
-}
-
 /** 多色分布：模拟一张有几个色块的壁纸。 */
 function mixedPixels() {
   const colors = [

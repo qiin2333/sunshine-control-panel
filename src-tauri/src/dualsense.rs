@@ -141,11 +141,11 @@ impl Drop for TemporaryPackageFile {
     }
 }
 
-#[derive(Clone, Copy, Default)]
-struct LocalComponentPackages<'a> {
-    sidecar: Option<&'a Path>,
-    hidmaestro: Option<&'a Path>,
-    usbip: Option<&'a Path>,
+#[derive(Clone, Default)]
+struct LocalComponentPackages {
+    sidecar: Option<PathBuf>,
+    hidmaestro: Option<PathBuf>,
+    usbip: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -573,9 +573,12 @@ fn sidecar_package_manifest() -> Result<SidecarPackageManifest, String> {
     read_sidecar_package_manifest(&sidecar_package_manifest_path())
 }
 
-fn classify_local_component_packages<'a>(
-    packages: impl IntoIterator<Item = &'a Path>,
-) -> Result<LocalComponentPackages<'a>, String> {
+fn classify_local_component_packages<P>(
+    packages: impl IntoIterator<Item = P>,
+) -> Result<LocalComponentPackages, String>
+where
+    P: AsRef<Path>,
+{
     let packages = packages.into_iter().collect::<Vec<_>>();
     if packages.is_empty() {
         return Ok(LocalComponentPackages::default());
@@ -591,6 +594,7 @@ fn classify_local_component_packages<'a>(
     let mut classified = LocalComponentPackages::default();
 
     for package in packages {
+        let package = package.as_ref();
         let digest = sha256_file(package)?;
         let Some(kind) = local_component_kind(
             &digest,
@@ -608,7 +612,7 @@ fn classify_local_component_packages<'a>(
             LocalComponentKind::Hidmaestro => (&mut classified.hidmaestro, "HIDMaestro"),
             LocalComponentKind::Usbip => (&mut classified.usbip, "USB/IP"),
         };
-        if slot.replace(package).is_some() {
+        if slot.replace(package.to_path_buf()).is_some() {
             return Err(format!(
                 "DS5-PKG-005: more than one local {component} package was selected"
             ));
@@ -1765,26 +1769,67 @@ fn component_fs_error(action: &str, error: &std::io::Error) -> String {
     }
 }
 
-fn install_error_after_rollback(
+fn activate_staged_component(staging: &Path, active: &Path, backup: &Path) -> Result<(), String> {
+    if backup.exists() {
+        retry_component_fs_operation(|| fs::remove_dir_all(backup)).map_err(|error| {
+            format!(
+                "DS5-PKG-002: {}",
+                component_fs_error("unable to remove previous component backup", &error)
+            )
+        })?;
+    }
+    if active.exists() {
+        retry_component_fs_operation(|| fs::rename(active, backup)).map_err(|error| {
+            format!(
+                "DS5-PKG-002: {}",
+                component_fs_error("unable to back up the active component", &error)
+            )
+        })?;
+    }
+    if let Err(error) = retry_component_fs_operation(|| fs::rename(staging, active)) {
+        if backup.exists()
+            && let Err(rollback_error) = retry_component_fs_operation(|| fs::rename(backup, active))
+        {
+            warn!(
+                "DualSense activation rollback failed: {}",
+                component_fs_error("unable to restore previous component", &rollback_error)
+            );
+        }
+        return Err(format!(
+            "DS5-PKG-002: {}",
+            component_fs_error("unable to activate component", &error)
+        ));
+    }
+    Ok(())
+}
+
+async fn install_error_after_rollback(
     error: String,
     active: &Path,
     backup: &Path,
     had_previous: bool,
 ) -> String {
-    match rollback_activated_component(active, backup, had_previous) {
-        Ok(()) => format!("{error}; activated component was rolled back"),
-        Err(rollback_error) => {
+    let active = active.to_path_buf();
+    let backup = backup.to_path_buf();
+    match tokio::task::spawn_blocking(move || {
+        rollback_activated_component(&active, &backup, had_previous)
+    })
+    .await
+    {
+        Ok(Ok(())) => format!("{error}; activated component was rolled back"),
+        Ok(Err(rollback_error)) => {
             format!("{error}; component rollback also failed: {rollback_error}")
         }
+        Err(task_error) => format!("{error}; component rollback task failed: {task_error}"),
     }
 }
 
 async fn dualsense_install_impl(
     progress: &ProgressReporter<'_>,
-    local_packages: LocalComponentPackages<'_>,
+    local_packages: LocalComponentPackages,
 ) -> Result<DualSenseStatus, String> {
     report_progress(progress, "preparing", 1);
-    let selected_sidecar_package = local_packages.sidecar;
+    let selected_sidecar_package = local_packages.sidecar.as_deref();
     let discovered_package = selected_sidecar_package
         .is_none()
         .then(manually_placed_sidecar_package)
@@ -1812,18 +1857,23 @@ async fn dualsense_install_impl(
     let operation = format!("staging-{}", std::process::id());
     let staging = root.join(&operation);
     if staging.exists() {
-        retry_component_fs_operation(|| fs::remove_dir_all(&staging)).map_err(|error| {
-            format!(
-                "DS5-PKG-002: {}",
-                component_fs_error("unable to remove stale staging component", &error)
-            )
-        })?;
+        let stale_staging = staging.clone();
+        tokio::task::spawn_blocking(move || {
+            retry_component_fs_operation(|| fs::remove_dir_all(&stale_staging)).map_err(|error| {
+                format!(
+                    "DS5-PKG-002: {}",
+                    component_fs_error("unable to remove stale staging component", &error)
+                )
+            })
+        })
+        .await
+        .map_err(|error| format!("DS5-PKG-002: staging cleanup task failed: {error}"))??;
     }
     fs::create_dir(&staging).map_err(|error| error.to_string())?;
     let current_handoff_packages = [
         local_sidecar_package,
-        local_packages.hidmaestro,
-        local_packages.usbip,
+        local_packages.hidmaestro.as_deref(),
+        local_packages.usbip.as_deref(),
     ]
     .into_iter()
     .flatten()
@@ -1836,7 +1886,7 @@ async fn dualsense_install_impl(
     let had_previous = active.exists();
     let install_result: Result<UsbipInstallResult, String> = async {
         let usbip_install_result =
-            ensure_pinned_usbip(progress, &root, local_packages.usbip).await?;
+            ensure_pinned_usbip(progress, &root, local_packages.usbip.as_deref()).await?;
         if let Some(manifest) = package_manifest.as_ref() {
             if using_discovered_package {
                 report_progress(progress, "sidecar_local", 12);
@@ -1863,7 +1913,7 @@ async fn dualsense_install_impl(
             return Err("DS5-PKG-002: no DualSense sidecar source is available".to_string());
         }
 
-        if let Some(source) = local_packages.hidmaestro {
+        if let Some(source) = local_packages.hidmaestro.as_deref() {
             report_progress(progress, "runtime_local", 38);
             tokio::fs::copy(source, &archive_path).await.map_err(|error| {
                 format!("DS5-PKG-002: unable to stage the local HIDMaestro package: {error}")
@@ -1921,63 +1971,47 @@ async fn dualsense_install_impl(
         )
         .map_err(|error| error.to_string())?;
 
-        if backup.exists() {
-            retry_component_fs_operation(|| fs::remove_dir_all(&backup)).map_err(|error| {
-                format!(
-                    "DS5-PKG-002: {}",
-                    component_fs_error("unable to remove previous component backup", &error)
-                )
-            })?;
-        }
-        if active.exists() {
-            retry_component_fs_operation(|| fs::rename(&active, &backup)).map_err(|error| {
-                format!(
-                    "DS5-PKG-002: {}",
-                    component_fs_error("unable to back up the active component", &error)
-                )
-            })?;
-        }
-        if let Err(error) = retry_component_fs_operation(|| fs::rename(&staging, &active)) {
-            if backup.exists()
-                && let Err(rollback_error) =
-                    retry_component_fs_operation(|| fs::rename(&backup, &active))
-            {
-                warn!(
-                    "DualSense activation rollback failed: {}",
-                    component_fs_error("unable to restore previous component", &rollback_error)
-                );
-            }
-            return Err(format!(
-                "DS5-PKG-002: {}",
-                component_fs_error("unable to activate component", &error)
-            ));
-        }
+        let activation_staging = staging.clone();
+        let activation_active = active.clone();
+        let activation_backup = backup.clone();
+        tokio::task::spawn_blocking(move || {
+            activate_staged_component(
+                &activation_staging,
+                &activation_active,
+                &activation_backup,
+            )
+        })
+        .await
+        .map_err(|error| format!("DS5-PKG-002: component activation task failed: {error}"))??;
         report_progress(progress, "activating", 96);
         Ok(usbip_install_result)
     }
     .await;
     let _ = fs::remove_file(&archive_path);
     let _ = fs::remove_file(&sidecar_archive_path);
-    if install_result.is_err()
-        && let Err(error) = retry_component_fs_operation(|| fs::remove_dir_all(&staging))
-        && error.kind() != std::io::ErrorKind::NotFound
-    {
-        warn!(
-            "Unable to clean the failed DualSense staging component: {}",
-            component_fs_error("cleanup failed", &error)
-        );
+    if install_result.is_err() {
+        let failed_staging = staging.clone();
+        match tokio::task::spawn_blocking(move || {
+            retry_component_fs_operation(|| fs::remove_dir_all(&failed_staging))
+        })
+        .await
+        {
+            Ok(Err(error)) if error.kind() != std::io::ErrorKind::NotFound => warn!(
+                "Unable to clean the failed DualSense staging component: {}",
+                component_fs_error("cleanup failed", &error)
+            ),
+            Err(error) => warn!("DualSense staging cleanup task failed: {error}"),
+            _ => {}
+        }
     }
     let reboot_recommended = matches!(install_result?, UsbipInstallResult::RebootRecommended);
     report_progress(progress, "complete", 100);
     let mut status = match dualsense_get_status().await {
         Ok(status) => status,
         Err(status_error) => {
-            return Err(install_error_after_rollback(
-                status_error,
-                &active,
-                &backup,
-                had_previous,
-            ));
+            return Err(
+                install_error_after_rollback(status_error, &active, &backup, had_previous).await,
+            );
         }
     };
     if !status.verified {
@@ -1992,7 +2026,8 @@ async fn dualsense_install_impl(
             &active,
             &backup,
             had_previous,
-        ));
+        )
+        .await);
     }
     status.reboot_recommended = reboot_recommended;
     Ok(status)
@@ -2170,9 +2205,17 @@ async fn run_elevated_helper(operation: ElevatedOperation, token: uuid::Uuid) ->
                 let classified = if local_packages.is_empty() {
                     LocalComponentPackages::default()
                 } else {
-                    classify_local_component_packages(
-                        local_packages.iter().map(TemporaryPackageFile::path),
-                    )?
+                    let package_paths = local_packages
+                        .iter()
+                        .map(|package| package.path().to_path_buf())
+                        .collect::<Vec<_>>();
+                    tokio::task::spawn_blocking(move || {
+                        classify_local_component_packages(package_paths)
+                    })
+                    .await
+                    .map_err(|error| {
+                        format!("DS5-PKG-002: local package classification task failed: {error}")
+                    })??
                 };
                 serde_json::to_value(dualsense_install_impl(&progress, classified).await?)
                     .map_err(|error| error.to_string())
@@ -2518,8 +2561,13 @@ pub async fn dualsense_install(
     #[cfg(not(target_os = "windows"))]
     {
         let progress = |stage: &str, value: u32| emit_progress(&app, stage, value);
-        let local_packages =
-            classify_local_component_packages(selected_packages.iter().map(PathBuf::as_path))?;
+        let local_packages = tokio::task::spawn_blocking(move || {
+            classify_local_component_packages(selected_packages)
+        })
+        .await
+        .map_err(|error| {
+            format!("DS5-PKG-002: local package classification task failed: {error}")
+        })??;
         dualsense_install_impl(&progress, local_packages).await
     }
 }
@@ -3114,7 +3162,9 @@ mod tests {
 
     #[test]
     fn online_install_does_not_require_a_local_package_manifest_for_classification() {
-        let packages = super::classify_local_component_packages(std::iter::empty()).unwrap();
+        let packages =
+            super::classify_local_component_packages(std::iter::empty::<std::path::PathBuf>())
+                .unwrap();
 
         assert!(packages.sidecar.is_none());
         assert!(packages.hidmaestro.is_none());

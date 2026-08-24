@@ -6,6 +6,8 @@
       class="app-list-item"
       :class="{ launching: launchingApp === app.name }"
       tabindex="0"
+      :data-app-name="app.name"
+      :data-focus-key="'app-' + app.name"
       @click="$emit('launch', app)"
       @keydown.enter="$emit('launch', app)"
       @contextmenu.prevent="$emit('contextmenu', $event, app)"
@@ -26,6 +28,7 @@
         <span class="list-cmd" v-if="app.cmd">{{ app.cmd }}</span>
       </div>
       <div class="list-tags">
+        <span v-if="playtimeLabel(app.name)" class="list-tag playtime">{{ playtimeLabel(app.name) }}</span>
         <span v-if="isFavorite(app.name)" class="list-tag fav"><StarFilled /> {{ t.appContext.favorite }}</span>
         <span v-if="app.elevated && app.elevated !== 'false'" class="list-tag admin">{{ t.appContext.admin }}</span>
       </div>
@@ -37,17 +40,25 @@
 <script setup>
 import { useI18n } from '../i18n/index.js'
 import { StarFilled, VideoPlay } from '@element-plus/icons-vue'
+import { formatDuration } from '../composables/useGameSession.js'
 const { t } = useI18n()
 
-defineProps({
+const props = defineProps({
   apps: { type: Array, required: true },
   launchingApp: { type: String, default: null },
   isFavorite: { type: Function, required: true },
   getAppImageUrl: { type: Function, required: true },
   handleImageError: { type: Function, required: true },
+  stats: { type: Object, default: () => ({}) },
 })
 
 defineEmits(['launch', 'contextmenu'])
+
+function playtimeLabel(appName) {
+  const seconds = Number(props.stats?.[appName]?.totalSeconds) || 0
+  if (seconds < 60) return ''
+  return t.value.gameSession.playedFor.replace('{duration}', formatDuration(seconds))
+}
 </script>
 
 <style lang="less" scoped>
@@ -139,6 +150,11 @@ defineEmits(['launch', 'contextmenu'])
 
     &.fav { background: rgba(var(--fd-status-warning-rgb, 255, 215, 0), 0.1); color: var(--fd-status-warning, #ffd700); }
     &.admin { background: rgba(var(--fd-status-danger-rgb, 255, 107, 53), 0.1); color: var(--fd-status-danger, #ff6b35); }
+    &.playtime {
+      background: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.06);
+      color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.4);
+      font-variant-numeric: tabular-nums;
+    }
   }
 
   .list-play {

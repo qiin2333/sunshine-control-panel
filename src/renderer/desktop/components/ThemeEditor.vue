@@ -7,7 +7,7 @@
 
     <!-- 编辑面板 -->
     <Transition name="slide">
-      <div v-if="open" class="theme-editor" @click.stop>
+      <div v-if="open" ref="editorRef" class="theme-editor" @click.stop>
         <div class="editor-header">
           <h2><Brush /> {{ t.themeEditor.title }}</h2>
           <button class="close-btn" @click="$emit('close')">✕</button>
@@ -145,6 +145,7 @@
 <script setup>
 import { ref } from 'vue'
 import { Brush, Refresh, Picture, Upload, Download } from '@element-plus/icons-vue'
+import { useModalFocusScope } from '../composables/useFocusNav.js'
 import { useI18n } from '../i18n/index.js'
 
 const props = defineProps({
@@ -157,6 +158,9 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['close', 'setVar', 'applyPreset', 'export', 'import', 'setWallpaper', 'removeWallpaper'])
+
+const editorRef = ref(null)
+useModalFocusScope(editorRef, () => props.open)
 
 const { t } = useI18n()
 const isDragging = ref(false)

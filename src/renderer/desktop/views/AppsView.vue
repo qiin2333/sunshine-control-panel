@@ -60,6 +60,7 @@
       :getAppImageUrl="getAppImageUrl"
       :handleImageError="handleImageError"
       :helperIds="getActiveHelperIds"
+      :stats="gameStats"
       @launch="launchApp"
       @contextmenu="openContextMenu"
       @toggleFavorite="toggleFavorite"
@@ -72,6 +73,7 @@
       :isFavorite="isFavorite"
       :getAppImageUrl="getAppImageUrl"
       :handleImageError="handleImageError"
+      :stats="gameStats"
       @launch="launchApp"
       @contextmenu="openContextMenu"
     />
@@ -89,6 +91,7 @@
       @openDir="ctxOpenDir"
       @configHelpers="ctxConfigHelpers"
       @updateCover="ctxUpdateCover"
+      @close="closeContextMenu"
     />
 
     <LaunchHelperPanel
@@ -120,10 +123,13 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useApps } from '../composables/useApps'
 import { useLaunchHelpers } from '../composables/useLaunchHelpers'
 import { tauriInvoke } from '../composables/useTauri'
+import { gamepadConnected, onGamepadAction } from '../composables/useGamepad.js'
+import { editInputWithOsk } from '../composables/useOsk.js'
+import { focusElement } from '../composables/useFocusNav.js'
 import { useI18n } from '../i18n/index.js'
 
 const { t } = useI18n()
@@ -149,6 +155,7 @@ const {
   proxyUrl,
   recentApps,
   displayApps,
+  gameStats,
   isFavorite,
   toggleFavorite,
   cycleSortMode,
@@ -174,8 +181,8 @@ watch(helperPanelOpen, (v) => { if (!v) helperPanel.value.open = false })
 function openContextMenu(event, app) {
   contextMenu.value = {
     visible: true,
-    x: Math.min(event.clientX, window.innerWidth - 200),
-    y: Math.min(event.clientY, window.innerHeight - 200),
+    x: event.clientX,
+    y: event.clientY,
     app,
   }
 }
@@ -253,13 +260,113 @@ function onDocClick() {
   closeContextMenu()
 }
 
+// === 手柄动作 ===
+
+/** 当前焦点落在哪个应用卡片上。网格、列表、最近条都带 data-app-name。 */
+function focusedApp() {
+  const host = document.activeElement?.closest?.('[data-app-name]')
+  if (!host) return null
+  const name = host.dataset.appName
+  return {
+    element: host,
+    app: displayApps.value.find((entry) => entry.name === name)
+      || recentApps.value.find((entry) => entry.name === name)
+      || null,
+  }
+}
+
+/** Y 键：在焦点卡片下方打开上下文菜单，不再依赖鼠标坐标。 */
+function openContextMenuForFocus() {
+  const focused = focusedApp()
+  if (!focused?.app) return false
+  const rect = focused.element.getBoundingClientRect()
+  contextMenu.value = {
+    visible: true,
+    x: rect.left,
+    y: rect.bottom + 6,
+    app: focused.app,
+  }
+  return true
+}
+
+function toggleFavoriteForFocus() {
+  const focused = focusedApp()
+  if (!focused?.app) return false
+  toggleFavorite(focused.app.name)
+  return true
+}
+
+async function focusSearchWithOsk() {
+  const input = document.querySelector('[data-focus-key="apps-search"]')
+  if (!input) return
+  focusElement(input)
+  await editInputWithOsk(input, { title: t.value.apps.searchPlaceholder })
+}
+
+function cycleFilter(step) {
+  const tabs = filterTabs.value
+  if (tabs.length === 0) return
+  const index = tabs.findIndex((tab) => tab.id === activeFilter.value)
+  const next = (index + step + tabs.length) % tabs.length
+  activeFilter.value = tabs[next].id
+}
+
+function handleGamepadAction(action) {
+  // B 键：从内到外逐层关闭本视图拥有的弹层
+  if (action === 'back' || action === 'backRoot') {
+    if (contextMenu.value.visible) closeContextMenu()
+    else if (coverPicker.value.open) coverPicker.value.open = false
+    else if (helperPanel.value.open) helperPanel.value.open = false
+    return
+  }
+
+  // 弹层打开时其余按键留给弹层自己处理
+  if (contextMenu.value.visible || coverPicker.value.open || helperPanel.value.open) return
+
+  switch (action) {
+    case 'menu':
+      openContextMenuForFocus()
+      break
+    case 'favorite':
+      toggleFavoriteForFocus()
+      break
+    case 'search':
+      focusSearchWithOsk()
+      break
+    case 'filterPrev':
+      cycleFilter(-1)
+      break
+    case 'filterNext':
+      cycleFilter(1)
+      break
+  }
+}
+
+/**
+ * 首屏把焦点放在第一张卡片上（有「最近启动」时就是上次玩的那个），
+ * 这样手柄第一次按方向键是从有意义的位置开始移动，而不是跳到元素 0。
+ * 没插手柄时不做，避免干扰鼠标用户。
+ */
+async function focusFirstApp() {
+  if (!gamepadConnected.value) return
+  await nextTick()
+  if (document.activeElement && document.activeElement !== document.body) return
+  const first = document.querySelector('.apps-view [data-app-name]')
+  if (first) focusElement(first)
+}
+
+let disposeGamepadActions = null
+
 onMounted(async () => {
   document.addEventListener('click', onDocClick)
+  disposeGamepadActions = onGamepadAction(handleGamepadAction)
   await loadApps()
+  await focusFirstApp()
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', onDocClick)
+  disposeGamepadActions?.()
 })
 </script>
 

@@ -2,7 +2,7 @@
   <Teleport to="body">
     <Transition name="cover-modal">
       <div v-if="open" class="cover-modal-mask" @click.self="$emit('close')">
-        <div class="cover-modal">
+        <div ref="modalRef" class="cover-modal">
           <div class="modal-header">
             <h3><Picture /> 更新封面 — {{ appName }}</h3>
             <button class="modal-close" @click="$emit('close')">✕</button>
@@ -53,6 +53,7 @@
 import { ref, watch } from 'vue'
 import { Picture } from '@element-plus/icons-vue'
 import { tauriInvoke } from '../composables/useTauri'
+import { useModalFocusScope } from '../composables/useFocusNav.js'
 
 const props = defineProps({
   open: { type: Boolean, required: true },
@@ -61,6 +62,9 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['close', 'updated'])
+
+const modalRef = ref(null)
+useModalFocusScope(modalRef, () => props.open)
 
 const searchQuery = ref('')
 const candidates = ref([])

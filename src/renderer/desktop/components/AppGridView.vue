@@ -6,6 +6,8 @@
       class="app-tile fade-in"
       :class="{ launching: launchingApp === app.name, favorited: isFavorite(app.name) }"
       tabindex="0"
+      :data-app-name="app.name"
+      :data-focus-key="'app-' + app.name"
       :style="{ animationDelay: `${Math.min(index * 0.03, 0.4)}s` }"
       @click="$emit('launch', app)"
       @keydown.enter="$emit('launch', app)"
@@ -50,6 +52,7 @@
       </div>
       <div class="tile-info">
         <span class="tile-name" :title="app.name">{{ app.name }}</span>
+        <span v-if="playtimeLabel(app.name)" class="tile-playtime">{{ playtimeLabel(app.name) }}</span>
         <span v-if="app.elevated && app.elevated !== 'false'" class="tile-badge admin">{{ t.appContext.admin }}</span>
       </div>
     </div>
@@ -60,6 +63,7 @@
 import { useI18n } from '../i18n/index.js'
 import { StarFilled, VideoPlay } from '@element-plus/icons-vue'
 import LaunchHelperIcon from './LaunchHelperIcon.vue'
+import { formatDuration } from '../composables/useGameSession.js'
 const { t } = useI18n()
 
 const props = defineProps({
@@ -70,9 +74,17 @@ const props = defineProps({
   getAppImageUrl: { type: Function, required: true },
   handleImageError: { type: Function, required: true },
   helperIds: { type: Function, default: () => [] },
+  stats: { type: Object, default: () => ({}) },
 })
 
 defineEmits(['launch', 'contextmenu', 'toggleFavorite'])
+
+/** 累计时长不足一分钟就不显示，避免失败的启动留下 "0m" 噪声。 */
+function playtimeLabel(appName) {
+  const seconds = Number(props.stats?.[appName]?.totalSeconds) || 0
+  if (seconds < 60) return ''
+  return t.value.gameSession.playedFor.replace('{duration}', formatDuration(seconds))
+}
 </script>
 
 <style lang="less" scoped>
@@ -280,6 +292,13 @@ defineEmits(['launch', 'contextmenu', 'toggleFavorite'])
   flex-shrink: 0;
 
   &.admin { background: rgba(var(--fd-status-danger-rgb, 255, 107, 53), 0.15); color: var(--fd-status-danger, #ff6b35); }
+}
+
+.tile-playtime {
+  font-size: 11px;
+  color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.32);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }

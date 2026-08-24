@@ -15,6 +15,14 @@
       @update-value="setSettingValue"
     />
 
+    <SettingsToggleSection
+      :title="t.settings.bigScreen"
+      :icon="Monitor"
+      :items="bigScreenItems"
+      :values="bigScreenSettings"
+      @update-value="setBigScreenSetting"
+    />
+
     <SettingsLaunchAssistantCard :has-tauri="hasTauri" />
 
     <SettingsFileSharingCard />
@@ -49,8 +57,9 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted } from 'vue'
-import { Bell, Promotion } from '@element-plus/icons-vue'
+import { Bell, Monitor, Promotion } from '@element-plus/icons-vue'
 import { useSettingsState } from '../composables/useSettingsState'
+import { bigScreenSettings, setBigScreenSetting } from '../composables/useBigScreenSettings.js'
 import { useI18n } from '../i18n/index.js'
 import SettingsActions from '../components/settings/SettingsActions.vue'
 import SettingsAboutCard from '../components/settings/SettingsAboutCard.vue'
@@ -96,8 +105,25 @@ const startupSettings = computed(() => [
   },
 ])
 
-const notificationSettings = computed(() => [
+const bigScreenItems = computed(() => [
   {
+    key: 'autoYieldOnLaunch',
+    name: t.value.settings.autoYield,
+    description: t.value.settings.autoYieldDesc,
+  },
+  {
+    key: 'gamepadCursorEnabled',
+    name: t.value.settings.gamepadCursor,
+    description: t.value.settings.gamepadCursorDesc,
+  },
+  {
+    key: 'oskAutoOpen',
+    name: t.value.settings.oskAutoOpen,
+    description: t.value.settings.oskAutoOpenDesc,
+  },
+])
+
+const notificationSettings = computed(() => [  {
     key: 'notifications',
     name: t.value.settings.desktopNotifications,
     description: t.value.settings.desktopNotificationsDesc,

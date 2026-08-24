@@ -6,6 +6,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
+use crate::github_download::{
+    self, DEFAULT_CONNECT_TIMEOUT, DEFAULT_IDLE_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT,
+    DownloadAttemptPhase, DownloadRequest,
+};
+
 mod channel;
 mod preferences;
 
@@ -20,21 +25,11 @@ const GITHUB_API_URL_LATEST: &str =
     "https://api.github.com/repos/qiin2333/sunshine/releases/latest";
 const UPDATE_CHECK_INTERVAL: u64 = 4 * 60 * 60; // 4小时（秒）
 const HTTP_TIMEOUT_SECS: u64 = 3;
-const DOWNLOAD_CONNECT_TIMEOUT_SECS: u64 = 5;
-const DOWNLOAD_RESPONSE_TIMEOUT_SECS: u64 = 10;
-const DOWNLOAD_IDLE_TIMEOUT_SECS: u64 = 20;
 const GITHUB_RELEASE_HOST: &str = "github.com";
 const MAX_RELEASES_TO_CHECK: usize = 10; // 最多检查的发布数量
 
 // GitHub API 加速代理列表（按优先级排序）
 const API_PROXY_PREFIXES: &[&str] = &["https://ghapi.hackhub.cn/", "https://mirror.ghproxy.com/"];
-
-// GitHub 下载加速代理列表
-const DOWNLOAD_PROXY_PREFIXES: &[(&str, &str)] = &[
-    ("ghfast.top", "https://ghfast.top/"),
-    ("ghproxy.com", "https://ghproxy.com/"),
-    ("mirror.ghproxy.com", "https://mirror.ghproxy.com/"),
-];
 
 // ========== 数据结构定义 ==========
 
@@ -73,12 +68,6 @@ struct GitHubAsset {
     browser_download_url: String,
     #[serde(default)]
     size: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct DownloadSource {
-    name: &'static str,
-    url: String,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -1665,114 +1654,6 @@ fn validate_download_filename(filename: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// 创建安装包下载客户端。下载使用独立请求头和更细粒度的超时策略。
-fn create_download_http_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(DOWNLOAD_CONNECT_TIMEOUT_SECS))
-        .read_timeout(Duration::from_secs(DOWNLOAD_IDLE_TIMEOUT_SECS))
-        .redirect(reqwest::redirect::Policy::limited(10))
-        .no_gzip()
-        .no_deflate()
-        .build()
-        .map_err(|e| format!("创建下载客户端失败: {}", e))
-}
-
-/// 构建安装包候选源：GitHub 直连优先，其后按配置顺序尝试代理。
-fn build_download_sources(original_url: &str) -> Vec<DownloadSource> {
-    let mut sources = vec![DownloadSource {
-        name: "GitHub",
-        url: original_url.to_string(),
-    }];
-
-    for (name, prefix) in DOWNLOAD_PROXY_PREFIXES {
-        sources.push(DownloadSource {
-            name,
-            url: format!("{}{}", prefix, original_url),
-        });
-    }
-
-    sources
-}
-
-fn validate_download_response(
-    response: &reqwest::Response,
-    expected_size: Option<u64>,
-) -> Result<(), String> {
-    if !response.status().is_success() {
-        return Err(format!("HTTP状态码 {}", response.status().as_u16()));
-    }
-
-    if let Some(content_type) = response
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-    {
-        let content_type = content_type.to_ascii_lowercase();
-        if content_type.starts_with("text/")
-            || content_type.contains("application/json")
-            || content_type.contains("application/xml")
-        {
-            return Err(format!("返回了非安装包内容: {}", content_type));
-        }
-    }
-
-    if response.content_length() == Some(0) {
-        return Err("返回了空文件".to_string());
-    }
-
-    if let (Some(expected), Some(actual)) = (
-        expected_size.filter(|size| *size > 0),
-        response.content_length(),
-    ) && actual != expected
-    {
-        return Err(format!(
-            "文件大小不匹配，预期 {} bytes，响应为 {} bytes",
-            expected, actual
-        ));
-    }
-
-    Ok(())
-}
-
-async fn request_download_source(
-    client: &reqwest::Client,
-    source: &DownloadSource,
-    expected_size: Option<u64>,
-) -> Result<reqwest::Response, String> {
-    let request = client
-        .get(&source.url)
-        .header(
-            reqwest::header::USER_AGENT,
-            "Sunshine-Control-Panel updater",
-        )
-        .header(reqwest::header::ACCEPT, "application/octet-stream")
-        .header(reqwest::header::ACCEPT_ENCODING, "identity");
-
-    let response = match tokio::time::timeout(
-        Duration::from_secs(DOWNLOAD_RESPONSE_TIMEOUT_SECS),
-        request.send(),
-    )
-    .await
-    {
-        Ok(Ok(response)) => response,
-        Ok(Err(error)) => {
-            return Err(format!("{} 请求失败: {}", source.name, error));
-        }
-        Err(_) => {
-            return Err(format!(
-                "{} 在 {} 秒内未返回响应",
-                source.name, DOWNLOAD_RESPONSE_TIMEOUT_SECS
-            ));
-        }
-    };
-
-    validate_download_response(&response, expected_size)
-        .map_err(|error| format!("{} 响应无效: {}", source.name, error))?;
-
-    debug!("✅ 下载源已就绪: {} ({})", source.name, response.url());
-    Ok(response)
-}
-
 /// 发送下载进度事件到前端
 fn emit_download_progress(
     window: &tauri::WebviewWindow,
@@ -1810,124 +1691,6 @@ fn emit_install_progress(
     );
 }
 
-/// 处理下载流
-async fn download_stream(
-    mut stream: impl futures_util::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Unpin,
-    file: &mut tokio::fs::File,
-    total_size: u64,
-    source_name: &str,
-    window: Option<&tauri::WebviewWindow>,
-) -> Result<u64, String> {
-    use futures_util::StreamExt;
-    use tokio::io::AsyncWriteExt;
-
-    let mut downloaded: u64 = 0;
-    let mut last_progress_percent: u32 = 0;
-
-    while let Some(item) = stream.next().await {
-        let chunk = item.map_err(|e| format!("读取数据块失败: {}", e))?;
-        file.write_all(&chunk)
-            .await
-            .map_err(|e| format!("写入文件失败: {}", e))?;
-        downloaded += chunk.len() as u64;
-
-        // 更新进度
-        if total_size > 0 {
-            // 完整性校验通过之前最多显示 99%，避免残缺文件被表现为下载成功。
-            let progress_percent = (downloaded.saturating_mul(100) / total_size).min(99) as u32;
-
-            if progress_percent > last_progress_percent || downloaded == total_size {
-                last_progress_percent = progress_percent;
-
-                if let Some(win) = window {
-                    emit_download_progress(
-                        win,
-                        progress_percent,
-                        total_size,
-                        downloaded,
-                        DownloadPhase::Downloading,
-                        Some(source_name),
-                    );
-                }
-
-                debug!(
-                    "📊 下载进度: {}% ({}/{})",
-                    progress_percent, downloaded, total_size
-                );
-            }
-        } else if let Some(win) = window {
-            emit_download_progress(
-                win,
-                0,
-                0,
-                downloaded,
-                DownloadPhase::Downloading,
-                Some(source_name),
-            );
-        }
-    }
-
-    file.flush()
-        .await
-        .map_err(|e| format!("刷新下载文件失败: {}", e))?;
-
-    Ok(downloaded)
-}
-
-async fn download_source_to_file(
-    client: &reqwest::Client,
-    source: &DownloadSource,
-    partial_path: &Path,
-    expected_size: Option<u64>,
-    window: Option<&tauri::WebviewWindow>,
-) -> Result<(u64, u64), String> {
-    let response = request_download_source(client, source, expected_size).await?;
-    let response_size = response.content_length();
-    let total_size = expected_size
-        .filter(|size| *size > 0)
-        .or(response_size)
-        .unwrap_or(0);
-
-    if let Some(win) = window {
-        emit_download_progress(
-            win,
-            0,
-            total_size,
-            0,
-            DownloadPhase::Downloading,
-            Some(source.name),
-        );
-    }
-
-    let mut file = tokio::fs::File::create(partial_path)
-        .await
-        .map_err(|e| format!("创建临时下载文件失败: {}", e))?;
-    let downloaded = download_stream(
-        response.bytes_stream(),
-        &mut file,
-        total_size,
-        source.name,
-        window,
-    )
-    .await?;
-    drop(file);
-
-    if downloaded == 0 {
-        return Err("下载结果为空文件".to_string());
-    }
-
-    if let Some(required_size) = expected_size.filter(|size| *size > 0).or(response_size)
-        && downloaded != required_size
-    {
-        return Err(format!(
-            "下载文件大小不匹配，预期 {} bytes，实际 {} bytes",
-            required_size, downloaded
-        ));
-    }
-
-    Ok((downloaded, total_size))
-}
-
 fn remove_file_if_exists(
     path: &Path,
     error_code: DownloadErrorCode,
@@ -1962,15 +1725,6 @@ async fn finalize_download_file(
         })
 }
 
-fn sources_exhausted_error(errors: &[String]) -> DownloadCommandError {
-    let detail = if errors.is_empty() {
-        "所有下载源都失败了".to_string()
-    } else {
-        format!("所有下载源都失败了：{}", errors.join("；"))
-    };
-    DownloadCommandError::new(DownloadErrorCode::SourcesExhausted, detail)
-}
-
 /// 下载更新文件（带真实进度报告）
 #[tauri::command]
 pub async fn download_update(
@@ -1994,10 +1748,6 @@ pub async fn download_update(
     let file_path = download_dir.join(&filename);
     let partial_path = download_dir.join(format!("{}.part", filename));
     let window = app_handle.get_webview_window("main");
-    let client = create_download_http_client()
-        .map_err(|detail| DownloadCommandError::new(DownloadErrorCode::SetupFailed, detail))?;
-    let sources = build_download_sources(&url);
-    let mut errors = Vec::new();
 
     remove_file_if_exists(
         &partial_path,
@@ -2005,77 +1755,103 @@ pub async fn download_update(
         "清理旧的临时下载文件",
     )?;
 
-    for (index, source) in sources.iter().enumerate() {
-        if let Some(ref win) = window {
-            let phase = if index == 0 {
-                DownloadPhase::Connecting
-            } else {
-                DownloadPhase::Retrying
+    let mut last_progress_percent = 0;
+    let outcome = github_download::download_to_file_with_fallbacks(
+        DownloadRequest {
+            url: &url,
+            destination: &partial_path,
+            expected_size: expected_size.filter(|size| *size > 0),
+            max_size: expected_size.filter(|size| *size > 0),
+            user_agent: "Sunshine-Control-Panel updater",
+            connect_timeout: DEFAULT_CONNECT_TIMEOUT,
+            response_timeout: DEFAULT_RESPONSE_TIMEOUT,
+            idle_timeout: DEFAULT_IDLE_TIMEOUT,
+            overall_timeout: None,
+        },
+        |event| {
+            let Some(win) = window.as_ref() else {
+                return;
             };
-            emit_download_progress(win, 0, 0, 0, phase, None);
-        }
-
-        info!("📡 尝试下载源: {}", source.name);
-        match download_source_to_file(
-            &client,
-            source,
-            &partial_path,
-            expected_size,
-            window.as_ref(),
-        )
-        .await
-        {
-            Ok((downloaded, total_size)) => {
-                if let Some(ref win) = window {
-                    emit_download_progress(
-                        win,
-                        99,
-                        total_size,
-                        downloaded,
-                        DownloadPhase::Verifying,
-                        Some(source.name),
-                    );
+            match event.phase {
+                DownloadAttemptPhase::Connecting => {
+                    last_progress_percent = 0;
+                    emit_download_progress(win, 0, event.total, 0, DownloadPhase::Connecting, None);
                 }
-                let finalization = finalize_download_file(&partial_path, &file_path).await;
-                if let Err(error) = finalization {
-                    let _ = tokio::fs::remove_file(&partial_path).await;
-                    return Err(error);
+                DownloadAttemptPhase::Retrying => {
+                    last_progress_percent = 0;
+                    emit_download_progress(win, 0, event.total, 0, DownloadPhase::Retrying, None);
                 }
-
-                info!("✅ 下载完成: {} bytes，来源: {}", downloaded, source.name);
-                if let Some(win) = window {
-                    emit_download_progress(
-                        &win,
-                        100,
-                        total_size,
-                        downloaded,
-                        DownloadPhase::Complete,
-                        Some(source.name),
-                    );
+                DownloadAttemptPhase::Downloading => {
+                    let progress = if event.total == 0 {
+                        0
+                    } else {
+                        (event.downloaded.saturating_mul(100) / event.total).min(99) as u32
+                    };
+                    if event.total == 0 || progress > last_progress_percent || event.downloaded == 0
+                    {
+                        last_progress_percent = progress;
+                        emit_download_progress(
+                            win,
+                            progress,
+                            event.total,
+                            event.downloaded,
+                            DownloadPhase::Downloading,
+                            Some(event.source),
+                        );
+                    }
                 }
-
-                return Ok(serde_json::json!({
-                    "success": true,
-                    "file_path": file_path.to_string_lossy().to_string(),
-                    "source": source.name
-                }));
             }
-            Err(error) => {
-                warn!("⚠️ {}", error);
-                errors.push(error);
-                let _ = tokio::fs::remove_file(&partial_path).await;
-            }
-        }
+        },
+    )
+    .await
+    .map_err(|error| {
+        let code = if error.is_setup() {
+            DownloadErrorCode::SetupFailed
+        } else {
+            DownloadErrorCode::SourcesExhausted
+        };
+        DownloadCommandError::new(code, error.to_string())
+    })?;
+
+    if let Some(ref win) = window {
+        emit_download_progress(
+            win,
+            99,
+            outcome.total,
+            outcome.downloaded,
+            DownloadPhase::Verifying,
+            Some(outcome.source),
+        );
+    }
+    if let Err(error) = finalize_download_file(&partial_path, &file_path).await {
+        let _ = tokio::fs::remove_file(&partial_path).await;
+        return Err(error);
     }
 
-    let _ = tokio::fs::remove_file(&partial_path).await;
-    Err(sources_exhausted_error(&errors))
+    info!(
+        "✅ 下载完成: {} bytes，来源: {}",
+        outcome.downloaded, outcome.source
+    );
+    if let Some(win) = window {
+        emit_download_progress(
+            &win,
+            100,
+            outcome.total,
+            outcome.downloaded,
+            DownloadPhase::Complete,
+            Some(outcome.source),
+        );
+    }
+    Ok(serde_json::json!({
+        "success": true,
+        "file_path": file_path.to_string_lossy().to_string(),
+        "source": outcome.source
+    }))
 }
 
 #[cfg(test)]
 mod download_source_tests {
     use super::*;
-    use axum::{Router, response::Html, routing::get};
 
     #[test]
     fn download_url_requires_https_and_the_github_release_host() {
@@ -2126,24 +1902,6 @@ mod download_source_tests {
     }
 
     #[test]
-    fn download_sources_are_direct_first_then_follow_proxy_order() {
-        let original_url = "https://github.com/qiin2333/sunshine/releases/download/v1/setup.exe";
-        let sources = build_download_sources(original_url);
-
-        assert_eq!(sources.len(), 1 + DOWNLOAD_PROXY_PREFIXES.len());
-        assert_eq!(sources[0].name, "GitHub");
-        assert_eq!(sources[0].url, original_url);
-
-        for (source, (expected_name, expected_prefix)) in
-            sources.iter().skip(1).zip(DOWNLOAD_PROXY_PREFIXES)
-        {
-            assert_eq!(source.name, *expected_name);
-            assert_eq!(source.url, format!("{}{}", expected_prefix, original_url));
-            assert!(!source.url.contains("cdn.jsdelivr.net"));
-        }
-    }
-
-    #[test]
     fn download_errors_expose_stable_language_neutral_codes() {
         let error = DownloadCommandError::new(
             DownloadErrorCode::SourcesExhausted,
@@ -2156,28 +1914,6 @@ mod download_source_tests {
             serialized["detail"],
             "diagnostic details stay out of the localized UI"
         );
-    }
-
-    #[tokio::test]
-    async fn html_response_is_rejected_before_writing_a_download_file() {
-        let app = Router::new().route("/html", get(|| async { Html("proxy error") }));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-
-        let source = DownloadSource {
-            name: "html",
-            url: format!("http://{}/html", address),
-        };
-        let client = create_download_http_client().unwrap();
-        let error = request_download_source(&client, &source, None)
-            .await
-            .unwrap_err();
-
-        assert!(error.contains("返回了非安装包内容"));
-        server.abort();
     }
 }
 

@@ -6,7 +6,6 @@
 //! package, or from an explicit development override. This keeps the optional
 //! self-contained .NET runtime out of the main Sunshine package.
 
-use futures_util::StreamExt;
 use log::{info, warn};
 use once_cell::sync::{Lazy, OnceCell};
 use reqwest::header::HeaderValue;
@@ -14,12 +13,15 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::Emitter;
-use tokio::io::{AsyncWriteExt, BufWriter};
+
+use crate::github_download::{
+    self, DEFAULT_IDLE_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT, DownloadAttemptPhase, DownloadRequest,
+};
 
 const COMPONENT_VERSION: &str = "1.2.0";
 const PROTOCOL_VERSION: u32 = 1;
@@ -42,7 +44,6 @@ const SIDECAR_PACKAGE_TARGET: &str = "win-x64-self-contained";
 const SIDECAR_PACKAGE_LICENSE: &str = "GPL-3.0-only";
 const MAX_SIDECAR_PACKAGE_MANIFEST_BYTES: u64 = 64 * 1024;
 const MAX_SIDECAR_PACKAGE_BYTES: u64 = 160 * 1024 * 1024;
-const COMPONENT_DOWNLOAD_BUFFER_BYTES: usize = 1024 * 1024;
 const CONFIG_APPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 const CORE_CONFIG_READ_ATTEMPTS: usize = 3;
 const CORE_CONFIG_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(75);
@@ -406,6 +407,53 @@ fn emit_progress(app: &tauri::AppHandle, stage: &str, progress: u32) {
 
 fn report_progress(progress: &ProgressReporter<'_>, stage: &str, value: u32) {
     progress(stage, value.min(100));
+}
+
+struct ComponentDownloadSpec<'a> {
+    url: &'a str,
+    destination: &'a Path,
+    expected_size: Option<u64>,
+    max_size: u64,
+    stage: &'a str,
+    progress_start: u32,
+    progress_span: u32,
+    error_code: &'a str,
+}
+
+async fn download_component_asset(
+    spec: ComponentDownloadSpec<'_>,
+    progress: &ProgressReporter<'_>,
+) -> Result<(), String> {
+    report_progress(progress, spec.stage, spec.progress_start);
+    let mut highest_progress = spec.progress_start;
+    github_download::download_to_file_with_fallbacks(
+        DownloadRequest {
+            url: spec.url,
+            destination: spec.destination,
+            expected_size: spec.expected_size,
+            max_size: Some(spec.max_size),
+            user_agent: "foundation-sunshine-dualsense-component",
+            connect_timeout: std::time::Duration::from_secs(10),
+            response_timeout: DEFAULT_RESPONSE_TIMEOUT,
+            idle_timeout: DEFAULT_IDLE_TIMEOUT,
+            overall_timeout: Some(std::time::Duration::from_secs(600)),
+        },
+        |event| {
+            if event.phase != DownloadAttemptPhase::Downloading || event.total == 0 {
+                return;
+            }
+            let value = spec.progress_start
+                + (event.downloaded.saturating_mul(spec.progress_span as u64) / event.total)
+                    .min(spec.progress_span as u64) as u32;
+            if value > highest_progress {
+                highest_progress = value;
+                report_progress(progress, spec.stage, value);
+            }
+        },
+    )
+    .await
+    .map(|_| ())
+    .map_err(|error| format!("{}: download failed: {error}", spec.error_code))
 }
 
 fn component_root() -> PathBuf {
@@ -1377,7 +1425,6 @@ fn extract_sidecar_package(
 }
 
 async fn acquire_sidecar_package(
-    client: &reqwest::Client,
     manifest: &SidecarPackageManifest,
     local_package: Option<&Path>,
     destination: &Path,
@@ -1413,43 +1460,20 @@ async fn acquire_sidecar_package(
         );
     }
     report_progress(progress, "sidecar_downloading", 12);
-    let response = client
-        .get(&manifest.download_url)
-        .send()
-        .await
-        .map_err(|error| format!("DS5-PKG-001: sidecar download failed: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("DS5-PKG-001: sidecar download failed: {error}"))?;
-    let total_size = response.content_length();
-    if total_size.is_some_and(|size| size != manifest.size) {
-        return Err("DS5-PKG-001: sidecar download size does not match the manifest".to_string());
-    }
-    let output = tokio::fs::File::create(destination)
-        .await
-        .map_err(|error| error.to_string())?;
-    let mut output = BufWriter::with_capacity(COMPONENT_DOWNLOAD_BUFFER_BYTES, output);
-    let mut downloaded = 0u64;
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk =
-            chunk.map_err(|error| format!("DS5-PKG-001: sidecar download failed: {error}"))?;
-        downloaded = downloaded.saturating_add(chunk.len() as u64);
-        if downloaded > manifest.size || downloaded > MAX_SIDECAR_PACKAGE_BYTES {
-            return Err("DS5-PKG-001: sidecar download exceeds the manifest size".to_string());
-        }
-        output
-            .write_all(&chunk)
-            .await
-            .map_err(|error| error.to_string())?;
-        let value = 12 + (downloaded.saturating_mul(24) / manifest.size).min(24) as u32;
-        report_progress(progress, "sidecar_downloading", value);
-    }
-    output.flush().await.map_err(|error| error.to_string())?;
-    drop(output);
-    if downloaded != manifest.size {
-        return Err("DS5-PKG-001: sidecar download ended before the expected size".to_string());
-    }
-    Ok(())
+    download_component_asset(
+        ComponentDownloadSpec {
+            url: &manifest.download_url,
+            destination,
+            expected_size: Some(manifest.size),
+            max_size: MAX_SIDECAR_PACKAGE_BYTES,
+            stage: "sidecar_downloading",
+            progress_start: 12,
+            progress_span: 24,
+            error_code: "DS5-PKG-001",
+        },
+        progress,
+    )
+    .await
 }
 
 fn extract_verified_package(archive_path: &Path, staging: &Path) -> Result<(), String> {
@@ -1514,7 +1538,6 @@ fn extract_verified_package(archive_path: &Path, staging: &Path) -> Result<(), S
 #[cfg(target_os = "windows")]
 async fn ensure_pinned_usbip(
     progress: &ProgressReporter<'_>,
-    client: &reqwest::Client,
     component_root: &Path,
 ) -> Result<UsbipInstallResult, String> {
     if installed_usbip_version().as_deref() == Some(USBIP_VERSION) {
@@ -1524,45 +1547,20 @@ async fn ensure_pinned_usbip(
     report_progress(progress, "transport_downloading", 3);
     let installer_path = component_root.join(format!("USBip-{USBIP_VERSION}-x64.partial.exe"));
     let download_result: Result<UsbipInstallResult, String> = async {
-        let response = client
-            .get(USBIP_URL)
-            .send()
-            .await
-            .map_err(|error| format!("DS5-DRV-001: USB/IP download failed: {error}"))?
-            .error_for_status()
-            .map_err(|error| format!("DS5-DRV-001: USB/IP download failed: {error}"))?;
-        if response
-            .content_length()
-            .is_some_and(|size| size > MAX_USBIP_INSTALLER_BYTES)
-        {
-            return Err("DS5-DRV-001: USB/IP installer exceeds the download limit".to_string());
-        }
-
-        let output = tokio::fs::File::create(&installer_path)
-            .await
-            .map_err(|error| error.to_string())?;
-        let mut output = BufWriter::with_capacity(COMPONENT_DOWNLOAD_BUFFER_BYTES, output);
-        let mut downloaded = 0u64;
-        let mut stream = response.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk
-                .map_err(|error| format!("DS5-DRV-001: USB/IP download failed: {error}"))?;
-            downloaded = downloaded.saturating_add(chunk.len() as u64);
-            if downloaded > MAX_USBIP_INSTALLER_BYTES {
-                return Err(
-                    "DS5-DRV-001: USB/IP installer exceeds the download limit".to_string(),
-                );
-            }
-            output
-                .write_all(&chunk)
-                .await
-                .map_err(|error| error.to_string())?;
-        }
-        output
-            .flush()
-            .await
-            .map_err(|error| error.to_string())?;
-        drop(output);
+        download_component_asset(
+            ComponentDownloadSpec {
+                url: USBIP_URL,
+                destination: &installer_path,
+                expected_size: None,
+                max_size: MAX_USBIP_INSTALLER_BYTES,
+                stage: "transport_downloading",
+                progress_start: 3,
+                progress_span: 6,
+                error_code: "DS5-DRV-001",
+            },
+            progress,
+        )
+        .await?;
 
         let actual = sha256_file(&installer_path)?;
         if actual != USBIP_SHA256 {
@@ -1614,7 +1612,6 @@ async fn ensure_pinned_usbip(
 #[cfg(not(target_os = "windows"))]
 async fn ensure_pinned_usbip(
     _progress: &ProgressReporter<'_>,
-    _client: &reqwest::Client,
     _component_root: &Path,
 ) -> Result<UsbipInstallResult, String> {
     Ok(UsbipInstallResult::Ready)
@@ -1695,21 +1692,13 @@ async fn dualsense_install_impl(
     let active = active_dir();
     let backup = root.join("previous");
     let had_previous = active.exists();
-    let client = reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .timeout(std::time::Duration::from_secs(600))
-        .user_agent("foundation-sunshine-dualsense-component")
-        .build()
-        .map_err(|error| error.to_string())?;
-
     let install_result: Result<UsbipInstallResult, String> = async {
-        let usbip_install_result = ensure_pinned_usbip(progress, &client, &root).await?;
+        let usbip_install_result = ensure_pinned_usbip(progress, &root).await?;
         if let Some(manifest) = package_manifest.as_ref() {
             if using_discovered_package {
                 report_progress(progress, "sidecar_local", 12);
             }
             acquire_sidecar_package(
-                &client,
                 manifest,
                 local_sidecar_package,
                 &sidecar_archive_path,
@@ -1731,44 +1720,20 @@ async fn dualsense_install_impl(
             return Err("DS5-PKG-002: no DualSense sidecar source is available".to_string());
         }
 
-        let response = client
-            .get(HIDMAESTRO_URL)
-            .send()
-            .await
-            .map_err(|error| format!("DS5-PKG-001: download failed: {error}"))?
-            .error_for_status()
-            .map_err(|error| format!("DS5-PKG-001: download failed: {error}"))?;
-        report_progress(progress, "downloading", 38);
-        let total_size = response.content_length();
-        if total_size.is_some_and(|size| size > MAX_ARCHIVE_BYTES) {
-            return Err("DS5-PKG-002: release archive exceeds the download limit".to_string());
-        }
-        let output = tokio::fs::File::create(&archive_path)
-            .await
-            .map_err(|error| error.to_string())?;
-        let mut output = BufWriter::with_capacity(COMPONENT_DOWNLOAD_BUFFER_BYTES, output);
-        let mut downloaded = 0u64;
-        let mut stream = response.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|error| format!("DS5-PKG-001: download failed: {error}"))?;
-            downloaded = downloaded.saturating_add(chunk.len() as u64);
-            if downloaded > MAX_ARCHIVE_BYTES {
-                return Err("DS5-PKG-002: release archive exceeds the download limit".to_string());
-            }
-            output
-                .write_all(&chunk)
-                .await
-                .map_err(|error| error.to_string())?;
-            if let Some(total) = total_size.filter(|total| *total != 0) {
-                let download_progress = (downloaded * 34 / total).min(34) as u32;
-                report_progress(progress, "downloading", 38 + download_progress);
-            }
-        }
-        output
-            .flush()
-            .await
-            .map_err(|error| error.to_string())?;
-        drop(output);
+        download_component_asset(
+            ComponentDownloadSpec {
+                url: HIDMAESTRO_URL,
+                destination: &archive_path,
+                expected_size: None,
+                max_size: MAX_ARCHIVE_BYTES,
+                stage: "downloading",
+                progress_start: 38,
+                progress_span: 34,
+                error_code: "DS5-PKG-001",
+            },
+            progress,
+        )
+        .await?;
 
         report_progress(progress, "verifying", 74);
         let archive = archive_path.clone();

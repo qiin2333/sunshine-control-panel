@@ -50,7 +50,7 @@
 <script setup>
 import { computed, nextTick, ref, watch } from 'vue'
 import { formatDuration } from '../composables/useGameSession.js'
-import { useModalFocusScope } from '../composables/useFocusNav.js'
+import { focusElement, useModalFocusScope } from '../composables/useFocusNav.js'
 import { useI18n } from '../i18n/index.js'
 
 const { t } = useI18n()
@@ -67,14 +67,24 @@ const emit = defineEmits(['dismiss', 'stop'])
 const overlayRef = ref(null)
 useModalFocusScope(overlayRef, () => !!props.state)
 
-// launching 态没有任何按钮，作用域里无处可聚焦。主动把焦点从遮罩背后的卡片上移开，
-// 否则 A 键会点到被完全挡住的应用卡片。关闭时 popFocusScope 会把焦点还回去。
+// 状态在遮罩存续期间会变（launching -> error / conflict / untracked），而
+// useModalFocusScope 只在开合时压栈，不会为中途才出现的按钮重新聚焦。所以这里
+// 按状态自己收尾：
+//   有按钮而焦点在遮罩外 -> 聚焦第一个。否则焦点还停在 launching 期间被 blur 掉的
+//   body 上，第一次按 A 是空的（confirmFocused 对 body 直接返回 false）。
+//   没有按钮（launching）-> 把焦点从遮罩背后的卡片上移开，否则 A 会点到被完全挡住
+//   的应用卡片。关闭时 popFocusScope 会把焦点还回去。
 watch(
   () => props.state?.status,
   async () => {
     await nextTick()
     const root = overlayRef.value
-    if (!root || root.querySelector('[data-focusable]')) return
+    if (!root) return
+    const focusable = root.querySelector('[data-focusable]')
+    if (focusable) {
+      if (!root.contains(document.activeElement)) focusElement(focusable)
+      return
+    }
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
   },
   { immediate: true }

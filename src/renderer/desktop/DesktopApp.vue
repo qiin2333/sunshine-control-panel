@@ -45,12 +45,15 @@
     :presets="presets"
     :wallpaper="wallpaper"
     :wallpaperColors="wallpaperColors"
+    :wallpaperSeeds="wallpaperSeeds"
+    :activeWallpaperSeed="activeWallpaperSeed"
     @close="themeEditorOpen = false"
     @setVar="setVar"
     @applyPreset="applyPreset"
     @export="handleThemeExport"
     @import="handleThemeImport"
     @setWallpaper="setWallpaper"
+    @applySeed="applySeedColor"
     @removeWallpaper="removeWallpaper"
   />
 
@@ -177,7 +180,7 @@ const { t, locale, toggleLocale } = useI18n()
 const appTitle = 'FOUNDATION DESKTOP'
 
 // 主题
-const { themeVars, activePreset, presets, setVar, applyPreset, exportTheme, importTheme, wallpaper, wallpaperColors, setWallpaper, removeWallpaper } = useTheme()
+const { themeVars, activePreset, presets, setVar, applyPreset, exportTheme, importTheme, wallpaper, wallpaperColors, wallpaperSeeds, activeWallpaperSeed, setWallpaper, applySeedColor, removeWallpaper } = useTheme()
 const themeEditorOpen = ref(false)
 const showSplash = ref(true)
 const { helperPanelOpen } = useLaunchHelpers(t)

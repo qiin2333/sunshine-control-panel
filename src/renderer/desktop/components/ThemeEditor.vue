@@ -44,16 +44,29 @@
               style="display: none"
               @change="handleFileSelect"
             />
-            <!-- 提取的色板 -->
-            <div v-if="wallpaperColors.length" class="color-palette">
-              <div
+            <!-- 提取的色板：点击切换强调色（Material You 取色选项） -->
+            <div
+              v-if="wallpaperColors.length"
+              class="color-palette"
+              role="group"
+              :aria-label="t.themeEditor.pickSeed"
+            >
+              <button
                 v-for="(color, i) in wallpaperColors"
                 :key="i"
+                type="button"
                 class="palette-dot"
+                :class="{ selected: wallpaperSeeds[i] === activeWallpaperSeed }"
+                :aria-pressed="wallpaperSeeds[i] === activeWallpaperSeed"
+                data-focusable
+                :data-focus-key="'seed-' + i"
                 :style="{ background: `rgb(${color.map(Math.round).join(',')})` }"
                 :title="`rgb(${color.map(Math.round).join(', ')})`"
-              ></div>
+                :aria-label="`rgb(${color.map(Math.round).join(', ')})`"
+                @click="$emit('applySeed', i)"
+              ></button>
             </div>
+            <p v-if="wallpaperColors.length" class="palette-hint">{{ t.themeEditor.pickSeed }}</p>
           </section>
 
           <!-- 预设主题 -->
@@ -155,9 +168,11 @@ const props = defineProps({
   presets: { type: Object, required: true },
   wallpaper: { type: String, default: null },
   wallpaperColors: { type: Array, default: () => [] },
+  wallpaperSeeds: { type: Array, default: () => [] },
+  activeWallpaperSeed: { type: Number, default: null },
 })
 
-const emit = defineEmits(['close', 'setVar', 'applyPreset', 'export', 'import', 'setWallpaper', 'removeWallpaper'])
+const emit = defineEmits(['close', 'setVar', 'applyPreset', 'export', 'import', 'setWallpaper', 'applySeed', 'removeWallpaper'])
 
 const editorRef = ref(null)
 useModalFocusScope(editorRef, () => props.open)
@@ -577,12 +592,34 @@ function handleDrop(e) {
   height: 20px;
   border-radius: 50%;
   border: 2px solid rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.1);
-  cursor: default;
-  transition: transform 0.15s ease;
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 
   &:hover {
     transform: scale(1.3);
   }
+
+  // 焦点用 outline 表示：border-color 会被后面的 .selected 以相同特异性覆盖，
+  // 已选中项聚焦时会看不出焦点在哪；outline 层独立于两者
+  &:focus-visible {
+    transform: scale(1.3);
+    outline: 2px solid rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.9);
+    outline-offset: 3px;
+  }
+
+  &.selected {
+    border-color: var(--fd-accent, #00fff5);
+    box-shadow: 0 0 0 2px rgba(var(--fd-accent-rgb, 0, 255, 245), 0.35);
+    transform: scale(1.2);
+  }
+}
+
+.palette-hint {
+  margin: 6px 0 0;
+  font-size: 11px;
+  text-align: center;
+  color: rgba(var(--fd-text-primary-rgb, 255, 255, 255), 0.35);
 }
 
 // 过渡动画

@@ -275,6 +275,7 @@ export const zh = {
   themeEditor: {
     title: '主题编辑',
     wallpaper: '壁纸',
+    pickSeed: '点击色板切换强调色',
     replace: '更换',
     remove: '移除',
     dropImage: '拖拽图片到此处',

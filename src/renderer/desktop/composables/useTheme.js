@@ -1,4 +1,10 @@
 import { ref, watch, onMounted } from 'vue'
+import {
+  candidatesToSwatches,
+  extractSeedCandidates,
+  imageDataToArgb,
+  m3ThemeFromSeed,
+} from './useDynamicColor.js'
 
 const STORAGE_KEY = 'foundation-desktop-theme'
 const WALLPAPER_KEY = 'foundation-desktop-wallpaper'
@@ -194,161 +200,6 @@ function hexToRgb(hex) {
   return `${r}, ${g}, ${b}`
 }
 
-// RGB → hex
-function rgbToHex(r, g, b) {
-  return '#' + [r, g, b].map(c => Math.round(c).toString(16).padStart(2, '0')).join('')
-}
-
-// RGB → HSL
-function rgbToHsl(r, g, b) {
-  r /= 255; g /= 255; b /= 255
-  const max = Math.max(r, g, b), min = Math.min(r, g, b)
-  let h, s, l = (max + min) / 2
-  if (max === min) { h = s = 0 }
-  else {
-    const d = max - min
-    s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
-    switch (max) {
-      case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break
-      case g: h = ((b - r) / d + 2) / 6; break
-      case b: h = ((r - g) / d + 4) / 6; break
-    }
-  }
-  return [h * 360, s * 100, l * 100]
-}
-
-// 颜色距离 (简单欧几里得)
-function colorDistance(a, b) {
-  return Math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2)
-}
-
-// K-means 聚类提取主色调
-function extractColors(imageData, k = 5) {
-  const pixels = []
-  const data = imageData.data
-  // 采样 (最多 5000 个像素)
-  const step = Math.max(1, Math.floor(data.length / 4 / 5000))
-  for (let i = 0; i < data.length; i += 4 * step) {
-    const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3]
-    if (a < 128) continue // 跳过透明像素
-    pixels.push([r, g, b])
-  }
-  if (pixels.length < k) return pixels
-
-  // 初始化中心点 (k-means++)
-  const centers = [pixels[Math.floor(Math.random() * pixels.length)]]
-  for (let c = 1; c < k; c++) {
-    const dists = pixels.map(p => Math.min(...centers.map(ct => colorDistance(p, ct))))
-    const total = dists.reduce((a, b) => a + b, 0)
-    let r = Math.random() * total
-    for (let i = 0; i < dists.length; i++) {
-      r -= dists[i]
-      if (r <= 0) { centers.push(pixels[i]); break }
-    }
-  }
-
-  // 迭代 (最多 10 次)
-  for (let iter = 0; iter < 10; iter++) {
-    const clusters = Array.from({ length: k }, () => [])
-    for (const p of pixels) {
-      let minDist = Infinity, minIdx = 0
-      for (let i = 0; i < k; i++) {
-        const d = colorDistance(p, centers[i])
-        if (d < minDist) { minDist = d; minIdx = i }
-      }
-      clusters[minIdx].push(p)
-    }
-    let changed = false
-    for (let i = 0; i < k; i++) {
-      if (clusters[i].length === 0) continue
-      const avg = [0, 1, 2].map(ch => clusters[i].reduce((s, p) => s + p[ch], 0) / clusters[i].length)
-      if (colorDistance(avg, centers[i]) > 1) changed = true
-      centers[i] = avg
-    }
-    if (!changed) break
-  }
-
-  // 按聚类大小排序
-  return centers.sort((a, b) => {
-    const [, sa, la] = rgbToHsl(...a)
-    const [, sb, lb] = rgbToHsl(...b)
-    return (sb * lb) - (sa * la)
-  })
-}
-
-// 从提取的颜色生成主题变量
-function colorsToTheme(colors) {
-  if (!colors.length) return {}
-
-  // 按饱和度×亮度排序找到最鲜明的颜色
-  const ranked = colors.map(c => {
-    const [h, s, l] = rgbToHsl(...c)
-    return { c, h, s, l, score: s * (l > 15 && l < 85 ? 1 : 0.3) }
-  }).sort((a, b) => b.score - a.score)
-
-  // 找最暗的颜色作背景
-  const darkest = [...colors].sort((a, b) => {
-    const la = rgbToHsl(...a)[2], lb = rgbToHsl(...b)[2]
-    return la - lb
-  })
-
-  const accent = ranked[0]?.c || colors[0]
-  const secondary = ranked[1]?.c || ranked[0]?.c || colors[0]
-  const bgBase = darkest[0]
-
-  // 生成暗色背景变体
-  const bgPrimary = bgBase.map(c => Math.max(0, Math.round(c * 0.15)))
-  const bgSecondary = bgBase.map(c => Math.max(0, Math.round(c * 0.25)))
-  const bgTertiary = bgBase.map(c => Math.max(0, Math.round(c * 0.35)))
-
-  // 根据背景亮度决定文字颜色
-  const bgLightness = rgbToHsl(...bgPrimary)[2]
-  const textPrimary = bgLightness > 50 ? [30, 30, 30] : [255, 255, 255]
-  const textPrimaryHex = rgbToHex(...textPrimary)
-
-  // 根据主色调生成 status 颜色
-  const accentHsl = rgbToHsl(...accent)
-  const successHue = (accentHsl[0] + 120) % 360
-  const warningHue = 45
-  const dangerHue = 0
-
-  const hslToApproxRgb = (h, s, l) => {
-    s /= 100; l /= 100
-    const a = s * Math.min(l, 1 - l)
-    const f = n => {
-      const k = (n + h / 30) % 12
-      return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))
-    }
-    return [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)]
-  }
-
-  const success = hslToApproxRgb(successHue, 70, 55)
-  const warning = hslToApproxRgb(warningHue, 80, 55)
-  const danger = hslToApproxRgb(dangerHue, 75, 55)
-
-  return {
-    '--fd-accent': rgbToHex(...accent),
-    '--fd-accent-rgb': accent.map(Math.round).join(', '),
-    '--fd-accent-secondary': rgbToHex(...secondary),
-    '--fd-accent-secondary-rgb': secondary.map(Math.round).join(', '),
-    '--fd-bg-primary': rgbToHex(...bgPrimary),
-    '--fd-bg-secondary': rgbToHex(...bgSecondary),
-    '--fd-bg-tertiary': rgbToHex(...bgTertiary),
-    '--fd-text-primary': textPrimaryHex,
-    '--fd-text-primary-rgb': textPrimary.join(', '),
-    '--fd-text-secondary': `rgba(${textPrimary.join(',')},0.7)`,
-    '--fd-text-muted': `rgba(${textPrimary.join(',')},0.4)`,
-    '--fd-status-success': rgbToHex(...success),
-    '--fd-status-success-rgb': success.join(', '),
-    '--fd-status-warning': rgbToHex(...warning),
-    '--fd-status-warning-rgb': warning.join(', '),
-    '--fd-status-danger': rgbToHex(...danger),
-    '--fd-status-danger-rgb': danger.join(', '),
-    '--fd-grid-visible': '0',
-    '--fd-scanline-visible': '0',
-  }
-}
-
 // 将图片文件加载为 Image 元素
 function loadImage(file) {
   return new Promise((resolve, reject) => {
@@ -360,7 +211,7 @@ function loadImage(file) {
   })
 }
 
-// 从图片文件提取颜色并生成主题
+// 从图片文件提取种子（主题变量由 applySeedTheme 从种子推导）
 async function analyzeWallpaper(file) {
   const img = await loadImage(file)
 
@@ -372,8 +223,7 @@ async function analyzeWallpaper(file) {
   const thumbCtx = thumbCanvas.getContext('2d')
   thumbCtx.drawImage(img, 0, 0, thumbCanvas.width, thumbCanvas.height)
   const imageData = thumbCtx.getImageData(0, 0, thumbCanvas.width, thumbCanvas.height)
-  const colors = extractColors(imageData, 6)
-  const theme = colorsToTheme(colors)
+  const { seed, candidates } = extractSeedCandidates(imageDataToArgb(imageData))
 
   // 大画布生成显示用壁纸（限制 1920px，JPEG 质量 0.75）
   const displayCanvas = document.createElement('canvas')
@@ -385,7 +235,7 @@ async function analyzeWallpaper(file) {
   displayCtx.drawImage(img, 0, 0, displayCanvas.width, displayCanvas.height)
   const dataUrl = displayCanvas.toDataURL('image/jpeg', 0.75)
 
-  return { dataUrl, theme, colors }
+  return { dataUrl, seed, seeds: candidates, colors: candidatesToSwatches(candidates) }
 }
 
 export function useTheme() {
@@ -393,7 +243,9 @@ export function useTheme() {
   const activePreset = ref(defaultPreset)
   const editorOpen = ref(false)
   const wallpaper = ref(null) // data URL
-  const wallpaperColors = ref([]) // 提取的主色调 [[r,g,b], ...]
+  const wallpaperColors = ref([]) // 候选种子色板 [[r,g,b], ...]
+  const wallpaperSeeds = ref([]) // 候选种子 ARGB，与 wallpaperColors 一一对应
+  const activeWallpaperSeed = ref(null) // 当前生效的种子 ARGB
 
   // 应用 CSS 变量到 document
   function applyTheme(vars) {
@@ -449,13 +301,10 @@ export function useTheme() {
       const result = await analyzeWallpaper(file)
       wallpaper.value = result.dataUrl
       wallpaperColors.value = result.colors
+      wallpaperSeeds.value = result.seeds
+      activeWallpaperSeed.value = result.seed
       // 应用提取的主题 + 保留当前的圆角/字体等外观设置
-      const currentAppearance = {
-        '--fd-card-radius': themeVars.value['--fd-card-radius'],
-        '--fd-font-size': themeVars.value['--fd-font-size'],
-      }
-      themeVars.value = { ...getDefaultVars(), ...result.theme, ...currentAppearance }
-      activePreset.value = 'wallpaper'
+      applySeedTheme(result.seed)
       // 持久化壁纸到 IndexedDB（支持大体积图片）
       idbSet(WALLPAPER_KEY, result.dataUrl).catch(e =>
         console.warn('Failed to persist wallpaper:', e)
@@ -466,10 +315,30 @@ export function useTheme() {
     }
   }
 
+  /** 用指定种子重建主题变量。种子 → 主题是纯函数，同一种子永远同一主题。 */
+  function applySeedTheme(seed) {
+    const currentAppearance = {
+      '--fd-card-radius': themeVars.value['--fd-card-radius'],
+      '--fd-font-size': themeVars.value['--fd-font-size'],
+    }
+    themeVars.value = { ...getDefaultVars(), ...m3ThemeFromSeed(seed), ...currentAppearance }
+    activePreset.value = 'wallpaper'
+    activeWallpaperSeed.value = seed
+  }
+
+  /** 用户从色板挑选强调色（Android 的「壁纸取色选项」同款交互）。 */
+  function applySeedColor(index) {
+    const seed = wallpaperSeeds.value[index]
+    if (seed === undefined || seed === activeWallpaperSeed.value) return
+    applySeedTheme(seed)
+  }
+
   // 移除壁纸
   function removeWallpaper() {
     wallpaper.value = null
     wallpaperColors.value = []
+    wallpaperSeeds.value = []
+    activeWallpaperSeed.value = null
     idbDelete(WALLPAPER_KEY).catch(() => {})
     localStorage.removeItem(WALLPAPER_KEY) // 清理旧数据
     applyWallpaperBg(null)
@@ -492,7 +361,12 @@ export function useTheme() {
     applyTheme(vars)
     clearTimeout(saveTimer)
     saveTimer = setTimeout(() => {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ preset: activePreset.value, vars }))
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        preset: activePreset.value,
+        vars,
+        wallpaperSeeds: wallpaperSeeds.value,
+        activeWallpaperSeed: activeWallpaperSeed.value,
+      }))
     }, 300)
   }, { deep: true })
 
@@ -505,6 +379,16 @@ export function useTheme() {
         if (data.vars) {
           themeVars.value = { ...getDefaultVars(), ...data.vars }
           activePreset.value = data.preset || 'custom'
+        }
+        // 恢复色板候选与用户选中的种子（主题变量本身已随 vars 持久化）。
+        // localStorage 是外部数据，逐项校验避免坏数据流进色板渲染
+        if (Array.isArray(data.wallpaperSeeds)) {
+          const seeds = data.wallpaperSeeds.filter(Number.isInteger)
+          wallpaperSeeds.value = seeds
+          activeWallpaperSeed.value = Number.isInteger(data.activeWallpaperSeed)
+            ? data.activeWallpaperSeed
+            : null
+          wallpaperColors.value = candidatesToSwatches(seeds)
         }
       } catch (e) {
         // fallback to default
@@ -527,12 +411,15 @@ export function useTheme() {
     editorOpen,
     wallpaper,
     wallpaperColors,
+    wallpaperSeeds,
+    activeWallpaperSeed,
     presets,
     setVar,
     applyPreset,
     exportTheme,
     importTheme,
     setWallpaper,
+    applySeedColor,
     removeWallpaper,
   }
 }

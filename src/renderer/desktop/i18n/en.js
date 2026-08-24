@@ -275,6 +275,7 @@ export const en = {
   themeEditor: {
     title: 'Theme Editor',
     wallpaper: 'Wallpaper',
+    pickSeed: 'Tap a color to change the accent',
     replace: 'Replace',
     remove: 'Remove',
     dropImage: 'Drop image here',

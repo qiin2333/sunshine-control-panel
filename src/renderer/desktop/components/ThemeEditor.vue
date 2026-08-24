@@ -177,9 +177,6 @@ const emit = defineEmits(['close', 'setVar', 'applyPreset', 'export', 'import', 
 const editorRef = ref(null)
 useModalFocusScope(editorRef, () => props.open)
 
-const editorRef = ref(null)
-useModalFocusScope(editorRef, () => props.open)
-
 const { t } = useI18n()
 const isDragging = ref(false)
 const fileInputRef = ref(null)

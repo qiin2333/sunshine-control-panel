@@ -10,6 +10,7 @@
 <script setup>
 import { computed } from 'vue'
 import { viewActions } from '../composables/useGamepadActions.js'
+import { bigScreenSettings } from '../composables/useBigScreenSettings.js'
 import { useI18n } from '../i18n/index.js'
 
 const { t } = useI18n()
@@ -49,7 +50,9 @@ const hints = computed(() => {
   if (viewActions.value.has('search')) actions.push('search')
   if (viewActions.value.has('favorite')) actions.push('favorite')
   if (viewActions.value.has('menu')) actions.push('menu')
-  actions.push('scroll', 'pages', 'cursor')
+  actions.push('scroll', 'pages')
+  // 设置里关掉光标模式时 L3 不会响应，提示条不能显示无效按键
+  if (bigScreenSettings.value.gamepadCursorEnabled) actions.push('cursor')
 
   const labels = {
     confirm: legend.confirm,

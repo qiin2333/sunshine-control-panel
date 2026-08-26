@@ -126,6 +126,7 @@ html[data-fd-gamepad='true'] {
   .desktop-card:focus {
     outline: none;
     box-shadow: 0 0 0 2px var(--fd-accent, #00fff5), 0 0 16px rgba(var(--fd-accent-rgb, 0, 255, 245), 0.4);
+
     // 呼吸微光：同一时刻只有一个焦点元素，动画成本可控。
     // 大屏远看时静止的环容易和边框混淆，缓慢的明暗让它始终「活着」
     animation: fd-ring-breathe 2.6s ease-in-out infinite;

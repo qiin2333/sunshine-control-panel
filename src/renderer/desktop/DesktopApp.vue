@@ -583,16 +583,22 @@ watch(
 )
 
 // 首次拿起手柄：如果焦点还没建立（首次输入前 focus 在 body），把它放到侧边栏
-// 当前项上——第一次按方向键就是有意义的位置，而不是等一帧「跳到元素 0」
-watch(gamepadActive, (active) => {
-  if (!active) {
-    if (cursorEnabled.value) setCursorEnabled(false)
-    return
-  }
-  if (!document.activeElement || document.activeElement === document.body) {
-    focusSidebar()
-  }
-})
+// 当前项上。必须 flush:'sync'——useGamepad 在同一调用栈里先置 gamepadActive
+// 再同步调 onNavigate，默认 'pre' 的 watcher 会在 navigateFocus 之后才跑，
+// 那时焦点已不在 body 上，focusSidebar 永远被跳过
+watch(
+  gamepadActive,
+  (active) => {
+    if (!active) {
+      if (cursorEnabled.value) setCursorEnabled(false)
+      return
+    }
+    if (!document.activeElement || document.activeElement === document.body) {
+      focusSidebar()
+    }
+  },
+  { flush: 'sync' }
+)
 </script>
 
 <style lang="less" scoped>

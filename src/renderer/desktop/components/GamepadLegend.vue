@@ -41,6 +41,7 @@ const hints = computed(() => {
   if (props.cursorMode) {
     return [
       { button: 'A', tone: 'a', label: legend.click },
+      { button: '☰', tone: 'neutral', label: legend.menu },
       { button: 'B', tone: 'b', label: legend.exitCursor },
       { button: 'LT/RT', tone: 'neutral', label: legend.scroll },
     ]

@@ -128,6 +128,7 @@ import { useApps } from '../composables/useApps'
 import { useLaunchHelpers } from '../composables/useLaunchHelpers'
 import { tauriInvoke } from '../composables/useTauri'
 import { gamepadConnected, onGamepadAction } from '../composables/useGamepad.js'
+import { clearViewActions, setViewActions } from '../composables/useGamepadActions.js'
 import { editInputWithOsk } from '../composables/useOsk.js'
 import { focusElement } from '../composables/useFocusNav.js'
 import { useI18n } from '../i18n/index.js'
@@ -303,14 +304,6 @@ async function focusSearchWithOsk() {
   await editInputWithOsk(input, { title: t.value.apps.searchPlaceholder })
 }
 
-function cycleFilter(step) {
-  const tabs = filterTabs.value
-  if (tabs.length === 0) return
-  const index = tabs.findIndex((tab) => tab.id === activeFilter.value)
-  const next = (index + step + tabs.length) % tabs.length
-  activeFilter.value = tabs[next].id
-}
-
 function handleGamepadAction(action) {
   // B 键：从内到外逐层关闭本视图拥有的弹层
   if (action === 'back' || action === 'backRoot') {
@@ -333,12 +326,6 @@ function handleGamepadAction(action) {
     case 'search':
       focusSearchWithOsk()
       break
-    case 'filterPrev':
-      cycleFilter(-1)
-      break
-    case 'filterNext':
-      cycleFilter(1)
-      break
   }
 }
 
@@ -360,12 +347,15 @@ let disposeGamepadActions = null
 onMounted(async () => {
   document.addEventListener('click', onDocClick)
   disposeGamepadActions = onGamepadAction(handleGamepadAction)
+  // 声明本视图支持的手柄动作，按键提示条据此显示（其他页面不会显示这几项）
+  setViewActions(['search', 'favorite', 'menu'])
   await loadApps()
   await focusFirstApp()
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', onDocClick)
+  clearViewActions()
   disposeGamepadActions?.()
 })
 </script>

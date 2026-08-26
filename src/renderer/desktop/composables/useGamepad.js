@@ -28,17 +28,22 @@ const AXIS = {
 }
 
 /** 按键 → 语义动作。视图层只关心动作名，不关心按键号。 */
+/**
+ * 按键 → 语义动作，对齐主机惯例：
+ *   A 确认 / B 返回（长按回首页）/ LB RB 换页 —— 全局
+ *   Y 搜索、X 收藏、START 菜单 —— 视图级（见 useGamepadActions）
+ *   LT/RT 不再是离散按键：扳机有模拟行程，半按即触发，当翻页键误触率高，
+ *   改为模拟量驱动的快速滚动（正统用法），在 poll 循环里直接读值
+ *   BACK 不绑定（保留给未来）
+ */
 const BUTTON_ACTIONS = {
   [BUTTON.A]: 'confirm',
   [BUTTON.B]: 'back',
   [BUTTON.X]: 'favorite',
-  [BUTTON.Y]: 'menu',
+  [BUTTON.Y]: 'search',
   [BUTTON.LB]: 'tabPrev',
   [BUTTON.RB]: 'tabNext',
-  [BUTTON.LT]: 'filterPrev',
-  [BUTTON.RT]: 'filterNext',
-  [BUTTON.BACK]: 'search',
-  [BUTTON.START]: 'quickPanel',
+  [BUTTON.START]: 'menu',
   [BUTTON.L3]: 'cursorToggle',
   [BUTTON.R3]: 'home',
 }
@@ -68,6 +73,8 @@ const POLL_INTERVAL_MS = 16
 const IDLE_POLL_INTERVAL_MS = 500
 /** 右摇杆满偏时每次轮询滚动的像素数。 */
 const SCROLL_SPEED = 22
+/** 扳机满偏时的快速滚动速度（px/帧），比右摇杆快得多——这是「快速翻到底」用的。 */
+const TRIGGER_SCROLL_SPEED = 60
 /** 左摇杆满偏时光标每次轮询移动的像素数。 */
 const CURSOR_SPEED = 16
 
@@ -80,6 +87,8 @@ export const GAMEPAD_ACTION_EVENT = 'fd-gamepad-action'
  */
 export const gamepadActive = ref(false)
 export const gamepadConnected = ref(false)
+/** 长按 B 的进度（0..1），供环形进度指示消费。 */
+export const backHoldProgress = ref(0)
 
 export function emitGamepadAction(action, detail = {}) {
   window.dispatchEvent(new CustomEvent(GAMEPAD_ACTION_EVENT, { detail: { action, ...detail } }))
@@ -115,6 +124,7 @@ export function useGamepad(options = {}) {
   let activeIndex = null
   const repeatTimers = {}
   let backHoldTimer = null
+  let backHoldRaf = null
   let backHoldConsumed = false
 
   function markActive() {
@@ -148,6 +158,25 @@ export function useGamepad(options = {}) {
       clearTimeout(backHoldTimer)
       backHoldTimer = null
     }
+    if (backHoldRaf) {
+      cancelAnimationFrame(backHoldRaf)
+      backHoldRaf = null
+    }
+    if (backHoldProgress.value > 0) backHoldProgress.value = 0
+  }
+
+  /**
+   * 长按 B 的进度指示（0..1）。主机惯例是按住时出现环形进度——没有它，
+   * 「长按回首页」等于不存在：没人会发现，或纯误触。
+   */
+  function trackBackHold(startedAt) {
+    const tick = () => {
+      const elapsed = performance.now() - startedAt
+      const progress = Math.min(1, elapsed / BACK_HOLD_MS)
+      backHoldProgress.value = progress
+      if (progress < 1) backHoldRaf = requestAnimationFrame(tick)
+    }
+    backHoldRaf = requestAnimationFrame(tick)
   }
 
   function dispatchAction(action) {
@@ -165,11 +194,13 @@ export function useGamepad(options = {}) {
     }
 
     if (index === BUTTON.B) {
-      // 短按返回上一层，长按直接回到顶层
+      // 短按返回上一层，长按直接回到顶层；长按过程有环形进度反馈
       backHoldConsumed = false
       clearBackHold()
+      trackBackHold(performance.now())
       backHoldTimer = setTimeout(() => {
         backHoldTimer = null
+        clearBackHold()
         backHoldConsumed = true
         dispatchAction('backRoot')
       }, BACK_HOLD_MS)
@@ -342,6 +373,17 @@ export function useGamepad(options = {}) {
         markActive()
         onScroll?.(scrollY * SCROLL_SPEED, scrollX * SCROLL_SPEED)
       }
+    }
+
+    // 扳机快速滚动：模拟量直接驱动滚动速度，轻点是慢滚，按到底是全速。
+    // 这是扳机的正统用法——之前把它们当离散翻页键，半按即触发，误触率高。
+    const lt = pad.buttons[BUTTON.LT]?.value || 0
+    const rt = pad.buttons[BUTTON.RT]?.value || 0
+    const triggerScroll = Math.max(lt, rt)
+    if (triggerScroll > 0.55) {
+      markActive()
+      const direction = rt >= lt ? 1 : -1
+      onScroll?.(direction * (triggerScroll - 0.55) * TRIGGER_SCROLL_SPEED)
     }
   }
 

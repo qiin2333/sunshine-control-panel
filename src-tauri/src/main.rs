@@ -67,6 +67,9 @@ fn configure_loopback_proxy_bypass() {
             // 安全：忽略自签名证书错误（连接本地 Sunshine）
             "--ignore-certificate-errors",
             "--proxy-bypass-list=localhost;*.localhost;127.0.0.0/8;[::1]",
+            // UI 音效：手柄输入不属于「用户手势」，不解锁 AudioContext；
+            // 应用自身的导航反馈音不是网页自动播放媒体
+            "--autoplay-policy=no-user-gesture-required",
             // 节流：激进的后台/隐藏标签页定时器节流
             "--enable-features=IntensiveWakeUpThrottling,ThrottleDisplayNoneAndVisibilityHiddenCrossOriginIframes",
             // GPU 优化：禁用 Edge 特有的 UI 覆盖层（减少不必要的 GPU 合成层）

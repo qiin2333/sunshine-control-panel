@@ -121,6 +121,11 @@ const bigScreenItems = computed(() => [
     name: t.value.settings.oskAutoOpen,
     description: t.value.settings.oskAutoOpenDesc,
   },
+  {
+    key: 'navSounds',
+    name: t.value.settings.navSounds,
+    description: t.value.settings.navSoundsDesc,
+  },
 ])
 
 const notificationSettings = computed(() => [  {

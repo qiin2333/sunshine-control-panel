@@ -122,10 +122,31 @@ html[data-fd-gamepad='true'] {
   .app-tile:focus,
   .recent-tile:focus,
   .app-list-item:focus,
-  .nav-item:focus,
   .desktop-card:focus {
     outline: none;
     box-shadow: 0 0 0 2px var(--fd-accent, #00fff5), 0 0 16px rgba(var(--fd-accent-rgb, 0, 255, 245), 0.4);
+
+    // 呼吸微光：同一时刻只有一个焦点元素，动画成本可控。
+    // 大屏远看时静止的环容易和边框混淆，缓慢的明暗让它始终「活着」
+    animation: fd-ring-breathe 2.6s ease-in-out infinite;
+  }
+
+  // 侧边栏项要单独处理：焦点项几乎总是激活项，通用 keyframes 会把
+  // .nav-item.active 的 20px/40px 激活光晕整个覆盖掉。这里用一组
+  // 把激活光晕层合并进去的专属 keyframes，两个反馈都保留；
+  // 静态基线同值，动画被 prefers-reduced-motion 关闭时反馈依然完整
+  .nav-item:focus {
+    outline: none;
+    box-shadow:
+      0 0 0 2px var(--fd-accent, #00fff5),
+      0 0 16px rgba(var(--fd-accent-rgb, 0, 255, 245), 0.4),
+      0 0 20px rgba(var(--fd-accent-rgb, 0, 255, 245), 0.3),
+      0 0 40px rgba(var(--fd-accent-rgb, 0, 255, 245), 0.1);
+    animation: fd-ring-breathe-nav 2.6s ease-in-out infinite;
+  }
+
+  .osk-key:focus {
+    animation: fd-ring-breathe 2.6s ease-in-out infinite;
   }
 
   // 侧边栏项聚焦
@@ -156,6 +177,52 @@ html[data-fd-gamepad='true'] {
   input:focus,
   textarea:focus {
     caret-color: var(--fd-accent, #00fff5);
+  }
+}
+
+// 焦点环呼吸：光晕强度缓慢起伏（只动 box-shadow 的透明度层）
+@keyframes fd-ring-breathe {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 2px var(--fd-accent, #00fff5),
+      0 0 16px rgba(var(--fd-accent-rgb, 0, 255, 245), 0.4);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px var(--fd-accent, #00fff5),
+      0 0 22px rgba(var(--fd-accent-rgb, 0, 255, 245), 0.62);
+  }
+}
+
+// 侧边栏版：焦点环 + 激活光晕（20px/40px）合并呼吸，光晕层两帧恒定
+@keyframes fd-ring-breathe-nav {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 2px var(--fd-accent, #00fff5),
+      0 0 16px rgba(var(--fd-accent-rgb, 0, 255, 245), 0.4),
+      0 0 20px rgba(var(--fd-accent-rgb, 0, 255, 245), 0.3),
+      0 0 40px rgba(var(--fd-accent-rgb, 0, 255, 245), 0.1);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px var(--fd-accent, #00fff5),
+      0 0 22px rgba(var(--fd-accent-rgb, 0, 255, 245), 0.62),
+      0 0 20px rgba(var(--fd-accent-rgb, 0, 255, 245), 0.3),
+      0 0 40px rgba(var(--fd-accent-rgb, 0, 255, 245), 0.1);
+  }
+}
+
+// 减少动态效果偏好：关掉呼吸和入场动画（入场动画在 JS 侧也做了同样判断）
+@media (prefers-reduced-motion: reduce) {
+  html[data-fd-gamepad='true'] .app-tile:focus,
+  html[data-fd-gamepad='true'] .recent-tile:focus,
+  html[data-fd-gamepad='true'] .app-list-item:focus,
+  html[data-fd-gamepad='true'] .nav-item:focus,
+  html[data-fd-gamepad='true'] .desktop-card:focus,
+  html[data-fd-gamepad='true'] .osk-key:focus {
+    animation: none;
   }
 }
 

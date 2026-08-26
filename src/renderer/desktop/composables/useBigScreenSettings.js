@@ -17,6 +17,8 @@ export const defaultBigScreenSettings = {
   gamepadCursorEnabled: true,
   /** 焦点在文本框上按 A 时自动弹出屏幕键盘。 */
   oskAutoOpen: true,
+  /** 手柄导航音效（tick/确认/返回）。 */
+  navSounds: true,
 }
 
 function load() {

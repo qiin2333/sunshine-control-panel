@@ -59,6 +59,8 @@
 
   <OnScreenKeyboard />
 
+  <BackHoldRing :progress="backHoldProgress" />
+
   <ConfirmDialog />
 
   <LaunchOverlay
@@ -97,9 +99,11 @@ import ConfirmDialog from './components/ConfirmDialog.vue'
 import LaunchOverlay from './components/LaunchOverlay.vue'
 import RunningGameBar from './components/RunningGameBar.vue'
 import GamepadLegend from './components/GamepadLegend.vue'
+import BackHoldRing from './components/BackHoldRing.vue'
 
 // 手柄 / 焦点 / 屏幕键盘
-import { emitGamepadAction, gamepadActive, gamepadConnected, useGamepad } from './composables/useGamepad.js'
+import { backHoldProgress, emitGamepadAction, gamepadActive, gamepadConnected, useGamepad } from './composables/useGamepad.js'
+import { playNavSound } from './composables/useNavSound.js'
 import {
   collectFocusables,
   confirmFocused,
@@ -472,7 +476,10 @@ function handleBack(deep) {
   }
   if (deep || activeNav.value !== 'apps') {
     activeNav.value = 'apps'
+    return
   }
+  // 已在应用库顶层：短按 B 给一个出口（退出大屏模式），而不是无声无息
+  requestExitShell()
 }
 
 function handleCursorToggle() {
@@ -485,15 +492,35 @@ function focusSidebar() {
   focusElement(active || document.querySelector('.desktop-sidebar .nav-item'))
 }
 
+/** 顶层短按 B：主机惯例是「有出口」——确认后退出大屏模式。 */
+async function requestExitShell() {
+  const accepted = await requestConfirm({
+    title: t.value.gamepadLegend.exitTitle,
+    message: t.value.gamepadLegend.exitMessage,
+    confirmLabel: t.value.gamepadLegend.exitConfirm,
+    danger: false,
+  })
+  if (!accepted) return
+  try {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window')
+    await getCurrentWindow().close()
+  } catch {
+    window.close()
+  }
+}
+
 function handleAction(action) {
   switch (action) {
     case 'confirm':
+      playNavSound('confirm')
       handleConfirm()
       return
     case 'back':
+      playNavSound('back')
       handleBack(false)
       return
     case 'backRoot':
+      playNavSound('home')
       handleBack(true)
       return
     case 'cursorToggle':
@@ -521,10 +548,8 @@ function handleAction(action) {
     case 'home':
       activeNav.value = 'apps'
       return
-    case 'quickPanel':
-      focusSidebar()
-      return
     default:
+      // search / favorite / menu 是视图级动作，由各视图决定是否响应
       emitGamepadAction(action)
   }
 }
@@ -532,7 +557,8 @@ function handleAction(action) {
 // 手柄状态是模块级单例，这里只负责驱动它
 useGamepad({
   onNavigate(direction) {
-    navigateFocus(direction)
+    const moved = navigateFocus(direction)
+    if (moved) playNavSound('tick')
   },
   onScroll(deltaY, deltaX) {
     if (cursorEnabled.value) scrollAtCursor(deltaY, deltaX)
@@ -556,10 +582,23 @@ watch(
   { immediate: true }
 )
 
-// 退出手柄模式时顺手关掉光标，避免留下一个不动的指针
-watch(gamepadActive, (active) => {
-  if (!active && cursorEnabled.value) setCursorEnabled(false)
-})
+// 首次拿起手柄：如果焦点还没建立（首次输入前 focus 在 body），把它放到侧边栏
+// 当前项上。必须 flush:'sync'——useGamepad 在同一调用栈里先置 gamepadActive
+// 再同步调 onNavigate，默认 'pre' 的 watcher 会在 navigateFocus 之后才跑，
+// 那时焦点已不在 body 上，focusSidebar 永远被跳过
+watch(
+  gamepadActive,
+  (active) => {
+    if (!active) {
+      if (cursorEnabled.value) setCursorEnabled(false)
+      return
+    }
+    if (!document.activeElement || document.activeElement === document.body) {
+      focusSidebar()
+    }
+  },
+  { flush: 'sync' }
+)
 </script>
 
 <style lang="less" scoped>

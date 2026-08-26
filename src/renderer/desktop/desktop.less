@@ -126,6 +126,13 @@ html[data-fd-gamepad='true'] {
   .desktop-card:focus {
     outline: none;
     box-shadow: 0 0 0 2px var(--fd-accent, #00fff5), 0 0 16px rgba(var(--fd-accent-rgb, 0, 255, 245), 0.4);
+    // 呼吸微光：同一时刻只有一个焦点元素，动画成本可控。
+    // 大屏远看时静止的环容易和边框混淆，缓慢的明暗让它始终「活着」
+    animation: fd-ring-breathe 2.6s ease-in-out infinite;
+  }
+
+  .osk-key:focus {
+    animation: fd-ring-breathe 2.6s ease-in-out infinite;
   }
 
   // 侧边栏项聚焦
@@ -160,6 +167,33 @@ html[data-fd-gamepad='true'] {
 }
 
 // 非手柄模式下隐藏焦点环（避免鼠标点击时出现）
+// 焦点环呼吸：光晕强度在 0.3 ~ 0.55 之间缓慢起伏（只动 box-shadow 的透明度层）
+@keyframes fd-ring-breathe {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 2px var(--fd-accent, #00fff5),
+      0 0 16px rgba(var(--fd-accent-rgb, 0, 255, 245), 0.4);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px var(--fd-accent, #00fff5),
+      0 0 22px rgba(var(--fd-accent-rgb, 0, 255, 245), 0.62);
+  }
+}
+
+// 减少动态效果偏好：关掉呼吸和入场动画（入场动画在 JS 侧也做了同样判断）
+@media (prefers-reduced-motion: reduce) {
+  html[data-fd-gamepad='true'] .app-tile:focus,
+  html[data-fd-gamepad='true'] .recent-tile:focus,
+  html[data-fd-gamepad='true'] .app-list-item:focus,
+  html[data-fd-gamepad='true'] .nav-item:focus,
+  html[data-fd-gamepad='true'] .desktop-card:focus,
+  html[data-fd-gamepad='true'] .osk-key:focus {
+    animation: none;
+  }
+}
+
 html:not([data-fd-gamepad='true']) {
   .desktop-window *:focus,
   .context-menu *:focus {

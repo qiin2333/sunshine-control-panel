@@ -148,10 +148,45 @@ function readingOrder(candidates) {
   return readingOrderIndexes(rects).map((index) => candidates[index])
 }
 
-export function focusElement(element) {
+/** 方向 → 焦点落点入场时的位移（从那个方向「滑入」）。 */
+const ENTRY_OFFSET = {
+  up: '0 10px',
+  down: '0 -10px',
+  left: '10px 0',
+  right: '-10px 0',
+}
+
+/**
+ * 焦点移动的入场动画：从移动方向的反侧轻微滑入并落定。
+ * 用 WAAPI + composite: 'add'，与元素自身的 CSS transform（如卡片悬浮位移）
+ * 叠加而不是覆盖；prefers-reduced-motion 时完全跳过。
+ */
+function playEntryAnimation(element, direction) {
+  if (!direction || !ENTRY_OFFSET[direction]) return
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+  const offset = ENTRY_OFFSET[direction]
+  try {
+    element.animate(
+      [
+        { transform: `translate(${offset}) scale(0.97)`, opacity: 0.55 },
+        { transform: 'none', opacity: 1 },
+      ],
+      {
+        duration: 170,
+        easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+        composite: 'add',
+      }
+    )
+  } catch {
+    // WAAPI 不可用（旧内核）时静默退化为无动画
+  }
+}
+
+export function focusElement(element, { direction = null } = {}) {
   if (!element) return false
   element.focus({ preventScroll: true })
   element.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' })
+  if (direction) playEntryAnimation(element, direction)
   return true
 }
 
@@ -170,14 +205,14 @@ export function navigateFocus(direction, root = activeScopeRoot()) {
   }
 
   const target = bestCandidate(direction, current, focusables)
-  if (target) return focusElement(target)
+  if (target) return focusElement(target, { direction })
 
   // 行末/列尾按左右时按阅读顺序换行，避免「卡住不动」
   if (direction === 'left' || direction === 'right') {
     const ordered = readingOrder(focusables)
     const index = ordered.indexOf(current)
     const next = ordered[direction === 'right' ? index + 1 : index - 1]
-    if (next) return focusElement(next)
+    if (next) return focusElement(next, { direction })
   }
 
   return false

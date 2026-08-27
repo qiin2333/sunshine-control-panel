@@ -87,6 +87,8 @@ export const GAMEPAD_ACTION_EVENT = 'fd-gamepad-action'
  */
 export const gamepadActive = ref(false)
 export const gamepadConnected = ref(false)
+/** 当前活跃手柄的 id 字符串（含厂商标识），布局识别据此推导。 */
+export const gamepadName = ref('')
 /** 长按 B 的进度（0..1），供环形进度指示消费。 */
 export const backHoldProgress = ref(0)
 
@@ -300,6 +302,8 @@ export function useGamepad(options = {}) {
   function switchActivePad(index) {
     if (activeIndex === index) return
     activeIndex = index
+    // 活跃手柄变了，id（布局识别的数据源）跟着换
+    gamepadName.value = connectedPads().find((pad) => pad.index === index)?.id || gamepadName.value
     // 换手柄时旧的按住状态不再有效
     stopAllRepeats()
     clearBackHold()
@@ -405,8 +409,10 @@ export function useGamepad(options = {}) {
     if (wanted !== currentInterval) startPolling(wanted)
   }
 
-  function onGamepadConnected() {
+  function onGamepadConnected(event) {
     gamepadConnected.value = true
+    // 尚无活跃手柄时先用接入者的 id，提示条不用等第一次输入才识别布局
+    if (!gamepadName.value && event?.gamepad?.id) gamepadName.value = event.gamepad.id
     startPolling(POLL_INTERVAL_MS)
   }
 

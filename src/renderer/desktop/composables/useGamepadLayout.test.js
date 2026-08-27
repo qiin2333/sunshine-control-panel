@@ -42,6 +42,9 @@ test('大小写与厂商号位置不敏感；"Xbox ... Wireless Controller" 不�
   // 锚定的 ^wireless controller：蓝牙 Sony 开头命中，Xbox 品牌词组不命中
   assert.equal(detectLayout('Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 09cc)'), 'ps')
   assert.equal(detectLayout('Xbox Elite Wireless Controller (STANDARD GAMEPAD Vendor: 045e)'), 'xbox')
+  // vendor 号锚定到 Vendor 字段：非 Sony 手柄的 Product 恰为 054c 不得误判
+  assert.equal(detectLayout('Generic Pad (STANDARD GAMEPAD Vendor: 0079 Product: 054c)'), 'xbox')
+  assert.equal(detectLayout('Xbox One Controller (STANDARD GAMEPAD Vendor: 045e Product: 054c)'), 'xbox')
 })
 
 test('两套布局的按键符号语义对应：confirm/back 互为镜像', () => {

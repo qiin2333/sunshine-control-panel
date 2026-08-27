@@ -21,7 +21,9 @@ import { gamepadName } from './useGamepad.js'
  * 第三方驱动（8BitDo 等接收器）。
  */
 const PS_PATTERNS = [
-  /054c/i, // Sony vendor id
+  // Sony vendor id。必须锚定到 Vendor 字段：标准 id 里同时有 Product，
+  // 非 Sony 手柄的 Product 恰为 054c 时裸匹配会误判
+  /\bvendor:\s*054c\b/i,
   /dualsense/i,
   /dualshock/i,
   /playstation/i,

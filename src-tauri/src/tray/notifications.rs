@@ -36,6 +36,21 @@ struct NotificationContent {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum NotificationAction {
     OpenPin,
+    ConfirmAudioOutput {
+        notification_id: u64,
+        allow_label: &'static str,
+        keep_label: &'static str,
+    },
+}
+
+#[cfg(target_os = "windows")]
+enum NotificationInteraction {
+    Activated(Option<String>),
+    Dismissed,
+}
+
+fn audio_output_activation_is_allowed(selected_action: Option<&str>) -> bool {
+    selected_action == Some("allow")
 }
 
 #[cfg(target_os = "windows")]
@@ -241,6 +256,20 @@ fn core_notification_content(
         };
     }
 
+    if notification.action == "confirm_audio_output" {
+        let target_name = if notification.message.trim().is_empty() {
+            strings.audio_output_unknown_device.to_string()
+        } else {
+            super::menu::compact_menu_text(notification.message.trim(), 96)
+        };
+        return NotificationContent {
+            title: strings.audio_output_change_title.to_string(),
+            body: strings
+                .audio_output_change_body
+                .replace("{name}", &target_name),
+        };
+    }
+
     NotificationContent {
         title: if notification.title.trim().is_empty() {
             strings.notification.to_string()
@@ -288,8 +317,18 @@ pub(super) fn show_core_notification_if_new<R: Runtime>(
 
     let supports_actions = supports_actions();
     let content = core_notification_content(super::get_tray_strings(), state, supports_actions);
-    let action = (notification.action == "open_pin" && supports_actions)
-        .then_some(NotificationAction::OpenPin);
+    let action = if notification.action == "open_pin" && supports_actions {
+        Some(NotificationAction::OpenPin)
+    } else if notification.action == "confirm_audio_output" && supports_actions {
+        let strings = super::get_tray_strings();
+        Some(NotificationAction::ConfirmAudioOutput {
+            notification_id: notification.id,
+            allow_label: strings.audio_output_change_allow,
+            keep_label: strings.audio_output_change_keep,
+        })
+    } else {
+        None
+    };
     match show(app, &content.title, &content.body, action) {
         Ok(()) => {
             *LAST_SHOWN_NOTIFICATION.lock().unwrap() = Some(key);
@@ -352,7 +391,7 @@ fn show_windows<R: Runtime>(
     action: Option<NotificationAction>,
 ) -> Result<(), String> {
     use std::sync::mpsc;
-    use tauri_winrt_notification::{IconCrop, Sound, Toast};
+    use tauri_winrt_notification::{Duration, IconCrop, Sound, Toast};
 
     let icon_path = ensure_windows_notification_icon()?;
     let mut toast = Toast::new(&app.config().identifier)
@@ -370,15 +409,27 @@ fn show_windows<R: Runtime>(
         return Ok(());
     };
 
+    if let NotificationAction::ConfirmAudioOutput {
+        allow_label,
+        keep_label,
+        ..
+    } = action
+    {
+        toast = toast
+            .duration(Duration::Long)
+            .add_button(allow_label, "allow")
+            .add_button(keep_label, "keep");
+    }
+
     let (sender, receiver) = mpsc::channel();
     let activated_sender = sender.clone();
     toast = toast
         .on_activated(move |selected_action| {
-            let _ = activated_sender.send(selected_action.is_none());
+            let _ = activated_sender.send(NotificationInteraction::Activated(selected_action));
             Ok(())
         })
         .on_dismissed(move |_| {
-            let _ = sender.send(false);
+            let _ = sender.send(NotificationInteraction::Dismissed);
             Ok(())
         });
     toast
@@ -389,11 +440,25 @@ fn show_windows<R: Runtime>(
     std::thread::Builder::new()
         .name("sunshine-notification-action".to_string())
         .spawn(move || {
-            if receiver.recv().unwrap_or(false) {
-                match action {
-                    NotificationAction::OpenPin => {
+            let interaction = receiver
+                .recv()
+                .unwrap_or(NotificationInteraction::Dismissed);
+            match action {
+                NotificationAction::OpenPin => {
+                    if matches!(interaction, NotificationInteraction::Activated(None)) {
                         super::actions::open_pairing_window(&app_handle);
                     }
+                }
+                NotificationAction::ConfirmAudioOutput {
+                    notification_id, ..
+                } => {
+                    let accepted = match interaction {
+                        NotificationInteraction::Activated(selected_action) => {
+                            audio_output_activation_is_allowed(selected_action.as_deref())
+                        }
+                        NotificationInteraction::Dismissed => false,
+                    };
+                    super::actions::decide_notification(&app_handle, notification_id, accepted);
                 }
             }
         })
@@ -412,6 +477,27 @@ mod tests {
             instance_id: instance_id.to_string(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn only_explicit_allow_activation_approves_audio_output_change() {
+        assert!(audio_output_activation_is_allowed(Some("allow")));
+        assert!(!audio_output_activation_is_allowed(Some("keep")));
+        assert!(!audio_output_activation_is_allowed(Some("unexpected")));
+        assert!(!audio_output_activation_is_allowed(None));
+    }
+
+    #[test]
+    fn audio_output_notification_uses_localized_device_name() {
+        let mut state = tray_state("notification", "core-instance");
+        state.notification.active = true;
+        state.notification.id = 42;
+        state.notification.action = "confirm_audio_output".to_string();
+        state.notification.message = "Speakers (Realtek Audio)".to_string();
+
+        let content = core_notification_content(&super::super::ZH_STRINGS, &state, true);
+        assert_eq!(content.title, "音频输出切换已暂停");
+        assert!(content.body.contains("Speakers (Realtek Audio)"));
     }
 
     #[test]

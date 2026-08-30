@@ -674,6 +674,18 @@ mod tray_protocol_tests {
         assert!(validate_config_save_response(r#"{}"#).is_err());
         assert!(validate_config_save_response("not json").is_err());
     }
+
+    #[test]
+    fn notification_decision_body_contains_id_and_choice() {
+        assert_eq!(
+            tray_action_request_body("notification_decide", Some(true), Some(42), None),
+            serde_json::json!({
+                "action": "notification_decide",
+                "enabled": true,
+                "notification_id": 42
+            })
+        );
+    }
 }
 
 #[derive(Debug)]
@@ -713,16 +725,7 @@ async fn post_tray_action_request(
         .map_err(TrayActionRequestError::Definite)?;
 
     let client = create_https_client().map_err(TrayActionRequestError::Definite)?;
-    let mut body = serde_json::json!({ "action": action });
-    if let Some(enabled) = enabled {
-        body["enabled"] = serde_json::json!(enabled);
-    }
-    if let Some(notification_id) = notification_id {
-        body["notification_id"] = serde_json::json!(notification_id);
-    }
-    if let Some(operation_id) = operation_id {
-        body["operation_id"] = serde_json::json!(operation_id);
-    }
+    let body = tray_action_request_body(action, enabled, notification_id, operation_id);
 
     let response = client
         .post(&action_url)
@@ -763,6 +766,25 @@ async fn post_tray_action_request(
     Ok(result)
 }
 
+fn tray_action_request_body(
+    action: &str,
+    enabled: Option<bool>,
+    notification_id: Option<u64>,
+    operation_id: Option<u64>,
+) -> serde_json::Value {
+    let mut body = serde_json::json!({ "action": action });
+    if let Some(enabled) = enabled {
+        body["enabled"] = serde_json::json!(enabled);
+    }
+    if let Some(notification_id) = notification_id {
+        body["notification_id"] = serde_json::json!(notification_id);
+    }
+    if let Some(operation_id) = operation_id {
+        body["operation_id"] = serde_json::json!(operation_id);
+    }
+    body
+}
+
 pub async fn post_tray_action(
     action: &str,
     enabled: Option<bool>,
@@ -785,6 +807,20 @@ pub async fn acknowledge_tray_notification(
     post_tray_action_request("notification_ack", None, Some(notification_id), None)
         .await
         .map_err(TrayActionRequestError::into_message)
+}
+
+pub async fn decide_tray_notification(
+    notification_id: u64,
+    accepted: bool,
+) -> Result<TrayActionResponse, String> {
+    post_tray_action_request(
+        "notification_decide",
+        Some(accepted),
+        Some(notification_id),
+        None,
+    )
+    .await
+    .map_err(TrayActionRequestError::into_message)
 }
 
 pub async fn confirm_vdd_keep(operation_id: u64, keep: bool) -> Result<TrayActionResponse, String> {

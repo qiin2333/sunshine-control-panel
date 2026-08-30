@@ -181,6 +181,27 @@ fn acknowledge_notification<R: Runtime>(app: &AppHandle<R>, notification_id: u64
     });
 }
 
+pub(super) fn decide_notification<R: Runtime>(
+    app: &AppHandle<R>,
+    notification_id: u64,
+    accepted: bool,
+) {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        match sunshine::decide_tray_notification(notification_id, accepted).await {
+            Ok(response) => {
+                if let Some(state) = response.tray_state {
+                    apply_tray_state_on_main_thread(&app_handle, state);
+                }
+            }
+            Err(e) => debug!(
+                "Notification decision {} could not be applied: {}",
+                notification_id, e
+            ),
+        }
+    });
+}
+
 fn run_vdd_toggle_action<R: Runtime + 'static>(
     app: &AppHandle<R>,
     action: &'static str,

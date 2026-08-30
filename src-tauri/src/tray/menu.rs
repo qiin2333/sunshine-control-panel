@@ -68,6 +68,10 @@ fn recovery_action_enabled(connection: CoreConnectionState, recovery_in_progress
     connection == CoreConnectionState::Disconnected && !recovery_in_progress
 }
 
+fn notification_has_menu_action(notification: &sunshine::TrayNotificationState) -> bool {
+    notification.active && notification.action != "confirm_audio_output"
+}
+
 pub(super) fn tray_notification_label(s: &TrayStrings, state: &sunshine::TrayState) -> String {
     let notification = &state.notification;
     if notification.action == "open_pin" {
@@ -101,7 +105,7 @@ pub(super) fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<M
     let core_connected = connection == CoreConnectionState::Connected;
     let active_notification = tray_state
         .as_ref()
-        .filter(|state| state.notification.active)
+        .filter(|state| notification_has_menu_action(&state.notification))
         .map(|state| state.notification.clone());
     let (
         core_tray_state_available,
@@ -465,5 +469,16 @@ mod tests {
             CoreConnectionState::Connected,
             false
         ));
+    }
+
+    #[test]
+    fn audio_output_confirmation_is_not_a_tray_menu_action() {
+        let notification = sunshine::TrayNotificationState {
+            active: true,
+            action: "confirm_audio_output".to_string(),
+            ..Default::default()
+        };
+
+        assert!(!notification_has_menu_action(&notification));
     }
 }

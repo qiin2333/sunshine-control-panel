@@ -308,6 +308,75 @@
   }
 }
 
+// ============ USB/IP 设备管理 ============
+.chub-usb-setup {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px dashed var(--el-border-color);
+
+  p {
+    margin: 0;
+    color: var(--el-text-color-secondary);
+    font-size: 13px;
+  }
+}
+.chub-usb-discovery {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 118px auto;
+  gap: 10px;
+  align-items: center;
+}
+.chub-usb-list {
+  display: grid;
+  gap: 9px;
+  margin-top: 14px;
+}
+.chub-usb-device {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--el-border-color-lighter);
+  background: color-mix(in srgb, var(--chub-window-fill) 88%, transparent);
+}
+.chub-usb-device-body {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 2px;
+
+  strong,
+  span,
+  small {
+    overflow-wrap: anywhere;
+  }
+  strong { font-size: 13px; }
+  span,
+  small {
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+  }
+}
+.chub-usb-port {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  flex: 0 0 36px;
+  border: 2px solid var(--chub-window-line);
+  color: var(--chub-primary);
+  font-family: var(--pix-font);
+  font-size: 13px;
+}
+.chub-usb-attached-section {
+  margin-top: 28px;
+}
+
 // ============ 分区 ============
 .chub-section-head {
   display: flex;
@@ -585,6 +654,17 @@
   .chub-mic-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+  .chub-usb-setup,
+  .chub-usb-device {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .chub-usb-discovery {
+    grid-template-columns: 1fr;
+  }
+  .chub-usb-port {
+    align-self: flex-start;
   }
 }
 

@@ -138,6 +138,21 @@ export const dualsense = {
   selfTest: (profile) => wrapResult('dualsense_self_test', { profile }),
 }
 
+export const usbip = {
+  getStatus: () => wrapResult('usbip_get_status'),
+  installTransport: () => wrapResult('usbip_install_transport'),
+  listRemote: (remote, tcpPort = 3240) => wrapResult('usbip_list_remote', {
+    remote,
+    tcpPort,
+  }),
+  attach: (remote, busId, tcpPort = 3240) => wrapResult('usbip_attach', {
+    remote,
+    busId,
+    tcpPort,
+  }),
+  detach: (port) => wrapResult('usbip_detach', { port }),
+}
+
 // ─── Sunshine 配置 ───────────────────────────────────────
 
 export const sunshine = {
@@ -218,6 +233,7 @@ export default {
   controllerHub,
   virtualMicrophone,
   dualsense,
+  usbip,
   sunshine,
   tools,
   fileMapping,

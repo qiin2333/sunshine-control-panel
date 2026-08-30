@@ -19,6 +19,12 @@ mod tests;
 pub use commands::*;
 #[cfg(target_os = "windows")]
 pub(crate) use elevated::try_handle_elevated_command;
+#[cfg(target_os = "windows")]
+pub(crate) use install::ensure_pinned_usbip;
+#[cfg(target_os = "windows")]
+pub(crate) use packages::{UsbipInstallResult, component_root};
+#[cfg(target_os = "windows")]
+pub(crate) use probe::ensure_no_active_session;
 
 #[cfg(test)]
 pub(crate) use {
@@ -33,7 +39,7 @@ pub(crate) use {
         rollback_activated_component,
     },
     packages::{
-        InstalledComponentManifest, LocalComponentKind, SidecarPackageManifest, UsbipInstallResult,
+        InstalledComponentManifest, LocalComponentKind, SidecarPackageManifest,
         classify_local_component_packages, component_matches_current_runtime,
         component_update_available, local_component_kind, purge_stale_handoff_packages,
         read_sidecar_package_manifest, sha256_file, validate_component_integrity,

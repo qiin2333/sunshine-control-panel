@@ -1,6 +1,6 @@
 <template>
   <section class="ds5-page">
-    <header class="ds5-page-header">
+    <header v-if="!embedded" class="ds5-page-header">
       <p class="ds5-eyebrow">{{ t.controllers.eyebrow }}</p>
       <div class="ds5-title-row">
         <h1>{{ t.controllers.title }}</h1>
@@ -269,6 +269,10 @@ import { useDualSenseSettings } from '../composables/useDualSenseSettings.js'
 
 const { t } = useI18n()
 const emit = defineEmits(['open-controller-meta'])
+defineProps({
+  // 控制器中心内嵌时隐藏独立页头（标题由外壳提供）
+  embedded: { type: Boolean, default: false },
+})
 
 const {
   status, statusKnown, saving, refreshing,

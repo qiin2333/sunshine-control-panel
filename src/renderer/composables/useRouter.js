@@ -12,6 +12,8 @@ export const ROUTES = {
   CONTROLLERS: 'controllers',
   // Compatibility alias for callers that still navigate to the original page id.
   DUALSENSE: 'dualsense',
+  // 控制器中心（多控制器类型原型，dev-only）
+  CONTROLLERS_HUB: 'controllers-hub',
 }
 
 /**
@@ -45,13 +47,18 @@ const routeConfig = {
   },
   [ROUTES.CONTROLLERS]: {
     name: ROUTES.CONTROLLERS,
-    component: 'DualSenseSettings',
-    title: '控制器',
+    component: 'ControllersHub',
+    title: '设备中心',
   },
   [ROUTES.DUALSENSE]: {
     name: ROUTES.DUALSENSE,
-    component: 'DualSenseSettings',
-    title: '控制器',
+    component: 'ControllersHub',
+    title: '设备中心',
+  },
+  [ROUTES.CONTROLLERS_HUB]: {
+    name: ROUTES.CONTROLLERS_HUB,
+    component: 'ControllersHub',
+    title: '设备中心',
   },
 }
 

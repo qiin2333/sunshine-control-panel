@@ -81,11 +81,13 @@ export function createManagementTools(ctx) {
       visible: import.meta.env.DEV,
     },
     {
-      id: 'controllers',
+      id: 'device-hub',
       icon: IconGamepad,
-      label: ctx.t.value.sidebar.controllers,
+      label: ctx.t.value.sidebar.deviceHub,
       action: ctx.openControllers,
-      isActive: () => ctx.router.isRoute(ROUTES.CONTROLLERS) || ctx.router.isRoute(ROUTES.DUALSENSE),
+      isActive: () => ctx.router.isRoute(ROUTES.CONTROLLERS)
+        || ctx.router.isRoute(ROUTES.DUALSENSE)
+        || ctx.router.isRoute(ROUTES.CONTROLLERS_HUB),
     },
     {
       id: 'ai-assistant',

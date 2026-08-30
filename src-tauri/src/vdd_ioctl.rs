@@ -8,8 +8,6 @@
 //! Commands use a UTF-16 LE, NUL-terminated buffer (e.g. `"RELOAD_DRIVER"`,
 //! `"CREATEMONITOR {GUID}:[..][..]"`, `"DESTROYMONITOR"`).
 
-#![cfg(target_os = "windows")]
-
 use windows::Win32::Devices::DeviceAndDriverInstallation::{
     DIGCF_DEVICEINTERFACE, DIGCF_PRESENT, HDEVINFO, SP_DEVICE_INTERFACE_DATA,
     SetupDiDestroyDeviceInfoList, SetupDiEnumDeviceInterfaces, SetupDiGetClassDevsW,

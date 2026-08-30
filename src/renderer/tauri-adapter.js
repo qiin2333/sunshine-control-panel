@@ -101,6 +101,25 @@ export const vigem = {
   uninstall: () => wrapResult('uninstall_vigem_driver'),
 }
 
+// ─── 控制器中心（仿真模式 / DS4 行为 / DSU） ───────────────
+
+export const controllerHub = {
+  getConfig: () => wrapResult('get_controller_hub_config'),
+  saveConfig: (patch = {}) => wrapResult('save_controller_hub_config', {
+    gamepad: patch.gamepad,
+    motionAsDs4: patch.motion_as_ds4,
+    touchpadAsDs4: patch.touchpad_as_ds4,
+    ds4BackAsTouchpadClick: patch.ds4_back_as_touchpad_click,
+    enableDsuServer: patch.enable_dsu_server,
+    dsuServerPort: patch.dsu_server_port,
+  }),
+}
+
+export const virtualMicrophone = {
+  getStatus: () => wrapResult('get_virtual_microphone_status'),
+  test: () => wrapResult('test_virtual_microphone'),
+}
+
 export const dualsense = {
   getStatus: () => wrapResult('dualsense_get_status'),
   logPanelOpened: () => wrapResult('dualsense_log_panel_opened'),
@@ -196,6 +215,8 @@ export default {
   vdd,
   vmouse,
   vigem,
+  controllerHub,
+  virtualMicrophone,
   dualsense,
   sunshine,
   tools,

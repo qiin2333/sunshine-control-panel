@@ -87,8 +87,8 @@ pub async fn dualsense_install(
             ElevatedOperation::InstallLocal
         };
         let data = run_elevated_operation(Some(&app), operation, &selected_packages).await?;
-        return serde_json::from_value(data)
-            .map_err(|error| format!("DS5-PKG-003: invalid administrator result: {error}"));
+        serde_json::from_value(data)
+            .map_err(|error| format!("DS5-PKG-003: invalid administrator result: {error}"))
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -186,8 +186,8 @@ pub async fn dualsense_uninstall() -> Result<DualSenseStatus, String> {
     #[cfg(target_os = "windows")]
     {
         let data = run_elevated_operation(None, ElevatedOperation::Uninstall, &[]).await?;
-        return serde_json::from_value(data)
-            .map_err(|error| format!("DS5-PKG-003: invalid administrator result: {error}"));
+        serde_json::from_value(data)
+            .map_err(|error| format!("DS5-PKG-003: invalid administrator result: {error}"))
     }
     #[cfg(not(target_os = "windows"))]
     {

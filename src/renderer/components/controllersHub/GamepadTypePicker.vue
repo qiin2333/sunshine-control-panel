@@ -206,11 +206,15 @@ async function saveAppGamepad(index, value) {
   const prev = app.gamepad || ''
   app.gamepad = value
   appSavingIndex.value = index
+  let timeoutTimer = null
   try {
+    const controller = new AbortController()
+    timeoutTimer = setTimeout(() => controller.abort('timeout'), APPS_TIMEOUT_MS)
     const resp = await fetch(`${proxyUrl}/api/apps`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ apps: apps.value, editApp: { index, ...app } }),
+      signal: controller.signal,
     })
     if (resp.status === 409) {
       app.gamepad = prev
@@ -224,6 +228,7 @@ async function saveAppGamepad(index, value) {
     app.gamepad = prev
     ElMessage.error(t.value.controllersHub.emulation.appSaveFailed)
   } finally {
+    if (timeoutTimer !== null) clearTimeout(timeoutTimer)
     appSavingIndex.value = -1
   }
 }

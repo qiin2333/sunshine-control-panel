@@ -1,6 +1,6 @@
 //! Install, self-test, and uninstall orchestration.
 
-use log::warn;
+use log::{info, warn};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs::{self, File};
@@ -43,6 +43,7 @@ pub(crate) fn classify_usbip_installer_exit_code(
 }
 
 pub(crate) fn sidecar_source_dir() -> Result<PathBuf, String> {
+    #[cfg(debug_assertions)]
     if let Some(override_dir) = std::env::var_os("SUNSHINE_DS5_SIDECAR_DIR") {
         let path = PathBuf::from(override_dir);
         if path.join(SIDECAR_EXE).is_file() {
@@ -507,6 +508,24 @@ pub(crate) fn activate_staged_component(
     Ok(())
 }
 
+/// Restores the last valid component when a previous process stopped between
+/// moving `active` aside and promoting the staged directory.
+pub(crate) fn recover_interrupted_activation(active: &Path, backup: &Path) -> Result<bool, String> {
+    if active.exists() || !backup.exists() {
+        return Ok(false);
+    }
+    validate_component_backup(backup).map_err(|error| {
+        format!("DS5-PKG-002: interrupted activation backup is invalid: {error}")
+    })?;
+    retry_component_fs_operation(|| fs::rename(backup, active)).map_err(|error| {
+        format!(
+            "DS5-PKG-002: {}",
+            component_fs_error("unable to recover interrupted component activation", &error)
+        )
+    })?;
+    Ok(true)
+}
+
 pub(crate) async fn install_error_after_rollback(
     error: String,
     active: &Path,
@@ -558,6 +577,18 @@ pub(crate) async fn dualsense_install_impl(
     };
     let root = component_root();
     fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    let active = active_dir();
+    let backup = root.join("previous");
+    let recovery_active = active.clone();
+    let recovery_backup = backup.clone();
+    if tokio::task::spawn_blocking(move || {
+        recover_interrupted_activation(&recovery_active, &recovery_backup)
+    })
+    .await
+    .map_err(|error| format!("DS5-PKG-002: component recovery task failed: {error}"))??
+    {
+        info!("Recovered the previous DualSense component after an interrupted activation");
+    }
     let operation = format!("staging-{}", std::process::id());
     let staging = root.join(&operation);
     if staging.exists() {
@@ -585,8 +616,6 @@ pub(crate) async fn dualsense_install_impl(
     purge_stale_handoff_packages(&root, &current_handoff_packages);
     let archive_path = root.join(format!("{operation}-hidmaestro.partial"));
     let sidecar_archive_path = root.join(format!("{operation}-sidecar.partial.zip"));
-    let active = active_dir();
-    let backup = root.join("previous");
     let had_previous = active.exists();
     let install_result: Result<UsbipInstallResult, String> = async {
         let usbip_install_result =
@@ -803,8 +832,17 @@ pub(crate) async fn dualsense_uninstall_impl() -> Result<DualSenseStatus, String
     }
     let root = component_root();
     if root.exists() {
-        fs::remove_dir_all(&root)
-            .map_err(|error| format!("DS5-PKG-002: unable to remove component: {error}"))?;
+        tokio::task::spawn_blocking(move || {
+            retry_component_fs_operation(|| fs::remove_dir_all(&root))
+        })
+        .await
+        .map_err(|error| format!("DS5-PKG-002: component removal task failed: {error}"))?
+        .map_err(|error| {
+            format!(
+                "DS5-PKG-002: {}",
+                component_fs_error("unable to remove component", &error)
+            )
+        })?;
     }
     match dualsense_get_status().await {
         Ok(status) => Ok(status),

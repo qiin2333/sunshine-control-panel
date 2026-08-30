@@ -1,4 +1,3 @@
-#![cfg(target_os = "windows")]
 //! Elevated (administrator) DualSense operations over a local named pipe.
 
 use once_cell::sync::OnceCell;

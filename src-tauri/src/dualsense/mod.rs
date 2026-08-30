@@ -29,13 +29,15 @@ pub(crate) use {
     },
     install::{
         classify_usbip_installer_exit_code, component_fs_error, copy_runtime_files,
-        extract_sidecar_package, retry_component_fs_operation, rollback_activated_component,
+        extract_sidecar_package, recover_interrupted_activation, retry_component_fs_operation,
+        rollback_activated_component,
     },
     packages::{
         InstalledComponentManifest, LocalComponentKind, SidecarPackageManifest, UsbipInstallResult,
         classify_local_component_packages, component_matches_current_runtime,
         component_update_available, local_component_kind, purge_stale_handoff_packages,
-        read_sidecar_package_manifest, sha256_file, validate_sidecar_package_manifest,
+        read_sidecar_package_manifest, sha256_file, validate_component_integrity,
+        validate_sidecar_package_manifest,
     },
     probe::{
         component_state, component_test_failure, local_uninstalled_status, pinned_usbip_installed,

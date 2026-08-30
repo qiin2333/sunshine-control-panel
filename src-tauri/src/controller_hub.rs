@@ -46,7 +46,7 @@ const MAX_DEVICE_API_RESPONSE_BYTES: usize = 64 * 1024;
 static CONTROLLER_HUB_CONFIG_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 async fn read_device_api_response<T: DeserializeOwned>(
-    response: reqwest::Response,
+    mut response: reqwest::Response,
     operation: &str,
 ) -> Result<T, String> {
     let status = response.status();
@@ -56,12 +56,21 @@ async fn read_device_api_response<T: DeserializeOwned>(
     {
         return Err(format!("{operation} response exceeds 64 KiB"));
     }
-    let bytes = response
-        .bytes()
+    let mut bytes = Vec::with_capacity(
+        response
+            .content_length()
+            .unwrap_or_default()
+            .min(MAX_DEVICE_API_RESPONSE_BYTES as u64) as usize,
+    );
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .map_err(|error| format!("Unable to read {operation} response: {error}"))?;
-    if bytes.len() > MAX_DEVICE_API_RESPONSE_BYTES {
-        return Err(format!("{operation} response exceeds 64 KiB"));
+        .map_err(|error| format!("Unable to read {operation} response: {error}"))?
+    {
+        if bytes.len().saturating_add(chunk.len()) > MAX_DEVICE_API_RESPONSE_BYTES {
+            return Err(format!("{operation} response exceeds 64 KiB"));
+        }
+        bytes.extend_from_slice(&chunk);
     }
     if !status.is_success() {
         let detail = String::from_utf8_lossy(&bytes);
@@ -154,15 +163,15 @@ pub async fn save_controller_hub_config(
     enable_dsu_server: Option<bool>,
     dsu_server_port: Option<u16>,
 ) -> Result<String, String> {
-    if let Some(mode) = gamepad.as_deref() {
-        if !GAMEPAD_MODES.contains(&mode) {
-            return Err(format!("无效的仿真模式: {mode}（可选: auto/x360/ds4/ds5）"));
-        }
+    if let Some(mode) = gamepad.as_deref()
+        && !GAMEPAD_MODES.contains(&mode)
+    {
+        return Err(format!("无效的仿真模式: {mode}（可选: auto/x360/ds4/ds5）"));
     }
-    if let Some(port) = dsu_server_port {
-        if !(1024..=65535).contains(&port) {
-            return Err(format!("DSU 端口必须在 1024-65535 之间: {port}"));
-        }
+    if let Some(port) = dsu_server_port
+        && !(1024..=65535).contains(&port)
+    {
+        return Err(format!("DSU 端口必须在 1024-65535 之间: {port}"));
     }
 
     // Serialize the read/modify/write cycle so independent controls cannot

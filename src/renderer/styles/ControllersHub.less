@@ -6,16 +6,14 @@
 // ========================================
 
 @font-face {
-  font-family: 'FusionPixel';
+  font-family: FusionPixel;
   src: url('/fonts/fusion-pixel-12px-proportional-zh_hans.woff2') format('woff2');
   font-weight: 400;
   font-display: swap;
 }
 
-@chub-pixel-font: 'FusionPixel', 'PixelMplus12', 'YouYuan', 'Courier New', monospace;
-
 .chub-page {
-  --pix-font: @chub-pixel-font;
+  --pix-font: FusionPixel, PixelMplus12, YouYuan, 'Courier New', monospace;
   --chub-primary: #4a9eff;
   --chub-primary-deep: #3b7fcc;
   --chub-window-line: #4a9eff;
@@ -155,6 +153,7 @@
 .chub-pane > .ds5-page {
   margin-top: 28px;
 }
+
 // 内嵌 DualSense 页时去掉其页头留白（embedded 模式不渲染页头）
 .chub-pane .ds5-page {
   padding-top: 0;

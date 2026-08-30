@@ -8,8 +8,6 @@ use std::path::Path;
 use std::process::Command;
 
 use super::config::{CoreDualSenseResponse, get_core_ds5_settings, resolve_core_config};
-#[cfg(target_os = "windows")]
-use super::elevated::ELEVATED_HELPER_JOB;
 use super::packages::{
     active_dir, component_matches_current_runtime, component_update_available,
     installed_component_manifest, sidecar_path, validate_installed_component_integrity,
@@ -67,6 +65,43 @@ pub(crate) struct ProbeResult {
     pub(crate) usbip_available: bool,
 }
 
+#[cfg(target_os = "windows")]
+fn bind_child_process_tree(
+    child: &std::process::Child,
+) -> Result<std::os::windows::io::OwnedHandle, String> {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle};
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        SetInformationJobObject,
+    };
+    use windows::core::PCWSTR;
+
+    unsafe {
+        let raw_job = CreateJobObjectW(None, PCWSTR::null()).map_err(|error| {
+            format!("DS5-PKG-003: unable to create sidecar process job: {error}")
+        })?;
+        let job = std::os::windows::io::OwnedHandle::from_raw_handle(raw_job.0);
+        let job_handle = HANDLE(job.as_raw_handle());
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(
+            job_handle,
+            JobObjectExtendedLimitInformation,
+            std::ptr::from_ref(&limits).cast(),
+            std::mem::size_of_val(&limits) as u32,
+        )
+        .map_err(|error| {
+            format!("DS5-PKG-003: unable to configure sidecar process job: {error}")
+        })?;
+        AssignProcessToJobObject(job_handle, HANDLE(child.as_raw_handle())).map_err(|error| {
+            format!("DS5-PKG-003: unable to bind sidecar process tree: {error}")
+        })?;
+        Ok(job)
+    }
+}
+
 pub(crate) fn run_with_timeout(
     command: &mut Command,
     timeout: std::time::Duration,
@@ -82,7 +117,8 @@ pub(crate) fn run_with_timeout(
         command.creation_flags(CREATE_NO_WINDOW);
     }
 
-    fn drain_pipe<R: Read + Send + 'static>(mut pipe: R) -> std::thread::JoinHandle<Vec<u8>> {
+    fn drain_pipe<R: Read + Send + 'static>(mut pipe: R) -> std::sync::mpsc::Receiver<Vec<u8>> {
+        let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let mut captured = Vec::new();
             let mut buffer = [0u8; 8192];
@@ -96,8 +132,23 @@ pub(crate) fn run_with_timeout(
                 let remaining = MAX_CAPTURED_OUTPUT.saturating_sub(captured.len());
                 captured.extend_from_slice(&buffer[..count.min(remaining)]);
             }
-            captured
-        })
+            let _ = sender.send(captured);
+        });
+        receiver
+    }
+
+    fn receive_pipe(
+        receiver: Option<std::sync::mpsc::Receiver<Vec<u8>>>,
+        deadline: std::time::Instant,
+    ) -> Result<Vec<u8>, ()> {
+        let Some(receiver) = receiver else {
+            return Ok(Vec::new());
+        };
+        match receiver.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())) {
+            Ok(output) => Ok(output),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Ok(Vec::new()),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(()),
+        }
     }
 
     if capture_output {
@@ -112,6 +163,19 @@ pub(crate) fn run_with_timeout(
     let mut child = command
         .spawn()
         .map_err(|error| format!("DS5-PKG-003: unable to start sidecar: {error}"))?;
+    #[cfg(target_os = "windows")]
+    let mut child_job = if capture_output {
+        match bind_child_process_tree(&child) {
+            Ok(job) => Some(job),
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+        }
+    } else {
+        None
+    };
     let stdout_reader = child.stdout.take().map(drain_pipe);
     let stderr_reader = child.stderr.take().map(drain_pipe);
     let deadline = std::time::Instant::now() + timeout;
@@ -120,34 +184,23 @@ pub(crate) fn run_with_timeout(
             .try_wait()
             .map_err(|error| format!("DS5-PKG-003: unable to wait for sidecar: {error}"))?
         {
+            #[cfg(target_os = "windows")]
+            drop(child_job.take());
+            let stdout =
+                receive_pipe(stdout_reader, deadline).map_err(|_| timeout_error.to_string())?;
+            let stderr =
+                receive_pipe(stderr_reader, deadline).map_err(|_| timeout_error.to_string())?;
             return Ok(std::process::Output {
                 status,
-                stdout: stdout_reader
-                    .map(|reader| reader.join().unwrap_or_default())
-                    .unwrap_or_default(),
-                stderr: stderr_reader
-                    .map(|reader| reader.join().unwrap_or_default())
-                    .unwrap_or_default(),
+                stdout,
+                stderr,
             });
         }
         if std::time::Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
             #[cfg(target_os = "windows")]
-            if ELEVATED_HELPER_JOB.get().is_some() {
-                // A descendant may still hold an inherited pipe handle. The
-                // helper reports the timeout and exits, which closes its Job
-                // handle and terminates the complete process tree.
-                drop(stdout_reader);
-                drop(stderr_reader);
-                return Err(timeout_error.to_string());
-            }
-            if let Some(reader) = stdout_reader {
-                let _ = reader.join();
-            }
-            if let Some(reader) = stderr_reader {
-                let _ = reader.join();
-            }
+            drop(child_job.take());
             return Err(timeout_error.to_string());
         }
         std::thread::sleep(std::time::Duration::from_millis(25));

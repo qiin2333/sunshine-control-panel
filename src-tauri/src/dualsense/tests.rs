@@ -5,9 +5,9 @@ use super::{
     component_update_available, copy_runtime_files, core_ds5_http_error, extract_sidecar_package,
     local_uninstalled_status, pinned_usbip_installed, read_sidecar_package_manifest,
     recover_interrupted_activation, require_entity_tag, resolve_core_config,
-    rollback_activated_component, sha256_file, update_config_fields, update_tuning_fields,
-    validate_component_integrity, validate_core_ds5_response, validate_requested_profile,
-    validate_sidecar_package_manifest, validate_strong_entity_tag,
+    rollback_activated_component, run_with_timeout, sha256_file, update_config_fields,
+    update_tuning_fields, validate_component_integrity, validate_core_ds5_response,
+    validate_requested_profile, validate_sidecar_package_manifest, validate_strong_entity_tag,
 };
 #[cfg(target_os = "windows")]
 use super::{
@@ -744,6 +744,50 @@ async fn elevated_ipc_prefers_a_ready_pipe_over_a_ready_helper_exit() {
     .await;
 
     assert!(result.is_ok());
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+#[allow(clippy::zombie_processes)]
+fn process_pipe_descendant_helper() {
+    match std::env::var("SUNSHINE_DS5_PIPE_HELPER").as_deref() {
+        Ok("parent") => {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            // Intentionally exit without waiting so the descendant keeps the
+            // inherited output handles open for the process-tree regression.
+            Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "dualsense::tests::process_pipe_descendant_helper",
+                    "--nocapture",
+                ])
+                .env("SUNSHINE_DS5_PIPE_HELPER", "child")
+                .spawn()
+                .unwrap();
+        }
+        Ok("child") => std::thread::sleep(std::time::Duration::from_secs(5)),
+        _ => {}
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn process_timeout_does_not_wait_for_descendant_pipe_handles() {
+    let timeout = std::time::Duration::from_secs(2);
+    let started = std::time::Instant::now();
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "dualsense::tests::process_pipe_descendant_helper",
+            "--nocapture",
+        ])
+        .env("SUNSHINE_DS5_PIPE_HELPER", "parent");
+
+    let output = run_with_timeout(&mut command, timeout, "test process timed out", true).unwrap();
+
+    assert!(output.status.success());
+    assert!(started.elapsed() < timeout + std::time::Duration::from_secs(1));
 }
 
 #[test]

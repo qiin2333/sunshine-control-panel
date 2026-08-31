@@ -20,7 +20,7 @@
         </div>
         <div class="ds5-hud-actions">
           <el-button
-            v-if="statusKnown && !status.installed"
+            v-if="statusKnown && componentAction === 'install'"
             text
             type="primary"
             class="ds5-action"
@@ -29,7 +29,7 @@
             @click="install()"
           >{{ t.dualSense.install }}</el-button>
           <el-button
-            v-else-if="statusKnown && !status.verified"
+            v-else-if="statusKnown && componentAction === 'repair'"
             text
             type="warning"
             class="ds5-action"
@@ -38,7 +38,7 @@
             @click="install()"
           >{{ t.dualSense.repair }}</el-button>
           <el-button
-            v-else-if="statusKnown && status.update_available"
+            v-else-if="statusKnown && componentAction === 'update'"
             text
             type="warning"
             class="ds5-action"
@@ -75,7 +75,7 @@
         <el-checkbox
           v-model="enabled"
           class="ds5-enable-control"
-          :disabled="!status.verified || status.in_use || componentControlsBusy"
+          :disabled="!componentOperational || status.in_use || componentControlsBusy"
           @change="saveSettings"
         >{{ t.dualSense.enableShort }}</el-checkbox>
       </div>
@@ -100,7 +100,7 @@
       @close="operationError = ''"
     />
 
-    <section v-if="status.verified" class="ds5-section" :aria-label="t.dualSense.profileTitle">
+    <section v-if="componentOperational" class="ds5-section" :aria-label="t.dualSense.profileTitle">
       <div class="ds5-section-head">
         <span class="ds5-section-label">◈ {{ t.dualSense.profileTitle }}</span>
         <span class="ds5-section-rule"></span>
@@ -133,7 +133,7 @@
       </div>
     </section>
 
-    <section v-if="status.verified" class="ds5-section" :aria-label="t.dualSense.tuningTitle">
+    <section v-if="componentOperational" class="ds5-section" :aria-label="t.dualSense.tuningTitle">
       <div class="ds5-section-head">
         <span class="ds5-section-label">◈ {{ t.dualSense.tuningTitle }}</span>
         <span class="ds5-section-rule"></span>
@@ -184,7 +184,7 @@
       </div>
     </section>
 
-    <section v-if="status.verified" class="ds5-section" :aria-label="t.dualSense.gameCompatibility">
+    <section v-if="componentOperational" class="ds5-section" :aria-label="t.dualSense.gameCompatibility">
       <div class="ds5-section-head">
         <span class="ds5-section-label">◈ {{ t.dualSense.gameCompatibility }}</span>
         <span class="ds5-section-rule"></span>
@@ -207,7 +207,7 @@
       </p>
     </section>
 
-    <section v-if="status.verified" class="ds5-section">
+    <section v-if="componentOperational" class="ds5-section">
       <div class="ds5-section-head">
         <span class="ds5-section-label">◈ {{ t.dualSense.validateMode }}</span>
         <span class="ds5-section-rule"></span>
@@ -280,7 +280,7 @@ const {
   enabled, audioHaptics, genshinCompatibility,
   legacyStrength, legacyCurve, legacyNoiseGate,
   tuningSaving, tuningDirty, testCompleted, expandedSections,
-  controlsBusy, componentControlsBusy,
+  controlsBusy, componentControlsBusy, componentAction, componentOperational,
   stateLabel, nextAction, overallVersion, canTestAudioHaptics,
   showNotice, healthRows, safeStatusDetail,
   install, installFromPackage, refresh,

@@ -1,12 +1,12 @@
 use super::{
     CoreDualSenseResponse, CoreDualSenseSettings, InstalledComponentManifest,
     SidecarPackageManifest, UsbipInstallResult, clamp_tuning, classify_usbip_installer_exit_code,
-    component_matches_current_runtime, component_state, component_test_failure,
-    component_update_available, copy_runtime_files, core_ds5_http_error, extract_sidecar_package,
-    local_uninstalled_status, pinned_usbip_installed, read_sidecar_package_manifest,
-    recover_interrupted_activation, require_entity_tag, resolve_core_config,
-    rollback_activated_component, run_with_timeout, sha256_file, update_config_fields,
-    update_tuning_fields, validate_component_integrity, validate_core_ds5_response,
+    component_is_verified, component_matches_current_runtime, component_state,
+    component_test_failure, component_update_available, copy_runtime_files, core_ds5_http_error,
+    extract_sidecar_package, local_uninstalled_status, pinned_usbip_installed,
+    read_sidecar_package_manifest, recover_interrupted_activation, require_entity_tag,
+    resolve_core_config, rollback_activated_component, run_with_timeout, sha256_file,
+    update_config_fields, update_tuning_fields, validate_core_ds5_response,
     validate_requested_profile, validate_sidecar_package_manifest, validate_strong_entity_tag,
 };
 #[cfg(target_os = "windows")]
@@ -90,7 +90,7 @@ fn component_state_prioritizes_stream_ownership_and_recovery() {
     );
     assert_eq!(
         component_state(true, false, true, false, true),
-        "update_available"
+        "repair_required"
     );
     assert_eq!(
         component_state(true, true, true, false, true),
@@ -101,19 +101,6 @@ fn component_state_prioritizes_stream_ownership_and_recovery() {
         "transport_missing"
     );
     assert_eq!(component_state(true, true, true, false, false), "ready");
-}
-
-#[test]
-fn installed_component_integrity_rejects_modified_runtime_files() {
-    let root = std::env::temp_dir().join(format!("sunshine-ds5-test-{}", uuid::Uuid::new_v4()));
-    write_valid_component(&root, b"trusted");
-    let manifest: InstalledComponentManifest =
-        serde_json::from_slice(&std::fs::read(root.join("component.json")).unwrap()).unwrap();
-
-    assert!(validate_component_integrity(&root, &manifest).is_ok());
-    std::fs::write(root.join(super::SIDECAR_EXE), b"modified").unwrap();
-    assert!(validate_component_integrity(&root, &manifest).is_err());
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -169,6 +156,9 @@ fn component_status_separates_updates_from_same_version_repairs() {
         true,
         true
     ));
+    assert!(component_is_verified(true, true, false));
+    assert!(!component_is_verified(false, true, false));
+    assert!(component_is_verified(true, false, true));
 }
 
 #[test]

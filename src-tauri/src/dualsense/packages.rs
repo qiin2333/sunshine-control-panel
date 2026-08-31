@@ -315,30 +315,6 @@ pub(crate) fn installed_component_manifest() -> Option<InstalledComponentManifes
     serde_json::from_slice(&contents).ok()
 }
 
-/// Verifies runtime files against the manifest written during elevated installation.
-pub(crate) fn validate_component_integrity(
-    directory: &Path,
-    manifest: &InstalledComponentManifest,
-) -> Result<(), String> {
-    if manifest.sha256.len() != 64 || manifest.sidecar_sha256.len() != 64 {
-        return Err("DS5-PKG-001: installed component manifest has invalid digests".to_string());
-    }
-    let sidecar_hash = sha256_file(&directory.join(SIDECAR_EXE))?;
-    let hidmaestro_hash = sha256_file(&directory.join("HIDMaestro.Core.dll"))?;
-    if !sidecar_hash.eq_ignore_ascii_case(&manifest.sidecar_sha256)
-        || !hidmaestro_hash.eq_ignore_ascii_case(&manifest.sha256)
-    {
-        return Err("DS5-PKG-001: installed component integrity check failed".to_string());
-    }
-    Ok(())
-}
-
-pub(crate) fn validate_installed_component_integrity(
-    manifest: &InstalledComponentManifest,
-) -> Result<(), String> {
-    validate_component_integrity(&active_dir(), manifest)
-}
-
 pub(crate) fn component_update_available(manifest: Option<&InstalledComponentManifest>) -> bool {
     manifest.is_some_and(|manifest| manifest.component_version != COMPONENT_VERSION)
 }

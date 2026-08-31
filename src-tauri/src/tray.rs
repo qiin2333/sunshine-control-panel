@@ -193,6 +193,20 @@ static TRAY_RUNTIME_STATE: Mutex<TrayRuntimeState> = Mutex::new(TrayRuntimeState
     },
 });
 
+/// Sunshine 核心是否处于活跃会话（推流中或暂停）。paused 会话仍持有资源，
+/// 恢复瞬间不能处于效率模式节流之下。
+pub(crate) fn is_tray_session_active() -> bool {
+    TRAY_RUNTIME_STATE
+        .lock()
+        .map(|runtime| {
+            runtime
+                .tray_state
+                .as_ref()
+                .is_some_and(|state| matches!(state.status.as_str(), "streaming" | "paused"))
+        })
+        .unwrap_or(false)
+}
+
 static MAIN_PANEL_BRIDGE: main_panel::Bridge = main_panel::Bridge::new();
 
 pub(crate) fn emit_message<R: Runtime>(app: &AppHandle<R>, msg_type: &str, message: &str) {
@@ -1013,6 +1027,7 @@ fn apply_tray_state<R: Runtime + 'static>(
         let mut runtime = TRAY_RUNTIME_STATE.lock().unwrap();
         runtime.apply_connected_state(state, monitored_state_receipt)
     };
+    crate::power::refresh_ecoqos_state(app);
     let Some((previous_state, should_rebuild_menu)) = applied else {
         debug!("Ignored non-monitor tray state while Core is unavailable");
         return;
@@ -1053,6 +1068,7 @@ fn apply_tray_state<R: Runtime + 'static>(
 
 fn apply_core_disconnected<R: Runtime + 'static>(app: &AppHandle<R>) {
     let should_rebuild_menu = TRAY_RUNTIME_STATE.lock().unwrap().mark_disconnected();
+    crate::power::refresh_ecoqos_state(app);
 
     if let Err(e) = build_owned_system_tray(app) {
         error!(

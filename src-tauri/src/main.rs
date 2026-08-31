@@ -18,6 +18,7 @@ mod github_download;
 mod hwinfo;
 mod logger;
 mod moonlight_web;
+mod power;
 mod proxy_server;
 mod rtss;
 #[cfg(target_os = "windows")]

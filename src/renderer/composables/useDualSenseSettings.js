@@ -225,7 +225,7 @@ export function useDualSenseSettings() {
       ? packagePaths.filter((path) => typeof path === 'string' && path)
       : []
     const componentWasInstalled = status.value.installed
-    const upgrading = Boolean(status.value.installed && status.value.update_available)
+    const upgrading = componentAction.value === 'update'
     const localPackage = packagePaths.length > 0
     operation.value = 'confirm-install'
     try {

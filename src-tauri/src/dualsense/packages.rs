@@ -315,6 +315,27 @@ pub(crate) fn installed_component_manifest() -> Option<InstalledComponentManifes
     serde_json::from_slice(&contents).ok()
 }
 
+/// Verifies only the Sunshine-owned executable before it is launched from the active install.
+/// `sha256` is the HIDMaestro archive digest and must not be compared with an extracted DLL.
+pub(crate) fn validate_sidecar_integrity(
+    executable: &Path,
+    manifest: &InstalledComponentManifest,
+) -> Result<(), String> {
+    let valid_digest = manifest.sidecar_sha256.len() == 64
+        && manifest
+            .sidecar_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit());
+    if manifest.sidecar_file != SIDECAR_EXE || !valid_digest {
+        return Err("DS5-PKG-001: installed sidecar manifest is invalid".to_string());
+    }
+    let actual = sha256_file(executable)?;
+    if !actual.eq_ignore_ascii_case(&manifest.sidecar_sha256) {
+        return Err("DS5-PKG-001: installed sidecar integrity check failed".to_string());
+    }
+    Ok(())
+}
+
 pub(crate) fn component_update_available(manifest: Option<&InstalledComponentManifest>) -> bool {
     manifest.is_some_and(|manifest| manifest.component_version != COMPONENT_VERSION)
 }

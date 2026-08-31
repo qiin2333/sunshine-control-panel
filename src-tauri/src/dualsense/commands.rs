@@ -15,11 +15,10 @@ use super::emit_progress;
 use super::install::{dualsense_install_impl, dualsense_self_test_impl, dualsense_uninstall_impl};
 #[cfg(not(target_os = "windows"))]
 use super::packages::classify_local_component_packages;
-use super::packages::sidecar_path;
 use super::probe::{
     dualsense_get_status_with_config, ensure_no_active_session,
     ensure_no_active_session_for_uninstall, installed_usbip_version, pinned_usbip_installed,
-    run_probe, validate_requested_profile,
+    run_installed_probe, validate_requested_profile,
 };
 use super::{
     COMPONENT_OPERATION, DualSenseStatus, DualSenseTuningResult, MAX_LOCAL_COMPONENT_PACKAGES,
@@ -115,8 +114,7 @@ pub async fn dualsense_set_config(
     })?;
     ensure_no_active_session().await?;
     if enabled {
-        let executable = sidecar_path();
-        let probe = tokio::task::spawn_blocking(move || run_probe(&executable))
+        let probe = tokio::task::spawn_blocking(run_installed_probe)
             .await
             .map_err(|error| format!("DS5-PKG-003: sidecar probe task failed: {error}"))??;
         let usbip_version = installed_usbip_version();

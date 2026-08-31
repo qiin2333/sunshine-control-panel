@@ -7,7 +7,8 @@ use super::{
     read_sidecar_package_manifest, recover_interrupted_activation, require_entity_tag,
     resolve_core_config, rollback_activated_component, run_with_timeout, sha256_file,
     update_config_fields, update_tuning_fields, validate_core_ds5_response,
-    validate_requested_profile, validate_sidecar_package_manifest, validate_strong_entity_tag,
+    validate_requested_profile, validate_sidecar_integrity, validate_sidecar_package_manifest,
+    validate_strong_entity_tag,
 };
 #[cfg(target_os = "windows")]
 use super::{
@@ -101,6 +102,20 @@ fn component_state_prioritizes_stream_ownership_and_recovery() {
         "transport_missing"
     );
     assert_eq!(component_state(true, true, true, false, false), "ready");
+}
+
+#[test]
+fn installed_sidecar_integrity_rejects_a_replaced_executable() {
+    let root = std::env::temp_dir().join(format!("sunshine-ds5-test-{}", uuid::Uuid::new_v4()));
+    write_valid_component(&root, b"trusted");
+    let manifest: InstalledComponentManifest =
+        serde_json::from_slice(&std::fs::read(root.join("component.json")).unwrap()).unwrap();
+    let executable = root.join(super::SIDECAR_EXE);
+
+    assert!(validate_sidecar_integrity(&executable, &manifest).is_ok());
+    std::fs::write(&executable, b"replaced").unwrap();
+    assert!(validate_sidecar_integrity(&executable, &manifest).is_err());
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

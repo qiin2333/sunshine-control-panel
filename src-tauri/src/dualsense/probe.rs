@@ -10,7 +10,7 @@ use std::process::Command;
 use super::config::{CoreDualSenseResponse, get_core_ds5_settings, resolve_core_config};
 use super::packages::{
     active_dir, component_matches_current_runtime, component_update_available,
-    installed_component_manifest, sidecar_path,
+    installed_component_manifest, sidecar_path, validate_sidecar_integrity,
 };
 use super::{
     COMPONENT_VERSION, DualSenseStatus, PROTOCOL_VERSION, USBIP_VERSION, observe_config_revision,
@@ -247,6 +247,14 @@ pub(crate) fn run_probe(executable: &Path) -> Result<ProbeResult, String> {
     Ok(result)
 }
 
+pub(crate) fn run_installed_probe() -> Result<ProbeResult, String> {
+    let executable = sidecar_path();
+    let manifest = installed_component_manifest()
+        .ok_or_else(|| "DS5-PKG-001: installed component manifest is missing".to_string())?;
+    validate_sidecar_integrity(&executable, &manifest)?;
+    run_probe(&executable)
+}
+
 pub(crate) fn component_test_failure(output: &std::process::Output, result_path: &Path) -> String {
     if let Ok(contents) = fs::read_to_string(result_path)
         && let Ok(result) = serde_json::from_str::<serde_json::Value>(&contents)
@@ -406,9 +414,8 @@ pub(crate) async fn dualsense_get_status_with_config(
     let installed = executable.is_file();
     let in_use = has_active_session().await;
     let probe = if installed {
-        let probe_executable = executable.clone();
         Some(
-            tokio::task::spawn_blocking(move || run_probe(&probe_executable))
+            tokio::task::spawn_blocking(run_installed_probe)
                 .await
                 .map_err(|error| format!("DS5-PKG-003: sidecar probe task failed: {error}"))
                 .and_then(|result| result),

@@ -36,12 +36,12 @@ pub(crate) use {
         InstalledComponentManifest, LocalComponentKind, SidecarPackageManifest, UsbipInstallResult,
         classify_local_component_packages, component_matches_current_runtime,
         component_update_available, local_component_kind, purge_stale_handoff_packages,
-        read_sidecar_package_manifest, sha256_file, validate_component_integrity,
+        read_sidecar_package_manifest, sha256_file, validate_sidecar_integrity,
         validate_sidecar_package_manifest,
     },
     probe::{
-        component_state, component_test_failure, local_uninstalled_status, pinned_usbip_installed,
-        run_with_timeout, validate_requested_profile,
+        component_is_verified, component_state, component_test_failure, local_uninstalled_status,
+        pinned_usbip_installed, run_with_timeout, validate_requested_profile,
     },
 };
 

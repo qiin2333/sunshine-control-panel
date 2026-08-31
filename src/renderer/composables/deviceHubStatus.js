@@ -2,6 +2,17 @@ export function deviceRuntimeReady(dualsenseStatus = {}, microphoneStatus = {}) 
   return Boolean(dualsenseStatus.verified || microphoneStatus.component_available)
 }
 
+export function dualSenseComponentAction(status = {}) {
+  if (!status.installed) return 'install'
+  if (!status.verified) return 'repair'
+  if (status.update_available) return 'update'
+  return ''
+}
+
+export function dualSenseComponentOperational(status = {}) {
+  return Boolean(status.verified)
+}
+
 export function microphoneStatusTone(status = {}) {
   if (status.error_code || status.state === 'faulted') return 'state-error'
   if (status.device_created || status.online) return 'state-ready'

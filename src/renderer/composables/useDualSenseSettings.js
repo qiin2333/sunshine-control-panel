@@ -17,6 +17,7 @@ import {
   mergeDualSenseStatus,
 } from './dualsenseConfigSync.js'
 import { installSelectedDualSensePackages } from './dualsenseInstallFlow.js'
+import { dualSenseComponentAction, dualSenseComponentOperational } from './deviceHubStatus.js'
 import { useI18n } from '../desktop/i18n/index.js'
 
 const STATUS_REFRESH_WAIT_TIMEOUT_MS = 5000
@@ -66,6 +67,8 @@ export function useDualSenseSettings() {
 
   const controlsBusy = computed(() => saving.value || tuningSaving.value || Boolean(operation.value))
   const componentControlsBusy = computed(() => Boolean(operation.value))
+  const componentAction = computed(() => dualSenseComponentAction(status.value))
+  const componentOperational = computed(() => dualSenseComponentOperational(status.value))
   const tuningDirty = computed(() =>
     legacyStrength.value !== status.value.legacy_strength
     || legacyCurve.value !== status.value.legacy_curve
@@ -91,7 +94,7 @@ export function useDualSenseSettings() {
   })
 
   const overallVersion = computed(() => {
-    if (status.value.update_available) {
+    if (status.value.verified && status.value.update_available) {
       const installedVersion = status.value.component_version || t.value.dualSense.unknownVersion
       return `${installedVersion} → ${status.value.available_component_version}`
     }
@@ -108,13 +111,13 @@ export function useDualSenseSettings() {
   const healthRows = computed(() => [
     {
       label: t.value.dualSense.component,
-      state: status.value.update_available
+      state: status.value.verified && status.value.update_available
         ? t.value.dualSense.updateAvailable
         : status.value.verified ? t.value.dualSense.available : t.value.dualSense.unavailable,
-      detail: status.value.update_available
+      detail: status.value.verified && status.value.update_available
         ? `${status.value.component_version || t.value.dualSense.unknownVersion} → ${status.value.available_component_version}`
         : status.value.component_version || status.value.error_code,
-      tone: status.value.update_available ? 'warn' : status.value.verified ? 'ok' : status.value.installed ? 'bad' : '',
+      tone: status.value.verified && status.value.update_available ? 'warn' : status.value.verified ? 'ok' : status.value.installed ? 'bad' : '',
     },
     {
       label: t.value.dualSense.runtime,
@@ -222,7 +225,7 @@ export function useDualSenseSettings() {
       ? packagePaths.filter((path) => typeof path === 'string' && path)
       : []
     const componentWasInstalled = status.value.installed
-    const upgrading = Boolean(status.value.installed && status.value.update_available)
+    const upgrading = componentAction.value === 'update'
     const localPackage = packagePaths.length > 0
     operation.value = 'confirm-install'
     try {
@@ -606,7 +609,7 @@ export function useDualSenseSettings() {
     enabled, audioHaptics, genshinCompatibility,
     legacyStrength, legacyCurve, legacyNoiseGate,
     tuningSaving, tuningDirty, testCompleted, expandedSections,
-    controlsBusy, componentControlsBusy,
+    controlsBusy, componentControlsBusy, componentAction, componentOperational,
     stateLabel, nextAction, overallVersion, canTestAudioHaptics,
     showNotice, healthRows, safeStatusDetail,
     install, installFromPackage, refresh,

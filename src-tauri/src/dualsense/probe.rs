@@ -10,7 +10,7 @@ use std::process::Command;
 use super::config::{CoreDualSenseResponse, get_core_ds5_settings, resolve_core_config};
 use super::packages::{
     active_dir, component_matches_current_runtime, component_update_available,
-    installed_component_manifest, sidecar_path, validate_installed_component_integrity,
+    installed_component_manifest, sidecar_path, validate_sidecar_integrity,
 };
 use super::{
     COMPONENT_VERSION, DualSenseStatus, PROTOCOL_VERSION, USBIP_VERSION, observe_config_revision,
@@ -247,6 +247,14 @@ pub(crate) fn run_probe(executable: &Path) -> Result<ProbeResult, String> {
     Ok(result)
 }
 
+pub(crate) fn run_installed_probe() -> Result<ProbeResult, String> {
+    let executable = sidecar_path();
+    let manifest = installed_component_manifest()
+        .ok_or_else(|| "DS5-PKG-001: installed component manifest is missing".to_string())?;
+    validate_sidecar_integrity(&executable, &manifest)?;
+    run_probe(&executable)
+}
+
 pub(crate) fn component_test_failure(output: &std::process::Output, result_path: &Path) -> String {
     if let Ok(contents) = fs::read_to_string(result_path)
         && let Ok(result) = serde_json::from_str::<serde_json::Value>(&contents)
@@ -299,15 +307,23 @@ pub(crate) fn component_state(
         "in_use"
     } else if !installed {
         "not_installed"
-    } else if update_available {
-        "update_available"
     } else if !verified {
         "repair_required"
+    } else if update_available {
+        "update_available"
     } else if !transport_available {
         "transport_missing"
     } else {
         "ready"
     }
+}
+
+pub(crate) fn component_is_verified(
+    probe_succeeded: bool,
+    update_available: bool,
+    matches_current_runtime: bool,
+) -> bool {
+    probe_succeeded && (update_available || matches_current_runtime)
 }
 
 pub(crate) async fn ensure_no_active_session_for_uninstall() -> Result<(), String> {
@@ -397,28 +413,13 @@ pub(crate) async fn dualsense_get_status_with_config(
     let executable = sidecar_path();
     let installed = executable.is_file();
     let in_use = has_active_session().await;
-    let manifest = installed.then(installed_component_manifest).flatten();
-    let integrity_error = if installed {
-        manifest
-            .as_ref()
-            .ok_or_else(|| "DS5-PKG-001: installed component manifest is missing".to_string())
-            .and_then(validate_installed_component_integrity)
-            .err()
-    } else {
-        None
-    };
     let probe = if installed {
-        if let Some(error) = integrity_error {
-            Some(Err(error))
-        } else {
-            let probe_executable = executable.clone();
-            Some(
-                tokio::task::spawn_blocking(move || run_probe(&probe_executable))
-                    .await
-                    .map_err(|error| format!("DS5-PKG-003: sidecar probe task failed: {error}"))
-                    .and_then(|result| result),
-            )
-        }
+        Some(
+            tokio::task::spawn_blocking(run_installed_probe)
+                .await
+                .map_err(|error| format!("DS5-PKG-003: sidecar probe task failed: {error}"))
+                .and_then(|result| result),
+        )
     } else {
         None
     };
@@ -445,14 +446,16 @@ pub(crate) async fn dualsense_get_status_with_config(
     let usbip_version = installed_usbip_version().unwrap_or_default();
     let usbip_version_valid = pinned_usbip_installed(Some(usbip_version.as_str()));
     let usbip_available = result.usbip_available && usbip_version_valid;
+    let manifest = installed.then(installed_component_manifest).flatten();
     let update_available = installed && component_update_available(manifest.as_ref());
     let matches_current_runtime = component_matches_current_runtime(
         manifest.as_ref(),
         result.genshin_compatibility_identity,
         result.audio_policy_violation,
     );
-    let verified = probe_succeeded && matches_current_runtime;
-    if probe_succeeded && !matches_current_runtime {
+    let verified =
+        component_is_verified(probe_succeeded, update_available, matches_current_runtime);
+    if probe_succeeded && !update_available && !matches_current_runtime {
         error_code = "DS5-PROTO-001".to_string();
         detail = "DS5-PROTO-001: the installed component metadata or capabilities do not match this Control Panel build".to_string();
     }

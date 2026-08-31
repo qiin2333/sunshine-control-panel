@@ -6,21 +6,25 @@
 //! 可见面板/工具窗，就不能节流宿主进程。
 
 use log::info;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use tauri::{AppHandle, Manager, Runtime};
 
 /// 初值 true：`--hidden` 代理模式启动即处于 EcoQoS ON，无需打日志。
-static ECOQOS_ENABLED: AtomicBool = AtomicBool::new(true);
+/// 锁覆盖「求值 → 记录 → 应用」整个流程：并发回调按加锁顺序串行化，
+/// 避免较早回调的求值结果覆盖较新回调已应用的状态。
+static ECOQOS_ENABLED: Mutex<bool> = Mutex::new(true);
 
 /// 按当前应用状态重新评估并应用 EcoQoS。幂等、线程无关、可任意频率调用。
 pub fn refresh_ecoqos_state<R: Runtime>(app: &AppHandle<R>) {
     #[cfg(target_os = "windows")]
     {
+        let mut enabled = ECOQOS_ENABLED.lock().unwrap_or_else(|e| e.into_inner());
         let enable = app.webview_windows().is_empty()
             && !crate::game_session::is_game_session_active()
             && !crate::tray::is_tray_session_active();
 
-        if ECOQOS_ENABLED.swap(enable, Ordering::Relaxed) != enable {
+        if *enabled != enable {
+            *enabled = enable;
             info!(
                 "⚡ 效率模式（EcoQoS）→ {}",
                 if enable {

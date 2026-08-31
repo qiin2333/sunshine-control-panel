@@ -1091,6 +1091,7 @@ fn suspend_webview<R: Runtime>(ww: &WebviewWindow<R>) {
             match webview3 {
                 Some(Ok(webview3)) => {
                     let cb_label = label.clone();
+                    let cb_controller = controller.clone();
                     let handler =
                         TrySuspendCompletedHandler::create(Box::new(move |result, suspended| {
                             if result.is_ok() && suspended {
@@ -1098,6 +1099,15 @@ fn suspend_webview<R: Runtime>(ww: &WebviewWindow<R>) {
                             } else {
                                 debug!("⚠️ WebView2 挂起未生效 [{}]: {:?}", cb_label, result.err());
                                 SUSPENDED_WEBVIEWS.lock().unwrap().remove(&cb_label);
+                                // 异步失败时外层闭包已返回，必须在此自行还原
+                                // controller 可见性，否则面板会停留在隐形状态。
+                                if let Err(e) = cb_controller.SetIsVisible(true) {
+                                    log::warn!(
+                                        "⚠️ 挂起失败后恢复可见性失败 [{}]: {}",
+                                        cb_label,
+                                        e
+                                    );
+                                }
                             }
                             Ok(())
                         }));

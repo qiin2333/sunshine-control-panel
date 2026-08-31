@@ -63,6 +63,7 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
     }
 
     tray::create_system_tray(&app_handle)?;
+    crate::power::refresh_ecoqos_state(&app_handle);
     #[cfg(target_os = "windows")]
     if let Err(e) = crate::shell_context_menu::install_file_transfer_menu() {
         warn!("⚠️  安装文件传输右键菜单失败: {}", e);

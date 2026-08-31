@@ -1,7 +1,7 @@
 use crate::proxy_server;
 use log::{debug, error, info, warn};
 use once_cell::sync::Lazy;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use tauri::{
     AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewWindow,
@@ -27,6 +27,11 @@ impl HeartbeatState {
 /// recovery monitor reload that window while its first page is still loading.
 static HEARTBEAT_MAP: Lazy<Mutex<HashMap<String, HeartbeatState>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// Labels whose WebView2 render pipeline is suspended via ICoreWebView2_3::TrySuspend.
+/// A suspended webview's JS timers are frozen, so the heartbeat monitor must not
+/// treat it as crashed while it sits in this set.
+static SUSPENDED_WEBVIEWS: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 
 #[derive(Default)]
 struct ToolWindowMoveSave {
@@ -290,6 +295,9 @@ pub fn webview_heartbeat(webview: tauri::Webview) {
 }
 
 fn begin_webview_heartbeat(window_id: &str) {
+    // A window recreated under the same label must never inherit a suspended
+    // state from its destroyed predecessor.
+    SUSPENDED_WEBVIEWS.lock().unwrap().remove(window_id);
     HEARTBEAT_MAP
         .lock()
         .unwrap()
@@ -439,6 +447,11 @@ pub fn start_heartbeat_monitor(app: AppHandle) {
 
             // 只检查可见的主要窗口（main / desktop）
             for label in &[MAIN_WINDOW_ID, DESKTOP_WINDOW_ID] {
+                // 挂起中的 WebView JS 定时器被冻结，心跳缺失是预期行为，
+                // 不能按崩溃恢复（否则会在挂起期间强制重载页面）。
+                if SUSPENDED_WEBVIEWS.lock().unwrap().contains(*label) {
+                    continue;
+                }
                 if let Some(win) = app.get_webview_window(label) {
                     let is_visible = win.is_visible().unwrap_or(false);
                     let is_minimized = win.is_minimized().unwrap_or(true);
@@ -461,6 +474,7 @@ pub fn show_and_activate_window<R: Runtime>(window: &WebviewWindow<R>) {
     let _ = window.set_focus();
 
     // 恢复 WebView 活跃状态（引擎级 + JS 级）
+    resume_webview(window);
     set_webview_window_visibility(window, true);
 
     // 重置代理快速失败状态，确保恢复后首次请求不被拦截
@@ -586,10 +600,13 @@ where
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
+        crate::power::refresh_ecoqos_state(app);
         return Ok(window);
     }
 
-    builder_fn(app).map_err(|e| format!("创建窗口失败: {}", e))
+    let window = builder_fn(app).map_err(|e| format!("创建窗口失败: {}", e))?;
+    crate::power::refresh_ecoqos_state(app);
+    Ok(window)
 }
 
 /// 打开关于窗口（单例模式）
@@ -651,6 +668,7 @@ pub fn open_pin_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std
         let _ = window.show();
         let _ = window.set_focus();
         debug!("✅ PIN 窗口已激活");
+        crate::power::refresh_ecoqos_state(app);
         return Ok(());
     }
 
@@ -681,6 +699,7 @@ pub fn open_pin_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std
     });
 
     debug!("✅ PIN 配对窗口创建成功");
+    crate::power::refresh_ecoqos_state(app);
     Ok(())
 }
 
@@ -782,6 +801,7 @@ fn create_main_window_internal<R: Runtime>(
 
     disable_context_menu(&window);
     info!("✅ {}主窗口创建成功", visibility_desc);
+    crate::power::refresh_ecoqos_state(app);
     Ok(())
 }
 
@@ -837,6 +857,7 @@ fn create_desktop_window_internal<R: Runtime>(
 
     disable_context_menu(&window);
     info!("✅ 桌面 UI 窗口创建成功");
+    crate::power::refresh_ecoqos_state(app);
     Ok(())
 }
 
@@ -847,6 +868,7 @@ pub fn open_desktop_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String>
         let _ = window.show();
         let _ = window.set_focus();
         debug!("✅ 桌面 UI 窗口已激活");
+        crate::power::refresh_ecoqos_state(app);
     } else {
         create_desktop_window(app).map_err(|e| e.to_string())?;
     }
@@ -896,7 +918,9 @@ pub fn activate_main_window(app: &tauri::AppHandle, target_url: Option<String>) 
     let _ = window.set_focus();
 
     // 恢复 WebView 活跃状态（引擎级 + JS 级）
+    resume_webview(&window);
     set_webview_window_visibility(&window, true);
+    crate::power::refresh_ecoqos_state(app);
 
     // 重置代理快速失败状态
     proxy_server::reset_fast_fail();
@@ -1028,6 +1052,113 @@ fn refresh_webview_surface<R: Runtime>(window: &WebviewWindow<R>) {
     });
 }
 
+/// 挂起 WebView2 渲染管线（窗口最小化/隐藏时调用）。
+///
+/// TrySuspend 要求 controller 不可见，而 wry 最小化时不会自动隐藏 controller，
+/// 因此先 SetIsVisible(false) 再挂起；恢复时由 resume_webview 按相反顺序还原。
+#[cfg(target_os = "windows")]
+fn suspend_webview<R: Runtime>(ww: &WebviewWindow<R>) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_3;
+    use webview2_com::TrySuspendCompletedHandler;
+    use wv2_windows_core::Interface;
+
+    let is_visible = ww.is_visible().unwrap_or(true);
+    let is_minimized = ww.is_minimized().unwrap_or(false);
+    if is_visible && !is_minimized {
+        // 200ms 延迟期内窗口已经恢复，不挂起。
+        return;
+    }
+
+    let label = ww.label().to_string();
+    if !SUSPENDED_WEBVIEWS.lock().unwrap().insert(label.clone()) {
+        return;
+    }
+
+    let _ = ww.with_webview(move |webview| {
+        let controller = webview.controller();
+        unsafe {
+            let mut started = true;
+            if let Err(e) = controller.SetIsVisible(false) {
+                log::warn!("⚠️ SetIsVisible(false) 失败 [{}]: {}", label, e);
+                started = false;
+            }
+
+            let webview3 = started
+                .then(|| controller.CoreWebView2())
+                .and_then(|core| core.ok())
+                .map(|core| core.cast::<ICoreWebView2_3>());
+
+            match webview3 {
+                Some(Ok(webview3)) => {
+                    let cb_label = label.clone();
+                    let handler =
+                        TrySuspendCompletedHandler::create(Box::new(move |result, suspended| {
+                            if result.is_ok() && suspended {
+                                debug!("💤 WebView2 渲染已挂起 [{}]", cb_label);
+                            } else {
+                                debug!("⚠️ WebView2 挂起未生效 [{}]: {:?}", cb_label, result.err());
+                                SUSPENDED_WEBVIEWS.lock().unwrap().remove(&cb_label);
+                            }
+                            Ok(())
+                        }));
+                    if let Err(e) = webview3.TrySuspend(&handler) {
+                        log::warn!("⚠️ TrySuspend 调用失败 [{}]: {}", label, e);
+                        started = false;
+                    }
+                }
+                Some(Err(e)) => {
+                    log::warn!("⚠️ 无法获取 ICoreWebView2_3 [{}]: {}", label, e);
+                    started = false;
+                }
+                None => {}
+            }
+
+            if !started {
+                // 还原 controller 可见性，避免留下"隐形但仍活着"的 WebView。
+                SUSPENDED_WEBVIEWS.lock().unwrap().remove(&label);
+                if let Err(e) = controller.SetIsVisible(true) {
+                    log::warn!("⚠️ 挂起失败后恢复可见性失败 [{}]: {}", label, e);
+                }
+            }
+        }
+    });
+}
+
+#[cfg(not(target_os = "windows"))]
+fn suspend_webview<R: Runtime>(_ww: &WebviewWindow<R>) {}
+
+/// 恢复挂起的 WebView2（窗口重新可见/获得焦点时调用）。幂等：未挂起时为 no-op。
+#[cfg(target_os = "windows")]
+fn resume_webview<R: Runtime>(ww: &WebviewWindow<R>) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_3;
+    use wv2_windows_core::Interface;
+
+    let label = ww.label().to_string();
+    if !SUSPENDED_WEBVIEWS.lock().unwrap().remove(&label) {
+        return;
+    }
+
+    debug!("☀️ 恢复 WebView2 渲染 [{}]", label);
+    let _ = ww.with_webview(move |webview| {
+        let controller = webview.controller();
+        unsafe {
+            // SetIsVisible(true) 本身会隐式恢复，但显式 Resume 语义更明确。
+            if let Ok(core) = controller.CoreWebView2()
+                && let Ok(webview3) = core.cast::<ICoreWebView2_3>()
+                && let Err(e) = webview3.Resume()
+            {
+                log::warn!("⚠️ Resume 失败 [{}]: {}", label, e);
+            }
+            if let Err(e) = controller.SetIsVisible(true) {
+                log::warn!("⚠️ SetIsVisible(true) 失败 [{}]: {}", label, e);
+            }
+        }
+    });
+}
+
+#[cfg(not(target_os = "windows"))]
+fn resume_webview<R: Runtime>(_ww: &WebviewWindow<R>) {}
+
 /// Notify the page so it can pause animations and suspend expensive content.
 /// The native window already controls WebView2 composition. Toggling the
 /// controller's IsVisible property separately can leave transparent WebViews
@@ -1053,6 +1184,8 @@ pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
         }
         tauri::WindowEvent::CloseRequested { .. } => {
             end_webview_heartbeat(window.label());
+            // 窗口正在销毁：清掉挂起标记即可，无需 Resume。
+            SUSPENDED_WEBVIEWS.lock().unwrap().remove(window.label());
             match window.label() {
                 "main" => {
                     // Let the WebView close so the user agent returns to its
@@ -1092,6 +1225,9 @@ pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
             if *focused {
                 // 窗口获得焦点时恢复 WebView 活跃状态
                 set_webview_visibility(window, true);
+                if let Some(ww) = window.app_handle().get_webview_window(label) {
+                    resume_webview(&ww);
+                }
                 // 重置代理快速失败状态
                 proxy_server::reset_fast_fail();
             } else {
@@ -1105,6 +1241,7 @@ pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
                         let is_visible = ww.is_visible().unwrap_or(true);
                         if is_minimized || !is_visible {
                             set_webview_window_visibility(&ww, false);
+                            suspend_webview(&ww);
                             debug!(
                                 "💤 WebView 进入休眠 [{}]: minimized={}, visible={}",
                                 label, is_minimized, is_visible
@@ -1113,6 +1250,14 @@ pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
                     }
                 });
             }
+        }
+        tauri::WindowEvent::Destroyed => {
+            // 延迟重估，等窗口从 Tauri 注册表移除后再判断是否回到托盘常驻态。
+            let app_handle = window.app_handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                crate::power::refresh_ecoqos_state(&app_handle);
+            });
         }
         _ => {}
     }

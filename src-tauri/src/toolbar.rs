@@ -310,6 +310,7 @@ pub fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &s
             #[cfg(target_os = "windows")]
             windows::configure_webview_security(&window);
 
+            crate::power::refresh_ecoqos_state(app);
             // 开发模式下自动打开 DevTools
             #[cfg(debug_assertions)]
             {
@@ -449,6 +450,7 @@ pub fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<
         Ok(win) => {
             // 在生产环境禁用右键菜单
             windows::disable_context_menu(&win);
+            crate::power::refresh_ecoqos_state(app);
 
             // 延迟 500ms 检查窗口尺寸（WebView2 初始化可能意外扩大窗口）
             let win_check = win.clone();

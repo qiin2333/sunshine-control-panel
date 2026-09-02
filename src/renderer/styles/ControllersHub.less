@@ -101,7 +101,10 @@
   .pixel-bracket-button(var(--chub-primary));
 }
 @media (prefers-reduced-motion: reduce) {
-  .chub-page .el-button:not(.is-text):not(.is-link) { transition: none; }
+  .chub-page .el-button:not(.el-button--small):not(.is-text):not(.is-link),
+  .chub-page .el-button--small:not(.is-text):not(.is-link) {
+    transition: none;
+  }
 }
 
 // —— 方角控件 ——

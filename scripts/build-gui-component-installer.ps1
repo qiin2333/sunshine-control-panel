@@ -52,12 +52,27 @@ function Resolve-WebViewLoader([string]$GuiExe) {
     return $null
 }
 
+function Resolve-NativePlugins([string]$GuiExe) {
+    $dir = Split-Path -Parent $GuiExe
+    $required = @('alkaidlab-plugin-stylus.dll')
+    return $required | ForEach-Object {
+        $path = Join-Path $dir $_
+        if (-not (Test-Path -LiteralPath $path)) {
+            throw "Native tool plugin was not found: $path"
+        }
+        $path
+    }
+}
+
 Push-Location $ProjectRoot
 try {
     if (-not $SkipBuild) {
         Write-Host '==> Building renderer assets' -ForegroundColor Cyan
         npm run build:renderer
         if ($LASTEXITCODE -ne 0) { throw 'build:renderer failed' }
+
+        & (Join-Path $ProjectRoot 'scripts\build-native-plugins.ps1') -Configuration Release
+        if ($LASTEXITCODE -ne 0) { throw 'native tool plugin build failed' }
 
         Write-Host '==> Building Tauri GUI (release)' -ForegroundColor Cyan
         $cargoArgs = @('build', '--release', '--manifest-path', (Join-Path $TauriRoot 'Cargo.toml'))
@@ -78,6 +93,7 @@ try {
 
     $guiExe = Resolve-GuiExe
     $loader = Resolve-WebViewLoader $guiExe
+    $nativePlugins = Resolve-NativePlugins $guiExe
 
     New-Item -ItemType Directory -Path $StageDir -Force | Out-Null
     New-Item -ItemType Directory -Path $DistDir -Force | Out-Null
@@ -86,6 +102,9 @@ try {
     Copy-Item $guiExe (Join-Path $StageDir 'sunshine-gui.exe') -Force
     if ($loader) {
         Copy-Item $loader (Join-Path $StageDir 'WebView2Loader.dll') -Force
+    }
+    foreach ($plugin in $nativePlugins) {
+        Copy-Item -LiteralPath $plugin -Destination (Join-Path $StageDir (Split-Path -Leaf $plugin)) -Force
     }
 
     Write-Host '==> Building GUI component installer with NSIS' -ForegroundColor Cyan

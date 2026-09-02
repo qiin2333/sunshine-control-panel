@@ -127,6 +127,11 @@ fn running_slot() -> &'static Mutex<Option<RunningState>> {
     SLOT.get_or_init(|| Mutex::new(None))
 }
 
+/// 当前是否有活跃的游戏会话（含启动器 shim 的识别窗口期）。
+pub fn is_game_session_active() -> bool {
+    running_slot().lock().is_ok_and(|slot| slot.is_some())
+}
+
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 
 fn now_ms() -> u64 {
@@ -736,6 +741,7 @@ fn monitor_game(mut handle: OwnedHandle, context: MonitorContext) {
             stopped,
         },
     );
+    crate::power::refresh_ecoqos_state(&context.app);
     info!(
         "Game session ended: {} after {}s",
         context.app_name, seconds
@@ -969,6 +975,7 @@ pub async fn launch_game(
             adopted: false,
         },
     );
+    crate::power::refresh_ecoqos_state(&app_handle);
 
     if options.auto_yield {
         yield_desktop_window(&app_handle);

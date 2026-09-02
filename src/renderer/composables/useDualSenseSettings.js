@@ -17,6 +17,7 @@ import {
   mergeDualSenseStatus,
 } from './dualsenseConfigSync.js'
 import { installSelectedDualSensePackages } from './dualsenseInstallFlow.js'
+import { dualSenseComponentAction, dualSenseComponentOperational } from './deviceHubStatus.js'
 import { useI18n } from '../desktop/i18n/index.js'
 
 const STATUS_REFRESH_WAIT_TIMEOUT_MS = 5000
@@ -66,10 +67,27 @@ export function useDualSenseSettings() {
 
   const controlsBusy = computed(() => saving.value || tuningSaving.value || Boolean(operation.value))
   const componentControlsBusy = computed(() => Boolean(operation.value))
+  const componentAction = computed(() => dualSenseComponentAction(status.value))
+  const componentOperational = computed(() => dualSenseComponentOperational(status.value))
   const tuningDirty = computed(() =>
     legacyStrength.value !== status.value.legacy_strength
     || legacyCurve.value !== status.value.legacy_curve
     || legacyNoiseGate.value !== status.value.legacy_noise_gate)
+  const tuningStrengthFeel = computed(() => {
+    if (legacyStrength.value < 0.75) return t.value.dualSense.tuningStrengthSoft
+    if (legacyStrength.value > 1.5) return t.value.dualSense.tuningStrengthStrong
+    return t.value.dualSense.tuningBalanced
+  })
+  const tuningCurveFeel = computed(() => {
+    if (legacyCurve.value < 0.45) return t.value.dualSense.tuningCurveDetailed
+    if (legacyCurve.value > 1) return t.value.dualSense.tuningCurvePunchy
+    return t.value.dualSense.tuningBalanced
+  })
+  const tuningGateFeel = computed(() => {
+    if (legacyNoiseGate.value < 0.012) return t.value.dualSense.tuningGateSensitive
+    if (legacyNoiseGate.value > 0.03) return t.value.dualSense.tuningGateClean
+    return t.value.dualSense.tuningBalanced
+  })
   const stateLabel = computed(() => t.value.dualSense.states[status.value.state] || status.value.state)
   const safeStatusDetail = computed(() => status.value.detail
     ? safeDualSenseTechnicalError(status.value.detail)
@@ -91,7 +109,7 @@ export function useDualSenseSettings() {
   })
 
   const overallVersion = computed(() => {
-    if (status.value.update_available) {
+    if (status.value.verified && status.value.update_available) {
       const installedVersion = status.value.component_version || t.value.dualSense.unknownVersion
       return `${installedVersion} → ${status.value.available_component_version}`
     }
@@ -108,13 +126,13 @@ export function useDualSenseSettings() {
   const healthRows = computed(() => [
     {
       label: t.value.dualSense.component,
-      state: status.value.update_available
+      state: status.value.verified && status.value.update_available
         ? t.value.dualSense.updateAvailable
         : status.value.verified ? t.value.dualSense.available : t.value.dualSense.unavailable,
-      detail: status.value.update_available
+      detail: status.value.verified && status.value.update_available
         ? `${status.value.component_version || t.value.dualSense.unknownVersion} → ${status.value.available_component_version}`
         : status.value.component_version || status.value.error_code,
-      tone: status.value.update_available ? 'warn' : status.value.verified ? 'ok' : status.value.installed ? 'bad' : '',
+      tone: status.value.verified && status.value.update_available ? 'warn' : status.value.verified ? 'ok' : status.value.installed ? 'bad' : '',
     },
     {
       label: t.value.dualSense.runtime,
@@ -222,7 +240,7 @@ export function useDualSenseSettings() {
       ? packagePaths.filter((path) => typeof path === 'string' && path)
       : []
     const componentWasInstalled = status.value.installed
-    const upgrading = Boolean(status.value.installed && status.value.update_available)
+    const upgrading = componentAction.value === 'update'
     const localPackage = packagePaths.length > 0
     operation.value = 'confirm-install'
     try {
@@ -467,6 +485,7 @@ export function useDualSenseSettings() {
   }
 
   const applyErmPreset = () => {
+    legacyStrength.value = 1
     legacyCurve.value = 0.5
     legacyNoiseGate.value = 0.006
   }
@@ -605,8 +624,9 @@ export function useDualSenseSettings() {
     operation, operationProgress, operationStage, operationError,
     enabled, audioHaptics, genshinCompatibility,
     legacyStrength, legacyCurve, legacyNoiseGate,
+    tuningStrengthFeel, tuningCurveFeel, tuningGateFeel,
     tuningSaving, tuningDirty, testCompleted, expandedSections,
-    controlsBusy, componentControlsBusy,
+    controlsBusy, componentControlsBusy, componentAction, componentOperational,
     stateLabel, nextAction, overallVersion, canTestAudioHaptics,
     showNotice, healthRows, safeStatusDetail,
     install, installFromPackage, refresh,

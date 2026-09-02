@@ -53,6 +53,11 @@ if (-not (Test-Path "$projectRoot\src-tauri\Cargo.toml")) {
 
 if (-not $NoBuild) {
     Write-Host "`n🔨 编译 Sunshine GUI..." -ForegroundColor Yellow
+    & (Join-Path $projectRoot 'scripts\build-native-plugins.ps1') -Configuration $(if ($Release) { 'Release' } else { 'Debug' })
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "❌ 原生工具插件编译失败" -ForegroundColor Red
+        exit 1
+    }
     Push-Location "$projectRoot\src-tauri"
 
     if ($Release) {
@@ -93,6 +98,12 @@ Write-Host "📦 编译产物: $exeSrc" -ForegroundColor Green
 $exeSize = [math]::Round((Get-Item $exeSrc).Length / 1MB, 1)
 Write-Host "   大小: ${exeSize} MB"
 
+$pluginSrc = Join-Path (Split-Path $exeSrc -Parent) 'alkaidlab-plugin-stylus.dll'
+if (-not (Test-Path -LiteralPath $pluginSrc -PathType Leaf)) {
+    Write-Host "❌ 找不到原生工具插件 alkaidlab-plugin-stylus.dll" -ForegroundColor Red
+    exit 1
+}
+
 # 部署
 if (-not (Test-Path $guiDir)) {
     New-Item -ItemType Directory -Path $guiDir -Force | Out-Null
@@ -108,6 +119,7 @@ if ($running) {
 
 Write-Host "📋 复制到 $guiDir ..." -ForegroundColor Yellow
 Copy-Item $exeSrc "$guiDir\sunshine-gui.exe" -Force
+Copy-Item -LiteralPath $pluginSrc -Destination "$guiDir\alkaidlab-plugin-stylus.dll" -Force
 
 # WebView2Loader.dll (如果存在)
 $loaderPath = Split-Path $exeSrc -Parent | Join-Path -ChildPath "WebView2Loader.dll"

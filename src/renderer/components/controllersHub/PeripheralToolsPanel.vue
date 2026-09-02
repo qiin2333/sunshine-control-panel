@@ -8,7 +8,7 @@
       </div>
 
       <div v-if="!initialized" class="chub-cards" aria-live="polite">
-        <article v-for="index in 3" :key="index" class="chub-card chub-card-placeholder">
+        <article v-for="index in 4" :key="index" class="chub-card chub-card-placeholder">
           <el-skeleton :rows="3" animated />
         </article>
       </div>
@@ -98,6 +98,22 @@
             >{{ t.controllersHub.peripherals.meta.launch }}</el-button>
           </div>
         </article>
+
+        <!-- 手写笔输入检测 -->
+        <article class="chub-card">
+          <div class="chub-card-head">
+            <strong>{{ t.controllersHub.peripherals.stylus.title }}</strong>
+          </div>
+          <p class="chub-hint">{{ t.controllersHub.peripherals.stylus.hint }}</p>
+          <div class="chub-card-actions">
+            <el-button
+              size="small"
+              type="primary"
+              :disabled="refreshing"
+              @click="emit('open-stylus-input-probe')"
+            >{{ t.controllersHub.peripherals.stylus.launch }}</el-button>
+          </div>
+        </article>
       </div>
     </div>
   </section>
@@ -109,7 +125,7 @@ import { ElMessageBox } from 'element-plus'
 import { usePeripheralTools } from '../../composables/usePeripheralTools.js'
 import { useI18n } from '../../desktop/i18n/index.js'
 
-const emit = defineEmits(['open-controller-meta'])
+const emit = defineEmits(['open-controller-meta', 'open-stylus-input-probe'])
 const { t } = useI18n()
 
 const {

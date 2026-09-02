@@ -20,7 +20,7 @@
         </div>
         <div class="ds5-hud-actions">
           <el-button
-            v-if="statusKnown && !status.installed"
+            v-if="statusKnown && componentAction === 'install'"
             text
             type="primary"
             class="ds5-action"
@@ -29,7 +29,7 @@
             @click="install()"
           >{{ t.dualSense.install }}</el-button>
           <el-button
-            v-else-if="statusKnown && !status.verified"
+            v-else-if="statusKnown && componentAction === 'repair'"
             text
             type="warning"
             class="ds5-action"
@@ -38,7 +38,7 @@
             @click="install()"
           >{{ t.dualSense.repair }}</el-button>
           <el-button
-            v-else-if="statusKnown && status.update_available"
+            v-else-if="statusKnown && componentAction === 'update'"
             text
             type="warning"
             class="ds5-action"
@@ -75,7 +75,7 @@
         <el-checkbox
           v-model="enabled"
           class="ds5-enable-control"
-          :disabled="!status.verified || status.in_use || componentControlsBusy"
+          :disabled="!componentOperational || status.in_use || componentControlsBusy"
           @change="saveSettings"
         >{{ t.dualSense.enableShort }}</el-checkbox>
       </div>
@@ -100,7 +100,7 @@
       @close="operationError = ''"
     />
 
-    <section v-if="status.verified" class="ds5-section" :aria-label="t.dualSense.profileTitle">
+    <section v-if="componentOperational" class="ds5-section" :aria-label="t.dualSense.profileTitle">
       <div class="ds5-section-head">
         <span class="ds5-section-label">◈ {{ t.dualSense.profileTitle }}</span>
         <span class="ds5-section-rule"></span>
@@ -133,7 +133,7 @@
       </div>
     </section>
 
-    <section v-if="status.verified" class="ds5-section" :aria-label="t.dualSense.tuningTitle">
+    <section v-if="componentOperational" class="ds5-section" :aria-label="t.dualSense.tuningTitle">
       <div class="ds5-section-head">
         <span class="ds5-section-label">◈ {{ t.dualSense.tuningTitle }}</span>
         <span class="ds5-section-rule"></span>
@@ -153,21 +153,75 @@
       </div>
 
       <div class="ds5-tuning-fields">
-        <label class="ds5-tuning-field">
-          <span>{{ t.dualSense.tuningStrength }}</span>
-          <el-input-number v-model="legacyStrength" :min="0.1" :max="4" :step="0.05" size="small" :disabled="componentControlsBusy" />
-        </label>
-        <label class="ds5-tuning-field">
-          <span>{{ t.dualSense.tuningCurve }}</span>
-          <el-input-number v-model="legacyCurve" :min="0.3" :max="2" :step="0.05" size="small" :disabled="componentControlsBusy" />
-        </label>
-        <label class="ds5-tuning-field">
-          <span>{{ t.dualSense.tuningGate }}</span>
-          <el-input-number
-            v-model="legacyNoiseGate" :min="0.002" :max="0.06"
-            :step="0.002" :precision="3" size="small" :disabled="componentControlsBusy"
-          />
-        </label>
+        <div class="ds5-tuning-field">
+          <div class="ds5-tuning-field-head">
+            <strong>{{ t.dualSense.tuningStrength }}</strong>
+            <span class="ds5-feel-badge">{{ tuningStrengthFeel }}</span>
+          </div>
+          <small class="ds5-tuning-field-tip">{{ t.dualSense.tuningStrengthTip }}</small>
+          <div class="ds5-eq-fader">
+            <span>{{ t.dualSense.tuningStrengthHigh }}</span>
+            <el-slider
+              v-model="legacyStrength" vertical height="128px"
+              :aria-label="t.dualSense.tuningStrength"
+              :min="0.1" :max="4" :step="0.05" :show-tooltip="false" :disabled="componentControlsBusy"
+            />
+            <span>{{ t.dualSense.tuningStrengthLow }}</span>
+          </div>
+          <label class="ds5-exact-value">
+            <span>{{ t.dualSense.tuningExactValue }}</span>
+            <el-input-number
+              v-model="legacyStrength" :min="0.1" :max="4" :step="0.05"
+              :precision="2" :controls="false" size="small" :disabled="componentControlsBusy"
+            />
+          </label>
+        </div>
+        <div class="ds5-tuning-field">
+          <div class="ds5-tuning-field-head">
+            <strong>{{ t.dualSense.tuningCurve }}</strong>
+            <span class="ds5-feel-badge">{{ tuningCurveFeel }}</span>
+          </div>
+          <small class="ds5-tuning-field-tip">{{ t.dualSense.tuningCurveTip }}</small>
+          <div class="ds5-eq-fader">
+            <span>{{ t.dualSense.tuningCurveHigh }}</span>
+            <el-slider
+              v-model="legacyCurve" vertical height="128px"
+              :aria-label="t.dualSense.tuningCurve"
+              :min="0.3" :max="2" :step="0.05" :show-tooltip="false" :disabled="componentControlsBusy"
+            />
+            <span>{{ t.dualSense.tuningCurveLow }}</span>
+          </div>
+          <label class="ds5-exact-value">
+            <span>{{ t.dualSense.tuningExactValue }}</span>
+            <el-input-number
+              v-model="legacyCurve" :min="0.3" :max="2" :step="0.05"
+              :precision="2" :controls="false" size="small" :disabled="componentControlsBusy"
+            />
+          </label>
+        </div>
+        <div class="ds5-tuning-field">
+          <div class="ds5-tuning-field-head">
+            <strong>{{ t.dualSense.tuningGate }}</strong>
+            <span class="ds5-feel-badge">{{ tuningGateFeel }}</span>
+          </div>
+          <small class="ds5-tuning-field-tip">{{ t.dualSense.tuningGateTip }}</small>
+          <div class="ds5-eq-fader">
+            <span>{{ t.dualSense.tuningGateHigh }}</span>
+            <el-slider
+              v-model="legacyNoiseGate" vertical height="128px"
+              :aria-label="t.dualSense.tuningGate"
+              :min="0.002" :max="0.06" :step="0.002" :show-tooltip="false" :disabled="componentControlsBusy"
+            />
+            <span>{{ t.dualSense.tuningGateLow }}</span>
+          </div>
+          <label class="ds5-exact-value">
+            <span>{{ t.dualSense.tuningExactValue }}</span>
+            <el-input-number
+              v-model="legacyNoiseGate" :min="0.002" :max="0.06"
+              :step="0.002" :precision="3" :controls="false" size="small" :disabled="componentControlsBusy"
+            />
+          </label>
+        </div>
       </div>
 
       <div class="ds5-save-row">
@@ -184,7 +238,7 @@
       </div>
     </section>
 
-    <section v-if="status.verified" class="ds5-section" :aria-label="t.dualSense.gameCompatibility">
+    <section v-if="componentOperational" class="ds5-section" :aria-label="t.dualSense.gameCompatibility">
       <div class="ds5-section-head">
         <span class="ds5-section-label">◈ {{ t.dualSense.gameCompatibility }}</span>
         <span class="ds5-section-rule"></span>
@@ -207,7 +261,7 @@
       </p>
     </section>
 
-    <section v-if="status.verified" class="ds5-section">
+    <section v-if="componentOperational" class="ds5-section">
       <div class="ds5-section-head">
         <span class="ds5-section-label">◈ {{ t.dualSense.validateMode }}</span>
         <span class="ds5-section-rule"></span>
@@ -279,8 +333,9 @@ const {
   operation, operationProgress, operationStage, operationError,
   enabled, audioHaptics, genshinCompatibility,
   legacyStrength, legacyCurve, legacyNoiseGate,
+  tuningStrengthFeel, tuningCurveFeel, tuningGateFeel,
   tuningSaving, tuningDirty, testCompleted, expandedSections,
-  controlsBusy, componentControlsBusy,
+  controlsBusy, componentControlsBusy, componentAction, componentOperational,
   stateLabel, nextAction, overallVersion, canTestAudioHaptics,
   showNotice, healthRows, safeStatusDetail,
   install, installFromPackage, refresh,

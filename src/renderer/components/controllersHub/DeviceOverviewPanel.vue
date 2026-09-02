@@ -28,7 +28,7 @@
       <article class="chub-card">
         <div class="chub-card-head"><strong>{{ t.deviceHub.overview.usb }}</strong><el-tag size="small" :type="usb.ready ? 'success' : 'warning'" effect="plain">{{ usb.ready ? t.deviceHub.available : t.deviceHub.needsSetup }}</el-tag></div>
         <p class="chub-hint">{{ t.deviceHub.overview.usbHint }}</p>
-        <div class="chub-card-actions"><el-button size="small" @click="emit('navigate', 'usb')">{{ t.deviceHub.overview.inspectUsb }}</el-button></div>
+        <div class="chub-card-actions"><el-button size="small" type="primary" @click="emit('navigate', 'usb')">{{ t.deviceHub.overview.inspectUsb }}</el-button></div>
       </article>
     </div>
   </section>

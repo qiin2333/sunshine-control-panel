@@ -1,7 +1,7 @@
 // ========================================
 // 控制器中心（Controllers Hub）— 像素风样式
 // 视觉语言与 DualSenseSettings.less 保持一致：
-// 像素窗锚点 + ◈ 分区标题 + 块状按钮。
+// 像素窗锚点 + ◈ 分区标题 + 投影大按钮 / [ 方括号 ] 小按钮 + 方角控件。
 // 本文件经非 scoped <style> 引入，前缀 chub- 全局唯一。
 // ========================================
 
@@ -35,6 +35,102 @@
   --chub-window-line: #8b6f5e;
   --chub-window-fill: rgba(45, 38, 40, 0.96);
   --chub-window-shadow: rgba(0, 0, 0, 0.45);
+}
+
+// ============================================
+// 设计语言（自 DualSenseSettings.less 抽象，仅设备中心作用域）
+// 词汇表：
+//   大按钮   = 方角 + 2px 边 + 硬投影按压手感（主操作）
+//   小按钮   = [ 方括号 ] 文本操作（块内低权重动作）
+//   方角控件 = 标签 / 输入 / 步进器 / 复选框 / 进度条 一律直角
+// 内嵌 ds5-page 自带同名规则（scoped 特异性更高），不受此处影响。
+// ============================================
+
+// —— 大按钮 ——
+.pixel-block-button(@shadow-color) {
+  border-radius: 0 !important;
+  border-width: 2px;
+  font-weight: 700;
+  box-shadow: 0 4px 0 @shadow-color;
+  transition: transform .1s ease, box-shadow .1s ease, background-color .12s ease, border-color .12s ease, color .12s ease;
+
+  &.el-button--primary {
+    border: 2px solid @shadow-color !important;
+  }
+  &:not(.is-disabled):hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 0 @shadow-color;
+  }
+  &:not(.is-disabled):active {
+    transform: translateY(2px);
+    box-shadow: 0 1px 0 @shadow-color;
+  }
+  &.is-disabled {
+    transform: none;
+    box-shadow: 0 4px 0 var(--el-border-color-lighter);
+  }
+}
+
+// —— 小按钮 ——
+.pixel-bracket-button(@primary-color) {
+  min-height: 30px;
+  margin: 0;
+  padding: 3px 2px;
+  border: 0;
+  background: transparent;
+  font-family: var(--pix-font);
+  font-weight: 400;
+  box-shadow: none;
+  transition: color .12s ease;
+
+  &::before { content: '['; opacity: .7; margin-right: 4px; }
+  &::after { content: ']'; opacity: .7; margin-left: 4px; }
+  &.el-button--primary { color: @primary-color; }
+  &.el-button--warning { color: var(--el-color-warning-dark-2, var(--el-color-warning)); }
+  &.el-button--danger { color: var(--el-color-danger); }
+  &:not(.el-button--primary):not(.el-button--warning):not(.el-button--danger) { color: var(--el-text-color-secondary); }
+  &:hover, &:focus-visible { background: transparent; }
+  &:focus-visible { outline: 1px dashed currentColor; outline-offset: 3px; }
+  &.is-disabled { background: transparent; }
+}
+
+.chub-page .el-button:not(.el-button--small):not(.is-text):not(.is-link) {
+  .pixel-block-button(var(--chub-primary-deep));
+}
+.chub-page .el-button--small:not(.is-text):not(.is-link) {
+  .pixel-bracket-button(var(--chub-primary));
+}
+@media (prefers-reduced-motion: reduce) {
+  .chub-page .el-button:not(.is-text):not(.is-link) { transition: none; }
+}
+
+// —— 方角控件 ——
+.chub-page .el-tag {
+  border-radius: 0;
+  border-width: 2px;
+}
+.chub-page .el-input__wrapper {
+  border-radius: 0;
+  box-shadow: 0 0 0 2px var(--el-border-color) inset;
+}
+.chub-page .el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 2px var(--chub-primary) inset;
+}
+.chub-page .el-input-number__decrease,
+.chub-page .el-input-number__increase {
+  border-radius: 0;
+  background: var(--el-fill-color-light);
+}
+.chub-page .el-input__inner {
+  font-family: var(--pix-font);
+  font-weight: 400;
+}
+.chub-page .el-checkbox__inner {
+  border-radius: 0;
+}
+.chub-page .el-progress-bar__outer,
+.chub-page .el-progress-bar__inner {
+  border-radius: 0;
 }
 
 // ============ 主区：手柄类型选择 ============
@@ -329,6 +425,11 @@
   grid-template-columns: minmax(220px, 1fr) 118px auto;
   gap: 10px;
   align-items: center;
+
+  // Element Plus 默认给 .el-input-number 固定 150px，会溢出 118px 轨道压住按钮
+  .el-input-number {
+    width: 100%;
+  }
 }
 .chub-usb-list {
   display: grid;

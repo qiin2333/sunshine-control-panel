@@ -1162,6 +1162,16 @@ fn resume_webview<R: Runtime>(ww: &WebviewWindow<R>) {
             if let Err(e) = controller.SetIsVisible(true) {
                 log::warn!("⚠️ SetIsVisible(true) 失败 [{}]: {}", label, e);
             }
+            // 挂起管线恢复后必须强制重新提交 bounds 并通知位置变化，
+            // 否则 DWM 收不到新帧、面板持续黑屏（真机复现于 v0.4.40，
+            // 与 refresh_webview_surface 处理的陈旧合成是同类问题）。
+            let mut bounds = Default::default();
+            if controller.Bounds(&mut bounds).is_ok()
+                && let Err(error) = controller.SetBounds(bounds)
+            {
+                log::debug!("Failed to refresh WebView bounds [{}]: {:?}", label, error);
+            }
+            let _ = controller.NotifyParentWindowPositionChanged();
         }
     });
 }

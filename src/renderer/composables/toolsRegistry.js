@@ -31,6 +31,7 @@ import {
   Download,
   Connection,
   MagicStick,
+  Brush,
 } from '@element-plus/icons-vue'
 import IconLang from '../desktop/icons/IconLang.vue'
 import IconGamepad from '../desktop/icons/IconGamepad.vue'
@@ -136,6 +137,12 @@ export function createUtilityTools(ctx) {
       icon: Cpu,
       label: ctx.t.value.sidebar.gamepadTest,
       action: ctx.openGamepadTest,
+    },
+    {
+      id: 'stylus-input-probe',
+      icon: Brush,
+      label: ctx.t.value.tools.stylusInputProbe,
+      action: ctx.openStylusInputProbe,
     },
     {
       id: 'clipboard-sync',

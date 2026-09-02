@@ -18,6 +18,7 @@ mod github_download;
 mod hwinfo;
 mod logger;
 mod moonlight_web;
+mod native_tools;
 mod power;
 mod proxy_server;
 mod rtss;
@@ -169,6 +170,7 @@ fn main() {
             toolbar::is_primary_mouse_button_pressed,
             system::get_current_dpi,
             system::set_desktop_dpi,
+            native_tools::open_native_tool,
             commands::open_tool_window,
             game_session::launch_game,
             game_session::get_running_game,
@@ -324,7 +326,10 @@ fn main() {
         tauri::RunEvent::ExitRequested {
             code: None, api, ..
         } => api.prevent_exit(),
-        tauri::RunEvent::Exit => app::shutdown_application(),
+        tauri::RunEvent::Exit => {
+            native_tools::shutdown_all();
+            app::shutdown_application();
+        }
         _ => {}
     });
 }

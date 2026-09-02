@@ -29,7 +29,10 @@
       <UsbPassthroughPanel v-else-if="activeTab === 'usb'" />
       <template v-else-if="activeTab === 'components'">
         <RuntimeComponentsPanel />
-        <PeripheralToolsPanel @open-controller-meta="emit('open-controller-meta')" />
+        <PeripheralToolsPanel
+          @open-controller-meta="emit('open-controller-meta')"
+          @open-stylus-input-probe="emit('open-stylus-input-probe')"
+        />
       </template>
     </div>
   </section>
@@ -48,7 +51,7 @@ import RuntimeComponentsPanel from './RuntimeComponentsPanel.vue'
 import UsbPassthroughPanel from './UsbPassthroughPanel.vue'
 import { useI18n } from '../../desktop/i18n/index.js'
 
-const emit = defineEmits(['open-controller-meta'])
+const emit = defineEmits(['open-controller-meta', 'open-stylus-input-probe'])
 const { t } = useI18n()
 const activeTab = ref('overview')
 const controllerMode = ref('auto')

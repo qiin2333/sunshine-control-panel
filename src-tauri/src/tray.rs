@@ -31,6 +31,11 @@ use menu::{build_tray_menu, tray_status_label};
 #[cfg(test)]
 use menu::{compact_menu_text, tray_notification_label};
 
+#[cfg(target_os = "windows")]
+pub(crate) fn default_window_icon_path() -> Result<std::path::PathBuf, String> {
+    notifications::ensure_windows_notification_icon()
+}
+
 // 托盘图标 ID
 const TRAY_ID: &str = "main-tray";
 

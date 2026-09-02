@@ -73,6 +73,21 @@ export function useDualSenseSettings() {
     legacyStrength.value !== status.value.legacy_strength
     || legacyCurve.value !== status.value.legacy_curve
     || legacyNoiseGate.value !== status.value.legacy_noise_gate)
+  const tuningStrengthFeel = computed(() => {
+    if (legacyStrength.value < 0.75) return t.value.dualSense.tuningStrengthSoft
+    if (legacyStrength.value > 1.5) return t.value.dualSense.tuningStrengthStrong
+    return t.value.dualSense.tuningBalanced
+  })
+  const tuningCurveFeel = computed(() => {
+    if (legacyCurve.value < 0.45) return t.value.dualSense.tuningCurveDetailed
+    if (legacyCurve.value > 1) return t.value.dualSense.tuningCurvePunchy
+    return t.value.dualSense.tuningBalanced
+  })
+  const tuningGateFeel = computed(() => {
+    if (legacyNoiseGate.value < 0.012) return t.value.dualSense.tuningGateSensitive
+    if (legacyNoiseGate.value > 0.03) return t.value.dualSense.tuningGateClean
+    return t.value.dualSense.tuningBalanced
+  })
   const stateLabel = computed(() => t.value.dualSense.states[status.value.state] || status.value.state)
   const safeStatusDetail = computed(() => status.value.detail
     ? safeDualSenseTechnicalError(status.value.detail)
@@ -470,6 +485,7 @@ export function useDualSenseSettings() {
   }
 
   const applyErmPreset = () => {
+    legacyStrength.value = 1
     legacyCurve.value = 0.5
     legacyNoiseGate.value = 0.006
   }
@@ -608,6 +624,7 @@ export function useDualSenseSettings() {
     operation, operationProgress, operationStage, operationError,
     enabled, audioHaptics, genshinCompatibility,
     legacyStrength, legacyCurve, legacyNoiseGate,
+    tuningStrengthFeel, tuningCurveFeel, tuningGateFeel,
     tuningSaving, tuningDirty, testCompleted, expandedSections,
     controlsBusy, componentControlsBusy, componentAction, componentOperational,
     stateLabel, nextAction, overallVersion, canTestAudioHaptics,

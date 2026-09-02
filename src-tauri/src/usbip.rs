@@ -563,8 +563,11 @@ fn pipe_name(token: uuid::Uuid) -> String {
 
 #[cfg(target_os = "windows")]
 async fn run_elevated(request: ElevatedRequest) -> Result<ElevatedResponse, String> {
+    use std::os::windows::io::AsRawHandle;
     use tokio::io::AsyncReadExt;
     use tokio::net::windows::named_pipe::ServerOptions;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
 
     let timeout = request.timeout();
     let token = uuid::Uuid::new_v4();
@@ -594,6 +597,20 @@ async fn run_elevated(request: ElevatedRequest) -> Result<ElevatedResponse, Stri
         .await
         .map_err(|_| "USBIP-UAC-002: administrator helper connection timed out".to_string())?
         .map_err(|error| format!("USBIP-UAC-002: administrator IPC connection failed: {error}"))?;
+    let expected_process_id = process.process_id();
+    let mut client_process_id = 0;
+    unsafe {
+        GetNamedPipeClientProcessId(HANDLE(server.as_raw_handle()), &mut client_process_id)
+            .map_err(|error| {
+                format!("USBIP-UAC-002: unable to authenticate administrator IPC client: {error}")
+            })?;
+    }
+    if client_process_id == 0 || client_process_id != expected_process_id {
+        return Err(
+            "USBIP-UAC-002: administrator IPC client is not the process authorized for this session"
+                .to_string(),
+        );
+    }
     let mut encoded = Vec::with_capacity(MAX_ELEVATED_RESPONSE_BYTES);
     let mut reader = server.take((MAX_ELEVATED_RESPONSE_BYTES + 1) as u64);
     tokio::time::timeout(timeout, reader.read_to_end(&mut encoded))

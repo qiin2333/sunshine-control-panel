@@ -69,7 +69,7 @@
             type="primary"
             plain
             :loading="attachingBusId === device.bus_id"
-            :disabled="operationBusy"
+            :disabled="operationBusy || !status.ready"
             @click="attachDevice(device)"
           >{{ t.deviceHub.usb.attach }}</el-button>
         </article>
@@ -255,6 +255,7 @@ async function discover() {
 }
 
 async function attachDevice(device) {
+  if (!status.ready || operationBusy.value) return
   try {
     await ElMessageBox.confirm(
       t.value.deviceHub.usb.attachConfirm
@@ -264,6 +265,7 @@ async function attachDevice(device) {
       { confirmButtonText: t.value.deviceHub.usb.attach, cancelButtonText: t.value.deviceHub.usb.cancel, type: 'warning' },
     )
   } catch { return }
+  if (!status.ready || operationBusy.value) return
   attachingBusId.value = device.bus_id
   const result = await usbip.attach(remote.value.trim(), device.bus_id, tcpPort.value)
   attachingBusId.value = ''

@@ -13,6 +13,14 @@ pub(crate) struct ElevatedProcess {
 
 #[cfg(target_os = "windows")]
 impl ElevatedProcess {
+    pub(crate) fn process_id(&self) -> u32 {
+        use std::os::windows::io::AsRawHandle;
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::System::Threading::GetProcessId;
+
+        unsafe { GetProcessId(HANDLE(self.handle.as_raw_handle())) }
+    }
+
     pub(crate) fn exit_code(&self) -> Result<Option<i32>, String> {
         use std::os::windows::io::AsRawHandle;
         use windows::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};

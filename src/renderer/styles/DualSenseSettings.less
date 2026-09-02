@@ -452,6 +452,12 @@
   .ds5-page { padding: 22px 14px 40px; }
   .ds5-preset-row { display: grid; grid-template-columns: 1fr 1fr; }
   .ds5-preset { display: grid; gap: 1px; }
+  .ds5-tuning-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ds5-tuning-field:nth-child(2) { border-right: 0; }
+  .ds5-tuning-field:last-child {
+    grid-column: 1 / -1;
+    border-top: 2px dashed color-mix(in srgb, var(--ds5-window-line) 45%, transparent);
+  }
   .ds5-health-row { grid-template-columns: minmax(0, 1fr) minmax(0, auto); gap: 8px; }
   .ds5-health-detail { grid-column: 1 / -1; text-align: left; }
 }
@@ -459,7 +465,12 @@
   .ds5-page-header { flex-direction: column; }
   .ds5-hud-row, .ds5-headline, .ds5-compat-row { flex-direction: column; align-items: flex-start; }
   .ds5-mode-option { grid-template-columns: 16px minmax(0, 1fr) auto; padding-inline: 4px; }
-  .ds5-tuning-field { padding-inline: 8px; }
+  .ds5-tuning-fields { grid-template-columns: minmax(0, 1fr); }
+  .ds5-tuning-field { padding-inline: 8px; border-right: 0; }
+  .ds5-tuning-field:nth-child(n + 2) {
+    border-top: 2px dashed color-mix(in srgb, var(--ds5-window-line) 45%, transparent);
+  }
+  .ds5-tuning-field:last-child { grid-column: auto; }
   .ds5-tuning-field-head { align-items: flex-start; flex-direction: column; gap: 3px; }
   .ds5-tuning-field-tip { font-size: 10px; }
   .ds5-eq-fader > span { max-width: 88px; }

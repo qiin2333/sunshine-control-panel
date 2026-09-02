@@ -99,7 +99,7 @@ $exeSize = [math]::Round((Get-Item $exeSrc).Length / 1MB, 1)
 Write-Host "   大小: ${exeSize} MB"
 
 $pluginSrc = Join-Path (Split-Path $exeSrc -Parent) 'alkaidlab-plugin-stylus.dll'
-if (-not (Test-Path -LiteralPath $pluginSrc)) {
+if (-not (Test-Path -LiteralPath $pluginSrc -PathType Leaf)) {
     Write-Host "❌ 找不到原生工具插件 alkaidlab-plugin-stylus.dll" -ForegroundColor Red
     exit 1
 }

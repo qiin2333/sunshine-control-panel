@@ -78,7 +78,7 @@ Windows、Sunshine 或绘画软件的输入行为。
 录制文件采用版本化文本 DAT：
 
 ```text
-SUNSHINE_STYLUS_DAT	2
+SUNSHINE_STYLUS_DAT	1
 # columns=P timestamp_us event_type x y pressure rotation tilt_x tilt_y
 P <timestamp_us> <event_type> <x> <y> <pressure> <rotation> <tilt_x> <tilt_y>
 ```
@@ -87,8 +87,8 @@ P <timestamp_us> <event_type> <x> <y> <pressure> <rotation> <tilt_x> <tilt_y>
 
 - 坐标和压力归一化到 `0..1`。
 - 未提供的旋转和倾角分量使用协议保留值，不根据压力伪造接触面积。
-- Tilt X/Y 分别保存，导入后可以恢复非对称倾角；读取器仍接受本 PR 早期产生的 v1 单倾角
-  文件，并将其解释为 `tilt_x=<旧值>`、`tilt_y=0`。
+- Tilt X/Y 分别保存，导入后可以恢复非对称倾角。格式尚未发布，v1 直接采用双倾角字段，
+  不兼容开发阶段产生的单倾角文件。
 - 离开画布、捕获丢失或异常结束时写入 `CANCEL`，防止导入后连接两段独立笔划。
 - 每 256 个样本或笔划抬起时刷新缓冲区，减少逐点磁盘同步。
 - 开始检测时自动创建 DAT 并增量写入；录制内存只保留计数和最后一个样本，不保存完整

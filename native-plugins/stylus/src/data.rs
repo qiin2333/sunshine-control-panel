@@ -2,8 +2,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 
-pub const MAGIC_V1: &str = "SUNSHINE_STYLUS_DAT\t1";
-pub const MAGIC: &str = "SUNSHINE_STYLUS_DAT\t2";
+pub const MAGIC: &str = "SUNSHINE_STYLUS_DAT\t1";
 pub const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_SAMPLES: usize = 200_000;
 
@@ -90,11 +89,9 @@ pub fn load(path: &Path) -> Result<StylusData, String> {
     reader
         .read_line(&mut first_line)
         .map_err(|_| "无法读取数据文件。".to_string())?;
-    let version = match first_line.trim_end_matches(['\r', '\n']) {
-        MAGIC => 2,
-        MAGIC_V1 => 1,
-        _ => return Err("数据文件格式或版本不受支持。".to_string()),
-    };
+    if first_line.trim_end_matches(['\r', '\n']) != MAGIC {
+        return Err("数据文件格式或版本不受支持。".to_string());
+    }
 
     let mut data = StylusData::default();
     let mut previous_timestamp = None;
@@ -117,8 +114,7 @@ pub fn load(path: &Path) -> Result<StylusData, String> {
         }
 
         let fields = trimmed.split_whitespace().collect::<Vec<_>>();
-        let expected_fields = if version == 2 { 9 } else { 8 };
-        if fields.len() != expected_fields || fields[0] != "P" {
+        if fields.len() != 9 || fields[0] != "P" {
             return Err("数据文件包含无效记录。".to_string());
         }
         let sample = StylusSample {
@@ -143,13 +139,9 @@ pub fn load(path: &Path) -> Result<StylusData, String> {
             tilt_x: fields[7]
                 .parse()
                 .map_err(|_| "数据文件包含无效倾角。".to_string())?,
-            tilt_y: if version == 2 {
-                fields[8]
-                    .parse()
-                    .map_err(|_| "数据文件包含无效倾角。".to_string())?
-            } else {
-                0
-            },
+            tilt_y: fields[8]
+                .parse()
+                .map_err(|_| "数据文件包含无效倾角。".to_string())?,
         };
         if !validate_sample(&sample) {
             return Err("数据文件中的样本超出允许范围。".to_string());
@@ -267,17 +259,6 @@ mod tests {
         let loaded = load(&path).unwrap();
         let _ = std::fs::remove_file(path);
         assert_eq!(loaded.samples, vec![sample]);
-    }
-
-    #[test]
-    fn loader_accepts_version_one_tilt_data() {
-        let path = test_path("version-one");
-        std::fs::write(&path, format!("{MAGIC_V1}\nP 10 3 0.1 0.2 0.5 270 42\n")).unwrap();
-
-        let loaded = load(&path).unwrap();
-        let _ = std::fs::remove_file(path);
-        assert_eq!(loaded.samples[0].tilt_x, 42);
-        assert_eq!(loaded.samples[0].tilt_y, 0);
     }
 
     #[test]

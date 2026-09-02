@@ -53,7 +53,7 @@ pub fn analyze<T: TraceSample>(trace: &VecDeque<T>) -> SamplingAnalysis {
             .timestamp_us()
             .saturating_sub(pair[0].timestamp_us()) as f64
             / 1000.0;
-        if elapsed > 0.0 && elapsed <= 1000.0 {
+        if elapsed > 0.0 {
             intervals.push(elapsed);
         }
     }
@@ -164,5 +164,32 @@ mod tests {
         assert_eq!(result.over_33_3ms, 0);
         assert_eq!(result.interval_p99_ms, 26.0);
         assert!(result.interval_stddev_ms > 0.0);
+    }
+
+    #[test]
+    fn analysis_keeps_multi_second_delivery_gaps() {
+        let trace = VecDeque::from([
+            Point(0, 0, 0, true),
+            Point(4_000, 1, 0, false),
+            Point(2_004_000, 2, 0, false),
+        ]);
+        let result = analyze(&trace);
+        assert_eq!(result.recent_intervals_ms, vec![4.0, 2000.0]);
+        assert_eq!(result.over_16_7ms, 1);
+        assert_eq!(result.over_20ms, 1);
+        assert_eq!(result.over_33_3ms, 1);
+        assert_eq!(result.interval_max_ms, 2000.0);
+    }
+
+    #[test]
+    fn analysis_ignores_zero_intervals() {
+        let trace = VecDeque::from([
+            Point(10_000, 0, 0, true),
+            Point(10_000, 1, 0, false),
+            Point(10_000, 2, 0, false),
+        ]);
+        let result = analyze(&trace);
+        assert!(result.recent_intervals_ms.is_empty());
+        assert_eq!(result.interval_max_ms, 0.0);
     }
 }

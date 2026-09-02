@@ -98,6 +98,12 @@ Write-Host "📦 编译产物: $exeSrc" -ForegroundColor Green
 $exeSize = [math]::Round((Get-Item $exeSrc).Length / 1MB, 1)
 Write-Host "   大小: ${exeSize} MB"
 
+$pluginSrc = Join-Path (Split-Path $exeSrc -Parent) 'alkaidlab-plugin-stylus.dll'
+if (-not (Test-Path -LiteralPath $pluginSrc)) {
+    Write-Host "❌ 找不到原生工具插件 alkaidlab-plugin-stylus.dll" -ForegroundColor Red
+    exit 1
+}
+
 # 部署
 if (-not (Test-Path $guiDir)) {
     New-Item -ItemType Directory -Path $guiDir -Force | Out-Null
@@ -113,12 +119,6 @@ if ($running) {
 
 Write-Host "📋 复制到 $guiDir ..." -ForegroundColor Yellow
 Copy-Item $exeSrc "$guiDir\sunshine-gui.exe" -Force
-
-$pluginSrc = Join-Path (Split-Path $exeSrc -Parent) 'alkaidlab-plugin-stylus.dll'
-if (-not (Test-Path -LiteralPath $pluginSrc)) {
-    Write-Host "❌ 找不到原生工具插件 alkaidlab-plugin-stylus.dll" -ForegroundColor Red
-    exit 1
-}
 Copy-Item -LiteralPath $pluginSrc -Destination "$guiDir\alkaidlab-plugin-stylus.dll" -Force
 
 # WebView2Loader.dll (如果存在)

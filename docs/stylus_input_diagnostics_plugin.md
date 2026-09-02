@@ -67,7 +67,8 @@ Windows、Sunshine 或绘画软件的输入行为。
 - 只保留最近 161 个手写笔点，对应最近 160 个采样间隔。
 - 当前笔划总点数由独立计数器维护，不需要保存整条笔划。
 - 新笔划开始时重置分析窗口和计数器。
-- 分析计算中位数、P95、最大间隔、超过 20 ms 的次数以及相邻方向变化。
+- 分析计算间隔 Median、P95、P99、Max、标准差，统计 `>16.7 ms`、`>20 ms`、
+  `>33.3 ms` 的次数，并计算相邻方向变化的 Median/P95。
 - 分析在 16 ms UI 刷新节奏内完成；161 点计算量很小，不引入后台线程和同步锁。
 
 持久底图只保证视觉轨迹保留。需要复查全部原始点时必须使用 DAT 录制。
@@ -77,15 +78,17 @@ Windows、Sunshine 或绘画软件的输入行为。
 录制文件采用版本化文本 DAT：
 
 ```text
-SUNSHINE_STYLUS_DAT	1
-# columns=P timestamp_us event_type x y pressure rotation tilt
-P <timestamp_us> <event_type> <x> <y> <pressure> <rotation> <tilt>
+SUNSHINE_STYLUS_DAT	2
+# columns=P timestamp_us event_type x y pressure rotation tilt_x tilt_y
+P <timestamp_us> <event_type> <x> <y> <pressure> <rotation> <tilt_x> <tilt_y>
 ```
 
 主要规则：
 
 - 坐标和压力归一化到 `0..1`。
-- 未提供的旋转和倾角使用协议保留值，不根据压力伪造接触面积。
+- 未提供的旋转和倾角分量使用协议保留值，不根据压力伪造接触面积。
+- Tilt X/Y 分别保存，导入后可以恢复非对称倾角；读取器仍接受本 PR 早期产生的 v1 单倾角
+  文件，并将其解释为 `tilt_x=<旧值>`、`tilt_y=0`。
 - 离开画布、捕获丢失或异常结束时写入 `CANCEL`，防止导入后连接两段独立笔划。
 - 每 256 个样本或笔划抬起时刷新缓冲区，减少逐点磁盘同步。
 - 开始检测时自动创建 DAT 并增量写入；录制内存只保留计数和最后一个样本，不保存完整

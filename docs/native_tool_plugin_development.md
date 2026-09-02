@@ -79,10 +79,12 @@ AlkaidLabNativeTool_GetApi(host_abi_version) -> PluginApiV1
 - `show()`：创建或激活工具界面。
 - `request_close()`：异步请求关闭。
 - `shutdown(timeout_ms)`：等待窗口、线程和回调退出。
+- `is_running()`：报告插件窗口、线程或回调是否仍在运行，供宿主关闭监控判断是否可以进入
+  `shutdown()` 和卸载流程。
 - `can_unload()`：确认宿主可以执行 `FreeLibrary`。
 
-宿主回调目前只提供分级日志。需要新增能力时应在 ABI 结构尾部扩展，并同时检查
-`struct_size`，不能向插件暴露 Tauri 内部对象。
+宿主目前提供分级日志和默认大、小窗口图标。需要新增能力时应在 ABI 结构尾部扩展，并
+同时检查 `struct_size`，不能向插件暴露 Tauri 内部对象。
 
 插件导出函数必须使用 `catch_unwind` 收口 Rust panic。窗口过程、线程入口和其他由操作
 系统反向调用的边界同样不能让 panic 穿过 ABI。

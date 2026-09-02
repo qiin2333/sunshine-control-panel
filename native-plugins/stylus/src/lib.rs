@@ -957,6 +957,13 @@ fn diagnosis_view(state: &WindowState) -> DiagnosisView {
     }
 
     let pen_contact_events = state.stats.down + state.stats.movement + state.stats.up;
+    if state.stats.errors != 0 {
+        return DiagnosisView {
+            level: DiagnosisLevel::Warning,
+            title: tr("conclusion.warning_title"),
+            summary: tr("conclusion.warning_pointer_error").to_string(),
+        };
+    }
     if pen_contact_events == 0 {
         if state.mouse_contact_events != 0 || state.filtered_promoted_mouse_contact_events != 0 {
             return DiagnosisView {
@@ -971,13 +978,17 @@ fn diagnosis_view(state: &WindowState) -> DiagnosisView {
             summary: tr("conclusion.data_insufficient_summary").to_string(),
         };
     }
+    if state.sampling_analysis.recent_intervals_ms.is_empty() {
+        return DiagnosisView {
+            level: DiagnosisLevel::Insufficient,
+            title: tr("conclusion.data_insufficient_title"),
+            summary: tr("conclusion.data_insufficient_summary").to_string(),
+        };
+    }
 
     let mut issues = Vec::new();
     if state.stats.down == 0 || state.stats.movement == 0 || state.stats.up == 0 {
         issues.push(tr("conclusion.warning_incomplete_sequence"));
-    }
-    if state.stats.errors != 0 {
-        issues.push(tr("conclusion.warning_pointer_error"));
     }
     if state.sampling_analysis.interval_p95_ms > 20.0 || state.sampling_analysis.over_33_3ms != 0 {
         issues.push(tr("conclusion.warning_sampling_gap"));
@@ -1629,14 +1640,6 @@ fn pointer_timestamp_us(pen_info: &POINTER_PEN_INFO) -> u64 {
     }
 }
 
-fn combined_tilt_degrees(tilt_x: i32, tilt_y: i32) -> i32 {
-    let tangent = (tilt_x as f64)
-        .to_radians()
-        .tan()
-        .hypot((tilt_y as f64).to_radians().tan());
-    tangent.atan().to_degrees().round().clamp(0.0, 90.0) as i32
-}
-
 fn mark_recording_truncated(state: &mut WindowState) -> Result<(), String> {
     state.recording_truncated = true;
     let newly_written = if let Some(recording) = state.recording.as_mut() {
@@ -1742,11 +1745,13 @@ fn record_data_sample(
     } else {
         UNKNOWN_ROTATION
     };
-    let tilt = if rotation != UNKNOWN_ROTATION
-        && pen_info.penMask & PEN_MASK_TILT_X != 0
-        && pen_info.penMask & PEN_MASK_TILT_Y != 0
-    {
-        combined_tilt_degrees(pen_info.tiltX, pen_info.tiltY)
+    let tilt_x = if pen_info.penMask & PEN_MASK_TILT_X != 0 {
+        pen_info.tiltX
+    } else {
+        UNKNOWN_TILT
+    };
+    let tilt_y = if pen_info.penMask & PEN_MASK_TILT_Y != 0 {
+        pen_info.tiltY
     } else {
         UNKNOWN_TILT
     };
@@ -1758,7 +1763,8 @@ fn record_data_sample(
         y: y.clamp(0.0, 1.0),
         pressure,
         rotation,
-        tilt,
+        tilt_x,
+        tilt_y,
     };
     data::write_sample(&mut recording.writer, &sample)
         .map_err(|_| tr("error.write_recording_data").to_string())?;
@@ -2237,13 +2243,17 @@ fn load_data_into_canvas(hwnd: HWND, state: &mut WindowState, imported: StylusDa
         };
         let attributes = PenAttributes {
             pressure_available: sample.pressure > 0.0,
-            tilt_x: if sample.tilt == UNKNOWN_TILT {
+            tilt_x: if sample.tilt_x == UNKNOWN_TILT {
                 0
             } else {
-                sample.tilt
+                sample.tilt_x
             },
-            tilt_y: 0,
-            tilt_available: sample.tilt != UNKNOWN_TILT,
+            tilt_y: if sample.tilt_y == UNKNOWN_TILT {
+                0
+            } else {
+                sample.tilt_y
+            },
+            tilt_available: sample.tilt_x != UNKNOWN_TILT && sample.tilt_y != UNKNOWN_TILT,
             rotation: if sample.rotation == UNKNOWN_ROTATION {
                 0
             } else {
@@ -2296,10 +2306,10 @@ fn load_data_into_canvas(hwnd: HWND, state: &mut WindowState, imported: StylusDa
         }
         state.last_pressure = point.pressure;
         state.last_pressure_available = sample.pressure > 0.0;
-        state.last_tilt_available = sample.tilt != UNKNOWN_TILT;
+        state.last_tilt_available = sample.tilt_x != UNKNOWN_TILT && sample.tilt_y != UNKNOWN_TILT;
         if state.last_tilt_available {
-            state.last_tilt_x = sample.tilt;
-            state.last_tilt_y = 0;
+            state.last_tilt_x = sample.tilt_x;
+            state.last_tilt_y = sample.tilt_y;
         }
         state.last_rotation_available = sample.rotation != UNKNOWN_ROTATION;
         if state.last_rotation_available {
@@ -3908,7 +3918,8 @@ mod tests {
             y: 0.5,
             pressure: 0.5,
             rotation: 0,
-            tilt: 0,
+            tilt_x: 0,
+            tilt_y: 0,
         };
         data::write_sample(&mut writer, &sample).unwrap();
         let mut state = WindowState::new();
@@ -4079,6 +4090,7 @@ mod tests {
         normal.stats.down = 1;
         normal.stats.movement = 10;
         normal.stats.up = 1;
+        normal.sampling_analysis.recent_intervals_ms = vec![8.0];
         normal.sampling_analysis.interval_p95_ms = 8.0;
         assert!(matches!(
             diagnosis_view(&normal).level,
@@ -4100,6 +4112,7 @@ mod tests {
         state.mode = DiagnosticMode::Completed;
         state.stats.down = 1;
         state.stats.movement = 10;
+        state.sampling_analysis.recent_intervals_ms = vec![4.0];
         assert!(matches!(
             diagnosis_view(&state).level,
             DiagnosisLevel::Warning
@@ -4107,10 +4120,26 @@ mod tests {
     }
 
     #[test]
-    fn combines_windows_tilt_axes_into_protocol_tilt() {
-        assert_eq!(combined_tilt_degrees(0, 0), 0);
-        assert_eq!(combined_tilt_degrees(45, 0), 45);
-        assert_eq!(combined_tilt_degrees(45, 45), 55);
+    fn diagnosis_reports_insufficient_data_without_positive_intervals() {
+        let mut state = WindowState::new();
+        state.mode = DiagnosticMode::Imported;
+        state.stats.down = 1;
+        assert!(matches!(
+            diagnosis_view(&state).level,
+            DiagnosisLevel::Insufficient
+        ));
+    }
+
+    #[test]
+    fn diagnosis_prioritizes_pointer_errors() {
+        let mut state = WindowState::new();
+        state.mode = DiagnosticMode::Completed;
+        state.stats.errors = 1;
+        state.mouse_contact_events = 1;
+        assert!(matches!(
+            diagnosis_view(&state).level,
+            DiagnosisLevel::Warning
+        ));
     }
 
     #[test]

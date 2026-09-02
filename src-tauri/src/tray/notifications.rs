@@ -39,7 +39,7 @@ pub(super) enum NotificationAction {
 }
 
 #[cfg(target_os = "windows")]
-fn ensure_windows_notification_icon() -> Result<PathBuf, String> {
+pub(super) fn ensure_windows_notification_icon() -> Result<PathBuf, String> {
     WINDOWS_NOTIFICATION_ICON
         .get_or_init(|| {
             let directory = dirs::data_local_dir()

@@ -160,6 +160,7 @@ export const tools = {
   restartSunshineService: () => invoke('restart_sunshine_service'),
   restartSunshineInUserMode: () => invoke('restart_sunshine_in_user_mode'),
   uninstallVddDriver: () => invoke('uninstall_vdd_driver'),
+  openNativeTool: (toolId) => invoke('open_native_tool', { toolId }),
 }
 
 // Folder Sharing

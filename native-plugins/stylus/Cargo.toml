@@ -1,0 +1,29 @@
+[package]
+name = "alkaidlab-plugin-stylus"
+version = "1.0.0"
+edition = "2024"
+license = "GPL-3.0-only"
+
+[lib]
+name = "alkaidlab_plugin_stylus"
+crate-type = ["cdylib"]
+
+[dependencies]
+alkaidlab-native-tool-plugin-api = { path = "../plugin-api" }
+serde_json = "1"
+windows = { version = "0.62.2", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_Globalization",
+  "Win32_System_DataExchange",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Memory",
+  "Win32_System_Performance",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Controls",
+  "Win32_UI_Controls_Dialogs",
+  "Win32_UI_Input_Pointer",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }

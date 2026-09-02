@@ -1,6 +1,7 @@
+use super::packages::UsbipInstallResult;
 use super::{
     CoreDualSenseResponse, CoreDualSenseSettings, InstalledComponentManifest,
-    SidecarPackageManifest, UsbipInstallResult, clamp_tuning, classify_usbip_installer_exit_code,
+    SidecarPackageManifest, clamp_tuning, classify_usbip_installer_exit_code,
     component_is_verified, component_matches_current_runtime, component_state,
     component_test_failure, component_update_available, copy_runtime_files, core_ds5_http_error,
     extract_sidecar_package, local_uninstalled_status, pinned_usbip_installed,

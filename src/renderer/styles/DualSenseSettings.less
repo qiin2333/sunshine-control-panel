@@ -15,6 +15,8 @@
 
 @ds5-pixel-font: 'FusionPixel', 'PixelMplus12', 'YouYuan', 'Courier New', monospace;
 
+@import './pixel-language.less';
+
 // 主题令牌两块都走 :global()：`:global(x) y` 的写法会丢弃括号外的选择器，
 // 深色块因此只会编译成 `[data-bs-theme='dark']` 挂到 <html> 上，只能靠继承
 // 传给 .ds5-page，于是被直接命中元素的浅色块整体压过 —— 页面就成了
@@ -142,23 +144,7 @@
 
 // 方括号文本操作（低权重动作）
 .ds5-page :deep(.el-button.ds5-action) {
-  min-height: 30px;
-  margin: 0;
-  padding: 3px 2px;
-  border: 0;
-  background: transparent;
-  font-family: var(--pix-font);
-  font-weight: 400;
-  box-shadow: none;
-  transition: color .12s ease;
-  &::before { content: '['; opacity: .7; margin-right: 4px; }
-  &::after { content: ']'; opacity: .7; margin-left: 4px; }
-  &.el-button--primary { color: var(--ds5-primary); }
-  &.el-button--warning { color: var(--el-color-warning-dark-2, var(--el-color-warning)); }
-  &:not(.el-button--primary):not(.el-button--warning) { color: var(--el-text-color-secondary); }
-  &:hover, &:focus-visible { background: transparent; }
-  &:focus-visible { outline: 1px dashed currentColor; outline-offset: 3px; }
-  &.is-disabled { background: transparent; }
+  .pixel-bracket-button(var(--ds5-primary));
 }
 
 // ============ 窗内标题行 + 启用开关 ============
@@ -346,24 +332,7 @@
 
 // ============ 块状按钮（EP 覆写：方角 + 硬投影） ============
 .ds5-page :deep(.el-button:not(.is-text):not(.is-link)) {
-  border-radius: 0 !important;
-  border-width: 2px;
-  font-weight: 700;
-  box-shadow: 0 4px 0 var(--ds5-primary-deep);
-  transition: transform .1s ease, box-shadow .1s ease, background-color .12s ease, border-color .12s ease, color .12s ease;
-}
-.ds5-page :deep(.el-button--primary:not(.is-text):not(.is-link)) { border: 2px solid var(--ds5-primary-deep) !important; }
-.ds5-page :deep(.el-button:not(.is-text):not(.is-link):not(.is-disabled):hover) {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 0 var(--ds5-primary-deep);
-}
-.ds5-page :deep(.el-button:not(.is-text):not(.is-link):not(.is-disabled):active) {
-  transform: translateY(2px);
-  box-shadow: 0 1px 0 var(--ds5-primary-deep);
-}
-.ds5-page :deep(.el-button:not(.is-text):not(.is-link).is-disabled) {
-  transform: none;
-  box-shadow: 0 4px 0 var(--el-border-color-lighter);
+  .pixel-block-button(var(--ds5-primary-deep));
 }
 .ds5-test-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 14px; }
 .ds5-test-actions :deep(.ds5-test-button) { min-width: 180px; min-height: 38px; margin: 0; }
@@ -444,7 +413,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ds5-page :deep(.el-button), .ds5-preset { transition: none; }
+  .ds5-page :deep(.el-button:not(.is-text):not(.is-link)), .ds5-preset { transition: none; }
   .ds5-mode-option.is-selected .ds5-mode-cursor { animation: none; }
 }
 

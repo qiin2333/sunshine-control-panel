@@ -1,5 +1,5 @@
 <template>
-  <section class="chub-panel chub-usb-manager">
+  <section class="chub-panel">
     <div class="chub-window" :class="statusClass">
       <span class="chub-window-tab">USB/IP TRANSPORT</span>
       <div class="chub-hud-row">

@@ -4,7 +4,7 @@
       <span class="chub-window-tab">{{ t.deviceHub.runtime.title }}</span>
       <div class="chub-hud-row">
         <div class="chub-hud-state"><span class="chub-status-dot"></span><strong>{{ runtimeLabel }}</strong></div>
-        <el-button size="small" :loading="loading" @click="refresh">{{ t.deviceHub.refresh }}</el-button>
+        <el-button size="small" :loading="loading" @click="refresh(true)">{{ t.deviceHub.refresh }}</el-button>
       </div>
       <div class="chub-runtime-grid">
         <div><span>{{ t.deviceHub.runtime.host }}</span><strong>{{ hostLabel }}</strong></div>
@@ -35,20 +35,17 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
-import { dualsense, usbip, virtualMicrophone } from '../../tauri-adapter.js'
+import { computed, onMounted } from 'vue'
 import { deviceRuntimeReady, microphoneOverviewState } from '../../composables/deviceHubStatus.js'
+import { useDeviceRuntime } from '../../composables/useDeviceRuntime.js'
 import { useI18n } from '../../desktop/i18n/index.js'
 
 const emit = defineEmits(['navigate'])
 const { t } = useI18n()
-const loading = ref(false)
-const loadError = ref(false)
-const ds = reactive({ verified: false, usbip_available: false, usbip_version: '' })
-const mic = reactive({ component_available: false, device_created: false, host_streaming: false })
-const usb = reactive({ ready: false, version: '' })
-const controllerReady = computed(() => ds.verified)
-const microphoneState = computed(() => microphoneOverviewState(mic))
+const { runtime, loading, loadError, refresh } = useDeviceRuntime()
+const usb = computed(() => runtime.usb)
+const controllerReady = computed(() => runtime.ds.verified)
+const microphoneState = computed(() => microphoneOverviewState(runtime.mic))
 const microphoneTag = computed(() => ({
   missing: t.value.deviceHub.overview.statusUnavailable,
   capturing: t.value.deviceHub.overview.statusCapturing,
@@ -61,12 +58,12 @@ const microphoneTagType = computed(() => ({
   idle: 'success',
   waiting: 'info',
 })[microphoneState.value])
-const runtimeReady = computed(() => deviceRuntimeReady(ds, mic))
+const runtimeReady = computed(() => deviceRuntimeReady(runtime.ds, runtime.mic))
 const runtimeTone = computed(() => runtimeReady.value ? 'state-ready' : loadError.value ? 'state-error' : '')
 const runtimeLabel = computed(() => runtimeReady.value ? t.value.deviceHub.runtime.ready : t.value.deviceHub.runtime.needsAttention)
 const hostLabel = computed(() => runtimeReady.value ? t.value.deviceHub.available : t.value.deviceHub.unavailable)
-const transportLabel = computed(() => usb.ready || ds.usbip_available
-  ? `USB/IP ${usb.version || ds.usbip_version || ''}`.trim()
+const transportLabel = computed(() => usb.value.ready || runtime.ds.usbip_available
+  ? `USB/IP ${usb.value.version || runtime.ds.usbip_version || ''}`.trim()
   : t.value.deviceHub.unavailable)
 const microphoneSummary = computed(() => {
   const key = microphoneState.value
@@ -78,16 +75,5 @@ const microphoneSummary = computed(() => {
   }[key]
 })
 
-async function refresh() {
-  if (loading.value) return
-  loading.value = true
-  loadError.value = false
-  const [dsResult, micResult, usbResult] = await Promise.all([dualsense.getStatus(), virtualMicrophone.getStatus(), usbip.getStatus()])
-  if (dsResult?.success) Object.assign(ds, dsResult.data)
-  if (micResult?.success) Object.assign(mic, micResult.data)
-  if (usbResult?.success) Object.assign(usb, usbResult.data)
-  loadError.value = !dsResult?.success && !micResult?.success && !usbResult?.success
-  loading.value = false
-}
-onMounted(refresh)
+onMounted(() => refresh())
 </script>

@@ -430,6 +430,8 @@ async fn list_attached() -> Result<Vec<UsbipAttachedDevice>, String> {
     Ok(parse_attached_devices(&text))
 }
 
+/// Spawns a `usbip.exe port` subprocess on every call to enumerate attached
+/// devices. Intended for on-demand refreshes — do not poll at high frequency.
 #[tauri::command]
 pub async fn usbip_get_status() -> Result<UsbipStatus, String> {
     #[cfg(not(target_os = "windows"))]

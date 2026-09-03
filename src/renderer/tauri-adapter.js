@@ -161,6 +161,7 @@ export const sunshine = {
   getUrl: () => wrapDefault('get_sunshine_url', 'https://localhost:47990/'),
   getCommandLineUrl: () => wrapDefault('get_command_line_url', null),
   getProxyUrl: () => wrapDefault('get_proxy_url_command', 'http://localhost:48081'),
+  waitForProxyReady: () => wrapResult('wait_for_proxy_ready'),
   refreshTarget: () => wrapDefault('refresh_sunshine_target', null),
   getActiveSessions: () => wrapDefault('get_active_sessions', []),
   getLocale: () => wrapDefault('get_sunshine_locale', 'en'),
@@ -210,6 +211,8 @@ export const moonlightWeb = {
 export const controllerMeta = {
   getStatus: () => wrapDefault('controllermeta_get_status',
     { installed: false, running: false, install_path: '', binary_path: '', version: '' }),
+  // 可失败的探测：失败时返回 { success: false }，与「未安装」区分开
+  probeStatus: () => wrapResult('controllermeta_get_status'),
   checkRelease: () => invoke('controllermeta_check_release'),
   download: (url, version) => invoke('controllermeta_download', { url, version: version || '' }),
   launch: () => invoke('controllermeta_launch'),

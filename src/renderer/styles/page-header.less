@@ -1,0 +1,57 @@
+// ============================================
+// 通用页头（横幅式）— 供各设置页复用
+// 结构：图标/头像 + [kicker + 标题] 栈，右侧可放操作区
+// 主题通过变量注入（在使用方作用域内覆盖，参考 webstream 的浅蓝/深色两块）：
+//   --page-header-border  底部分隔线
+//   --page-header-bg      横幅渐变背景
+//   --page-header-title   标题颜色
+//   --page-header-accent  图标/强调色
+// ============================================
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 32px;
+  border-bottom: 1px solid var(--page-header-border, var(--el-border-color-lighter));
+  background: var(--page-header-bg, transparent);
+  transition: all 0.3s ease;
+
+  .page-header-heading {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .page-header-icon {
+    flex: 0 0 auto;
+    font-size: 28px;
+    color: var(--page-header-accent, var(--el-color-primary));
+  }
+
+  .page-header-title-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .page-header-kicker {
+    color: var(--el-text-color-secondary);
+    font-family: var(--pix-font, 'Cascadia Code', Consolas, monospace);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .page-header-title {
+    margin: 0;
+    color: var(--page-header-title, var(--el-text-color-primary));
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+}

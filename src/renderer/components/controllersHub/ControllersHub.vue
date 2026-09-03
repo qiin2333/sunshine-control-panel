@@ -1,10 +1,15 @@
 <template>
   <section class="chub-page">
-    <header class="chub-header">
-      <p class="chub-eyebrow">{{ t.deviceHub.eyebrow }}</p>
-      <div class="chub-title-row"><h1>{{ t.deviceHub.title }}</h1></div>
-      <p class="chub-intro">{{ t.deviceHub.intro }}</p>
+    <header class="page-header chub-header">
+      <div class="page-header-heading">
+        <el-icon class="page-header-icon"><Cpu /></el-icon>
+        <div class="page-header-title-stack">
+          <span class="page-header-kicker">{{ t.deviceHub.eyebrow }}</span>
+          <h2 class="page-header-title">{{ t.deviceHub.title }}</h2>
+        </div>
+      </div>
     </header>
+    <p class="chub-intro">{{ t.deviceHub.intro }}</p>
 
     <div class="chub-tabs"><ChubTabs v-model="activeTab" :options="tabs" /></div>
 
@@ -40,6 +45,7 @@
 
 <script setup>
 import { computed, ref } from 'vue'
+import { Cpu } from '@element-plus/icons-vue'
 import DualSenseSettings from '../DualSenseSettings.vue'
 import AdvancedControllerOptions from './AdvancedControllerOptions.vue'
 import ChubTabs from './ChubTabs.vue'

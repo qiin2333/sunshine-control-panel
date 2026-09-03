@@ -21,7 +21,7 @@
               size="small"
               :type="!probeFailed.vigem && vigemStatus.installed ? 'success' : 'info'"
               effect="plain"
-            >{{ probeFailed.vigem ? t.deviceHub.statusUnavailable : (vigemStatus.installed
+            >{{ probeFailed.vigem ? t.deviceHub.probeUnavailable : (vigemStatus.installed
               ? (vigemStatus.version ? `v${vigemStatus.version}` : t.controllersHub.peripherals.installed)
               : t.controllersHub.peripherals.notInstalled) }}</el-tag>
           </div>
@@ -50,7 +50,7 @@
               size="small"
               :type="!probeFailed.vmouse && vmouseStatus.installed ? 'success' : 'info'"
               effect="plain"
-            >{{ probeFailed.vmouse ? t.deviceHub.statusUnavailable : (vmouseStatus.installed
+            >{{ probeFailed.vmouse ? t.deviceHub.probeUnavailable : (vmouseStatus.installed
               ? t.controllersHub.peripherals.installed
               : t.controllersHub.peripherals.notInstalled) }}</el-tag>
           </div>
@@ -84,7 +84,7 @@
               size="small"
               :type="!probeFailed.meta && metaStatus.installed ? 'success' : 'info'"
               effect="plain"
-            >{{ probeFailed.meta ? t.deviceHub.statusUnavailable : (metaStatus.installed
+            >{{ probeFailed.meta ? t.deviceHub.probeUnavailable : (metaStatus.installed
               ? (metaStatus.version ? `v${metaStatus.version}` : t.controllersHub.peripherals.installed)
               : t.controllersHub.peripherals.notInstalled) }}</el-tag>
           </div>

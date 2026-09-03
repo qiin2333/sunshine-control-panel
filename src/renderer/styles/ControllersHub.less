@@ -127,13 +127,55 @@
   letter-spacing: 0.06em;
 }
 
-// ============ 页头 ============
+// ============ 页头横幅 ============
+.chub-header {
+  position: relative;
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+  overflow: hidden;
+  padding: 20px 22px;
+  border: 2px solid var(--chub-window-line);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--chub-primary) 12%, transparent), transparent 68%),
+    var(--chub-window-fill);
+  box-shadow: 0 5px 0 var(--chub-window-shadow);
+
+  &::after {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 88px;
+    height: 4px;
+    content: '';
+    background: var(--chub-primary);
+  }
+}
+.chub-header-icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border: 2px solid var(--chub-window-line);
+  color: var(--chub-primary);
+  background: color-mix(in srgb, var(--chub-primary) 9%, transparent);
+  box-shadow: 3px 3px 0 var(--chub-window-shadow);
+
+  svg {
+    width: 28px;
+    height: 28px;
+  }
+}
+.chub-header-copy {
+  min-width: 0;
+}
 .chub-eyebrow {
-  margin: 0 0 8px;
-  color: var(--el-text-color-secondary);
+  margin: 0 0 3px;
+  color: var(--chub-primary);
   font-family: var(--pix-font);
-  font-size: 12px;
-  letter-spacing: 0.35em;
+  font-size: 11px;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
 }
 .chub-title-row {
@@ -141,7 +183,7 @@
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
-  margin-bottom: 7px;
+  margin-bottom: 4px;
 }
 .chub-title-row h1 {
   margin: 0;
@@ -160,7 +202,8 @@
 .chub-intro {
   margin: 0;
   color: var(--el-text-color-secondary);
-  font-size: 14px;
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 // ============ Tab 栏（文件夹页签，复用 ds5-window-tab 语汇） ============
@@ -702,6 +745,20 @@
 @media (max-width: 720px) {
   .chub-page {
     padding: 24px 18px 44px;
+  }
+  .chub-header {
+    grid-template-columns: 44px minmax(0, 1fr);
+    gap: 12px;
+    padding: 16px;
+  }
+  .chub-header-icon {
+    width: 40px;
+    height: 40px;
+
+    svg {
+      width: 24px;
+      height: 24px;
+    }
   }
   .chub-tabbar {
     gap: 4px;

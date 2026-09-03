@@ -16,7 +16,7 @@
   box-shadow: 0 4px 0 @shadow-color;
   transition: transform .1s ease, box-shadow .1s ease, background-color .12s ease, border-color .12s ease, color .12s ease;
 
-  &.el-button--primary {
+  &.el-button--primary:not(.is-disabled) {
     border: 2px solid @shadow-color !important;
   }
   &:not(.is-disabled):hover {
@@ -47,10 +47,10 @@
 
   &::before { content: '['; opacity: .7; margin-right: 4px; }
   &::after { content: ']'; opacity: .7; margin-left: 4px; }
-  &.el-button--primary { color: @primary-color; }
-  &.el-button--warning { color: var(--el-color-warning-dark-2, var(--el-color-warning)); }
-  &.el-button--danger { color: var(--el-color-danger); }
-  &:not(.el-button--primary):not(.el-button--warning):not(.el-button--danger) { color: var(--el-text-color-secondary); }
+  &.el-button--primary:not(.is-disabled) { color: @primary-color; }
+  &.el-button--warning:not(.is-disabled) { color: var(--el-color-warning-dark-2, var(--el-color-warning)); }
+  &.el-button--danger:not(.is-disabled) { color: var(--el-color-danger); }
+  &:not(.el-button--primary):not(.el-button--warning):not(.el-button--danger):not(.is-disabled) { color: var(--el-text-color-secondary); }
   &:hover, &:focus-visible { background: transparent; }
   &:focus-visible { outline: 1px dashed currentColor; outline-offset: 3px; }
   &.is-disabled { background: transparent; }

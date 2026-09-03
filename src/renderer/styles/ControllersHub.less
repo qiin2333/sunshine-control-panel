@@ -38,6 +38,15 @@
   --chub-window-shadow: rgba(0, 0, 0, 0.45);
 }
 
+// 大屏：860px 单列是按 1280 默认窗口设计的，≥1600 视口放开上限，
+// 卡片网格 auto-fit / auto-fill 自动增列。内嵌 ds5-page 一并放宽。
+@media (min-width: 1600px) {
+  .chub-page,
+  .chub-page .ds5-page {
+    max-width: 1400px;
+  }
+}
+
 // ============================================
 // 设计语言（与 DualSenseSettings.less 共享 pixel-language.less 中的定义）
 // 词汇表：

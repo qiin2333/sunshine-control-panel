@@ -119,14 +119,6 @@
 .chub-advanced-block {
   margin-top: 30px;
 }
-.chub-soon-note {
-  margin: 4px 0 8px;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-  font-family: var(--pix-font);
-  letter-spacing: 0.06em;
-}
-
 // ============ 页头横幅 ============
 .chub-header {
   position: relative;
@@ -170,27 +162,12 @@
 .chub-header-copy {
   min-width: 0;
 }
-.chub-title-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-bottom: 4px;
-}
-.chub-title-row h1 {
-  margin: 0;
+.chub-header-copy h1 {
+  margin: 0 0 4px;
   font-family: var(--pix-font);
   font-size: 24px;
   font-weight: 400;
   letter-spacing: 0.02em;
-}
-.chub-tag-proto {
-  border: 2px solid var(--el-color-warning);
-  color: var(--el-color-warning);
-  background: transparent;
-  font-family: var(--pix-font);
-  font-size: 11px;
-  letter-spacing: 0.06em;
 }
 .chub-intro {
   margin: 0;
@@ -330,25 +307,6 @@
   gap: 4px;
   flex-wrap: wrap;
 }
-.chub-headline {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  flex-wrap: wrap;
-  margin-top: 18px;
-}
-.chub-operation-card {
-  margin-top: 16px;
-  padding: 12px 14px;
-  border: 1px dashed var(--chub-window-line);
-  & > div {
-    display: flex;
-    justify-content: space-between;
-    margin-bottom: 8px;
-    font-size: 13px;
-  }
-}
 .chub-runtime-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -394,21 +352,6 @@
     font-size: 13px;
   }
 }
-.chub-soon {
-  padding: 26px 8px 10px;
-  text-align: center;
-  strong {
-    display: block;
-    margin-bottom: 6px;
-    font-size: 15px;
-  }
-  p {
-    margin: 0;
-    color: var(--el-text-color-secondary);
-    font-size: 13px;
-  }
-}
-
 // ============ USB/IP 设备管理 ============
 .chub-usb-setup {
   display: flex;
@@ -544,14 +487,6 @@
     color: transparent;
     font-size: 12px;
   }
-  .chub-mode-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-    &.is-ok { background: var(--el-color-success); }
-    &.is-off { background: var(--el-text-color-disabled); }
-  }
   &:hover:not(:disabled) {
     border-color: var(--chub-primary);
     background: rgba(74, 158, 255, 0.06);
@@ -641,20 +576,6 @@
   color: var(--el-text-color-secondary);
 }
 
-// ============ 硬件能力 ============
-.chub-feature-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.chub-feature-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  border: 1px solid var(--el-border-color-lighter);
-  font-size: 13px;
-}
 .chub-panel-footer {
   display: flex;
   justify-content: flex-end;
@@ -797,8 +718,4 @@
   margin-top: 34px;
   padding-top: 14px;
   border-top: 1px solid var(--el-border-color-lighter);
-}
-.chub-mock-note {
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
 }

@@ -26,7 +26,7 @@
               : t.controllersHub.peripherals.notInstalled) }}</el-tag>
           </div>
           <p class="chub-hint">{{ t.controllersHub.peripherals.vigem.hint }}</p>
-          <p v-if="vigemStatus.installed && vigemStatus.status_text" class="chub-status-text">
+          <p v-if="vigemStatus.installed && vigemStatus.status_text">
             {{ vigemStatus.status_text }}
           </p>
           <div class="chub-card-actions">
@@ -55,7 +55,7 @@
               : t.controllersHub.peripherals.notInstalled) }}</el-tag>
           </div>
           <p class="chub-hint">{{ t.controllersHub.peripherals.vmouse.hint }}</p>
-          <p v-if="vmouseStatus.installed && vmouseStatus.status_text" class="chub-status-text">
+          <p v-if="vmouseStatus.installed && vmouseStatus.status_text">
             {{ vmouseStatus.status_text }}
           </p>
           <div class="chub-card-actions">

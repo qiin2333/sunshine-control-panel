@@ -13,11 +13,11 @@
       <div v-else class="chub-cards">
         <article class="chub-card">
           <div class="chub-card-head"><strong>Virtual Device Host</strong><el-tag size="small" :type="hostReady ? 'success' : 'info'" effect="plain">{{ hostReady ? t.deviceHub.available : t.deviceHub.unavailable }}</el-tag></div>
-          <p class="chub-hint">{{ t.deviceHub.components.hostHint }}</p><p class="chub-status-text">{{ runtime.ds.component_version || runtime.ds.runtime_version || t.deviceHub.unknown }}</p>
+          <p class="chub-hint">{{ t.deviceHub.components.hostHint }}</p><p>{{ runtime.ds.component_version || runtime.ds.runtime_version || t.deviceHub.unknown }}</p>
         </article>
         <article class="chub-card">
           <div class="chub-card-head"><strong>USB/IP Transport</strong><el-tag size="small" :type="runtime.usb.ready ? 'success' : 'warning'" effect="plain">{{ runtime.usb.ready ? t.deviceHub.available : t.deviceHub.unavailable }}</el-tag></div>
-          <p class="chub-hint">{{ t.deviceHub.components.transportHint }}</p><p class="chub-status-text">{{ runtime.usb.version || t.deviceHub.unknown }}</p>
+          <p class="chub-hint">{{ t.deviceHub.components.transportHint }}</p><p>{{ runtime.usb.version || t.deviceHub.unknown }}</p>
         </article>
       </div>
       <p v-if="loadError" class="chub-status-error">{{ t.deviceHub.statusUnavailable }}</p>

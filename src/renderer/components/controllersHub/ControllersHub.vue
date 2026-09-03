@@ -3,7 +3,7 @@
     <header class="chub-header">
       <span class="chub-header-icon" aria-hidden="true"><IconGamepad /></span>
       <div class="chub-header-copy">
-        <div class="chub-title-row"><h1>DEVICE HUB</h1></div>
+        <h1>DEVICE HUB</h1>
         <p class="chub-intro">{{ t.deviceHub.intro }}</p>
       </div>
     </header>

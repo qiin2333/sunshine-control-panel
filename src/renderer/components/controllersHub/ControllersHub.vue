@@ -1,15 +1,11 @@
 <template>
-  <div class="chub-shell">
-    <header class="page-header chub-header">
-      <div class="page-header-heading">
-        <el-icon class="page-header-icon"><IconGamepad /></el-icon>
-        <div class="page-header-title-stack">
-          <span class="page-header-kicker">{{ t.deviceHub.eyebrow }}</span>
-          <h2 class="page-header-title">{{ t.deviceHub.title }}</h2>
-        </div>
-      </div>
+  <section class="chub-page">
+    <header class="chub-header">
+      <p class="chub-eyebrow">{{ t.deviceHub.eyebrow }}</p>
+      <div class="chub-title-row"><h1>{{ t.deviceHub.title }}</h1></div>
+      <p class="chub-intro">{{ t.deviceHub.intro }}</p>
     </header>
-    <section class="chub-page">
+
     <div class="chub-tabs"><ChubTabs v-model="activeTab" :options="tabs" /></div>
 
     <div class="chub-pane">
@@ -39,13 +35,11 @@
         />
       </template>
     </div>
-    </section>
-  </div>
+  </section>
 </template>
 
 <script setup>
 import { computed, ref } from 'vue'
-import IconGamepad from '../../desktop/icons/IconGamepad.vue'
 import DualSenseSettings from '../DualSenseSettings.vue'
 import AdvancedControllerOptions from './AdvancedControllerOptions.vue'
 import ChubTabs from './ChubTabs.vue'

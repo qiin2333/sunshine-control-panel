@@ -127,26 +127,35 @@
   letter-spacing: 0.06em;
 }
 
-// ============ 页头（横幅式，样式来自 page-header.less） ============
-@import './page-header.less';
-
-// .chub-shell 全宽承接横幅（同 webstream/米塔 的通铺页头），
-// .chub-page 在其下居中，承载内容列
-.chub-shell {
-  width: 100%;
+// ============ 页头 ============
+.chub-eyebrow {
+  margin: 0 0 8px;
+  color: var(--el-text-color-secondary);
+  font-family: var(--pix-font);
+  font-size: 12px;
+  letter-spacing: 0.35em;
+  text-transform: uppercase;
 }
-
-.chub-header {
-  --page-header-border: rgba(74, 158, 255, 0.2);
-  --page-header-bg: linear-gradient(135deg, rgba(74, 158, 255, 0.1), rgba(122, 184, 255, 0.05));
-  --page-header-title: #3a7ed5;
-  --page-header-accent: #4a9eff;
+.chub-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 7px;
 }
-[data-bs-theme='dark'] .chub-header {
-  --page-header-border: rgba(230, 213, 184, 0.15);
-  --page-header-bg: linear-gradient(135deg, rgba(212, 165, 165, 0.1), rgba(230, 213, 184, 0.05));
-  --page-header-title: #e6d5b8;
-  --page-header-accent: #d4a5a5;
+.chub-title-row h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.chub-tag-proto {
+  border: 2px solid var(--el-color-warning);
+  color: var(--el-color-warning);
+  background: transparent;
+  font-family: var(--pix-font);
+  font-size: 11px;
+  letter-spacing: 0.06em;
 }
 .chub-intro {
   margin: 0;

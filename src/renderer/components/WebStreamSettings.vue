@@ -1,10 +1,10 @@
 <template>
   <div class="webstream-settings-wrapper">
-    <div class="page-header webstream-header">
-      <div class="page-header-heading">
-        <el-icon class="page-header-icon"><Connection /></el-icon>
-        <h2 class="page-header-title">{{ t.webStream.title }}</h2>
-      </div>
+    <div class="webstream-header">
+      <h2>
+        <el-icon class="header-icon"><Connection /></el-icon>
+        {{ t.webStream.title }}
+      </h2>
     </div>
 
     <div class="webstream-content">
@@ -514,7 +514,6 @@ async function openInBrowser() {
 
 <style scoped lang="less">
 @import '../styles/theme.less';
-@import '../styles/page-header.less';
 
 .webstream-settings-wrapper {
   display: flex;
@@ -526,10 +525,17 @@ async function openInBrowser() {
 // ========== 深色模式 ==========
 [data-bs-theme='dark'] {
   .webstream-header {
-    --page-header-border: rgba(230, 213, 184, 0.15);
-    --page-header-bg: linear-gradient(135deg, rgba(212, 165, 165, 0.1), rgba(230, 213, 184, 0.05));
-    --page-header-title: #e6d5b8;
-    --page-header-accent: @morandi-red;
+    border-bottom: 1px solid rgba(230, 213, 184, 0.15);
+    background: linear-gradient(135deg, rgba(212, 165, 165, 0.1), rgba(230, 213, 184, 0.05));
+
+    h2 {
+      color: #e6d5b8;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+
+      .header-icon {
+        color: @morandi-red;
+      }
+    }
   }
 
   .webstream-form {
@@ -652,10 +658,17 @@ async function openInBrowser() {
 // ========== 浅色模式 ==========
 [data-bs-theme='light'] {
   .webstream-header {
-    --page-header-border: rgba(74, 158, 255, 0.2);
-    --page-header-bg: linear-gradient(135deg, rgba(74, 158, 255, 0.1), rgba(122, 184, 255, 0.05));
-    --page-header-title: #3a7ed5;
-    --page-header-accent: @gura-blue;
+    border-bottom: 1px solid rgba(74, 158, 255, 0.2);
+    background: linear-gradient(135deg, rgba(74, 158, 255, 0.1), rgba(122, 184, 255, 0.05));
+
+    h2 {
+      color: #3a7ed5;
+      text-shadow: 0 1px 2px rgba(74, 158, 255, 0.2);
+
+      .header-icon {
+        color: @gura-blue;
+      }
+    }
   }
 
   .webstream-form {
@@ -776,7 +789,28 @@ async function openInBrowser() {
 }
 
 // ========== 通用样式 ==========
-// 页头结构来自 page-header.less（横幅 + 主题变量注入）
+.webstream-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 24px 32px;
+  transition: all 0.3s ease;
+
+  h2 {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+
+    .header-icon {
+      font-size: 28px;
+      transition: all 0.3s ease;
+    }
+  }
+}
 
 .webstream-content {
   flex: 1;

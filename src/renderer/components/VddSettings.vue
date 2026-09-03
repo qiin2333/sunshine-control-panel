@@ -1,13 +1,13 @@
 <template>
   <div class="vdd-settings-wrapper">
     <div class="vdd-content">
-      <div class="page-header vdd-page-header">
-        <div class="page-header-heading">
+      <div class="vdd-page-header">
+        <div class="page-title-group">
           <span class="page-title-icon" aria-hidden="true">
             <el-icon><Monitor /></el-icon>
           </span>
           <div class="page-title-copy">
-            <h2 class="page-header-title">{{ t.vddSettings.title }}</h2>
+            <h2>{{ t.vddSettings.title }}</h2>
             <div v-if="!isDriverCheckPending && hasUnsavedChanges" class="page-header-meta">
               <el-tag size="small" round type="warning" effect="light">
                 {{ t.vddSettings.unsavedBadge }}

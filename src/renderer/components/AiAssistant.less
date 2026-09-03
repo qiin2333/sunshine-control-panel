@@ -1,3 +1,5 @@
+@import '../styles/page-header.less';
+
 .ai-settings-wrapper {
   --mita-accent: #7457d9;
   --mita-accent-hover: #6447c8;
@@ -41,36 +43,14 @@
 }
 
 .ai-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  // 横幅结构来自 page-header.less，这里只注入米塔主题色
+  --page-header-border: var(--mita-border);
+  --page-header-bg: var(--mita-panel);
+  --page-header-title: var(--mita-heading);
+  --page-header-accent: var(--mita-accent);
+
   flex: 0 0 auto;
   min-width: 0;
-  padding: 14px 32px;
-  border-bottom: 1px solid var(--mita-border);
-  background: var(--mita-panel);
-
-  .ai-heading {
-    display: flex;
-    align-items: center;
-    min-width: 0;
-    gap: 12px;
-  }
-
-  .title-stack {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    gap: 2px;
-  }
-
-  h2 {
-    margin: 0;
-    color: var(--mita-heading);
-    font-size: 22px;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-  }
 }
 
 .header-avatar {
@@ -93,7 +73,8 @@
   }
 }
 
-.mita-kicker {
+// 米塔 kicker：字号/字色与通用页头不同，需压过 page-header.less 的平局竞争
+.ai-header .mita-kicker {
   display: flex;
   align-items: center;
   gap: 7px;

@@ -1,16 +1,16 @@
 <template>
   <div class="ai-settings-wrapper">
-    <div class="ai-header">
-      <div class="ai-heading">
+    <div class="ai-header page-header">
+      <div class="page-header-heading">
         <span class="header-avatar" aria-hidden="true">
           <img src="/mita-pixel.png" alt="" />
         </span>
-        <div class="title-stack">
-          <span class="mita-kicker">
+        <div class="page-header-title-stack">
+          <span class="page-header-kicker mita-kicker">
             <span class="status-dot" :class="{ active: config.enabled }"></span>
             M.I.T.A / AI ASSISTANT
           </span>
-          <h2>{{ t.aiAssistant.title }}</h2>
+          <h2 class="page-header-title">{{ t.aiAssistant.title }}</h2>
         </div>
       </div>
       <el-tag :type="config.enabled ? 'success' : 'info'" size="small" round class="status-tag">

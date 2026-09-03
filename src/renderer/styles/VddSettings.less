@@ -101,12 +101,6 @@
   @edid-bg,
   @edid-border
 ) {
-  .vdd-page-header {
-    // 页头横幅来自 page-header.less，这里只注入 VDD 主题色
-    --page-header-border: @section-divider;
-    --page-header-title: @header-title;
-  }
-
   .hero-panel {
     .panel-surface(@hero-panel-bg, @hero-panel-border, @hero-panel-shadow);
   }
@@ -174,6 +168,10 @@
     --driver-notice-border: rgba(216, 160, 160, 0.2);
     --driver-notice-title: #e6d5b8;
     --driver-notice-copy: rgba(230, 213, 184, 0.64);
+    --page-header-bg: linear-gradient(135deg, rgba(216, 160, 160, 0.1), rgba(230, 213, 184, 0.05));
+    --page-header-border: rgba(230, 213, 184, 0.15);
+    --page-header-title: #e6d5b8;
+    --page-header-accent: #d8a0a0;
 
     // Element Plus defaults are light surfaces. Define the complete local
     // palette so cards and controls do not turn white or inherit dark text.
@@ -302,6 +300,10 @@
     --page-title-icon-color: #3a7ed5;
     --page-title-icon-bg: rgba(58, 126, 213, 0.1);
     --page-title-icon-border: rgba(58, 126, 213, 0.2);
+    --page-header-bg: linear-gradient(135deg, rgba(58, 126, 213, 0.1), rgba(122, 184, 255, 0.05));
+    --page-header-border: rgba(58, 126, 213, 0.2);
+    --page-header-title: #3a7ed5;
+    --page-header-accent: #3a7ed5;
     --driver-notice-bg: rgba(230, 162, 60, 0.07);
     --driver-notice-border: rgba(230, 162, 60, 0.26);
     --driver-notice-title: #9a5f08;
@@ -408,7 +410,6 @@
   grid-template-columns: auto minmax(420px, 1fr);
   align-items: center;
   gap: 24px;
-  padding: 10px 4px 16px;
 }
 
 .page-title-group {
@@ -1846,7 +1847,6 @@
 
   .vdd-page-header {
     grid-template-columns: 1fr;
-    padding-top: 18px;
   }
 
   .degraded-driver-notice,
@@ -1891,7 +1891,6 @@
 
   .vdd-page-header {
     grid-template-columns: minmax(0, 1fr) auto;
-    padding: 8px 0 14px;
   }
 
   .page-header-actions {

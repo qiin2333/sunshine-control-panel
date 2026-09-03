@@ -1003,6 +1003,7 @@ Output only one short sentence, no explanation. Reply in English.`,
     planned: 'Planned',
     unknown: 'Unknown',
     statusUnavailable: 'Device status is unavailable. Make sure Sunshine is running and up to date.',
+    probeUnavailable: 'Status unknown',
     controllerAdvanced: 'Advanced controller behavior (DS4 / motion / DSU)',
     tabs: {
       overview: 'Overview',

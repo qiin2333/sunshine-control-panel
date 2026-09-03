@@ -19,11 +19,11 @@
             <strong>{{ t.controllersHub.peripherals.vigem.title }}</strong>
             <el-tag
               size="small"
-              :type="vigemStatus.installed ? 'success' : 'info'"
+              :type="!probeFailed.vigem && vigemStatus.installed ? 'success' : 'info'"
               effect="plain"
-            >{{ vigemStatus.installed
+            >{{ probeFailed.vigem ? t.deviceHub.probeUnavailable : (vigemStatus.installed
               ? (vigemStatus.version ? `v${vigemStatus.version}` : t.controllersHub.peripherals.installed)
-              : t.controllersHub.peripherals.notInstalled }}</el-tag>
+              : t.controllersHub.peripherals.notInstalled) }}</el-tag>
           </div>
           <p class="chub-hint">{{ t.controllersHub.peripherals.vigem.hint }}</p>
           <p v-if="vigemStatus.installed && vigemStatus.status_text" class="chub-status-text">
@@ -34,7 +34,7 @@
               size="small"
               :type="vigemStatus.installed ? 'default' : 'primary'"
               :loading="ops.vigem"
-              :disabled="refreshing"
+              :disabled="refreshing || probeFailed.vigem"
               @click="confirmToggle('vigem')"
             >{{ vigemStatus.installed
               ? t.controllersHub.peripherals.uninstall
@@ -48,11 +48,11 @@
             <strong>{{ t.controllersHub.peripherals.vmouse.title }}</strong>
             <el-tag
               size="small"
-              :type="vmouseStatus.installed ? 'success' : 'info'"
+              :type="!probeFailed.vmouse && vmouseStatus.installed ? 'success' : 'info'"
               effect="plain"
-            >{{ vmouseStatus.installed
+            >{{ probeFailed.vmouse ? t.deviceHub.probeUnavailable : (vmouseStatus.installed
               ? t.controllersHub.peripherals.installed
-              : t.controllersHub.peripherals.notInstalled }}</el-tag>
+              : t.controllersHub.peripherals.notInstalled) }}</el-tag>
           </div>
           <p class="chub-hint">{{ t.controllersHub.peripherals.vmouse.hint }}</p>
           <p v-if="vmouseStatus.installed && vmouseStatus.status_text" class="chub-status-text">
@@ -61,14 +61,14 @@
           <div class="chub-card-actions">
             <el-checkbox
               :model-value="vmouseStatus.config_enabled"
-              :disabled="refreshing || !vmouseStatus.installed || ops.vmouseConfig"
+              :disabled="refreshing || !vmouseStatus.installed || ops.vmouseConfig || probeFailed.vmouse"
               @change="handleVmouseToggle"
             >{{ t.controllersHub.peripherals.vmouse.enableShort }}</el-checkbox>
             <el-button
               size="small"
               :type="vmouseStatus.installed ? 'default' : 'primary'"
               :loading="ops.vmouse"
-              :disabled="refreshing"
+              :disabled="refreshing || probeFailed.vmouse"
               @click="confirmToggle('vmouse')"
             >{{ vmouseStatus.installed
               ? t.controllersHub.peripherals.uninstall
@@ -82,18 +82,18 @@
             <strong>{{ t.controllersHub.peripherals.meta.title }}</strong>
             <el-tag
               size="small"
-              :type="metaStatus.installed ? 'success' : 'info'"
+              :type="!probeFailed.meta && metaStatus.installed ? 'success' : 'info'"
               effect="plain"
-            >{{ metaStatus.installed
+            >{{ probeFailed.meta ? t.deviceHub.probeUnavailable : (metaStatus.installed
               ? (metaStatus.version ? `v${metaStatus.version}` : t.controllersHub.peripherals.installed)
-              : t.controllersHub.peripherals.notInstalled }}</el-tag>
+              : t.controllersHub.peripherals.notInstalled) }}</el-tag>
           </div>
           <p class="chub-hint">{{ t.controllersHub.peripherals.meta.hint }}</p>
           <div class="chub-card-actions">
             <el-button
               size="small"
               type="primary"
-              :disabled="refreshing"
+              :disabled="refreshing || probeFailed.meta"
               @click="emit('open-controller-meta')"
             >{{ t.controllersHub.peripherals.meta.launch }}</el-button>
           </div>
@@ -129,7 +129,7 @@ const emit = defineEmits(['open-controller-meta', 'open-stylus-input-probe'])
 const { t } = useI18n()
 
 const {
-  vigemStatus, vmouseStatus, metaStatus, ops, initialized, refreshing,
+  vigemStatus, vmouseStatus, metaStatus, probeFailed, ops, initialized, refreshing,
   refreshAll, installVigem, uninstallVigem,
   installVmouse, uninstallVmouse, setVmouseEnabled,
 } = usePeripheralTools()

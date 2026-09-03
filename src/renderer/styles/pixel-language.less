@@ -1,0 +1,58 @@
+// ============================================
+// 设备中心像素设计语言 — 按钮配方共享定义
+// 词汇表：
+//   大按钮   = 方角 + 2px 边 + 硬投影按压手感（主操作，默认尺寸）
+//   小按钮   = [ 方括号 ] 文本操作（块内低权重动作）
+// 仅 DualSenseSettings.less 与 ControllersHub.less 应导入本文件；
+// 不要上移到全局 mixins.less。
+// 方角控件与 reduced-motion 的套用规则在 ControllersHub.less：
+// ds5-page 仅嵌于 .chub-page 内渲染，随级联获得同样规则。
+// ============================================
+
+// —— 大按钮 ——
+.pixel-block-button(@shadow-color) {
+  border-radius: 0 !important;
+  border-width: 2px;
+  font-weight: 700;
+  box-shadow: 0 4px 0 @shadow-color;
+  transition: transform .1s ease, box-shadow .1s ease, background-color .12s ease, border-color .12s ease, color .12s ease;
+
+  &.el-button--primary:not(.is-disabled) {
+    border: 2px solid @shadow-color !important;
+  }
+  &:not(.is-disabled):hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 0 @shadow-color;
+  }
+  &:not(.is-disabled):active {
+    transform: translateY(2px);
+    box-shadow: 0 1px 0 @shadow-color;
+  }
+  &.is-disabled {
+    transform: none;
+    box-shadow: 0 4px 0 var(--el-border-color-lighter);
+  }
+}
+
+// —— 小按钮 ——
+.pixel-bracket-button(@primary-color) {
+  min-height: 30px;
+  margin: 0;
+  padding: 3px 2px;
+  border: 0;
+  background: transparent;
+  font-family: var(--pix-font);
+  font-weight: 400;
+  box-shadow: none;
+  transition: color .12s ease;
+
+  &::before { content: '['; opacity: .7; margin-right: 4px; }
+  &::after { content: ']'; opacity: .7; margin-left: 4px; }
+  &.el-button--primary:not(.is-disabled) { color: @primary-color; }
+  &.el-button--warning:not(.is-disabled) { color: var(--el-color-warning-dark-2, var(--el-color-warning)); }
+  &.el-button--danger:not(.is-disabled) { color: var(--el-color-danger); }
+  &:not(.el-button--primary):not(.el-button--warning):not(.el-button--danger):not(.is-disabled) { color: var(--el-text-color-secondary); }
+  &:hover, &:focus-visible { background: transparent; }
+  &:focus-visible { outline: 1px dashed currentColor; outline-offset: 3px; }
+  &.is-disabled { background: transparent; }
+}

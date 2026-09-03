@@ -85,7 +85,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { controllerHub } from '../../tauri-adapter.js'
+import { controllerHub, sunshine } from '../../tauri-adapter.js'
 import { useI18n } from '../../desktop/i18n/index.js'
 
 const { t } = useI18n()
@@ -178,9 +178,10 @@ async function loadApps() {
   appsError.value = false
   let timeoutTimer = null
   try {
-    const { invoke } = await import('@tauri-apps/api/core')
-    proxyUrl = await invoke('wait_for_proxy_ready')
+    const proxyResult = await sunshine.waitForProxyReady()
+    if (!proxyResult?.success) throw new Error(proxyResult?.message || 'proxy not ready')
     if (requestId !== appsRequestId) return
+    proxyUrl = proxyResult.data
 
     const controller = new AbortController()
     timeoutTimer = setTimeout(() => controller.abort('timeout'), APPS_TIMEOUT_MS)

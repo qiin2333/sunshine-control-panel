@@ -1,11 +1,12 @@
 // ========================================
 // 控制器中心（Controllers Hub）— 像素风样式
 // 视觉语言与 DualSenseSettings.less 保持一致：
-// 像素窗锚点 + ◈ 分区标题 + 块状按钮。
+// 像素窗锚点 + ◈ 分区标题 + 投影大按钮 / [ 方括号 ] 小按钮 + 方角控件。
 // 本文件经非 scoped <style> 引入，前缀 chub- 全局唯一。
 // ========================================
 
 @font-face {
+  // Fusion Pixel 12px proportional（OFL）补齐 PixelMplus12 缺失的简中字库
   font-family: FusionPixel;
   src: url('/fonts/fusion-pixel-12px-proportional-zh_hans.woff2') format('woff2');
   font-weight: 400;
@@ -35,6 +36,60 @@
   --chub-window-line: #8b6f5e;
   --chub-window-fill: rgba(45, 38, 40, 0.96);
   --chub-window-shadow: rgba(0, 0, 0, 0.45);
+}
+
+// ============================================
+// 设计语言（与 DualSenseSettings.less 共享 pixel-language.less 中的定义）
+// 词汇表：
+//   大按钮   = 方角 + 2px 边 + 硬投影按压手感（主操作）
+//   小按钮   = [ 方括号 ] 文本操作（块内低权重动作）
+//   方角控件 = 标签 / 输入 / 步进器 / 复选框 / 进度条 一律直角
+// 本层同时覆盖内嵌 ds5-page：ds5 仅在 .chub-page 内渲染，
+// 自身不再重复按钮与方角规则（text 模式的 .ds5-action 除外）。
+// ============================================
+
+@import './pixel-language.less';
+
+.chub-page .el-button:not(.el-button--small):not(.is-text):not(.is-link) {
+  .pixel-block-button(var(--chub-primary-deep));
+}
+.chub-page .el-button--small:not(.is-text):not(.is-link) {
+  .pixel-bracket-button(var(--chub-primary));
+}
+@media (prefers-reduced-motion: reduce) {
+  .chub-page .el-button:not(.el-button--small):not(.is-text):not(.is-link),
+  .chub-page .el-button--small:not(.is-text):not(.is-link) {
+    transition: none;
+  }
+}
+
+// —— 方角控件 ——
+.chub-page .el-tag {
+  border-radius: 0;
+  border-width: 2px;
+}
+.chub-page .el-input__wrapper {
+  border-radius: 0;
+  box-shadow: 0 0 0 2px var(--el-border-color) inset;
+}
+.chub-page .el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 2px var(--chub-primary) inset;
+}
+.chub-page .el-input-number__decrease,
+.chub-page .el-input-number__increase {
+  border-radius: 0;
+  background: var(--el-fill-color-light);
+}
+.chub-page .el-input__inner {
+  font-family: var(--pix-font);
+  font-weight: 400;
+}
+.chub-page .el-checkbox__inner {
+  border-radius: 0;
+}
+.chub-page .el-progress-bar__outer,
+.chub-page .el-progress-bar__inner {
+  border-radius: 0;
 }
 
 // ============ 主区：手柄类型选择 ============
@@ -329,6 +384,11 @@
   grid-template-columns: minmax(220px, 1fr) 118px auto;
   gap: 10px;
   align-items: center;
+
+  // Element Plus 默认给 .el-input-number 固定 150px，会溢出 118px 轨道压住按钮
+  .el-input-number {
+    width: 100%;
+  }
 }
 .chub-usb-list {
   display: grid;

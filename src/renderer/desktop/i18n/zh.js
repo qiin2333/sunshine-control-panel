@@ -1003,6 +1003,7 @@ export const zh = {
     planned: '规划中',
     unknown: '未知',
     statusUnavailable: '无法读取设备状态，请确认 Sunshine 正在运行且版本匹配。',
+    probeUnavailable: '状态未知',
     controllerAdvanced: '高级控制器行为（DS4 / 体感 / DSU）',
     tabs: {
       overview: '概览',

@@ -218,9 +218,10 @@
   margin-top: 28px;
 }
 
-// 内嵌 DualSense 页时去掉其页头留白（embedded 模式不渲染页头）
+// 内嵌 DualSense 页时去掉其自带页边距：embedded 模式不渲染页头，
+// 列宽与留白全部交给 .chub-page，否则与外层内容出现 30px 错位
 .chub-pane .ds5-page {
-  padding-top: 0;
+  padding: 0;
 }
 .chub-panel > .chub-section + .chub-section,
 .chub-panel > .chub-window + .chub-section,

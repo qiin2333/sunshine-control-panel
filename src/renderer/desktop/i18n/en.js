@@ -170,8 +170,7 @@ export const en = {
     gamepadCursor: 'Gamepad cursor mode',
     gamepadCursorDesc: 'Click the left stick to drive a virtual pointer, covering pages that spatial navigation does not reach yet',
     oskAutoOpen: 'Auto-open on-screen keyboard',
-    oskAutoOpenDesc: 'Press A on a focused text field to open the on-screen keyboard',
-
+    oskAutoOpenDesc: 'Press A on a focused text field to open the on-screen keyboard',
     navSounds: 'Gamepad navigation sounds',
     navSoundsDesc: 'Subtle ticks for focus moves, confirm and back',
     launchAssistant: 'Launch Assistant',
@@ -1005,7 +1004,6 @@ Output only one short sentence, no explanation. Reply in English.`,
     unknown: 'Unknown',
     statusUnavailable: 'Device status is unavailable. Make sure Sunshine is running and up to date.',
     probeUnavailable: 'Status unknown',
-
     controllerAdvanced: 'Advanced controller behavior (DS4 / motion / DSU)',
     tabs: {
       overview: 'Overview',

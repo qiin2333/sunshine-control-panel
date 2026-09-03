@@ -170,8 +170,7 @@ export const zh = {
     gamepadCursor: '手柄光标模式',
     gamepadCursorDesc: '按左摇杆键用左摇杆驱动虚拟指针，覆盖尚未适配空间导航的页面',
     oskAutoOpen: '自动弹出屏幕键盘',
-    oskAutoOpenDesc: '焦点在文本框上按 A 时打开屏幕键盘',
-
+    oskAutoOpenDesc: '焦点在文本框上按 A 时打开屏幕键盘',
     navSounds: '手柄导航音效',
     navSoundsDesc: '焦点移动和确认/返回时的轻微提示音',
     launchAssistant: '启动助手',
@@ -1005,7 +1004,6 @@ export const zh = {
     unknown: '未知',
     statusUnavailable: '无法读取设备状态，请确认 Sunshine 正在运行且版本匹配。',
     probeUnavailable: '状态未知',
-
     controllerAdvanced: '高级控制器行为（DS4 / 体感 / DSU）',
     tabs: {
       overview: '概览',

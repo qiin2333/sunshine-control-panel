@@ -5,16 +5,6 @@
 // 块状按钮 / 方角描边的物理感。
 // ========================================
 
-@font-face {
-  // Fusion Pixel 12px proportional（OFL）补齐 PixelMplus12 缺失的简中字库
-  font-family: 'FusionPixel';
-  src: url('/fonts/fusion-pixel-12px-proportional-zh_hans.woff2') format('woff2');
-  font-weight: 400;
-  font-display: swap;
-}
-
-@ds5-pixel-font: 'FusionPixel', 'PixelMplus12', 'YouYuan', 'Courier New', monospace;
-
 @import './pixel-language.less';
 
 // 主题令牌两块都走 :global()：`:global(x) y` 的写法会丢弃括号外的选择器，
@@ -24,7 +14,6 @@
 // 这样写让两块权重明确：:global(.ds5-page) 低于 :global([...dark] .ds5-page)。
 :global(.ds5-page) {
   // —— 像素菜单令牌：浅色 = Gura 蓝 ——
-  --pix-font: @ds5-pixel-font;
   --ds5-primary: #4a9eff;
   --ds5-primary-deep: #3b7fcc;
   --ds5-window-line: #4a9eff;
@@ -330,25 +319,10 @@
 .ds5-save-button { min-width: 140px; min-height: 36px; font-weight: 600; }
 .ds5-unsaved-tag { font-weight: 600; }
 
-// ============ 块状按钮（EP 覆写：方角 + 硬投影） ============
-.ds5-page :deep(.el-button:not(.is-text):not(.is-link)) {
-  .pixel-block-button(var(--ds5-primary-deep));
-}
+// 块状按钮 / 方角控件 / reduced-motion 由 ControllersHub.less 的设计语言层
+// 统一套用：ds5-page 仅嵌于 .chub-page 内渲染，随级联获得同样规则。
 .ds5-test-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 14px; }
 .ds5-test-actions :deep(.ds5-test-button) { min-width: 180px; min-height: 38px; margin: 0; }
-
-// ============ 数值步进器（方角 + 像素数值） ============
-.ds5-page :deep(.el-input__wrapper) { border-radius: 0; box-shadow: 0 0 0 2px var(--el-border-color) inset; }
-.ds5-page :deep(.el-input__wrapper.is-focus) { box-shadow: 0 0 0 2px var(--ds5-primary) inset; }
-.ds5-page :deep(.el-input-number__decrease),
-.ds5-page :deep(.el-input-number__increase) { border-radius: 0; background: var(--el-fill-color-light); }
-.ds5-page :deep(.el-input__inner) { font-family: var(--pix-font); font-weight: 400; }
-
-// ============ 标签 / 复选框 / 进度条方角化 ============
-.ds5-page :deep(.el-tag) { border-radius: 0; border-width: 2px; }
-.ds5-page :deep(.el-checkbox__inner) { border-radius: 0; }
-.ds5-page :deep(.el-progress-bar__outer),
-.ds5-page :deep(.el-progress-bar__inner) { border-radius: 0; }
 
 // ============ 兼容性 ============
 .ds5-compat-row { display: flex; justify-content: space-between; align-items: center; gap: 24px; flex-wrap: wrap; }
@@ -413,7 +387,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ds5-page :deep(.el-button:not(.is-text):not(.is-link)), .ds5-preset { transition: none; }
+  .ds5-preset { transition: none; }
   .ds5-mode-option.is-selected .ds5-mode-cursor { animation: none; }
 }
 

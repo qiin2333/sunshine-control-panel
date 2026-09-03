@@ -6,6 +6,7 @@
 // ========================================
 
 @font-face {
+  // Fusion Pixel 12px proportional（OFL）补齐 PixelMplus12 缺失的简中字库
   font-family: FusionPixel;
   src: url('/fonts/fusion-pixel-12px-proportional-zh_hans.woff2') format('woff2');
   font-weight: 400;
@@ -43,7 +44,8 @@
 //   大按钮   = 方角 + 2px 边 + 硬投影按压手感（主操作）
 //   小按钮   = [ 方括号 ] 文本操作（块内低权重动作）
 //   方角控件 = 标签 / 输入 / 步进器 / 复选框 / 进度条 一律直角
-// 内嵌 ds5-page 自带同名规则（scoped 特异性更高），不受此处影响。
+// 本层同时覆盖内嵌 ds5-page：ds5 仅在 .chub-page 内渲染，
+// 自身不再重复按钮与方角规则（text 模式的 .ds5-action 除外）。
 // ============================================
 
 @import './pixel-language.less';

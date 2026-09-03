@@ -5,7 +5,8 @@
 //   小按钮   = [ 方括号 ] 文本操作（块内低权重动作）
 // 仅 DualSenseSettings.less 与 ControllersHub.less 应导入本文件；
 // 不要上移到全局 mixins.less。
-// 方角控件（标签/输入/复选框等）因 scoped :deep 语境差异由各文件自行套用。
+// 方角控件与 reduced-motion 的套用规则在 ControllersHub.less：
+// ds5-page 仅嵌于 .chub-page 内渲染，随级联获得同样规则。
 // ============================================
 
 // —— 大按钮 ——

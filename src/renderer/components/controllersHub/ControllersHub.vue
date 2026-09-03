@@ -1,5 +1,5 @@
 <template>
-  <section class="chub-page">
+  <div class="chub-shell">
     <header class="page-header chub-header">
       <div class="page-header-heading">
         <el-icon class="page-header-icon"><Cpu /></el-icon>
@@ -9,6 +9,7 @@
         </div>
       </div>
     </header>
+    <section class="chub-page">
     <p class="chub-intro">{{ t.deviceHub.intro }}</p>
 
     <div class="chub-tabs"><ChubTabs v-model="activeTab" :options="tabs" /></div>
@@ -40,7 +41,8 @@
         />
       </template>
     </div>
-  </section>
+    </section>
+  </div>
 </template>
 
 <script setup>

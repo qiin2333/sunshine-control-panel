@@ -130,9 +130,13 @@
 // ============ 页头（横幅式，样式来自 page-header.less） ============
 @import './page-header.less';
 
+// .chub-shell 全宽承接横幅（同 webstream/米塔 的通铺页头），
+// .chub-page 在其下居中，承载内容列
+.chub-shell {
+  width: 100%;
+}
+
 .chub-header {
-  // 负外边距抵消 .chub-page 内边距，横幅通铺到列边（同 webstream/米塔 页头）
-  margin: -34px -30px 24px;
   --page-header-border: rgba(74, 158, 255, 0.2);
   --page-header-bg: linear-gradient(135deg, rgba(74, 158, 255, 0.1), rgba(122, 184, 255, 0.05));
   --page-header-title: #3a7ed5;

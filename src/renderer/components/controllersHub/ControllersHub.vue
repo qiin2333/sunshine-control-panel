@@ -2,7 +2,7 @@
   <div class="chub-shell">
     <header class="page-header chub-header">
       <div class="page-header-heading">
-        <el-icon class="page-header-icon"><Cpu /></el-icon>
+        <el-icon class="page-header-icon"><IconGamepad /></el-icon>
         <div class="page-header-title-stack">
           <span class="page-header-kicker">{{ t.deviceHub.eyebrow }}</span>
           <h2 class="page-header-title">{{ t.deviceHub.title }}</h2>
@@ -10,8 +10,6 @@
       </div>
     </header>
     <section class="chub-page">
-    <p class="chub-intro">{{ t.deviceHub.intro }}</p>
-
     <div class="chub-tabs"><ChubTabs v-model="activeTab" :options="tabs" /></div>
 
     <div class="chub-pane">
@@ -47,7 +45,7 @@
 
 <script setup>
 import { computed, ref } from 'vue'
-import { Cpu } from '@element-plus/icons-vue'
+import IconGamepad from '../../desktop/icons/IconGamepad.vue'
 import DualSenseSettings from '../DualSenseSettings.vue'
 import AdvancedControllerOptions from './AdvancedControllerOptions.vue'
 import ChubTabs from './ChubTabs.vue'

@@ -102,13 +102,9 @@
   @edid-border
 ) {
   .vdd-page-header {
-    h2 {
-      color: @header-title;
-    }
-
-    .header-icon {
-      color: @header-icon;
-    }
+    // 页头横幅来自 page-header.less，这里只注入 VDD 主题色
+    --page-header-border: @section-divider;
+    --page-header-title: @header-title;
   }
 
   .hero-panel {
@@ -413,13 +409,6 @@
   align-items: center;
   gap: 24px;
   padding: 10px 4px 16px;
-
-  h2 {
-    margin: 0;
-    font-size: 20px;
-    font-weight: 650;
-    line-height: 1.25;
-  }
 }
 
 .page-title-group {

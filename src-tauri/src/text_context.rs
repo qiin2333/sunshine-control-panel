@@ -30,14 +30,14 @@ use windows::Win32::UI::Accessibility::{
     SetWinEventHook, UIA_BoundingRectanglePropertyId, UIA_ControlTypePropertyId,
     UIA_EditControlTypeId, UIA_HasKeyboardFocusPropertyId, UIA_IsEnabledPropertyId,
     UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId, UIA_TextEditPatternId, UIA_TextPattern2Id,
-    UIA_ValuePatternId, UnhookWinEvent, HWINEVENTHOOK,
+    UIA_ValueIsReadOnlyPropertyId, UIA_ValuePatternId, UnhookWinEvent, HWINEVENTHOOK,
 };
 use windows::Win32::UI::Shell::IFrameworkInputPane;
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId,
     MsgWaitForMultipleObjectsEx, PeekMessageW, TranslateMessage, EVENT_OBJECT_FOCUS,
-    EVENT_SYSTEM_FOREGROUND, GUITHREADINFO, MSG, MWMO_INPUTAVAILABLE, OBJID_WINDOW, PM_REMOVE,
-    QS_ALLINPUT, WINEVENT_OUTOFCONTEXT,
+    EVENT_SYSTEM_FOREGROUND, GUITHREADINFO, MSG, MWMO_INPUTAVAILABLE, PM_REMOVE, QS_ALLINPUT,
+    WINEVENT_OUTOFCONTEXT,
 };
 
 use crate::sunshine::{create_https_client, get_local_sunshine_url};
@@ -294,7 +294,7 @@ fn inspect_focused_element(
     let writable_value =
         unsafe { element.GetCachedPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) }
             .ok()
-            .and_then(|pattern| unsafe { pattern.CurrentIsReadOnly() }.ok())
+            .and_then(|pattern| unsafe { pattern.CachedIsReadOnly() }.ok())
             .map(|value| !value.as_bool())
             .unwrap_or(false);
     let editable = has_text_edit || (control_type == UIA_EditControlTypeId.0 && writable_value);
@@ -332,12 +332,15 @@ unsafe extern "system" fn win_event_proc(
     _hook: HWINEVENTHOOK,
     _event: u32,
     hwnd: HWND,
-    id_object: i32,
+    _id_object: i32,
     _id_child: i32,
     _thread: u32,
     _time: u32,
 ) {
-    if hwnd.0.is_null() || id_object != OBJID_WINDOW.0 {
+    // EVENT_OBJECT_FOCUS arrives with varying idObject values (OBJID_CLIENT
+    // for child controls, OBJID_WINDOW for top-level), so do not filter on
+    // it — the debounce in the observer loop absorbs the extra triggers.
+    if hwnd.0.is_null() {
         return;
     }
     RESCAN_AT.with(|slot| {
@@ -392,6 +395,7 @@ fn observer_loop(
             let _ = request.AddProperty(UIA_BoundingRectanglePropertyId);
             let _ = request.AddProperty(UIA_ControlTypePropertyId);
             let _ = request.AddProperty(UIA_IsPasswordPropertyId);
+            let _ = request.AddProperty(UIA_ValueIsReadOnlyPropertyId);
             let _ = request.AddPattern(UIA_TextEditPatternId);
             let _ = request.AddPattern(UIA_ValuePatternId);
             let _ = request.AddPattern(UIA_TextPattern2Id);
@@ -474,8 +478,11 @@ fn observer_loop(
             || (editor_focused && now.duration_since(last_snapshot) >= EDITOR_CARET_POLL);
 
         if need_snapshot {
+            // Advance unconditionally: with UIA unavailable the watchdog must
+            // not re-fire every iteration, or the loop degenerates to the
+            // clamped 5ms minimum wait.
+            last_snapshot = now;
             if let (Some(automation), Some(cache)) = (automation.as_ref(), cache.as_ref()) {
-                last_snapshot = now;
                 match inspect_focused_element(automation, cache) {
                     Some((signature, observation)) => {
                         editor_focused = signature.editable;
@@ -508,11 +515,17 @@ fn observer_loop(
         }
 
         // Block until the nearest deadline while still receiving WinEvents.
+        // The pending debounce deadline must be included, or a freshly
+        // scheduled rescan sleeps behind the 500ms clamp and delays the
+        // focus response by that much.
         let mut wait = FOCUS_WATCHDOG_POLL.saturating_sub(now.duration_since(last_snapshot));
         if editor_focused {
             wait = wait.min(EDITOR_CARET_POLL.saturating_sub(now.duration_since(last_snapshot)));
         }
         wait = wait.min(PANE_POLL_INTERVAL.saturating_sub(now.duration_since(last_pane_check)));
+        if let Some(at) = RESCAN_AT.with(|slot| slot.get()) {
+            wait = wait.min(RESCAN_DEBOUNCE.saturating_sub(now.duration_since(at)));
+        }
         let wait = wait.clamp(Duration::from_millis(5), Duration::from_millis(500));
         unsafe {
             MsgWaitForMultipleObjectsEx(
@@ -534,6 +547,7 @@ fn observer_loop(
     }
     input_pane_available.store(false, Ordering::Release);
     uia_available.store(false, Ordering::Release);
+    drop(cache);
     drop(pane);
     drop(automation);
     unsafe { CoUninitialize() };

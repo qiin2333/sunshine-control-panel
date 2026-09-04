@@ -26,6 +26,8 @@ mod rtss;
 mod shell_context_menu;
 mod sunshine;
 mod system;
+#[cfg(target_os = "windows")]
+mod text_context;
 mod toolbar;
 mod tray;
 mod tray_config;

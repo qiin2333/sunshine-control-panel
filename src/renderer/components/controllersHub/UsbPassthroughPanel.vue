@@ -242,6 +242,9 @@ async function installTransport() {
       { confirmButtonText: t.value.deviceHub.usb.continue, cancelButtonText: t.value.deviceHub.usb.cancel, type: 'warning' },
     )
   } catch { return }
+  // Do not let an in-flight status refresh apply stale data over the result
+  // of the operation that is about to run.
+  if (statusRefreshPromise) await statusRefreshPromise
   installing.value = true
   const result = await usbip.installTransport()
   installing.value = false
@@ -259,10 +262,16 @@ async function cleanupResidual() {
       { confirmButtonText: t.value.deviceHub.usb.continue, cancelButtonText: t.value.deviceHub.usb.cancel, type: 'warning' },
     )
   } catch { return }
+  if (statusRefreshPromise) await statusRefreshPromise
   cleaning.value = true
   const result = await usbip.cleanupTransport()
   cleaning.value = false
-  if (!result?.success) return ElMessage.error(friendlyError(result?.message))
+  if (!result?.success) {
+    // The failed cleanup may still have removed some devnodes; refresh so the
+    // residual flag reflects the actual state instead of the stale snapshot.
+    await refreshStatus()
+    return ElMessage.error(friendlyError(result?.message))
+  }
   applyStatus(result.data)
   if (result.data?.vhci_residual) ElMessage.error(friendlyError('USBIP-CLEAN-002'))
   else ElMessage.success(t.value.deviceHub.usb.cleanupSuccess)

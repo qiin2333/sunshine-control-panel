@@ -232,6 +232,11 @@ fn enumerate_vhci_interfaces() -> Result<Vec<String>, String> {
         CM_Get_Device_Interface_List_SizeW, CR_BUFFER_SMALL, CR_SUCCESS,
     };
 
+    // PRESENT matches what usbip.exe itself enumerates, so this reports exactly
+    // the state that breaks it. Non-present interfaces are deliberately not
+    // counted: they do not fail usbip.exe, and CM_Locate_DevNodeW cannot remove
+    // them, so counting them would both disable a working transport and make
+    // the sweep's final emptiness check unsatisfiable.
     // The size query and the list query are not atomic: interfaces arriving in
     // between make the list call report CR_BUFFER_SMALL. Device removal during
     // cleanup is exactly when this races, so retry instead of failing.
@@ -940,10 +945,11 @@ fn uninstall_vhci_devnode(instance_id: &str) -> Result<(), String> {
     let located =
         unsafe { CM_Locate_DevNodeW(&mut devinst, PCWSTR(encoded.as_ptr()), CM_LOCATE_DEVNODE_NORMAL) };
     if located != CR_SUCCESS {
-        return Err(format!(
-            "USBIP-CLEAN-002: residual device {instance_id} could not be located (config error {})",
-            located.0
-        ));
+        // The devnode can disappear between enumeration and this lookup while
+        // asynchronous PnP teardown completes. Treat it as already removed so
+        // the sweep continues; the sweep's final emptiness check still fails
+        // the cleanup if real leftovers remain.
+        return Ok(());
     }
     let uninstalled = unsafe { CM_Uninstall_DevNode(devinst, 0) };
     if uninstalled != CR_SUCCESS {

@@ -229,43 +229,56 @@ const VHCI_INTERFACE_GUID: windows::core::GUID =
 fn enumerate_vhci_interfaces() -> Result<Vec<String>, String> {
     use windows::Win32::Devices::DeviceAndDriverInstallation::{
         CM_GET_DEVICE_INTERFACE_LIST_PRESENT, CM_Get_Device_Interface_ListW,
-        CM_Get_Device_Interface_List_SizeW, CR_SUCCESS,
+        CM_Get_Device_Interface_List_SizeW, CR_BUFFER_SMALL, CR_SUCCESS,
     };
 
-    let mut length = 0u32;
-    let result = unsafe {
-        CM_Get_Device_Interface_List_SizeW(
-            &mut length,
-            &VHCI_INTERFACE_GUID,
-            None,
-            CM_GET_DEVICE_INTERFACE_LIST_PRESENT,
-        )
-    };
-    if result != CR_SUCCESS {
-        return Err(format!(
-            "USBIP-CLEAN-002: unable to measure the VHCI device interface list (config error {})",
-            result.0
-        ));
+    // The size query and the list query are not atomic: interfaces arriving in
+    // between make the list call report CR_BUFFER_SMALL. Device removal during
+    // cleanup is exactly when this races, so retry instead of failing.
+    const MAX_ENUM_RETRIES: usize = 5;
+    for _ in 0..MAX_ENUM_RETRIES {
+        let mut length = 0u32;
+        let result = unsafe {
+            CM_Get_Device_Interface_List_SizeW(
+                &mut length,
+                &VHCI_INTERFACE_GUID,
+                None,
+                CM_GET_DEVICE_INTERFACE_LIST_PRESENT,
+            )
+        };
+        if result != CR_SUCCESS {
+            return Err(format!(
+                "USBIP-CLEAN-002: unable to measure the VHCI device interface list (config error {})",
+                result.0
+            ));
+        }
+        if length == 0 {
+            return Ok(Vec::new());
+        }
+        let mut buffer = vec![0u16; length as usize];
+        let result = unsafe {
+            CM_Get_Device_Interface_ListW(
+                &VHCI_INTERFACE_GUID,
+                None,
+                &mut buffer,
+                CM_GET_DEVICE_INTERFACE_LIST_PRESENT,
+            )
+        };
+        if result == CR_BUFFER_SMALL {
+            continue;
+        }
+        if result != CR_SUCCESS {
+            return Err(format!(
+                "USBIP-CLEAN-002: unable to list the VHCI device interfaces (config error {})",
+                result.0
+            ));
+        }
+        return Ok(split_multi_sz(&buffer));
     }
-    if length == 0 {
-        return Ok(Vec::new());
-    }
-    let mut buffer = vec![0u16; length as usize];
-    let result = unsafe {
-        CM_Get_Device_Interface_ListW(
-            &VHCI_INTERFACE_GUID,
-            None,
-            &mut buffer,
-            CM_GET_DEVICE_INTERFACE_LIST_PRESENT,
-        )
-    };
-    if result != CR_SUCCESS {
-        return Err(format!(
-            "USBIP-CLEAN-002: unable to list the VHCI device interfaces (config error {})",
-            result.0
-        ));
-    }
-    Ok(split_multi_sz(&buffer))
+    Err(
+        "USBIP-CLEAN-002: the VHCI device interface list kept changing while enumerating"
+            .to_string(),
+    )
 }
 
 #[cfg(target_os = "windows")]
@@ -889,7 +902,9 @@ async fn wait_for_uninstall_registration_gone() -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 async fn remove_vhci_devnodes() -> Result<(), String> {
-    for _ in 0..3 {
+    // PnP teardown is asynchronous; reuse the full cleanup polling budget so a
+    // slow but successful device removal is not reported as a failure.
+    for _ in 0..CLEANUP_POLL_ATTEMPTS {
         let interfaces = enumerate_vhci_interfaces()?;
         if interfaces.is_empty() {
             return Ok(());

@@ -14,7 +14,7 @@
       </div>
 
       <p v-if="statusProbeFailed || (status.detail && status.installed)" class="chub-status-error">{{ friendlyError(status.detail) }}</p>
-      <div v-if="statusLoaded && !statusProbeFailed && status.supported && !status.ready" class="chub-usb-setup">
+      <div v-if="statusLoaded && !statusProbeFailed && status.supported && !status.ready && !status.vhci_residual" class="chub-usb-setup">
         <p>{{ t.deviceHub.usb.setupHint }}</p>
         <el-button type="primary" :loading="installing" :disabled="transportBusy" @click="installTransport">
           {{ t.deviceHub.usb.installTransport }}

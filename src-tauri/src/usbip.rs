@@ -904,6 +904,7 @@ async fn wait_for_uninstall_registration_gone() -> Result<(), String> {
 async fn remove_vhci_devnodes() -> Result<(), String> {
     // PnP teardown is asynchronous; reuse the full cleanup polling budget so a
     // slow but successful device removal is not reported as a failure.
+    let mut last_error = None;
     for _ in 0..CLEANUP_POLL_ATTEMPTS {
         let interfaces = enumerate_vhci_interfaces()?;
         if interfaces.is_empty() {
@@ -911,7 +912,12 @@ async fn remove_vhci_devnodes() -> Result<(), String> {
         }
         for path in interfaces {
             if let Some(instance_id) = instance_id_from_interface_path(&path) {
-                uninstall_vhci_devnode(&instance_id)?;
+                // Removal can be transiently vetoed while PnP is busy; keep
+                // sweeping and let the closing emptiness check decide the
+                // outcome instead of abandoning the remaining nodes and retries.
+                if let Err(error) = uninstall_vhci_devnode(&instance_id) {
+                    last_error = Some(error);
+                }
             }
         }
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -919,10 +925,10 @@ async fn remove_vhci_devnodes() -> Result<(), String> {
     if enumerate_vhci_interfaces()?.is_empty() {
         Ok(())
     } else {
-        Err(
+        Err(last_error.unwrap_or_else(|| {
             "USBIP-CLEAN-002: residual USB/IP host controller devices could not be removed"
-                .to_string(),
-        )
+                .to_string()
+        }))
     }
 }
 

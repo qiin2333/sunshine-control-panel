@@ -291,26 +291,64 @@ fn instance_id_from_interface_path(path: &str) -> Option<String> {
 }
 
 /// Splits a registry command line such as `"C:\dir\unins000.exe" /flag` into
-/// the executable and its arguments. Bare paths without arguments are valid
+/// the executable and its arguments, applying the quoting rules of
+/// CommandLineToArgvW: double quotes group whitespace, a quote toggles
+/// quoting (an unclosed quote quotes to the end), and backslashes immediately
+/// before a quote are half-escaped. Bare paths without arguments are valid
 /// and yield an empty argument list.
 fn split_executable_command(command: &str) -> Option<(String, Vec<String>)> {
     let command = command.trim();
     if command.is_empty() {
         return None;
     }
-    let (executable, arguments) = if let Some(rest) = command.strip_prefix('"') {
-        let (executable, arguments) = rest.split_once('"')?;
-        (executable.to_string(), arguments.to_string())
-    } else {
-        match command.split_once(' ') {
-            Some((executable, arguments)) => (executable.to_string(), arguments.to_string()),
-            None => (command.to_string(), String::new()),
+    let mut arguments = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut chars = command.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            let mut slashes = 1;
+            while chars.peek() == Some(&'\\') {
+                chars.next();
+                slashes += 1;
+            }
+            if chars.peek() == Some(&'"') {
+                // Runs before a quote are half-escaped: 2n backslashes keep n
+                // and leave the quote as a toggle; 2n+1 keep n plus a literal
+                // quote.
+                for _ in 0..(slashes / 2) {
+                    current.push('\\');
+                }
+                if slashes % 2 == 1 {
+                    chars.next();
+                    current.push('"');
+                }
+            } else {
+                for _ in 0..slashes {
+                    current.push('\\');
+                }
+            }
+            continue;
         }
-    };
-    Some((
-        executable,
-        arguments.split_whitespace().map(str::to_string).collect(),
-    ))
+        match ch {
+            '"' => in_quotes = !in_quotes,
+            ' ' | '\t' if !in_quotes => {
+                if !current.is_empty() {
+                    arguments.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+    if !current.is_empty() {
+        arguments.push(current);
+    }
+    if arguments.is_empty() {
+        return None;
+    }
+    let mut arguments = arguments;
+    let executable = arguments.remove(0);
+    Some((executable, arguments))
 }
 
 #[cfg(target_os = "windows")]
@@ -546,7 +584,10 @@ pub async fn usbip_get_status() -> Result<UsbipStatus, String> {
 
     #[cfg(target_os = "windows")]
     {
-        let interfaces = enumerate_vhci_interfaces().unwrap_or_default();
+        // Fail closed: if the residual state cannot be determined, do not
+        // report a clean transport. Propagating the error surfaces the probe
+        // as unavailable, hiding install and attach actions.
+        let interfaces = enumerate_vhci_interfaces()?;
         let installation = match find_installation() {
             Ok(installation) => installation,
             Err(detail) => {
@@ -1089,7 +1130,32 @@ mod tests {
             Some(("C:\\USBip\\unins000.exe".to_string(), Vec::new()))
         );
         assert_eq!(split_executable_command("  "), None);
-        assert_eq!(split_executable_command(r#""unclosed"#), None);
+        // An unclosed quote quotes to the end, as CommandLineToArgvW does.
+        assert_eq!(
+            split_executable_command(r#""C:\USBip\unins000.exe"#),
+            Some(("C:\\USBip\\unins000.exe".to_string(), Vec::new()))
+        );
+        // Spaces inside a quoted argument are preserved.
+        assert_eq!(
+            split_executable_command(r#""C:\USBip\unins000.exe" /log="C:\logs dir\x"#),
+            Some((
+                "C:\\USBip\\unins000.exe".to_string(),
+                vec!["/log=C:\\logs dir\\x".to_string()]
+            ))
+        );
+        // An escaped quote stays inside the argument.
+        assert_eq!(
+            split_executable_command(r#""C:\USBip\unins000.exe" /D="a\"b""#),
+            Some((
+                "C:\\USBip\\unins000.exe".to_string(),
+                vec!["/D=a\"b".to_string()]
+            ))
+        );
+        // Backslashes before a non-quote are literal.
+        assert_eq!(
+            split_executable_command(r#""C:\a\\b\unins000.exe""#),
+            Some(("C:\\a\\\\b\\unins000.exe".to_string(), Vec::new()))
+        );
     }
 
     #[test]

@@ -22,6 +22,7 @@ mod native_tools;
 mod power;
 mod proxy_server;
 mod rtss;
+mod rtx_hdr;
 #[cfg(target_os = "windows")]
 mod shell_context_menu;
 mod sunshine;
@@ -108,6 +109,11 @@ fn configure_loopback_proxy_bypass() {
 fn main() {
     #[cfg(target_os = "windows")]
     configure_loopback_proxy_bypass();
+
+    #[cfg(target_os = "windows")]
+    if let Some(exit_code) = rtx_hdr::try_handle_elevated_command() {
+        std::process::exit(exit_code);
+    }
 
     #[cfg(target_os = "windows")]
     utils::wait_for_elevated_restart_handoff();
@@ -233,6 +239,9 @@ fn main() {
             proxy_server::get_proxy_health_check,
             proxy_server::refresh_sunshine_target,
             proxy_server::wait_for_proxy_ready,
+            rtx_hdr::rtx_hdr_get_status,
+            rtx_hdr::rtx_hdr_install,
+            rtx_hdr::rtx_hdr_uninstall,
             utils::open_external_url,
             utils::open_local_path,
             utils::restart_graphics_driver,

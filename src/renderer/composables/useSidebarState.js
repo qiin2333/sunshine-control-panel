@@ -107,6 +107,7 @@ export function useSidebarState() {
   const openControllers = () => router.navigate(ROUTES.CONTROLLERS)
   const openDualSense = openControllers
   const openControllersHub = () => router.navigate(ROUTES.CONTROLLERS_HUB)
+  const openRtxHdr = () => router.navigate(ROUTES.RTX_HDR)
   const goHome = () => router.goHome()
 
   /**
@@ -317,6 +318,7 @@ export function useSidebarState() {
     openControllers,
     openDualSense,
     openControllersHub,
+    openRtxHdr,
     goHome,
     skipVersion,
     isVersionSkipped,

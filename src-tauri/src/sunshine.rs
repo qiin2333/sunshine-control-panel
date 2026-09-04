@@ -964,6 +964,13 @@ pub async fn post_sunshine_config(
     let sunshine_url = get_sunshine_url()
         .await
         .map_err(|e| format!("Cannot get Sunshine URL: {}", e))?;
+    post_sunshine_config_to(&sunshine_url, config_data).await
+}
+
+async fn post_sunshine_config_to(
+    sunshine_url: &str,
+    config_data: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
     let config_url = format!("{}/api/config", sunshine_url.trim_end_matches('/'));
 
     let client = create_https_client()?;
@@ -1006,6 +1013,95 @@ pub async fn post_sunshine_config(
         ));
     }
     validate_config_save_response(&response_body)
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct RtxHdrBackendConfigState {
+    #[serde(default)]
+    pub persisted_path: String,
+    #[serde(default)]
+    pub active_path: String,
+    #[serde(default)]
+    pub restart_required: bool,
+}
+
+pub async fn get_local_rtx_hdr_backend_path() -> Result<RtxHdrBackendConfigState, String> {
+    let sunshine_url = get_local_sunshine_url().await?;
+    let endpoint = format!(
+        "{}/api/config/rtx-hdr-backend",
+        sunshine_url.trim_end_matches('/')
+    );
+    let response = create_https_client()?
+        .get(endpoint)
+        .send()
+        .await
+        .map_err(|error| format!("Read RTX HDR backend path failed: {error}"))?;
+    let status = response.status();
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|error| format!("Parse RTX HDR backend path failed: {error}"))?;
+    if !status.is_success() || body.get("status").and_then(serde_json::Value::as_bool) != Some(true)
+    {
+        return Err("Sunshine rejected the RTX HDR backend path query".to_string());
+    }
+    serde_json::from_value(body)
+        .map_err(|error| format!("Decode RTX HDR backend state failed: {error}"))
+}
+
+pub async fn set_local_rtx_hdr_backend_path(
+    path: &str,
+) -> Result<RtxHdrBackendConfigState, String> {
+    let sunshine_url = get_local_sunshine_url().await?;
+    let endpoint = format!(
+        "{}/api/config/rtx-hdr-backend",
+        sunshine_url.trim_end_matches('/')
+    );
+    let response = create_https_client()?
+        .post(endpoint)
+        .json(&serde_json::json!({ "backend_path": path }))
+        .send()
+        .await
+        .map_err(|error| format!("Update RTX HDR backend path failed: {error}"))?;
+    let status = response.status();
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|error| format!("Parse RTX HDR backend update failed: {error}"))?;
+    if status.is_success() && body.get("status").and_then(serde_json::Value::as_bool) == Some(true)
+    {
+        return serde_json::from_value(body)
+            .map_err(|error| format!("Decode RTX HDR backend update failed: {error}"));
+    }
+    Err(body
+        .get("error")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("Sunshine rejected the RTX HDR backend path update")
+        .to_string())
+}
+
+pub async fn restart_and_wait_for_rtx_hdr_backend(
+    path: &str,
+) -> Result<RtxHdrBackendConfigState, String> {
+    let _ = post_tray_restart_action().await?;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(45);
+    loop {
+        if tokio::time::Instant::now() >= deadline {
+            return Err(
+                "Sunshine restart timed out while activating the RTX HDR component".to_string(),
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let Ok(state) = get_local_rtx_hdr_backend_path().await else {
+            continue;
+        };
+        if state.persisted_path.eq_ignore_ascii_case(path)
+            && state.active_path.eq_ignore_ascii_case(path)
+            && !state.restart_required
+        {
+            return Ok(state);
+        }
+    }
 }
 
 #[tauri::command]

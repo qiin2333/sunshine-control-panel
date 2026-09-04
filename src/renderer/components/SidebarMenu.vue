@@ -151,6 +151,7 @@
         <Welcome v-if="router.isRoute(ROUTES.WELCOME)" @close="goHome" />
         <WebStreamSettings v-if="router.isRoute(ROUTES.WEB_STREAM)" @close="goHome" />
         <AiAssistant v-if="router.isRoute(ROUTES.AI_ASSISTANT)" @close="goHome" />
+        <RtxHdrManager v-if="router.isRoute(ROUTES.RTX_HDR)" />
         <ControllersHub
           v-if="router.isRoute(ROUTES.CONTROLLERS) || router.isRoute(ROUTES.DUALSENSE) || router.isRoute(ROUTES.CONTROLLERS_HUB)"
           @close="goHome"
@@ -182,6 +183,7 @@ import Welcome from './welcome.vue'
 import WebStreamSettings from './WebStreamSettings.vue'
 import AiAssistant from './AiAssistant.vue'
 import ControllersHub from './controllersHub/ControllersHub.vue'
+import RtxHdrManager from './RtxHdrManager.vue'
 const UpdateDialog = defineAsyncComponent(() => import('./UpdateDialog.vue'))
 import { useSidebarState } from '../composables/useSidebarState.js'
 import { useWindowControls } from '../composables/useWindowControls.js'
@@ -218,6 +220,7 @@ const {
   openControllers,
   openDualSense,
   openControllersHub,
+  openRtxHdr,
   goHome,
   skipVersion,
   includePrerelease,
@@ -280,6 +283,7 @@ const toolsCtx = {
   openAiAssistant,
   openControllers,
   openControllersHub,
+  openRtxHdr,
   handleCheckForUpdates,
   openTimer,
   openUrl,
@@ -311,6 +315,7 @@ defineExpose({
   openControllers,
   openDualSense,
   openControllersHub,
+  openRtxHdr,
   goHome,
   checkForUpdates: handleCheckForUpdates,
   router,

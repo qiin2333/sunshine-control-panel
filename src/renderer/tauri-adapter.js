@@ -153,6 +153,12 @@ export const usbip = {
   detach: (port) => wrapResult('usbip_detach', { port }),
 }
 
+export const rtxHdr = {
+  getStatus: () => wrapResult('rtx_hdr_get_status'),
+  install: (backendPath, runtimePath) => wrapResult('rtx_hdr_install', { backendPath, runtimePath }),
+  uninstall: () => wrapResult('rtx_hdr_uninstall'),
+}
+
 // ─── Sunshine 配置 ───────────────────────────────────────
 
 export const sunshine = {
@@ -238,6 +244,7 @@ export default {
   virtualMicrophone,
   dualsense,
   usbip,
+  rtxHdr,
   sunshine,
   tools,
   fileMapping,

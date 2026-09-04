@@ -141,6 +141,7 @@ export const dualsense = {
 export const usbip = {
   getStatus: () => wrapResult('usbip_get_status'),
   installTransport: () => wrapResult('usbip_install_transport'),
+  cleanupTransport: () => wrapResult('usbip_cleanup_transport'),
   listRemote: (remote, tcpPort = 3240) => wrapResult('usbip_list_remote', {
     remote,
     tcpPort,

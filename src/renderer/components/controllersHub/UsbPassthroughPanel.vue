@@ -20,6 +20,12 @@
           {{ t.deviceHub.usb.installTransport }}
         </el-button>
       </div>
+      <div v-if="statusLoaded && !statusProbeFailed && status.supported && status.vhci_residual" class="chub-usb-setup chub-usb-residual">
+        <p>{{ t.deviceHub.usb.residualHint }}</p>
+        <el-button type="danger" :loading="cleaning" @click="cleanupResidual">
+          {{ t.deviceHub.usb.cleanupResidual }}
+        </el-button>
+      </div>
       <el-alert
         v-if="status.reboot_recommended"
         class="chub-notice"
@@ -131,6 +137,7 @@ const status = reactive({
   version: '',
   version_valid: false,
   reboot_recommended: false,
+  vhci_residual: false,
   attached_devices: [],
   detail: '',
 })
@@ -138,6 +145,7 @@ const statusLoading = ref(false)
 const statusLoaded = ref(false)
 const statusProbeFailed = ref(false)
 const installing = ref(false)
+const cleaning = ref(false)
 const discovering = ref(false)
 const discoveryDone = ref(false)
 const attachingBusId = ref('')
@@ -193,12 +201,14 @@ async function performStatusRefresh() {
     else {
       status.ready = false
       status.attached_devices = []
+      status.vhci_residual = false
       status.detail = result?.message || ''
     }
   } catch (error) {
     statusProbeFailed.value = true
     status.ready = false
     status.attached_devices = []
+    status.vhci_residual = false
     status.detail = String(error || '')
   } finally {
     statusLoaded.value = true
@@ -238,6 +248,23 @@ async function installTransport() {
   applyStatus(result.data)
   if (result.data?.ready) ElMessage.success(t.value.deviceHub.usb.installSuccess)
   else ElMessage.warning(t.value.deviceHub.usb.rebootRequired)
+}
+
+async function cleanupResidual() {
+  try {
+    await ElMessageBox.confirm(
+      t.value.deviceHub.usb.cleanupConfirm,
+      t.value.deviceHub.usb.cleanupResidual,
+      { confirmButtonText: t.value.deviceHub.usb.continue, cancelButtonText: t.value.deviceHub.usb.cancel, type: 'warning' },
+    )
+  } catch { return }
+  cleaning.value = true
+  const result = await usbip.cleanupTransport()
+  cleaning.value = false
+  if (!result?.success) return ElMessage.error(friendlyError(result?.message))
+  applyStatus(result.data)
+  if (result.data?.vhci_residual) ElMessage.error(friendlyError('USBIP-CLEAN-002'))
+  else ElMessage.success(t.value.deviceHub.usb.cleanupSuccess)
 }
 
 async function discover() {

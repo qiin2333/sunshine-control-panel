@@ -24,9 +24,9 @@ pub(crate) use install::ensure_pinned_usbip;
 #[cfg(target_os = "windows")]
 pub(crate) use packages::{UsbipInstallResult, component_root};
 #[cfg(target_os = "windows")]
-pub(crate) use probe::ensure_no_active_session;
-#[cfg(target_os = "windows")]
-pub(crate) use probe::installed_usbip_version;
+pub(crate) use probe::{
+    ensure_no_active_session, installed_usbip_version, usbip_uninstall_entries,
+};
 
 #[cfg(test)]
 pub(crate) use {

@@ -152,74 +152,59 @@ fn validate_tcp_port(tcp_port: Option<u16>) -> Result<u16, String> {
 
 #[cfg(target_os = "windows")]
 fn find_installation() -> Result<UsbipInstallation, String> {
-    use winreg::RegKey;
-    use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY};
-
-    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let uninstall = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
     let mut fallback = None;
     let mut last_error = None;
-    for view in [KEY_READ | KEY_WOW64_64KEY, KEY_READ | KEY_WOW64_32KEY] {
-        let Ok(root) = hklm.open_subkey_with_flags(uninstall, view) else {
-            continue;
-        };
-        for name in root.enum_keys().flatten() {
-            let Ok(key) = root.open_subkey_with_flags(&name, view) else {
-                continue;
-            };
-            let display_name = key
-                .get_value::<String, _>("DisplayName")
-                .unwrap_or_default();
-            if !display_name.starts_with("USBip version ") {
-                continue;
-            }
-            let version = key
-                .get_value::<String, _>("DisplayVersion")
-                .unwrap_or_else(|_| {
-                    display_name
-                        .trim_start_matches("USBip version ")
-                        .to_string()
-                });
-            let candidate = (|| -> Result<UsbipInstallation, String> {
-                let install_location =
-                    key.get_value::<String, _>("InstallLocation").map_err(|_| {
+    for entry in crate::dualsense::usbip_uninstall_entries() {
+        let version = entry
+            .key
+            .get_value::<String, _>("DisplayVersion")
+            .unwrap_or_else(|_| {
+                entry
+                    .display_name
+                    .trim_start_matches("USBip version ")
+                    .to_string()
+            });
+        let candidate = (|| -> Result<UsbipInstallation, String> {
+            let install_location =
+                entry
+                    .key
+                    .get_value::<String, _>("InstallLocation")
+                    .map_err(|_| {
                         "USBIP-SETUP-002: USB/IP install location is missing".to_string()
                     })?;
-                let root = std::path::PathBuf::from(install_location)
-                    .canonicalize()
-                    .map_err(|error| {
-                        format!("USBIP-SETUP-002: USB/IP install location is invalid: {error}")
-                    })?;
-                let executable = root.join("usbip.exe").canonicalize().map_err(|error| {
-                    format!(
-                        "USBIP-SETUP-002: usbip.exe is missing from the installed transport: {error}"
-                    )
+            let root = std::path::PathBuf::from(install_location)
+                .canonicalize()
+                .map_err(|error| {
+                    format!("USBIP-SETUP-002: USB/IP install location is invalid: {error}")
                 })?;
-                if !executable.starts_with(&root)
-                    || !executable
-                        .file_name()
-                        .is_some_and(|name| name.eq_ignore_ascii_case("usbip.exe"))
-                {
-                    return Err(
-                        "USBIP-SETUP-002: the installed USB/IP executable path is unsafe"
-                            .to_string(),
-                    );
-                }
-                Ok(UsbipInstallation {
-                    version,
-                    executable,
-                })
-            })();
-            match candidate {
-                Ok(installation) if installation.version == PINNED_VERSION => {
-                    return Ok(installation);
-                }
-                Ok(installation) => {
-                    fallback.get_or_insert(installation);
-                }
-                Err(error) => {
-                    last_error = Some(error);
-                }
+            let executable = root.join("usbip.exe").canonicalize().map_err(|error| {
+                format!(
+                    "USBIP-SETUP-002: usbip.exe is missing from the installed transport: {error}"
+                )
+            })?;
+            if !executable.starts_with(&root)
+                || !executable
+                    .file_name()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("usbip.exe"))
+            {
+                return Err(
+                    "USBIP-SETUP-002: the installed USB/IP executable path is unsafe".to_string(),
+                );
+            }
+            Ok(UsbipInstallation {
+                version,
+                executable,
+            })
+        })();
+        match candidate {
+            Ok(installation) if installation.version == PINNED_VERSION => {
+                return Ok(installation);
+            }
+            Ok(installation) => {
+                fallback.get_or_insert(installation);
+            }
+            Err(error) => {
+                last_error = Some(error);
             }
         }
     }
@@ -323,35 +308,14 @@ fn split_executable_command(command: &str) -> Option<(String, String)> {
 
 #[cfg(target_os = "windows")]
 fn find_usbip_uninstall_string() -> Option<String> {
-    use winreg::RegKey;
-    use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY};
-
-    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let uninstall = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
-    for view in [KEY_READ | KEY_WOW64_64KEY, KEY_READ | KEY_WOW64_32KEY] {
-        let Ok(root) = hklm.open_subkey_with_flags(uninstall, view) else {
-            continue;
-        };
-        for name in root.enum_keys().flatten() {
-            let Ok(key) = root.open_subkey_with_flags(&name, view) else {
-                continue;
-            };
-            if !key
-                .get_value::<String, _>("DisplayName")
-                .unwrap_or_default()
-                .starts_with("USBip version ")
-            {
-                continue;
-            }
-            if let Ok(uninstall_string) = key.get_value::<String, _>("UninstallString") {
-                let uninstall_string = uninstall_string.trim().to_string();
-                if !uninstall_string.is_empty() {
-                    return Some(uninstall_string);
-                }
-            }
-        }
-    }
-    None
+    crate::dualsense::usbip_uninstall_entries().into_iter().find_map(|entry| {
+        entry
+            .key
+            .get_value::<String, _>("UninstallString")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    })
 }
 
 #[cfg(target_os = "windows")]

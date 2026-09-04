@@ -193,24 +193,26 @@ function friendlyError(error) {
   return translated || t.value.deviceHub.usb.unknownError
 }
 
+function applyProbeFailure(detail) {
+  statusProbeFailed.value = true
+  status.ready = false
+  status.attached_devices = []
+  status.vhci_residual = false
+  status.detail = detail
+}
+
 async function performStatusRefresh() {
   statusLoading.value = true
   try {
     const result = await usbip.getStatus()
-    statusProbeFailed.value = !result?.success
-    if (result?.success) applyStatus(result.data)
-    else {
-      status.ready = false
-      status.attached_devices = []
-      status.vhci_residual = false
-      status.detail = result?.message || ''
+    if (result?.success) {
+      statusProbeFailed.value = false
+      applyStatus(result.data)
+    } else {
+      applyProbeFailure(result?.message || '')
     }
   } catch (error) {
-    statusProbeFailed.value = true
-    status.ready = false
-    status.attached_devices = []
-    status.vhci_residual = false
-    status.detail = String(error || '')
+    applyProbeFailure(String(error || ''))
   } finally {
     statusLoaded.value = true
     statusLoading.value = false

@@ -838,13 +838,8 @@ async fn cleanup_broken_transport() -> Result<(), String> {
             uninstall_error = Some(error);
         }
     }
-    match remove_vhci_devnodes().await {
-        Ok(()) => match uninstall_error {
-            Some(error) => Err(error),
-            None => Ok(()),
-        },
-        Err(error) => Err(error),
-    }
+    remove_vhci_devnodes().await?;
+    uninstall_error.map_or(Ok(()), Err)
 }
 
 #[cfg(target_os = "windows")]
@@ -915,10 +910,8 @@ async fn remove_vhci_devnodes() -> Result<(), String> {
             return Ok(());
         }
         for path in interfaces {
-            if let Some(instance_id) = instance_id_from_interface_path(&path)
-                && let Err(error) = uninstall_vhci_devnode(&instance_id)
-            {
-                return Err(error);
+            if let Some(instance_id) = instance_id_from_interface_path(&path) {
+                uninstall_vhci_devnode(&instance_id)?;
             }
         }
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;

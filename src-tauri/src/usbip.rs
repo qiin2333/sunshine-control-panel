@@ -291,19 +291,26 @@ fn instance_id_from_interface_path(path: &str) -> Option<String> {
 }
 
 /// Splits a registry command line such as `"C:\dir\unins000.exe" /flag` into
-/// the executable and the remaining arguments.
-fn split_executable_command(command: &str) -> Option<(String, String)> {
+/// the executable and its arguments. Bare paths without arguments are valid
+/// and yield an empty argument list.
+fn split_executable_command(command: &str) -> Option<(String, Vec<String>)> {
     let command = command.trim();
     if command.is_empty() {
         return None;
     }
-    if let Some(rest) = command.strip_prefix('"') {
+    let (executable, arguments) = if let Some(rest) = command.strip_prefix('"') {
         let (executable, arguments) = rest.split_once('"')?;
-        Some((executable.to_string(), arguments.trim().to_string()))
+        (executable.to_string(), arguments.to_string())
     } else {
-        let (executable, arguments) = command.split_once(' ')?;
-        Some((executable.to_string(), arguments.trim().to_string()))
-    }
+        match command.split_once(' ') {
+            Some((executable, arguments)) => (executable.to_string(), arguments.to_string()),
+            None => (command.to_string(), String::new()),
+        }
+    };
+    Some((
+        executable,
+        arguments.split_whitespace().map(str::to_string).collect(),
+    ))
 }
 
 #[cfg(target_os = "windows")]
@@ -539,10 +546,7 @@ pub async fn usbip_get_status() -> Result<UsbipStatus, String> {
 
     #[cfg(target_os = "windows")]
     {
-        let vhci_residual = match enumerate_vhci_interfaces() {
-            Ok(interfaces) => interfaces.len() > 1,
-            Err(_) => false,
-        };
+        let interfaces = enumerate_vhci_interfaces().unwrap_or_default();
         let installation = match find_installation() {
             Ok(installation) => installation,
             Err(detail) => {
@@ -553,13 +557,16 @@ pub async fn usbip_get_status() -> Result<UsbipStatus, String> {
                     version: String::new(),
                     version_valid: false,
                     reboot_recommended: false,
-                    vhci_residual,
+                    // With no usable installation every present VHCI interface
+                    // is a ghost that would corrupt the next install.
+                    vhci_residual: !interfaces.is_empty(),
                     attached_devices: Vec::new(),
                     detail,
                 });
             }
         };
         let version_valid = installation.version == PINNED_VERSION;
+        let vhci_residual = interfaces.len() > 1;
         if !version_valid {
             return Ok(UsbipStatus {
                 supported: true,
@@ -577,7 +584,9 @@ pub async fn usbip_get_status() -> Result<UsbipStatus, String> {
             Ok(attached_devices) => Ok(UsbipStatus {
                 supported: true,
                 installed: true,
-                ready: true,
+                // Residual instances break every usbip.exe operation; reflect
+                // that even if a race let this probe succeed.
+                ready: !vhci_residual,
                 version: installation.version,
                 version_valid,
                 reboot_recommended: false,
@@ -755,17 +764,28 @@ const INNO_UNINSTALL_FLAGS: &str = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART";
 /// Runs inside the elevated helper. Order matters: the vendor uninstaller is
 /// the only supported way to retire the driver packages, service registration,
 /// and scheduled task; the devnode sweep afterwards only has to catch the
-/// nodes the vendor uninstaller silently failed to remove.
+/// nodes the vendor uninstaller silently failed to remove. An uninstaller
+/// failure never skips the sweep — leftover devnodes are the hard blocker for
+/// the next install — but it is still reported so the user can retry.
 #[cfg(target_os = "windows")]
 async fn cleanup_broken_transport() -> Result<(), String> {
     crate::dualsense::ensure_no_active_session().await.map_err(|_| {
         "USBIP-CLEAN-001: finish the active Sunshine stream before cleaning up the transport"
             .to_string()
     })?;
+    let mut uninstall_error = None;
     if crate::dualsense::installed_usbip_version().is_some() {
-        run_inno_uninstaller().await?;
+        if let Err(error) = run_inno_uninstaller().await {
+            uninstall_error = Some(error);
+        }
     }
-    remove_vhci_devnodes().await
+    match remove_vhci_devnodes().await {
+        Ok(()) => match uninstall_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        },
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -777,14 +797,10 @@ async fn run_inno_uninstaller() -> Result<(), String> {
     })?;
     let (executable, arguments) = split_executable_command(&uninstall_string)
         .ok_or_else(|| "USBIP-CLEAN-001: the USB/IP uninstaller registration is invalid".to_string())?;
-    let arguments = if arguments.is_empty() {
-        INNO_UNINSTALL_FLAGS.to_string()
-    } else {
-        format!("{arguments} {INNO_UNINSTALL_FLAGS}")
-    };
     let mut command = tokio::process::Command::new(&executable);
     command
-        .args(arguments.split_whitespace())
+        .args(arguments)
+        .args(INNO_UNINSTALL_FLAGS.split_whitespace())
         .kill_on_drop(true)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -801,7 +817,14 @@ async fn run_inno_uninstaller() -> Result<(), String> {
     )
     .await;
     match finished {
-        Ok(Ok(_)) => {}
+        // Inno uninstallers exit 0 on success; any non-zero code means the
+        // user cancelled or a fatal error occurred.
+        Ok(Ok(status)) if status.success() => {}
+        Ok(Ok(status)) => {
+            return Err(format!(
+                "USBIP-CLEAN-001: the USB/IP uninstaller exited with {status}"
+            ));
+        }
         Ok(Err(error)) => {
             return Err(format!("USBIP-CLEAN-001: the USB/IP uninstaller failed: {error}"));
         }
@@ -1045,18 +1068,25 @@ mod tests {
     fn splits_quoted_and_bare_uninstaller_commands() {
         assert_eq!(
             split_executable_command(r#""C:\Program Files\USBip\unins000.exe""#),
-            Some(("C:\\Program Files\\USBip\\unins000.exe".to_string(), String::new()))
+            Some(("C:\\Program Files\\USBip\\unins000.exe".to_string(), Vec::new()))
         );
         assert_eq!(
             split_executable_command(r#""C:\Program Files\USBip\unins000.exe" /log=x"#),
             Some((
                 "C:\\Program Files\\USBip\\unins000.exe".to_string(),
-                "/log=x".to_string()
+                vec!["/log=x".to_string()]
             ))
         );
         assert_eq!(
             split_executable_command(r"C:\USBip\unins000.exe /silent"),
-            Some(("C:\\USBip\\unins000.exe".to_string(), "/silent".to_string()))
+            Some((
+                "C:\\USBip\\unins000.exe".to_string(),
+                vec!["/silent".to_string()]
+            ))
+        );
+        assert_eq!(
+            split_executable_command(r"C:\USBip\unins000.exe"),
+            Some(("C:\\USBip\\unins000.exe".to_string(), Vec::new()))
         );
         assert_eq!(split_executable_command("  "), None);
         assert_eq!(split_executable_command(r#""unclosed"#), None);

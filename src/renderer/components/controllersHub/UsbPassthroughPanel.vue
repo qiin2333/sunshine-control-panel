@@ -9,20 +9,20 @@
         </div>
         <div class="chub-hud-actions">
           <span v-if="status.version" class="chub-hud-version">v{{ status.version }}</span>
-          <el-button size="small" :loading="statusLoading" @click="refreshStatus()">{{ t.deviceHub.refresh }}</el-button>
+          <el-button size="small" :loading="statusLoading" :disabled="transportBusy" @click="refreshStatus()">{{ t.deviceHub.refresh }}</el-button>
         </div>
       </div>
 
       <p v-if="statusProbeFailed || (status.detail && status.installed)" class="chub-status-error">{{ friendlyError(status.detail) }}</p>
       <div v-if="statusLoaded && !statusProbeFailed && status.supported && !status.ready" class="chub-usb-setup">
         <p>{{ t.deviceHub.usb.setupHint }}</p>
-        <el-button type="primary" :loading="installing" @click="installTransport">
+        <el-button type="primary" :loading="installing" :disabled="transportBusy" @click="installTransport">
           {{ t.deviceHub.usb.installTransport }}
         </el-button>
       </div>
       <div v-if="statusLoaded && !statusProbeFailed && status.supported && status.vhci_residual" class="chub-usb-setup chub-usb-residual">
         <p>{{ t.deviceHub.usb.residualHint }}</p>
-        <el-button type="danger" :loading="cleaning" @click="cleanupResidual">
+        <el-button type="danger" :loading="cleaning" :disabled="transportBusy" @click="cleanupResidual">
           {{ t.deviceHub.usb.cleanupResidual }}
         </el-button>
       </div>
@@ -157,6 +157,7 @@ let statusRefreshPromise = null
 
 const attachedDevices = computed(() => status.attached_devices || [])
 const operationBusy = computed(() => Boolean(attachingBusId.value || detachingPort.value))
+const transportBusy = computed(() => Boolean(installing.value || cleaning.value))
 const validTcpPort = computed(() => Number.isInteger(tcpPort.value) && tcpPort.value >= 1024 && tcpPort.value <= 65535)
 const canDiscover = computed(() => Boolean(
   status.ready

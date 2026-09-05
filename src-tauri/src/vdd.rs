@@ -1172,10 +1172,20 @@ pub(crate) fn try_handle_elevated_ioctl_command() -> Option<i32> {
         return Some(2);
     }
 
-    match crate::vdd_ioctl::send_command(&command) {
-        crate::vdd_ioctl::IoctlResult::Success => Some(0),
-        crate::vdd_ioctl::IoctlResult::InterfaceMissing
-        | crate::vdd_ioctl::IoctlResult::Failed { .. } => Some(1),
+    // A medium-integrity parent cannot terminate this high-integrity helper,
+    // so the helper bounds itself: if the ioctl hangs, exiting the process
+    // abandons the blocked thread and the parent observes the exit code
+    // instead of its own timeout. Kept just under the parent's 120 s wait.
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(crate::vdd_ioctl::send_command(&command));
+    });
+    let result = receiver.recv_timeout(std::time::Duration::from_secs(110));
+    match result {
+        Ok(crate::vdd_ioctl::IoctlResult::Success) => Some(0),
+        Ok(crate::vdd_ioctl::IoctlResult::InterfaceMissing)
+        | Ok(crate::vdd_ioctl::IoctlResult::Failed { .. })
+        | Err(_) => Some(1),
     }
 }
 
@@ -1235,14 +1245,23 @@ async fn run_elevated_ioctl_command(command: &str) -> Result<(), String> {
         return Err("不允许的 VDD 提权命令".to_string());
     }
 
-    let executable = std::env::current_exe().map_err(|e| format!("无法定位控制面板程序: {e}"))?;
-    let executable = executable.to_string_lossy().replace('\'', "''");
     let encoded = URL_SAFE_NO_PAD.encode(command.as_bytes());
-    let inner = format!(
-        "$p = Start-Process -FilePath '{}' -ArgumentList '{}','{}' -Verb RunAs -WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode",
-        executable, ELEVATED_VDD_IOCTL_ARG, encoded
-    );
-    run_elevated_powershell(&inner, "提权执行 VDD IOCTL").await
+    let process = crate::elevation::spawn_helper(
+        vec![ELEVATED_VDD_IOCTL_ARG.to_string(), encoded],
+        "VDD-ELEV",
+    )
+    .await
+    .map_err(|error| format!("提权执行 VDD IOCTL失败: {error}"))?;
+    // RELOAD_DRIVER triggers an IddCx display-driver reload that can be slow
+    // in pathological cases; the cap only guards against a truly hung child.
+    let status = crate::elevation::wait_for_exit(&process, std::time::Duration::from_secs(120))
+        .await
+        .map_err(|error| format!("提权执行 VDD IOCTL失败: {error}"))?
+        .ok_or_else(|| "提权执行 VDD IOCTL超时".to_string())?;
+    match status {
+        0 => Ok(()),
+        code => Err(format!("提权执行 VDD IOCTL失败（退出码 {code}）")),
+    }
 }
 
 /// 验证 EDID 文件格式和 checksum

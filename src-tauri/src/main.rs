@@ -10,6 +10,8 @@ mod controller_hub;
 mod controllermeta;
 mod desktop_settings;
 mod dualsense;
+#[cfg(target_os = "windows")]
+mod elevation;
 mod file_mapping;
 mod file_transfer;
 mod fs_utils;

@@ -96,26 +96,16 @@ pub fn run_elevated(bat_path: &Path, log_prefix: &str, extra_args: &[&str]) -> R
                 .map_err(|e| format!("写入 wrapper 失败: {e}，日志: {log_str}"))?;
         }
 
-        // 直接以 runas 启动 System32 的 cmd.exe 执行 wrapper：参数经过
-        // C-runtime 引号处理，%TEMP% 含空格时依然正确（此前经 PowerShell
-        // Start-Process -ArgumentList 中转，未加引号的路径会被拆断）。
-        let process = crate::elevation::launch_elevated(
-            crate::elevation::system_binary("cmd.exe").as_os_str(),
-            &[
-                "/d",
-                "/s",
-                "/c",
-                &wrapper_path.to_string_lossy(),
-            ],
-            windows::Win32::UI::WindowsAndMessaging::SW_HIDE.0,
+        // 经共享 run_cmd_elevated（裸 switch + 外层引号对）执行 wrapper：
+        // cmd 的 /S 精确剥掉外层引号后 `call "<wrapper>"` 原样执行，
+        // %TEMP% 含空格时依然正确（此前经 PowerShell Start-Process
+        // -ArgumentList 中转，未加引号的路径会被拆断）。
+        let command_line = format!(r#"call "{}""#, wrapper_path.to_string_lossy());
+        let status = crate::elevation::run_cmd_elevated(
+            &command_line,
+            std::time::Duration::from_secs(600),
         )
         .map_err(|e| format!("无法启动提权脚本: {e}，日志: {log_str}"))?;
-
-        // 驱动脚本可能跑数分钟；上限只兜底真正挂死的场景。
-        let status = process
-            .wait_for_exit_blocking(std::time::Duration::from_secs(600))
-            .map_err(|e| format!("等待提权脚本失败: {e}，日志: {log_str}"))?
-            .ok_or_else(|| format!("脚本执行超时，日志: {log_str}"))?;
 
         if status != 0 {
             return Err(format!("脚本执行失败 (exit {status})，日志: {log_str}"));

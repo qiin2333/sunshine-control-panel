@@ -416,8 +416,11 @@ fn run_rtss_cli_elevated(args: &[&str]) -> Result<String, String> {
     let args_str = args
         .iter()
         .map(|a| {
-            // 参数嵌入提权 cmd 命令行：拒绝引号与 cmd 元字符，防止拼接逃逸
-            if a.chars().any(|c| matches!(c, '"' | '&' | '|' | '<' | '>' | '%')) {
+            // 参数嵌入提权 cmd 命令行：拒绝引号、cmd 元字符、控制字符
+            //（CR/LF 是命令分隔符）与延迟展开字符，防止拼接逃逸
+            if a.chars().any(|c| {
+                c.is_ascii_control() || matches!(c, '"' | '&' | '|' | '<' | '>' | '%' | '^' | '!')
+            }) {
                 return Err(format!("rtss-cli 参数包含非法字符: {a}"));
             }
             Ok(if a.contains(' ') {
@@ -1060,15 +1063,17 @@ pub async fn rtss_download_cli() -> Result<String, String> {
 
         info!("🎯 需要管理员权限，提权复制 rtss-cli.exe ...");
 
-        let copy_result = crate::elevation::run_cmd_elevated(
+        let copy_result = crate::elevation::run_cmd_elevated_async(
             &command_line,
             std::time::Duration::from_secs(60),
-        );
+        )
+        .await;
 
-        let _ = std::fs::remove_file(&temp_path);
-
+        // 超时路径保留临时文件：中等完整性父进程无法终止高完整性的提权
+        // 子进程，复制仍可能在后台完成并需要该源文件。
         match copy_result {
             Ok(0) if dest.exists() => {
+                let _ = std::fs::remove_file(&temp_path);
                 info!("🎯 rtss-cli.exe 提权复制完成: {}", dest.display());
                 Ok(dest.to_string_lossy().to_string())
             }

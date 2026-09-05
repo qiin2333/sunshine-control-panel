@@ -347,6 +347,19 @@ pub(crate) fn run_cmd_elevated(
         .ok_or_else(|| "elevated command timed out".to_string())
 }
 
+/// Async form of [`run_cmd_elevated`] for callers on the async runtime: the
+/// UAC consent wait and the command wait run on the blocking pool instead of
+/// pinning a Tokio worker thread.
+pub(crate) async fn run_cmd_elevated_async(
+    command_line: &str,
+    timeout: std::time::Duration,
+) -> Result<i32, String> {
+    let command_line = command_line.to_string();
+    tokio::task::spawn_blocking(move || run_cmd_elevated(&command_line, timeout))
+        .await
+        .map_err(|error| format!("elevated command task failed: {error}"))?
+}
+
 /// Run one PowerShell `-Command <inner>` elevated (hidden window) and wait
 /// for its exit code. `inner` is passed verbatim: callers already quote their
 /// own values with PowerShell single quotes, and the C-runtime quoting at the

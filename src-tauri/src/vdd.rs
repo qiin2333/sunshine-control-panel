@@ -465,7 +465,7 @@ async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), Stri
 
     // 提权复制（run_cmd_elevated 内部等待完成并核对退出码），再读回校验内容
     let mut elevated_success = false;
-    match elevated_copy_with_shell_execute(&temp_path, vdd_xml_path) {
+    match elevated_copy_with_shell_execute(&temp_path, vdd_xml_path).await {
         Ok(()) => match tokio::fs::read_to_string(vdd_xml_path).await {
             Ok(written) if written == content => {
                 info!("  ✅ 提权复制成功");
@@ -494,16 +494,17 @@ async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), Stri
 }
 
 #[cfg(target_os = "windows")]
-fn elevated_copy_with_shell_execute(source: &Path, destination: &Path) -> Result<(), String> {
+async fn elevated_copy_with_shell_execute(source: &Path, destination: &Path) -> Result<(), String> {
     let command_line = format!(
         r#"copy "{}" "{}" /Y"#,
         source.to_string_lossy(),
         destination.to_string_lossy()
     );
-    let exit_code = crate::elevation::run_cmd_elevated(
+    let exit_code = crate::elevation::run_cmd_elevated_async(
         &command_line,
         std::time::Duration::from_secs(60),
-    )?;
+    )
+    .await?;
     if exit_code != 0 {
         return Err(format!("提权复制退出码 {exit_code}"));
     }

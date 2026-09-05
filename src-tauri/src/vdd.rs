@@ -1172,10 +1172,20 @@ pub(crate) fn try_handle_elevated_ioctl_command() -> Option<i32> {
         return Some(2);
     }
 
-    match crate::vdd_ioctl::send_command(&command) {
-        crate::vdd_ioctl::IoctlResult::Success => Some(0),
-        crate::vdd_ioctl::IoctlResult::InterfaceMissing
-        | crate::vdd_ioctl::IoctlResult::Failed { .. } => Some(1),
+    // A medium-integrity parent cannot terminate this high-integrity helper,
+    // so the helper bounds itself: if the ioctl hangs, exiting the process
+    // abandons the blocked thread and the parent observes the exit code
+    // instead of its own timeout. Kept just under the parent's 120 s wait.
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(crate::vdd_ioctl::send_command(&command));
+    });
+    let result = receiver.recv_timeout(std::time::Duration::from_secs(110));
+    match result {
+        Ok(crate::vdd_ioctl::IoctlResult::Success) => Some(0),
+        Ok(crate::vdd_ioctl::IoctlResult::InterfaceMissing)
+        | Ok(crate::vdd_ioctl::IoctlResult::Failed { .. })
+        | Err(_) => Some(1),
     }
 }
 

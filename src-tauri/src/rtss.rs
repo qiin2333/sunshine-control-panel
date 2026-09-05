@@ -365,7 +365,16 @@ fn set_ini_value(
         Err(_) => {
             // 使用提权 cmd 复制（等待退出码），再读回校验
             info!("🎯 普通权限写入失败, 尝试管理员权限...");
-            let tmp = std::env::temp_dir().join("rtss_profile_tmp");
+            // 唯一临时文件名：超时/失败路径会保留本文件给可能仍在进行的
+            // 提权复制，固定名会让后续调用覆盖一个正被复制的文件。
+            let tmp = std::env::temp_dir().join(format!(
+                "rtss_profile_{}_{}.tmp",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()
+            ));
             std::fs::write(&tmp, &new_content).map_err(|e| format!("写入临时文件失败: {}", e))?;
 
             let command_line = format!(

@@ -56,9 +56,8 @@ pub(crate) use {
 #[cfg(test)]
 #[cfg(target_os = "windows")]
 pub(crate) use elevated::{
-    ElevatedMessage, ElevatedOperation, MAX_ELEVATED_MESSAGE_BYTES, elevated_pipe_name,
-    read_limited_elevated_line, receive_local_component_packages_into,
-    wait_for_elevated_pipe_connection,
+    ElevatedMessage, ElevatedOperation, MAX_ELEVATED_MESSAGE_BYTES, read_limited_elevated_line,
+    receive_local_component_packages_into,
 };
 
 use log::info;

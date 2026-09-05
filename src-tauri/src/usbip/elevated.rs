@@ -11,60 +11,34 @@ use super::{
 use super::{validate_bus_id, validate_remote, validate_tcp_port};
 
 #[cfg(target_os = "windows")]
-fn pipe_name(token: uuid::Uuid) -> String {
-    format!(r"\\.\pipe\sunshine-usbip-{token}")
-}
-
-#[cfg(target_os = "windows")]
 pub(super) async fn run_elevated(request: ElevatedRequest) -> Result<ElevatedResponse, String> {
-    use std::os::windows::io::AsRawHandle;
     use tokio::io::AsyncReadExt;
-    use tokio::net::windows::named_pipe::ServerOptions;
-    use windows::Win32::Foundation::HANDLE;
-    use windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
 
     let timeout = request.timeout();
     let token = uuid::Uuid::new_v4();
-    let pipe = pipe_name(token);
-    let server = ServerOptions::new()
-        .access_inbound(true)
-        .access_outbound(true)
-        .first_pipe_instance(true)
-        .reject_remote_clients(true)
-        .create(&pipe)
-        .map_err(|error| format!("USBIP-UAC-002: unable to create administrator IPC: {error}"))?;
+    let mut server = crate::elevation::create_hardened_pipe(
+        &crate::elevation::pipe_name("usbip", token),
+        "USBIP-UAC-002",
+    )?;
     let payload = serde_json::to_string(&request).map_err(|error| {
         format!("USBIP-UAC-002: unable to encode administrator request: {error}")
     })?;
     let token_arg = token.to_string();
-    let process = tokio::task::spawn_blocking(move || {
-        crate::utils::launch_current_executable_elevated(
-            &[ELEVATED_ARG, &token_arg, &payload],
-            windows::Win32::UI::WindowsAndMessaging::SW_HIDE.0,
-        )
-    })
-    .await
-    .map_err(|error| format!("USBIP-UAC-001: administrator launch task failed: {error}"))?
-    .map_err(|error| format!("USBIP-UAC-001: administrator authorization was canceled: {error}"))?;
+    let process = crate::elevation::spawn_helper(
+        vec![ELEVATED_ARG.to_string(), token_arg, payload],
+        "USBIP-UAC-001",
+    )
+    .await?;
 
-    tokio::time::timeout(ELEVATED_CONNECT_TIMEOUT, server.connect())
-        .await
-        .map_err(|_| "USBIP-UAC-002: administrator helper connection timed out".to_string())?
-        .map_err(|error| format!("USBIP-UAC-002: administrator IPC connection failed: {error}"))?;
-    let expected_process_id = process.process_id();
-    let mut client_process_id = 0;
-    unsafe {
-        GetNamedPipeClientProcessId(HANDLE(server.as_raw_handle()), &mut client_process_id)
-            .map_err(|error| {
-                format!("USBIP-UAC-002: unable to authenticate administrator IPC client: {error}")
-            })?;
-    }
-    if client_process_id == 0 || client_process_id != expected_process_id {
-        return Err(
-            "USBIP-UAC-002: administrator IPC client is not the process authorized for this session"
-                .to_string(),
-        );
-    }
+    // Races the connect against an early helper exit (UAC cancellation) and
+    // verifies the pipe client is the process spawned above.
+    crate::elevation::connect_verified(
+        &mut server,
+        &process,
+        ELEVATED_CONNECT_TIMEOUT,
+        "USBIP-UAC-002",
+    )
+    .await?;
     let mut encoded = Vec::with_capacity(MAX_ELEVATED_RESPONSE_BYTES);
     let mut reader = server.take((MAX_ELEVATED_RESPONSE_BYTES + 1) as u64);
     tokio::time::timeout(timeout, reader.read_to_end(&mut encoded))
@@ -76,11 +50,21 @@ pub(super) async fn run_elevated(request: ElevatedRequest) -> Result<ElevatedRes
     }
     let response: ElevatedResponse = serde_json::from_slice(&encoded)
         .map_err(|error| format!("USBIP-UAC-002: invalid administrator response: {error}"))?;
-    drop(process);
-    if response.success {
+    // The helper's own verdict stays authoritative; the exit code only gates
+    // the success path as a belt-and-suspenders check.
+    if !response.success {
+        return Err(response.message);
+    }
+    let status = crate::elevation::wait_for_exit(&process, std::time::Duration::from_secs(5))
+        .await
+        .map_err(|error| format!("USBIP-UAC-002: administrator helper wait failed: {error}"))?
+        .ok_or_else(|| "USBIP-UAC-002: administrator helper did not exit".to_string())?;
+    if status == 0 {
         Ok(response)
     } else {
-        Err(response.message)
+        Err(format!(
+            "USBIP-UAC-002: administrator helper failed with exit code {status}"
+        ))
     }
 }
 
@@ -92,14 +76,19 @@ pub(super) async fn run_elevated(_request: ElevatedRequest) -> Result<ElevatedRe
 #[cfg(target_os = "windows")]
 async fn run_elevated_helper(token: uuid::Uuid, request: ElevatedRequest) -> i32 {
     use tokio::io::AsyncWriteExt;
-    use tokio::net::windows::named_pipe::ClientOptions;
 
-    let mut client = match ClientOptions::new().write(true).open(pipe_name(token)) {
+    let mut client = match crate::elevation::connect_helper_pipe(
+        &crate::elevation::pipe_name("usbip", token),
+        "USBIP-UAC-002",
+    )
+    .await
+    {
         Ok(client) => client,
         Err(_) => return 3,
     };
     let result: Result<ElevatedResponse, String> = async {
-        if !crate::bat_runner::is_elevated() {
+        crate::elevation::bind_lifetime_job("USBIP-UAC-002")?;
+        if !crate::elevation::is_elevated() {
             return Err("USBIP-UAC-001: administrator authorization was not granted".to_string());
         }
         match request {

@@ -259,6 +259,7 @@ fn main() {
             dualsense::dualsense_self_test,
             usbip::usbip_get_status,
             usbip::usbip_install_transport,
+            usbip::usbip_cleanup_transport,
             usbip::usbip_list_remote,
             usbip::usbip_attach,
             usbip::usbip_detach,

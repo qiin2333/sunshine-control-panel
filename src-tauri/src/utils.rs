@@ -13,6 +13,12 @@ pub(crate) struct ElevatedProcess {
 
 #[cfg(target_os = "windows")]
 impl ElevatedProcess {
+    pub(crate) fn from_owned_handle(
+        handle: std::os::windows::io::OwnedHandle,
+    ) -> Self {
+        Self { handle }
+    }
+
     pub(crate) fn process_id(&self) -> u32 {
         use std::os::windows::io::AsRawHandle;
         use windows::Win32::Foundation::HANDLE;
@@ -44,92 +50,54 @@ impl ElevatedProcess {
             Ok(Some(exit_code as i32))
         }
     }
-}
 
-#[cfg(target_os = "windows")]
-fn quote_windows_argument(value: &str) -> Result<String, String> {
-    if value.contains('\0') {
-        return Err("elevated process argument contains a NUL byte".to_string());
-    }
+    /// Blocking wait for the process to exit, bounded by `timeout`. Returns
+    /// `None` when it is still running when the timeout elapses.
+    pub(crate) fn wait_for_exit_blocking(
+        &self,
+        timeout: std::time::Duration,
+    ) -> Result<Option<i32>, String> {
+        use std::os::windows::io::AsRawHandle;
+        use windows::Win32::Foundation::{HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
+        use windows::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject};
 
-    let mut quoted = String::with_capacity(value.len() + 2);
-    quoted.push('"');
-    let mut backslashes = 0;
-    for character in value.chars() {
-        match character {
-            '\\' => backslashes += 1,
-            '"' => {
-                quoted.extend(std::iter::repeat_n('\\', backslashes * 2 + 1));
-                quoted.push('"');
-                backslashes = 0;
+        unsafe {
+            let handle = HANDLE(self.handle.as_raw_handle());
+            // u32::MAX is INFINITE for WaitForSingleObject; saturate one below
+            // so the wait stays bounded as documented.
+            let millis = timeout.as_millis().min(u32::MAX as u128 - 1) as u32;
+            match WaitForSingleObject(handle, millis) {
+                WAIT_TIMEOUT => return Ok(None),
+                WAIT_OBJECT_0 => {}
+                status => {
+                    return Err(format!(
+                        "could not wait for elevated process exit: {:?}",
+                        status
+                    ));
+                }
             }
-            _ => {
-                quoted.extend(std::iter::repeat_n('\\', backslashes));
-                quoted.push(character);
-                backslashes = 0;
-            }
+            let mut exit_code = 0;
+            GetExitCodeProcess(handle, &mut exit_code)
+                .map_err(|error| format!("could not read elevated process exit code: {error}"))?;
+            Ok(Some(exit_code as i32))
         }
     }
-    quoted.extend(std::iter::repeat_n('\\', backslashes * 2));
-    quoted.push('"');
-    Ok(quoted)
 }
 
 /// Start the current executable with the Windows `runas` verb.
 ///
 /// Callers pass fixed, internally validated arguments only. `ShellExecuteExW`
 /// waits for UAC approval before it returns, so a caller can retain its current
-/// process when elevation is canceled.
+/// process when elevation is canceled. The launcher itself lives in
+/// `crate::elevation` so external-program elevation shares one implementation.
 #[cfg(target_os = "windows")]
 pub(crate) fn launch_current_executable_elevated(
     arguments: &[&str],
     show_window: i32,
 ) -> Result<ElevatedProcess, String> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::Shell::{SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW};
-    use windows::core::PCWSTR;
-
-    fn to_wide(value: &str) -> Vec<u16> {
-        value.encode_utf16().chain(std::iter::once(0)).collect()
-    }
-
-    fn os_to_wide(value: &std::ffi::OsStr) -> Vec<u16> {
-        value.encode_wide().chain(std::iter::once(0)).collect()
-    }
-
     let executable = env::current_exe()
         .map_err(|error| format!("could not resolve current executable: {error}"))?;
-    let parameters = arguments
-        .iter()
-        .map(|argument| quote_windows_argument(argument))
-        .collect::<Result<Vec<_>, _>>()?
-        .join(" ");
-    let verb = to_wide("runas");
-    let executable = os_to_wide(executable.as_os_str());
-    let parameters = to_wide(&parameters);
-    let mut execute_info = SHELLEXECUTEINFOW::default();
-    execute_info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
-    execute_info.fMask = SEE_MASK_NOCLOSEPROCESS;
-    execute_info.hwnd = HWND(std::ptr::null_mut());
-    execute_info.lpVerb = PCWSTR(verb.as_ptr());
-    execute_info.lpFile = PCWSTR(executable.as_ptr());
-    execute_info.lpParameters = PCWSTR(parameters.as_ptr());
-    execute_info.nShow = show_window;
-
-    unsafe {
-        ShellExecuteExW(&mut execute_info)
-            .map_err(|error| format!("Windows could not start the elevated process: {error}"))?;
-    }
-    if execute_info.hProcess.0.is_null() {
-        return Err("Windows did not return an elevated process handle".to_string());
-    }
-    use std::os::windows::io::FromRawHandle;
-    Ok(ElevatedProcess {
-        handle: unsafe {
-            std::os::windows::io::OwnedHandle::from_raw_handle(execute_info.hProcess.0)
-        },
-    })
+    crate::elevation::launch_elevated(executable.as_os_str(), arguments, show_window)
 }
 
 /// Wait for the unelevated GUI to exit before creating the elevated GUI's
@@ -439,55 +407,22 @@ pub fn open_local_path(path: String, app_name: String) -> Result<bool, String> {
 /// Execute an elevated PowerShell command.
 #[cfg(target_os = "windows")]
 pub fn execute_powershell_command(command: &str, error_context: &str) -> Result<(), String> {
-    use std::os::windows::process::CommandExt;
-    use std::process::Command;
-
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-    let ps_command = format!(
-        "Start-Process powershell -ArgumentList '-NoProfile', '-Command', '{}' -Verb RunAs -WindowStyle Hidden",
-        command.replace("'", "''")
-    );
-
-    Command::new("powershell")
-        .args(&["-NoProfile", "-Command", &ps_command])
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
-        .map_err(|e| {
-            error!("{}: {}", error_context, e);
-            format!("{}: {}", error_context, e)
-        })?;
+    // 直接以 runas 启动 PowerShell（fire-and-forget：在后台线程等待 UAC，
+    // 不阻塞 async 调用方）。命令原样传递——调用方已自行用 PowerShell
+    // 单引号包好值。
+    let command = command.to_string();
+    let context = error_context.to_string();
+    std::thread::spawn(move || {
+        let program = crate::elevation::system_binary(r"WindowsPowerShell\v1.0\powershell.exe");
+        if let Err(error) = crate::elevation::launch_elevated(
+            program.as_os_str(),
+            &["-NoProfile", "-Command", &command],
+            windows::Win32::UI::WindowsAndMessaging::SW_HIDE.0,
+        ) {
+            error!("{}: {}", context, error);
+        }
+    });
 
     Ok(())
 }
 
-#[cfg(all(test, target_os = "windows"))]
-mod tests {
-    use super::quote_windows_argument;
-
-    #[test]
-    fn elevated_process_arguments_are_windows_quoted() {
-        assert_eq!(
-            quote_windows_argument("--elevated-dualsense").unwrap(),
-            "\"--elevated-dualsense\""
-        );
-        assert_eq!(
-            quote_windows_argument("contains spaces").unwrap(),
-            "\"contains spaces\""
-        );
-    }
-
-    #[test]
-    fn elevated_process_arguments_reject_nul_bytes() {
-        assert!(quote_windows_argument("invalid\0argument").is_err());
-    }
-
-    #[test]
-    fn elevated_process_arguments_escape_backslashes_and_quotes() {
-        assert_eq!(quote_windows_argument(r#"a\"b"#).unwrap(), r#""a\\\"b""#);
-        assert_eq!(
-            quote_windows_argument(r#"C:\path\"#).unwrap(),
-            r#""C:\path\\""#
-        );
-    }
-}

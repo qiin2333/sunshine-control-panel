@@ -12,19 +12,10 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
-const ELEVATION_LAUNCH_FAILED: i32 = 1223;
 
-/// 检查当前进程是否具有管理员权限
+/// 检查当前进程是否具有管理员权限（读取进程令牌，不再 spawn PowerShell）
 pub fn is_elevated() -> bool {
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)",
-        ])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output();
-    matches!(output, Ok(out) if String::from_utf8_lossy(&out.stdout).trim() == "True")
+    crate::elevation::is_elevated()
 }
 
 fn append_process_output(log_path: &Path, stdout: &[u8], stderr: &[u8]) {
@@ -105,25 +96,29 @@ pub fn run_elevated(bat_path: &Path, log_prefix: &str, extra_args: &[&str]) -> R
                 .map_err(|e| format!("写入 wrapper 失败: {e}，日志: {log_str}"))?;
         }
 
-        let escaped_wrapper = wrapper_path.to_string_lossy().replace('\'', "''");
-        let ps_cmd = format!(
-            r#"$ErrorActionPreference = 'Stop'; try {{ $p = Start-Process cmd -ArgumentList '/c','{escaped_wrapper}' -Verb RunAs -WindowStyle Hidden -PassThru -Wait; exit $p.ExitCode }} catch {{ [Console]::Error.WriteLine($_.Exception.Message); exit {ELEVATION_LAUNCH_FAILED} }}"#
-        );
-        let output = Command::new("powershell")
-            .args(["-NoProfile", "-Command", &ps_cmd])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-            .map_err(|e| format!("无法启动提权脚本: {e}，日志: {log_str}"))?;
+        // 直接以 runas 启动 System32 的 cmd.exe 执行 wrapper：参数经过
+        // C-runtime 引号处理，%TEMP% 含空格时依然正确（此前经 PowerShell
+        // Start-Process -ArgumentList 中转，未加引号的路径会被拆断）。
+        let process = crate::elevation::launch_elevated(
+            crate::elevation::system_binary("cmd.exe").as_os_str(),
+            &[
+                "/d",
+                "/s",
+                "/c",
+                &wrapper_path.to_string_lossy(),
+            ],
+            windows::Win32::UI::WindowsAndMessaging::SW_HIDE.0,
+        )
+        .map_err(|e| format!("无法启动提权脚本: {e}，日志: {log_str}"))?;
 
-        append_process_output(&log_path, &output.stdout, &output.stderr);
-        if !output.status.success() {
-            let code = output.status.code().unwrap_or(-1);
-            if code == ELEVATION_LAUNCH_FAILED && !output.stderr.is_empty() {
-                return Err(format!(
-                    "无法启动提权脚本（管理员授权被取消或启动失败），请重试。日志: {log_str}"
-                ));
-            }
-            return Err(format!("脚本执行失败 (exit {code})，日志: {log_str}"));
+        // 驱动脚本可能跑数分钟；上限只兜底真正挂死的场景。
+        let status = process
+            .wait_for_exit_blocking(std::time::Duration::from_secs(600))
+            .map_err(|e| format!("等待提权脚本失败: {e}，日志: {log_str}"))?
+            .ok_or_else(|| format!("脚本执行超时，日志: {log_str}"))?;
+
+        if status != 0 {
+            return Err(format!("脚本执行失败 (exit {status})，日志: {log_str}"));
         }
         let _ = std::fs::remove_file(&wrapper_path);
     }

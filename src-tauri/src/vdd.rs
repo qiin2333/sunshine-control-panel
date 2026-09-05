@@ -463,82 +463,28 @@ async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), Stri
 
     debug!("  📝 目标文件: {:?}", vdd_xml_path);
 
-    // 先尝试使用 ShellExecuteW 触发 UAC 并复制
-    let shell_execute_success = match elevated_copy_with_shell_execute(&temp_path, vdd_xml_path) {
-        Ok(()) => {
-            debug!("  🔧 已请求使用 ShellExecuteW 提权复制");
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-            match tokio::fs::read_to_string(vdd_xml_path).await {
-                Ok(written) if written == content => {
-                    info!("  ✅ ShellExecuteW 提权复制成功");
-                    true
-                }
-                Ok(_) => {
-                    warn!("  ⚠️ ShellExecuteW 复制后内容不匹配，准备回退到 PowerShell");
-                    false
-                }
-                Err(err) => {
-                    warn!(
-                        "  ⚠️ ShellExecuteW 复制后读取失败 ({}), 准备回退到 PowerShell",
-                        err
-                    );
-                    false
-                }
+    // 提权复制（run_cmd_elevated 内部等待完成并核对退出码），再读回校验内容
+    let mut elevated_success = false;
+    match elevated_copy_with_shell_execute(&temp_path, vdd_xml_path) {
+        Ok(()) => match tokio::fs::read_to_string(vdd_xml_path).await {
+            Ok(written) if written == content => {
+                info!("  ✅ 提权复制成功");
+                elevated_success = true;
             }
+            Ok(_) => warn!("  ⚠️ 提权复制后内容不匹配，准备回退到直接写入"),
+            Err(err) => warn!("  ⚠️ 提权复制后读取失败 ({err})，准备回退到直接写入"),
+        },
+        Err(err) => warn!("  ⚠️ 提权复制失败 ({err})，准备回退到直接写入"),
+    }
+
+    if !elevated_success {
+        // 尝试直接写入（可能会因权限不足而失败）
+        warn!("  ⚠️ 尝试直接写入...");
+        if let Err(error) = tokio::fs::write(vdd_xml_path, content).await {
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            return Err(format!("写入失败，需要管理员权限: {}", error));
         }
-        Err(err) => {
-            warn!(
-                "  ⚠️ ShellExecuteW 提权复制调用失败 ({}), 准备回退到 PowerShell",
-                err
-            );
-            false
-        }
-    };
-
-    if !shell_execute_success {
-        // 使用 Start-Process 以管理员权限运行 PowerShell 复制命令
-        let inner_command = format!(
-            "Copy-Item -Path '{}' -Destination '{}' -Force",
-            temp_path.display(),
-            vdd_xml_path.display()
-        );
-
-        debug!("  🔧 执行 PowerShell 提权命令...");
-
-        let powershell_success = match run_elevated_powershell(&inner_command, "写入 VDD XML").await
-        {
-            Ok(()) => match tokio::fs::read_to_string(vdd_xml_path).await {
-                Ok(written) if written == content => {
-                    info!("  ✅ PowerShell 提权复制成功");
-                    true
-                }
-                Ok(_) => {
-                    warn!("  ⚠️ PowerShell 复制后内容不匹配，准备回退到直接写入");
-                    false
-                }
-                Err(err) => {
-                    warn!("  ⚠️ PowerShell 复制后读取失败 ({err})，准备回退到直接写入");
-                    false
-                }
-            },
-            Err(err) => {
-                warn!("  ⚠️ PowerShell 提权复制失败 ({err})，准备回退到直接写入");
-                false
-            }
-        };
-
-        if !powershell_success {
-            error!("  ❌ PowerShell 提权复制失败");
-
-            // 尝试直接写入（可能会因权限不足而失败）
-            warn!("  ⚠️ 尝试直接写入...");
-            if let Err(error) = tokio::fs::write(vdd_xml_path, content).await {
-                let _ = tokio::fs::remove_file(&temp_path).await;
-                return Err(format!("写入失败，需要管理员权限: {}", error));
-            }
-            info!("  ✓ 直接写入成功");
-        }
+        info!("  ✓ 直接写入成功");
     }
 
     // 清理临时文件
@@ -549,70 +495,35 @@ async fn write_vdd_xml(vdd_xml_path: &PathBuf, content: &str) -> Result<(), Stri
 
 #[cfg(target_os = "windows")]
 fn elevated_copy_with_shell_execute(source: &Path, destination: &Path) -> Result<(), String> {
-    use std::path::PathBuf;
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::Shell::ShellExecuteW;
-    use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
-    use windows::core::PCWSTR;
-
-    fn to_wide(s: &str) -> Vec<u16> {
-        s.encode_utf16().chain(std::iter::once(0u16)).collect()
-    }
-
-    let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
-    let cmd_path: PathBuf = Path::new(&system_root).join("System32").join("cmd.exe");
-
-    let parameters = format!(
-        r#"/C copy "{}" "{}" /Y"#,
+    let command_line = format!(
+        r#"copy "{}" "{}" /Y"#,
         source.to_string_lossy(),
         destination.to_string_lossy()
     );
-
-    let operation_w = to_wide("runas");
-    let file_w = to_wide(&cmd_path.to_string_lossy());
-    let parameters_w = to_wide(&parameters);
-
-    unsafe {
-        let result = ShellExecuteW(
-            Some(HWND(std::ptr::null_mut())),
-            PCWSTR(operation_w.as_ptr()),
-            PCWSTR(file_w.as_ptr()),
-            PCWSTR(parameters_w.as_ptr()),
-            PCWSTR::null(),
-            SW_HIDE,
-        );
-
-        if result.0 as isize <= 32 {
-            return Err(format!("ShellExecuteW 返回错误码 {}", result.0 as isize));
-        }
+    let exit_code = crate::elevation::run_cmd_elevated(
+        &command_line,
+        std::time::Duration::from_secs(60),
+    )?;
+    if exit_code != 0 {
+        return Err(format!("提权复制退出码 {exit_code}"));
     }
-
     Ok(())
 }
 
 #[cfg(target_os = "windows")]
 async fn run_elevated_powershell(inner_command: &str, action_label: &str) -> Result<(), String> {
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    // 直接以 runas 启动 PowerShell 并等待退出码；此前经 Start-Process
+    // 中转且以固定 500ms sleep 代替确定等待。
+    let exit_code = crate::elevation::run_powershell_elevated(
+        inner_command,
+        std::time::Duration::from_secs(120),
+    )
+    .await
+    .map_err(|e| format!("{action_label}失败: {e}"))?;
 
-    let escaped_command = inner_command.replace("'", "''");
-    let ps_script = format!(
-        "$proc = Start-Process powershell -ArgumentList '-NoProfile', '-Command', '{}' -Verb RunAs -WindowStyle Hidden -Wait -PassThru; exit $proc.ExitCode",
-        escaped_command
-    );
-
-    let status = tokio::process::Command::new("powershell")
-        .args(&["-NoProfile", "-Command", &ps_script])
-        .creation_flags(CREATE_NO_WINDOW)
-        .status()
-        .await
-        .map_err(|e| format!("{}失败: {}", action_label, e))?;
-
-    if !status.success() {
-        let code = status.code().unwrap_or(-1);
-        return Err(format!("{}失败，PowerShell 退出码: {}", action_label, code));
+    if exit_code != 0 {
+        return Err(format!("{action_label}失败，PowerShell 退出码: {exit_code}"));
     }
-
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     Ok(())
 }
 

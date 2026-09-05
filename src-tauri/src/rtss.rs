@@ -363,114 +363,96 @@ fn set_ini_value(
             Ok(())
         }
         Err(_) => {
-            // 使用 PowerShell 提权写入
+            // 使用提权 cmd 复制（等待退出码），再读回校验
             info!("🎯 普通权限写入失败, 尝试管理员权限...");
             let tmp = std::env::temp_dir().join("rtss_profile_tmp");
             std::fs::write(&tmp, &new_content).map_err(|e| format!("写入临时文件失败: {}", e))?;
 
-            let ps_cmd = format!(
-                "Copy-Item -Path '{}' -Destination '{}' -Force",
+            let command_line = format!(
+                r#"copy "{}" "{}" /Y"#,
                 tmp.display(),
                 path.display()
             );
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
-            let output = std::process::Command::new("powershell")
-                .args(["-Command", &format!(
-                    "Start-Process powershell -Verb RunAs -WindowStyle Hidden -ArgumentList '-Command {}' -Wait",
-                    ps_cmd.replace('\'', "''")
-                )])
-                .creation_flags(CREATE_NO_WINDOW)
-                .output()
-                .map_err(|e| format!("提权写入失败: {}", e))?;
+            let elevated_ok = crate::elevation::run_cmd_elevated(
+                &command_line,
+                std::time::Duration::from_secs(30),
+            )
+            .map(|code| code == 0)
+            .and_then(|copied| {
+                if !copied {
+                    return Ok(false);
+                }
+                std::fs::read_to_string(path)
+                    .map(|written| written == new_content)
+                    .map_err(|e| format!("读回校验失败: {}", e))
+            });
 
             let _ = std::fs::remove_file(&tmp);
 
-            if output.status.success() {
-                info!("🎯 RTSS profile 管理员权限更新成功");
-                Ok(())
-            } else {
-                Err("写入 RTSS profile 失败: 需要管理员权限".to_string())
+            match elevated_ok {
+                Ok(true) => {
+                    info!("🎯 RTSS profile 管理员权限更新成功");
+                    Ok(())
+                }
+                Ok(false) => Err("写入 RTSS profile 失败: 需要管理员权限".to_string()),
+                Err(e) => Err(format!("提权写入失败: {}", e)),
             }
         }
     }
 }
 
 /// 以管理员权限执行 rtss-cli 并捕获 stdout
+///
+/// 通过 `cmd /c "cli ... > tmp 2>&1"` 中转捕获输出；以真实退出码判定成败，
+/// 空 stdout 只在退出码为 0 时视为合法输出（此前输出文件被清空也会被当成
+/// 成功，命令的真实失败会被吞掉）。
 #[cfg(target_os = "windows")]
 fn run_rtss_cli_elevated(args: &[&str]) -> Result<String, String> {
-    use windows::Win32::UI::Shell::ShellExecuteW;
-    use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
-    use windows::core::PCWSTR;
-
     let cli_path = get_rtss_cli_path()?;
 
-    // 通过临时文件捕获 stdout；先清理上次可能残留的旧文件
     let tmp_out = std::env::temp_dir().join("rtss_cli_elevated_out.txt");
     let _ = std::fs::remove_file(&tmp_out);
-    // cmd /c "rtss-cli.exe arg1 arg2 > tmpfile 2>&1"
+
     let args_str = args
         .iter()
         .map(|a| {
-            if a.contains(' ') {
+            // 参数嵌入提权 cmd 命令行：拒绝引号与 cmd 元字符，防止拼接逃逸
+            if a.chars().any(|c| matches!(c, '"' | '&' | '|' | '<' | '>' | '%')) {
+                return Err(format!("rtss-cli 参数包含非法字符: {a}"));
+            }
+            Ok(if a.contains(' ') {
                 format!("\"{}\"", a)
             } else {
                 a.to_string()
-            }
+            })
         })
-        .collect::<Vec<_>>()
+        .collect::<Result<Vec<_>, String>>()?
         .join(" ");
-    let cmd_line = format!(
-        "/c \"\"{}\" {} > \"{}\" 2>&1\"",
+    let command_line = format!(
+        r#""{}" {} > "{}" 2>&1"#,
         cli_path.display(),
         args_str,
         tmp_out.display()
     );
 
-    debug!("🎯 rtss-cli elevated: cmd {}", cmd_line);
+    debug!("🎯 rtss-cli elevated: cmd {}", command_line);
 
-    let verb: Vec<u16> = "runas\0".encode_utf16().collect();
-    let file: Vec<u16> = "cmd.exe\0".encode_utf16().collect();
-    let params: Vec<u16> = format!("{}\0", cmd_line).encode_utf16().collect();
+    let exit_code = crate::elevation::run_cmd_elevated(
+        &command_line,
+        std::time::Duration::from_secs(30),
+    )?;
 
-    unsafe {
-        let result = ShellExecuteW(
-            None,
-            PCWSTR(verb.as_ptr()),
-            PCWSTR(file.as_ptr()),
-            PCWSTR(params.as_ptr()),
-            PCWSTR::null(),
-            SW_HIDE,
-        );
-        let code = result.0 as usize;
-        if code <= 32 {
-            return Err(format!("管理员权限执行失败 (code={})", code));
+    let content = std::fs::read_to_string(&tmp_out).unwrap_or_default();
+    let _ = std::fs::remove_file(&tmp_out);
+
+    if exit_code != 0 {
+        let detail = content.trim();
+        if detail.is_empty() {
+            return Err(format!("管理员权限执行失败 (exit {exit_code})"));
         }
+        return Err(format!("管理员权限执行失败 (exit {exit_code}): {detail}"));
     }
-
-    // 等待执行完成（检测输出文件）
-    for _ in 0..30 {
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        if tmp_out.exists() {
-            if let Ok(content) = std::fs::read_to_string(&tmp_out) {
-                if !content.is_empty() {
-                    let _ = std::fs::remove_file(&tmp_out);
-                    return Ok(content.trim().to_string());
-                }
-            }
-        }
-    }
-
-    // 超时后尝试最后一次读取
-    if tmp_out.exists() {
-        let content = std::fs::read_to_string(&tmp_out).unwrap_or_default();
-        let _ = std::fs::remove_file(&tmp_out);
-        if !content.is_empty() {
-            return Ok(content.trim().to_string());
-        }
-    }
-
-    Err("管理员权限执行超时".to_string())
+    Ok(content.trim().to_string())
 }
 
 // ─── RTSS 状态查询 ─────────────────────────────────────────
@@ -1001,9 +983,6 @@ const RTSS_CLI_GITHUB_API: &str =
 pub async fn rtss_download_cli() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
-        use windows::Win32::UI::Shell::ShellExecuteW;
-        use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
-        use windows::core::HSTRING;
 
         let install_dir =
             detect_rtss_install_dir().ok_or("未检测到 RTSS 安装路径，请先安装 RTSS")?;
@@ -1072,46 +1051,32 @@ pub async fn rtss_download_cli() -> Result<String, String> {
         let temp_path = temp_dir.join("rtss-cli.exe");
         std::fs::write(&temp_path, &bytes).map_err(|e| format!("写入临时文件失败: {}", e))?;
 
-        // 用 cmd /c copy 以管理员权限复制
-        let params = format!(
-            "/c copy /Y \"{}\" \"{}\"",
+        // 用 cmd copy 以管理员权限复制（等待退出码）
+        let command_line = format!(
+            r#"copy /Y "{}" "{}""#,
             temp_path.display(),
             dest.display()
         );
 
         info!("🎯 需要管理员权限，提权复制 rtss-cli.exe ...");
 
-        let result = unsafe {
-            ShellExecuteW(
-                None,
-                &HSTRING::from("runas"),
-                &HSTRING::from("cmd.exe"),
-                &HSTRING::from(&params),
-                None,
-                SW_HIDE,
-            )
-        };
-
-        // ShellExecuteW 返回值 > 32 表示成功
-        let hinstance_val = result.0 as isize;
-        if hinstance_val <= 32 {
-            // 清理临时文件
-            let _ = std::fs::remove_file(&temp_path);
-            return Err("用户取消了管理员权限请求，或提权失败".into());
-        }
-
-        // 等待文件出现（提权命令是异步的）
-        for _ in 0..30 {
-            if dest.exists() {
-                let _ = std::fs::remove_file(&temp_path);
-                info!("🎯 rtss-cli.exe 提权复制完成: {}", dest.display());
-                return Ok(dest.to_string_lossy().to_string());
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        }
+        let copy_result = crate::elevation::run_cmd_elevated(
+            &command_line,
+            std::time::Duration::from_secs(60),
+        );
 
         let _ = std::fs::remove_file(&temp_path);
-        Err("提权复制超时，请手动复制 rtss-cli.exe 到 RTSS 目录".into())
+
+        match copy_result {
+            Ok(0) if dest.exists() => {
+                info!("🎯 rtss-cli.exe 提权复制完成: {}", dest.display());
+                Ok(dest.to_string_lossy().to_string())
+            }
+            Ok(code) => Err(format!(
+                "提权复制失败 (exit {code})，请手动复制 rtss-cli.exe 到 RTSS 目录"
+            )),
+            Err(e) => Err(format!("提权复制失败: {e}")),
+        }
     }
 
     #[cfg(not(target_os = "windows"))]

@@ -279,7 +279,9 @@ pub(crate) fn launch_elevated_raw(
 ) -> Result<crate::utils::ElevatedProcess, String> {
     use std::os::windows::ffi::OsStrExt;
     use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::Shell::{SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW};
+    use windows::Win32::UI::Shell::{
+        SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW,
+    };
     use windows::core::PCWSTR;
 
     fn os_to_wide(value: &std::ffi::OsStr) -> Vec<u16> {
@@ -291,7 +293,9 @@ pub(crate) fn launch_elevated_raw(
     let parameters = os_to_wide(raw_parameters.as_ref());
     let mut execute_info = SHELLEXECUTEINFOW::default();
     execute_info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
-    execute_info.fMask = SEE_MASK_NOCLOSEPROCESS;
+    // NOASYNC: worker threads (spawn_blocking) have no message loop, and this
+    // call must complete synchronously before returning the handle.
+    execute_info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
     execute_info.hwnd = HWND(std::ptr::null_mut());
     execute_info.lpVerb = PCWSTR(verb.as_ptr());
     execute_info.lpFile = PCWSTR(executable.as_ptr());

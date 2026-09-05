@@ -387,10 +387,11 @@ fn set_ini_value(
                     .map_err(|e| format!("读回校验失败: {}", e))
             });
 
-            let _ = std::fs::remove_file(&tmp);
-
+            // 超时/失败路径保留临时文件：中等完整性父进程无法终止高完整性的
+            // 提权子进程，复制仍可能在后台进行并需要该源文件。
             match elevated_ok {
                 Ok(true) => {
+                    let _ = std::fs::remove_file(&tmp);
                     info!("🎯 RTSS profile 管理员权限更新成功");
                     Ok(())
                 }
@@ -399,6 +400,28 @@ fn set_ini_value(
             }
         }
     }
+}
+
+/// 把 rtss-cli 参数编码为嵌入提权 cmd 命令行的片段。
+///
+/// 参数最终由 rtss-cli.exe 以 C-runtime 规则解析自己的 argv，因此每个
+/// 参数按 CRT 约定加引号（空参数、含空格或尾反斜杠的参数都能正确
+/// 往返）；同时拒绝引号、cmd 元字符、控制字符与延迟展开字符，防止
+/// 在 cmd 的解析层拼接逃逸。
+#[cfg(target_os = "windows")]
+fn format_rtss_cli_args(args: &[&str]) -> Result<String, String> {
+    args.iter()
+        .map(|a| {
+            if a.chars().any(|c| {
+                c.is_ascii_control()
+                    || matches!(c, '"' | '&' | '|' | '<' | '>' | '%' | '^' | '!')
+            }) {
+                return Err(format!("rtss-cli 参数包含非法字符: {a}"));
+            }
+            crate::elevation::quote_windows_argument(a)
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(|quoted| quoted.join(" "))
 }
 
 /// 以管理员权限执行 rtss-cli 并捕获 stdout
@@ -413,24 +436,7 @@ fn run_rtss_cli_elevated(args: &[&str]) -> Result<String, String> {
     let tmp_out = std::env::temp_dir().join("rtss_cli_elevated_out.txt");
     let _ = std::fs::remove_file(&tmp_out);
 
-    let args_str = args
-        .iter()
-        .map(|a| {
-            // 参数嵌入提权 cmd 命令行：拒绝引号、cmd 元字符、控制字符
-            //（CR/LF 是命令分隔符）与延迟展开字符，防止拼接逃逸
-            if a.chars().any(|c| {
-                c.is_ascii_control() || matches!(c, '"' | '&' | '|' | '<' | '>' | '%' | '^' | '!')
-            }) {
-                return Err(format!("rtss-cli 参数包含非法字符: {a}"));
-            }
-            Ok(if a.contains(' ') {
-                format!("\"{}\"", a)
-            } else {
-                a.to_string()
-            })
-        })
-        .collect::<Result<Vec<_>, String>>()?
-        .join(" ");
+    let args_str = format_rtss_cli_args(args)?;
     let command_line = format!(
         r#""{}" {} > "{}" 2>&1"#,
         cli_path.display(),
@@ -1051,7 +1057,16 @@ pub async fn rtss_download_cli() -> Result<String, String> {
 
         // 4. 直接写入失败（权限不足），用提权方式复制
         let temp_dir = std::env::temp_dir();
-        let temp_path = temp_dir.join("rtss-cli.exe");
+        // 唯一源文件名：超时后本文件会保留给可能仍在进行的提权复制，
+        // 固定名会让后续调用覆盖一个正被复制的文件。
+        let temp_path = temp_dir.join(format!(
+            "rtss-cli-{}-{}.exe",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
         std::fs::write(&temp_path, &bytes).map_err(|e| format!("写入临时文件失败: {}", e))?;
 
         // 用 cmd copy 以管理员权限复制（等待退出码）
@@ -2293,5 +2308,41 @@ pub async fn rtss_set_osd_property(
     #[cfg(not(target_os = "windows"))]
     {
         Err("RTSS 仅在 Windows 上可用".to_string())
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod tests {
+    use super::format_rtss_cli_args;
+
+    #[test]
+    fn quotable_arguments_survive_the_cmd_layer_round_trip() {
+        // 嵌入提权 cmd 命令行的参数由 rtss-cli.exe 以 CRT 规则解析，
+        // 因此按 CRT 加引号：空参数与尾反斜杠都能正确往返。
+        assert_eq!(
+            format_rtss_cli_args(&["limiter:toggle", "60"]).unwrap(),
+            "\"limiter:toggle\" \"60\"".to_string()
+        );
+        // 空参数保留为一对引号，而不是消失。
+        assert_eq!(
+            format_rtss_cli_args(&["", "60"]).unwrap(),
+            "\"\" \"60\"".to_string()
+        );
+        // 含空格且以反斜杠结尾：手工引号会把它变成 \"（CRT 里是字面引号），
+        // CRT 规则正确地把尾反斜杠翻倍。
+        assert_eq!(
+            format_rtss_cli_args(&["profile dir\\", "1"]).unwrap(),
+            "\"profile dir\\\\\" \"1\"".to_string()
+        );
+    }
+
+    #[test]
+    fn cmd_metacharacters_are_rejected() {
+        for bad in ["a&b", "a|b", "a<b", "a>b", "a%b%", "a^b", "a!b", "a\"b", "a\r\nb"] {
+            assert!(
+                format_rtss_cli_args(&["limiter:toggle", bad]).is_err(),
+                "should reject {bad:?}"
+            );
+        }
     }
 }

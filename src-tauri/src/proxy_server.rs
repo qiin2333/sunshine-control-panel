@@ -14,7 +14,7 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 /// 全局 Sunshine 目标 URL（动态配置）
 static SUNSHINE_TARGET: Lazy<Arc<RwLock<String>>> =
@@ -245,34 +245,83 @@ const INJECT_SCRIPT: &str = include_str!("../inject-script.js");
 /// 调皮的404页面（当Sunshine未启动时显示，编译时从文件读取）
 const ERROR_404_PAGE: &str = include_str!("../error-404.html");
 
-/// Private Network Access (PNA) Middleware
-/// 根据 Microsoft Edge 143+ 的要求添加 PNA 支持头部
-async fn pna_middleware(req: Request, next: Next) -> Response {
-    // 预定义常用的 header 值
-    const PNA_HEADER: &str = "Access-Control-Allow-Private-Network";
-    const PNA_VALUE: axum::http::HeaderValue = axum::http::HeaderValue::from_static("true");
-
-    // 检查是否是 OPTIONS 预检请求（CORS）
-    if req.method() == axum::http::Method::OPTIONS {
-        // 处理 CORS 预检请求，添加 PNA 支持
-        return Response::builder()
-            .status(axum::http::StatusCode::NO_CONTENT)
-            .header("Access-Control-Allow-Origin", "*")
-            .header(
-                "Access-Control-Allow-Methods",
-                "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD",
-            )
-            .header("Access-Control-Allow-Headers", "*")
-            .header(PNA_HEADER, "true")
-            .header("Access-Control-Max-Age", "86400")
-            .body(axum::body::Body::empty())
-            .unwrap();
+fn is_trusted_local_browser_url(value: &str) -> bool {
+    let Ok(url) = url::Url::parse(value) else {
+        return false;
+    };
+    if !matches!(url.scheme(), "http" | "https" | "tauri") {
+        return false;
     }
 
-    // 对于非 OPTIONS 请求，执行原有的处理器，然后在响应中添加 PNA 头部
-    let mut response = next.run(req).await;
-    response.headers_mut().insert(PNA_HEADER, PNA_VALUE);
-    response
+    match url.host() {
+        Some(url::Host::Domain(host)) => {
+            host.eq_ignore_ascii_case("localhost")
+                || host.to_ascii_lowercase().ends_with(".localhost")
+        }
+        Some(url::Host::Ipv4(address)) => address.is_loopback(),
+        Some(url::Host::Ipv6(address)) => address.is_loopback(),
+        None => false,
+    }
+}
+
+fn single_header_value<'a>(
+    headers: &'a axum::http::HeaderMap,
+    name: axum::http::header::HeaderName,
+) -> Result<Option<&'a axum::http::HeaderValue>, ()> {
+    let mut values = headers.get_all(name).iter();
+    let value = values.next();
+    if values.next().is_some() {
+        return Err(());
+    }
+    Ok(value)
+}
+
+fn browser_request_source_allowed(headers: &axum::http::HeaderMap) -> bool {
+    let Ok(origin) = single_header_value(headers, axum::http::header::ORIGIN) else {
+        return false;
+    };
+    if let Some(origin) = origin {
+        return origin.to_str().is_ok_and(is_trusted_local_browser_url);
+    }
+
+    let Ok(referer) = single_header_value(headers, axum::http::header::REFERER) else {
+        return false;
+    };
+    if let Some(referer) = referer {
+        return referer.to_str().is_ok_and(is_trusted_local_browser_url);
+    }
+
+    let Ok(fetch_site) = single_header_value(
+        headers,
+        axum::http::HeaderName::from_static("sec-fetch-site"),
+    ) else {
+        return false;
+    };
+    fetch_site.is_none_or(|value| {
+        value.to_str().is_ok_and(|value| {
+            value.eq_ignore_ascii_case("same-origin") || value.eq_ignore_ascii_case("none")
+        })
+    })
+}
+
+async fn browser_request_source_middleware(req: Request, next: Next) -> Response {
+    if !browser_request_source_allowed(req.headers()) {
+        debug!("Rejected a cross-site request to the local Sunshine proxy");
+        return axum::http::StatusCode::FORBIDDEN.into_response();
+    }
+    next.run(req).await
+}
+
+fn local_proxy_cors_layer() -> CorsLayer {
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(|origin, _| {
+            origin.to_str().is_ok_and(is_trusted_local_browser_url)
+        }))
+        .allow_methods(Any)
+        .allow_headers(Any)
+        .expose_headers(Any)
+        .allow_private_network(true)
+        .max_age(std::time::Duration::from_secs(86_400))
 }
 
 fn hold_proxy_permit(response: Response, permit: OwnedSemaphorePermit) -> Response {
@@ -390,9 +439,9 @@ pub async fn start_proxy_server() -> Result<(), Box<dyn std::error::Error + Send
     let app = Router::new()
         .route(PROXY_HEALTH_PATH, get(proxy_health_handler))
         .fallback(proxy_handler)
-        .layer(CorsLayer::permissive())
-        .layer(axum::middleware::from_fn(pna_middleware))
-        .layer(axum::middleware::from_fn(proxy_concurrency_middleware));
+        .layer(axum::middleware::from_fn(proxy_concurrency_middleware))
+        .layer(local_proxy_cors_layer())
+        .layer(axum::middleware::from_fn(browser_request_source_middleware));
 
     // 尝试在端口范围内找到可用端口
     let mut listener = None;
@@ -700,14 +749,6 @@ fn proxy_limit_response(status: axum::http::StatusCode, message: &'static str) -
         axum::http::header::CONTENT_TYPE,
         axum::http::HeaderValue::from_static("text/plain; charset=utf-8"),
     );
-    headers.insert(
-        axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN,
-        axum::http::HeaderValue::from_static("*"),
-    );
-    headers.insert(
-        axum::http::HeaderName::from_static("access-control-allow-private-network"),
-        axum::http::HeaderValue::from_static("true"),
-    );
     response
 }
 
@@ -1014,7 +1055,7 @@ async fn handle_steam_api(
     // 发送请求并构建响应
     let client = get_http_client();
     match send_request(client, &target_url, method, headers, &body).await {
-        Ok(response) => build_cors_response(response).await,
+        Ok(response) => build_filtered_proxy_response(response).await,
         Err(e) => {
             error!("❌ Steam API 请求失败: {}", e);
             (
@@ -1033,8 +1074,8 @@ async fn handle_steam_api(
     }
 }
 
-/// 构建带 CORS 头的响应
-async fn build_cors_response(response: reqwest::Response) -> Response {
+/// 构建经过响应头过滤的代理响应
+async fn build_filtered_proxy_response(response: reqwest::Response) -> Response {
     let status = response.status();
     let resp_headers = response.headers().clone();
     let body = match limited_response_body(response, MAX_PROXY_RESPONSE_BODY_BYTES) {
@@ -1057,21 +1098,13 @@ async fn build_cors_response(response: reqwest::Response) -> Response {
         }
     }
 
-    builder
-        .header("Access-Control-Allow-Origin", "*")
-        .header(
-            "Access-Control-Allow-Methods",
-            "GET, POST, PUT, DELETE, OPTIONS",
+    builder.body(body).unwrap_or_else(|_| {
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "构建响应失败",
         )
-        .header("Access-Control-Allow-Headers", "*")
-        .body(body)
-        .unwrap_or_else(|_| {
-            (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "构建响应失败",
-            )
-                .into_response()
-        })
+            .into_response()
+    })
 }
 
 /// 处理外部代理请求（绕过 CORS 限制）
@@ -1144,7 +1177,7 @@ async fn handle_external_proxy(
     // 发送请求
     let client = get_http_client();
     match send_request(client, &target_url, method, headers, &body).await {
-        Ok(response) => build_cors_response(response).await,
+        Ok(response) => build_filtered_proxy_response(response).await,
         Err(e) => {
             error!("❌ 外部代理请求失败: {}", e);
             (
@@ -1293,10 +1326,12 @@ async fn fetch_and_proxy(
     for (key, value) in resp_headers.iter() {
         let key_str = key.as_str().to_lowercase();
         // 排除内容长度、传输编码、内容编码，以及需要注入时排除缓存相关头部
-        if matches!(
-            key_str.as_str(),
-            "content-length" | "transfer-encoding" | "content-encoding"
-        ) {
+        if key_str.starts_with("access-control-")
+            || matches!(
+                key_str.as_str(),
+                "content-length" | "transfer-encoding" | "content-encoding"
+            )
+        {
             continue;
         }
         if needs_injection
@@ -1468,11 +1503,6 @@ mod tests {
 
         let response = read_proxy_request_body(request).await.unwrap_err();
         assert_eq!(response.status(), axum::http::StatusCode::PAYLOAD_TOO_LARGE);
-        assert_eq!(response.headers()["Access-Control-Allow-Origin"], "*");
-        assert_eq!(
-            response.headers()["Access-Control-Allow-Private-Network"],
-            "true"
-        );
     }
 
     #[tokio::test]

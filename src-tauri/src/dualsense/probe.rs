@@ -16,13 +16,23 @@ use super::{
     COMPONENT_VERSION, DualSenseStatus, PROTOCOL_VERSION, USBIP_VERSION, observe_config_revision,
 };
 
+/// One registry uninstall entry whose DisplayName announces the USB/IP
+/// transport ("USBip version x.y.z.w"). Shared by every reader of the
+/// transport's installation state.
 #[cfg(target_os = "windows")]
-pub(crate) fn installed_usbip_version() -> Option<String> {
+pub(crate) struct UsbipUninstallEntry {
+    pub(crate) key: winreg::RegKey,
+    pub(crate) display_name: String,
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn usbip_uninstall_entries() -> Vec<UsbipUninstallEntry> {
     use winreg::RegKey;
     use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY};
 
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     let uninstall = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
+    let mut entries = Vec::new();
     for view in [KEY_READ | KEY_WOW64_64KEY, KEY_READ | KEY_WOW64_32KEY] {
         let Ok(root) = hklm.open_subkey_with_flags(uninstall, view) else {
             continue;
@@ -35,14 +45,26 @@ pub(crate) fn installed_usbip_version() -> Option<String> {
                 .get_value::<String, _>("DisplayName")
                 .unwrap_or_default();
             if display_name.starts_with("USBip version ") {
-                if let Ok(version) = key.get_value::<String, _>("DisplayVersion") {
-                    return Some(version);
-                }
-                return display_name
-                    .strip_prefix("USBip version ")
-                    .map(str::to_string);
+                entries.push(UsbipUninstallEntry {
+                    key,
+                    display_name,
+                });
             }
         }
+    }
+    entries
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn installed_usbip_version() -> Option<String> {
+    for entry in usbip_uninstall_entries() {
+        if let Ok(version) = entry.key.get_value::<String, _>("DisplayVersion") {
+            return Some(version);
+        }
+        return entry
+            .display_name
+            .strip_prefix("USBip version ")
+            .map(str::to_string);
     }
     None
 }

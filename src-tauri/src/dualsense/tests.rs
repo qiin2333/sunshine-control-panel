@@ -13,8 +13,7 @@ use super::{
 };
 #[cfg(target_os = "windows")]
 use super::{
-    ElevatedMessage, ElevatedOperation, MAX_ELEVATED_MESSAGE_BYTES, elevated_pipe_name,
-    read_limited_elevated_line, wait_for_elevated_pipe_connection,
+    ElevatedMessage, ElevatedOperation, MAX_ELEVATED_MESSAGE_BYTES, read_limited_elevated_line,
 };
 use reqwest::header::HeaderValue;
 use std::io::Write as _;
@@ -669,7 +668,7 @@ fn elevated_operations_are_strictly_allowlisted() {
 fn elevated_ipc_uses_a_random_local_pipe_and_typed_messages() {
     let token = uuid::Uuid::parse_str("55d1fc2d-b474-4a86-a867-c6c514c077ef").unwrap();
     assert_eq!(
-        elevated_pipe_name(token),
+        crate::elevation::pipe_name("dualsense", token),
         r"\\.\pipe\sunshine-dualsense-55d1fc2d-b474-4a86-a867-c6c514c077ef"
     );
     let encoded = serde_json::to_string(&ElevatedMessage::Progress {
@@ -743,9 +742,10 @@ async fn elevated_ipc_rejects_oversized_messages_without_waiting_for_eof() {
 #[cfg(target_os = "windows")]
 #[tokio::test]
 async fn elevated_ipc_prefers_a_ready_pipe_over_a_ready_helper_exit() {
-    let result = wait_for_elevated_pipe_connection(
+    let result = crate::elevation::wait_for_pipe_connection(
         std::future::ready(Ok(())),
         std::future::ready(Ok(Some(0))),
+        "DS5-PKG-004",
     )
     .await;
 

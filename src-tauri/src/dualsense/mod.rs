@@ -24,7 +24,9 @@ pub(crate) use install::ensure_pinned_usbip;
 #[cfg(target_os = "windows")]
 pub(crate) use packages::{UsbipInstallResult, component_root};
 #[cfg(target_os = "windows")]
-pub(crate) use probe::ensure_no_active_session;
+pub(crate) use probe::{
+    ensure_no_active_session, installed_usbip_version, usbip_uninstall_entries,
+};
 
 #[cfg(test)]
 pub(crate) use {
@@ -54,9 +56,8 @@ pub(crate) use {
 #[cfg(test)]
 #[cfg(target_os = "windows")]
 pub(crate) use elevated::{
-    ElevatedMessage, ElevatedOperation, MAX_ELEVATED_MESSAGE_BYTES, elevated_pipe_name,
-    read_limited_elevated_line, receive_local_component_packages_into,
-    wait_for_elevated_pipe_connection,
+    ElevatedMessage, ElevatedOperation, MAX_ELEVATED_MESSAGE_BYTES, read_limited_elevated_line,
+    receive_local_component_packages_into,
 };
 
 use log::info;

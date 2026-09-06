@@ -1,6 +1,5 @@
 //! Elevated (administrator) DualSense operations over a local named pipe.
 
-use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -23,10 +22,6 @@ pub(crate) const MAX_ELEVATED_MESSAGE_BYTES: usize = 64 * 1024;
 #[cfg(target_os = "windows")]
 pub(crate) const ELEVATION_CONNECT_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(10);
-
-#[cfg(target_os = "windows")]
-pub(crate) static ELEVATED_HELPER_JOB: OnceCell<std::os::windows::io::OwnedHandle> =
-    OnceCell::new();
 
 #[cfg(target_os = "windows")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -96,73 +91,6 @@ pub(crate) enum ElevatedMessage {
     Progress { stage: String, progress: u32 },
     Complete { data: serde_json::Value },
     Error { message: String },
-}
-
-#[cfg(target_os = "windows")]
-/// Bind the elevated helper and all children it launches to one lifetime job.
-fn bind_elevated_helper_lifetime() -> Result<(), String> {
-    use std::os::windows::io::{AsRawHandle, FromRawHandle};
-    use windows::Win32::Foundation::HANDLE;
-    use windows::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-        SetInformationJobObject,
-    };
-    use windows::Win32::System::Threading::GetCurrentProcess;
-    use windows::core::PCWSTR;
-
-    ELEVATED_HELPER_JOB
-        .get_or_try_init(|| unsafe {
-            let raw_job = CreateJobObjectW(None, PCWSTR::null()).map_err(|error| {
-                format!("DS5-PKG-003: unable to create elevated helper job: {error}")
-            })?;
-            let job = std::os::windows::io::OwnedHandle::from_raw_handle(raw_job.0);
-            let job_handle = HANDLE(job.as_raw_handle());
-            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            SetInformationJobObject(
-                job_handle,
-                JobObjectExtendedLimitInformation,
-                std::ptr::from_ref(&limits).cast(),
-                std::mem::size_of_val(&limits) as u32,
-            )
-            .map_err(|error| {
-                format!("DS5-PKG-003: unable to configure elevated helper job: {error}")
-            })?;
-            AssignProcessToJobObject(job_handle, GetCurrentProcess()).map_err(|error| {
-                format!("DS5-PKG-003: unable to bind elevated helper lifetime: {error}")
-            })?;
-            Ok(job)
-        })
-        .map(|_| ())
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn elevated_pipe_name(token: uuid::Uuid) -> String {
-    format!(r"\\.\pipe\sunshine-dualsense-{token}")
-}
-
-#[cfg(target_os = "windows")]
-async fn connect_elevated_pipe(
-    token: uuid::Uuid,
-) -> Result<tokio::net::windows::named_pipe::NamedPipeClient, String> {
-    use tokio::net::windows::named_pipe::ClientOptions;
-
-    let pipe_name = elevated_pipe_name(token);
-    for _ in 0..100 {
-        match ClientOptions::new().read(true).write(true).open(&pipe_name) {
-            Ok(client) => return Ok(client),
-            Err(error) if matches!(error.raw_os_error(), Some(2 | 231)) => {
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            }
-            Err(error) => {
-                return Err(format!(
-                    "DS5-PKG-004: unable to connect to the administrator operation: {error}"
-                ));
-            }
-        }
-    }
-    Err("DS5-PKG-004: administrator operation pipe was unavailable".to_string())
 }
 
 #[cfg(target_os = "windows")]
@@ -257,8 +185,14 @@ where
 async fn run_elevated_helper(operation: ElevatedOperation, token: uuid::Uuid) -> i32 {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    let Ok(pipe) = connect_elevated_pipe(token).await else {
-        return 3;
+    let pipe = match crate::elevation::connect_helper_pipe(
+        &crate::elevation::pipe_name("dualsense", token),
+        "DS5-PKG-004",
+    )
+    .await
+    {
+        Ok(pipe) => pipe,
+        Err(_) => return 3,
     };
     let (mut pipe_reader, mut pipe_writer) = tokio::io::split(pipe);
     let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<ElevatedMessage>();
@@ -298,8 +232,8 @@ async fn run_elevated_helper(operation: ElevatedOperation, token: uuid::Uuid) ->
         });
     };
     let outcome: Result<serde_json::Value, String> = async {
-        bind_elevated_helper_lifetime()?;
-        if !crate::bat_runner::is_elevated() {
+        crate::elevation::bind_lifetime_job("DS5-PKG-003")?;
+        if !crate::elevation::is_elevated() {
             return Err("DS5-PKG-004: administrator authorization was not granted".to_string());
         }
         ensure_no_active_session().await?;
@@ -427,60 +361,12 @@ pub(crate) async fn read_limited_elevated_line<R: tokio::io::AsyncBufRead + Unpi
 }
 
 #[cfg(target_os = "windows")]
-async fn wait_for_elevated_process_exit(
-    process: &crate::utils::ElevatedProcess,
-    timeout: std::time::Duration,
-) -> Result<Option<i32>, String> {
-    let wait = async {
-        loop {
-            if let Some(exit_code) = process.exit_code()? {
-                return Ok::<_, String>(exit_code);
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-    };
-
-    match tokio::time::timeout(timeout, wait).await {
-        Ok(result) => result.map(Some),
-        Err(_) => Ok(None),
-    }
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) async fn wait_for_elevated_pipe_connection<Connect, HelperExit>(
-    connect: Connect,
-    helper_exit: HelperExit,
-) -> Result<(), String>
-where
-    Connect: std::future::Future<Output = std::io::Result<()>>,
-    HelperExit: std::future::Future<Output = Result<Option<i32>, String>>,
-{
-    tokio::select! {
-        biased;
-        connected = connect => connected.map_err(|error| {
-            format!("DS5-PKG-004: administrator IPC connection failed: {error}")
-        }),
-        status = helper_exit => {
-            let status = status
-                .map_err(|error| format!("DS5-PKG-004: administrator helper wait failed: {error}"))?;
-            let Some(status) = status else {
-                return Err("DS5-PKG-004: administrator authorization timed out".to_string());
-            };
-            Err(format!(
-                "DS5-PKG-004: administrator authorization was canceled or the helper exited early ({status})"
-            ))
-        },
-    }
-}
-
-#[cfg(target_os = "windows")]
 pub(crate) async fn run_elevated_operation(
     app: Option<&tauri::AppHandle>,
     operation: ElevatedOperation,
     selected_packages: &[PathBuf],
 ) -> Result<serde_json::Value, String> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
-    use tokio::net::windows::named_pipe::ServerOptions;
 
     let token = uuid::Uuid::new_v4();
     let mut local_packages = if operation == ElevatedOperation::InstallLocal {
@@ -517,34 +403,30 @@ pub(crate) async fn run_elevated_operation(
         }
         None
     };
-    let pipe_name = elevated_pipe_name(token);
-    let mut server = ServerOptions::new()
-        .access_inbound(true)
-        .access_outbound(true)
-        .first_pipe_instance(true)
-        .reject_remote_clients(true)
-        .create(&pipe_name)
-        .map_err(|error| format!("DS5-PKG-004: unable to create administrator IPC: {error}"))?;
+    let mut server = crate::elevation::create_hardened_pipe(
+        &crate::elevation::pipe_name("dualsense", token),
+        "DS5-PKG-004",
+    )?;
     let operation_arg = operation.as_arg();
     let token_arg = token.to_string();
-    let elevated_process = tokio::task::spawn_blocking(move || {
-        crate::utils::launch_current_executable_elevated(
-            &[ELEVATED_DS5_ARG, operation_arg, &token_arg],
-            windows::Win32::UI::WindowsAndMessaging::SW_HIDE.0,
-        )
-    })
-    .await
-    .map_err(|error| format!("DS5-PKG-004: administrator launch task failed: {error}"))?
-    .map_err(|error| {
-        format!("DS5-PKG-004: unable to request administrator authorization: {error}")
-    })?;
-    let mut helper_exit = Box::pin(wait_for_elevated_process_exit(
+    let elevated_process = crate::elevation::spawn_helper(
+        vec![
+            ELEVATED_DS5_ARG.to_string(),
+            operation_arg.to_string(),
+            token_arg,
+        ],
+        "DS5-PKG-004",
+    )
+    .await?;
+    // Races the connect against an early helper exit (UAC cancellation) and
+    // verifies the pipe client is the process spawned above.
+    crate::elevation::connect_verified(
+        &mut server,
         &elevated_process,
         ELEVATION_CONNECT_TIMEOUT,
-    ));
-
-    wait_for_elevated_pipe_connection(server.connect(), &mut helper_exit).await?;
-    drop(helper_exit);
+        "DS5-PKG-004",
+    )
+    .await?;
     if let Some(packages) = local_packages.take() {
         server
             .write_all(&[packages.len() as u8])
@@ -600,7 +482,7 @@ pub(crate) async fn run_elevated_operation(
         Ok(Ok(result)) => result,
         Ok(Err(error)) => {
             // Dropping the pipe wakes the elevated helper's disconnect watcher.
-            let _ = wait_for_elevated_process_exit(
+            let _ = crate::elevation::wait_for_exit(
                 &elevated_process,
                 std::time::Duration::from_secs(5),
             )
@@ -611,7 +493,7 @@ pub(crate) async fn run_elevated_operation(
             // Dropping the timed-out receive future closes the pipe and causes
             // the helper to terminate itself even though this process cannot
             // directly kill a high-integrity child.
-            let _ = wait_for_elevated_process_exit(
+            let _ = crate::elevation::wait_for_exit(
                 &elevated_process,
                 std::time::Duration::from_secs(5),
             )
@@ -619,11 +501,13 @@ pub(crate) async fn run_elevated_operation(
             return Err("DS5-PKG-004: administrator operation timed out".to_string());
         }
     };
-    let status =
-        wait_for_elevated_process_exit(&elevated_process, std::time::Duration::from_secs(5))
-            .await
-            .map_err(|error| format!("DS5-PKG-004: administrator helper wait failed: {error}"))?
-            .ok_or_else(|| "DS5-PKG-004: administrator helper did not exit".to_string())?;
+    let status = crate::elevation::wait_for_exit(
+        &elevated_process,
+        std::time::Duration::from_secs(5),
+    )
+    .await
+    .map_err(|error| format!("DS5-PKG-004: administrator helper wait failed: {error}"))?
+    .ok_or_else(|| "DS5-PKG-004: administrator helper did not exit".to_string())?;
     match final_result {
         Some(Ok(data)) if status == 0 => Ok(data),
         Some(Err(error)) => Err(error),

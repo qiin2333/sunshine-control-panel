@@ -17,16 +17,16 @@ use super::packages::{
     download_component_asset, manually_placed_sidecar_package, purge_stale_handoff_packages,
     sha256_file, sidecar_package_manifest, sidecar_package_manifest_path, sidecar_path,
 };
-use super::probe::{
-    component_test_failure, installed_usbip_version, local_uninstalled_status, run_probe,
-    run_with_timeout,
-};
+use super::probe::{component_test_failure, local_uninstalled_status, run_probe, run_with_timeout};
 use super::{
     COMPONENT_FS_RETRY_ATTEMPTS, COMPONENT_FS_RETRY_DELAY, COMPONENT_VERSION, DualSenseStatus,
     HIDMAESTRO_SHA256, HIDMAESTRO_URL, HIDMAESTRO_VERSION, MAX_ARCHIVE_BYTES, MAX_ARCHIVE_FILES,
     MAX_EXTRACTED_BYTES, MAX_SIDECAR_PACKAGE_BYTES, MAX_USBIP_INSTALLER_BYTES, PROTOCOL_VERSION,
-    ProgressReporter, SIDECAR_EXE, SIDECAR_PACKAGE_TARGET, USBIP_SHA256, USBIP_URL, USBIP_VERSION,
-    dualsense_get_status, report_progress,
+    ProgressReporter, SIDECAR_EXE, SIDECAR_PACKAGE_TARGET, dualsense_get_status, report_progress,
+};
+use crate::usbip::{
+    InstallDisposition, USBIP_SHA256, USBIP_URL, USBIP_VERSION, install_disposition,
+    installed_usbip_version,
 };
 
 pub(crate) fn classify_usbip_installer_exit_code(
@@ -327,8 +327,11 @@ pub(crate) async fn ensure_pinned_usbip(
     component_root: &Path,
     local_installer: Option<&Path>,
 ) -> Result<UsbipInstallResult, String> {
-    if installed_usbip_version().as_deref() == Some(USBIP_VERSION) {
-        return Ok(UsbipInstallResult::Ready);
+    match install_disposition(installed_usbip_version().as_deref())? {
+        InstallDisposition::Ready => {
+            return Ok(UsbipInstallResult::Ready);
+        }
+        InstallDisposition::Install => {}
     }
 
     let installer_path = component_root.join(format!("USBip-{USBIP_VERSION}-x64.partial.exe"));

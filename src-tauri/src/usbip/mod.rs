@@ -8,11 +8,12 @@ mod commands;
 mod device;
 mod elevated;
 mod exec;
+mod manager;
 mod status;
 
 use serde::{Deserialize, Serialize};
 
-const PINNED_VERSION: &str = "0.9.7.7";
+use manager::PINNED_VERSION;
 const DEFAULT_TCP_PORT: u16 = 3240;
 const MAX_OUTPUT_BYTES: usize = 256 * 1024;
 const MAX_ELEVATED_RESPONSE_BYTES: usize = 16 * 1024;
@@ -94,12 +95,13 @@ struct ElevatedResponse {
     message: String,
 }
 
-#[cfg(target_os = "windows")]
-#[derive(Debug)]
-struct UsbipInstallation {
-    version: String,
-    executable: std::path::PathBuf,
-}
+pub(crate) use manager::{
+    INSTALLER_SHA256 as USBIP_SHA256, INSTALLER_URL as USBIP_URL, InstallDisposition,
+    PINNED_VERSION as USBIP_VERSION, install_disposition,
+    installed_version as installed_usbip_version,
+    pinned_version_installed as pinned_usbip_installed,
+    uninstall_entries as usbip_uninstall_entries,
+};
 
 fn validate_remote(remote: &str) -> Result<String, String> {
     let value = remote.trim();
@@ -161,9 +163,9 @@ fn validate_tcp_port(tcp_port: Option<u16>) -> Result<u16, String> {
 // module. Glob re-exports carry the `#[tauri::command]`-generated hidden items
 // that generate_handler! resolves (same pattern as dualsense).
 pub use commands::*;
-pub use status::*;
 #[cfg(target_os = "windows")]
 pub(crate) use elevated::try_handle_elevated_command;
+pub use status::*;
 
 #[cfg(test)]
 mod tests {

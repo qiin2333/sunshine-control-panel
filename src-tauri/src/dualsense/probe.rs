@@ -12,67 +12,8 @@ use super::packages::{
     active_dir, component_matches_current_runtime, component_update_available,
     installed_component_manifest, sidecar_path, validate_sidecar_integrity,
 };
-use super::{
-    COMPONENT_VERSION, DualSenseStatus, PROTOCOL_VERSION, USBIP_VERSION, observe_config_revision,
-};
-
-/// One registry uninstall entry whose DisplayName announces the USB/IP
-/// transport ("USBip version x.y.z.w"). Shared by every reader of the
-/// transport's installation state.
-#[cfg(target_os = "windows")]
-pub(crate) struct UsbipUninstallEntry {
-    pub(crate) key: winreg::RegKey,
-    pub(crate) display_name: String,
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn usbip_uninstall_entries() -> Vec<UsbipUninstallEntry> {
-    use winreg::RegKey;
-    use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY};
-
-    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let uninstall = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
-    let mut entries = Vec::new();
-    for view in [KEY_READ | KEY_WOW64_64KEY, KEY_READ | KEY_WOW64_32KEY] {
-        let Ok(root) = hklm.open_subkey_with_flags(uninstall, view) else {
-            continue;
-        };
-        for name in root.enum_keys().flatten() {
-            let Ok(key) = root.open_subkey_with_flags(&name, view) else {
-                continue;
-            };
-            let display_name = key
-                .get_value::<String, _>("DisplayName")
-                .unwrap_or_default();
-            if display_name.starts_with("USBip version ") {
-                entries.push(UsbipUninstallEntry {
-                    key,
-                    display_name,
-                });
-            }
-        }
-    }
-    entries
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn installed_usbip_version() -> Option<String> {
-    for entry in usbip_uninstall_entries() {
-        if let Ok(version) = entry.key.get_value::<String, _>("DisplayVersion") {
-            return Some(version);
-        }
-        return entry
-            .display_name
-            .strip_prefix("USBip version ")
-            .map(str::to_string);
-    }
-    None
-}
-
-#[cfg(not(target_os = "windows"))]
-pub(crate) fn installed_usbip_version() -> Option<String> {
-    None
-}
+use super::{COMPONENT_VERSION, DualSenseStatus, PROTOCOL_VERSION, observe_config_revision};
+use crate::usbip::{installed_usbip_version, pinned_usbip_installed};
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
@@ -417,10 +358,6 @@ pub(crate) fn validate_requested_profile(
     } else {
         Ok(())
     }
-}
-
-pub(crate) fn pinned_usbip_installed(installed_version: Option<&str>) -> bool {
-    installed_version == Some(USBIP_VERSION)
 }
 
 pub(crate) async fn dualsense_get_status_with_config(

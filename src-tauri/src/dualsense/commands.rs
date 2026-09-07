@@ -17,13 +17,13 @@ use super::install::{dualsense_install_impl, dualsense_self_test_impl, dualsense
 use super::packages::classify_local_component_packages;
 use super::probe::{
     dualsense_get_status_with_config, ensure_no_active_session,
-    ensure_no_active_session_for_uninstall, installed_usbip_version, pinned_usbip_installed,
-    run_installed_probe, validate_requested_profile,
+    ensure_no_active_session_for_uninstall, run_installed_probe, validate_requested_profile,
 };
 use super::{
     COMPONENT_OPERATION, DualSenseStatus, DualSenseTuningResult, MAX_LOCAL_COMPONENT_PACKAGES,
     observe_config_revision,
 };
+use crate::usbip::{installed_usbip_version, pinned_usbip_installed};
 
 #[tauri::command]
 pub async fn dualsense_set_haptics_tuning(

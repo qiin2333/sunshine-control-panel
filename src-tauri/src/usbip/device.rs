@@ -100,6 +100,38 @@ fn instance_id_from_interface_path(path: &str) -> Option<String> {
     Some(head.replace('#', "\\"))
 }
 
+fn is_vhci_hardware_id(value: &str) -> bool {
+    value.eq_ignore_ascii_case(r"ROOT\USBIP_WIN2\UDE")
+}
+
+/// Present interfaces are sufficient for normal operation checks, but an
+/// interrupted uninstall can leave a phantom ROOT\USB node with no interface.
+/// Read its immutable hardware ID so cleanup can remove only usbip-win2 nodes.
+#[cfg(target_os = "windows")]
+pub(super) fn enumerate_vhci_devnodes() -> Vec<String> {
+    use winreg::RegKey;
+    use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ};
+
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let Ok(root) = hklm.open_subkey_with_flags(
+        r"SYSTEM\CurrentControlSet\Enum\ROOT\USB",
+        KEY_READ,
+    ) else {
+        return Vec::new();
+    };
+    root.enum_keys()
+        .flatten()
+        .filter_map(|name| {
+            let key = root.open_subkey_with_flags(&name, KEY_READ).ok()?;
+            let hardware_ids = key.get_value::<Vec<String>, _>("HardwareID").ok()?;
+            hardware_ids
+                .iter()
+                .any(|value| is_vhci_hardware_id(value))
+                .then(|| format!(r"ROOT\USB\{name}"))
+        })
+        .collect()
+}
+
 /// Splits a registry command line such as `"C:\dir\unins000.exe" /flag` into
 /// the executable and its arguments, applying the quoting rules of
 /// CommandLineToArgvW: double quotes group whitespace, a quote toggles
@@ -163,7 +195,7 @@ fn split_executable_command(command: &str) -> Option<(String, Vec<String>)> {
 
 #[cfg(target_os = "windows")]
 fn find_usbip_uninstall_string() -> Option<String> {
-    crate::dualsense::usbip_uninstall_entries().into_iter().find_map(|entry| {
+    super::usbip_uninstall_entries().into_iter().find_map(|entry| {
         entry
             .key
             .get_value::<String, _>("UninstallString")
@@ -186,12 +218,14 @@ pub(super) async fn cleanup_broken_transport() -> Result<(), String> {
             .to_string()
     })?;
     let mut uninstall_error = None;
-    if crate::dualsense::installed_usbip_version().is_some() {
+    if super::installed_usbip_version().is_some() {
         if let Err(error) = run_inno_uninstaller().await {
             uninstall_error = Some(error);
         }
     }
     remove_vhci_devnodes().await?;
+    remove_orphaned_driver_service("usbip2_ude", "usbip2_ude.sys")?;
+    remove_orphaned_driver_service("usbip2_filter", "usbip2_filter.sys")?;
     uninstall_error.map_or(Ok(()), Err)
 }
 
@@ -245,7 +279,7 @@ async fn run_inno_uninstaller() -> Result<(), String> {
 #[cfg(target_os = "windows")]
 async fn wait_for_uninstall_registration_gone() -> Result<(), String> {
     for _ in 0..CLEANUP_POLL_ATTEMPTS {
-        if crate::dualsense::installed_usbip_version().is_none() {
+        if super::installed_usbip_version().is_none() {
             return Ok(());
         }
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -260,22 +294,28 @@ async fn remove_vhci_devnodes() -> Result<(), String> {
     let mut last_error = None;
     for _ in 0..CLEANUP_POLL_ATTEMPTS {
         let interfaces = enumerate_vhci_interfaces()?;
-        if interfaces.is_empty() {
+        let mut instance_ids = enumerate_vhci_devnodes();
+        instance_ids.extend(
+            interfaces
+                .iter()
+                .filter_map(|path| instance_id_from_interface_path(path)),
+        );
+        instance_ids.sort_unstable();
+        instance_ids.dedup();
+        if instance_ids.is_empty() {
             return Ok(());
         }
-        for path in interfaces {
-            if let Some(instance_id) = instance_id_from_interface_path(&path) {
-                // Removal can be transiently vetoed while PnP is busy; keep
-                // sweeping and let the closing emptiness check decide the
-                // outcome instead of abandoning the remaining nodes and retries.
-                if let Err(error) = uninstall_vhci_devnode(&instance_id) {
-                    last_error = Some(error);
-                }
+        for instance_id in instance_ids {
+            // Removal can be transiently vetoed while PnP is busy; keep
+            // sweeping and let the closing emptiness check decide the
+            // outcome instead of abandoning the remaining nodes and retries.
+            if let Err(error) = uninstall_vhci_devnode(&instance_id) {
+                last_error = Some(error);
             }
         }
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
-    if enumerate_vhci_interfaces()?.is_empty() {
+    if enumerate_vhci_interfaces()?.is_empty() && enumerate_vhci_devnodes().is_empty() {
         Ok(())
     } else {
         Err(last_error.unwrap_or_else(|| {
@@ -288,14 +328,19 @@ async fn remove_vhci_devnodes() -> Result<(), String> {
 #[cfg(target_os = "windows")]
 fn uninstall_vhci_devnode(instance_id: &str) -> Result<(), String> {
     use windows::Win32::Devices::DeviceAndDriverInstallation::{
-        CM_LOCATE_DEVNODE_NORMAL, CM_Locate_DevNodeW, CM_Uninstall_DevNode, CR_SUCCESS,
+        CM_LOCATE_DEVNODE_PHANTOM, CM_Locate_DevNodeW, CM_Uninstall_DevNode, CR_SUCCESS,
     };
     use windows::core::PCWSTR;
 
     let encoded: Vec<u16> = instance_id.encode_utf16().chain(Some(0)).collect();
     let mut devinst = 0u32;
-    let located =
-        unsafe { CM_Locate_DevNodeW(&mut devinst, PCWSTR(encoded.as_ptr()), CM_LOCATE_DEVNODE_NORMAL) };
+    let located = unsafe {
+        CM_Locate_DevNodeW(
+            &mut devinst,
+            PCWSTR(encoded.as_ptr()),
+            CM_LOCATE_DEVNODE_PHANTOM,
+        )
+    };
     if located != CR_SUCCESS {
         // The devnode can disappear between enumeration and this lookup while
         // asynchronous PnP teardown completes. Treat it as already removed so
@@ -313,6 +358,42 @@ fn uninstall_vhci_devnode(instance_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
+fn remove_orphaned_driver_service(name: &str, expected_binary: &str) -> Result<(), String> {
+    use std::process::Command;
+    use winreg::RegKey;
+    use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ};
+
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let path = format!(r"SYSTEM\CurrentControlSet\Services\{name}");
+    let Ok(key) = hklm.open_subkey_with_flags(path, KEY_READ) else {
+        return Ok(());
+    };
+    let image_path = key
+        .get_value::<String, _>("ImagePath")
+        .unwrap_or_default();
+    if !image_path
+        .to_ascii_lowercase()
+        .ends_with(&expected_binary.to_ascii_lowercase())
+    {
+        return Err(format!(
+            "USBIP-CLEAN-004: refusing to remove unexpected service {name}"
+        ));
+    }
+    drop(key);
+    let output = Command::new("sc.exe")
+        .args(["delete", name])
+        .output()
+        .map_err(|error| format!("USBIP-CLEAN-004: unable to remove service {name}: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "USBIP-CLEAN-004: unable to remove orphaned service {name}"
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,6 +409,14 @@ mod tests {
         assert_eq!(instance_id_from_interface_path(r"\\?\ROOT#USB#0001"), None);
         assert_eq!(instance_id_from_interface_path(r"\\?\#{guid}"), None);
         assert_eq!(instance_id_from_interface_path("C:\\plain\\path"), None);
+    }
+
+    #[test]
+    fn recognizes_only_the_usbip_win2_vhci_hardware_id() {
+        assert!(is_vhci_hardware_id(r"ROOT\USBIP_WIN2\UDE"));
+        assert!(is_vhci_hardware_id(r"root\usbip_win2\ude"));
+        assert!(!is_vhci_hardware_id(r"ROOT\USB\0000"));
+        assert!(!is_vhci_hardware_id(r"ROOT\HIDMAESTRO_UDE"));
     }
 
     #[test]

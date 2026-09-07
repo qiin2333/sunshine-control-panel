@@ -25,19 +25,24 @@ pub async fn usbip_get_status() -> Result<UsbipStatus, String> {
         // report a clean transport. Propagating the error surfaces the probe
         // as unavailable, hiding install and attach actions.
         let interfaces = super::device::enumerate_vhci_interfaces()?;
-        let installation = match super::exec::find_installation() {
+        let devnodes = super::device::enumerate_vhci_devnodes();
+        let installation = match super::manager::find_installation() {
             Ok(installation) => installation,
             Err(detail) => {
+                let registered_version = super::installed_usbip_version();
+                let partially_installed = registered_version.is_some();
                 return Ok(UsbipStatus {
                     supported: true,
-                    installed: false,
+                    installed: partially_installed,
                     ready: false,
-                    version: String::new(),
+                    version: registered_version.unwrap_or_default(),
                     version_valid: false,
                     reboot_recommended: false,
-                    // With no usable installation every present VHCI interface
-                    // is a ghost that would corrupt the next install.
-                    vhci_residual: !interfaces.is_empty(),
+                    // A registration without a usable executable is also a
+                    // partial uninstall and must go through shared cleanup.
+                    vhci_residual: !interfaces.is_empty()
+                        || !devnodes.is_empty()
+                        || partially_installed,
                     attached_devices: Vec::new(),
                     detail,
                 });

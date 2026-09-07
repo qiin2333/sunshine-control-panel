@@ -4,17 +4,17 @@ use super::{
     SidecarPackageManifest, clamp_tuning, classify_usbip_installer_exit_code,
     component_is_verified, component_matches_current_runtime, component_state,
     component_test_failure, component_update_available, copy_runtime_files, core_ds5_http_error,
-    extract_sidecar_package, local_uninstalled_status, pinned_usbip_installed,
-    read_sidecar_package_manifest, recover_interrupted_activation, require_entity_tag,
-    resolve_core_config, rollback_activated_component, run_with_timeout, sha256_file,
-    update_config_fields, update_tuning_fields, validate_core_ds5_response,
-    validate_requested_profile, validate_sidecar_integrity, validate_sidecar_package_manifest,
-    validate_strong_entity_tag,
+    extract_sidecar_package, local_uninstalled_status, read_sidecar_package_manifest,
+    recover_interrupted_activation, require_entity_tag, resolve_core_config,
+    rollback_activated_component, run_with_timeout, sha256_file, update_config_fields,
+    update_tuning_fields, validate_core_ds5_response, validate_requested_profile,
+    validate_sidecar_integrity, validate_sidecar_package_manifest, validate_strong_entity_tag,
 };
 #[cfg(target_os = "windows")]
 use super::{
     ElevatedMessage, ElevatedOperation, MAX_ELEVATED_MESSAGE_BYTES, read_limited_elevated_line,
 };
+use crate::usbip::{USBIP_SHA256, pinned_usbip_installed};
 use reqwest::header::HeaderValue;
 use std::io::Write as _;
 use std::process::Command;
@@ -434,7 +434,7 @@ fn local_component_hashes_are_identified_without_trusting_file_names() {
         Some(super::LocalComponentKind::Hidmaestro)
     );
     assert_eq!(
-        super::local_component_kind(super::USBIP_SHA256, None),
+        super::local_component_kind(USBIP_SHA256, None),
         Some(super::LocalComponentKind::Usbip)
     );
     assert_eq!(

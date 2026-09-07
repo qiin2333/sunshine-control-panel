@@ -36,11 +36,6 @@ struct PluginDescriptor {
     file_name: &'static str,
 }
 
-const PLUGINS: &[PluginDescriptor] = &[PluginDescriptor {
-    id: "alkaidlab.stylus",
-    file_name: "alkaidlab-plugin-stylus.dll",
-}];
-
 #[derive(Clone, Copy, Debug)]
 enum NativePluginError {
     Unknown,
@@ -74,6 +69,34 @@ struct LoadedPlugin {
     module: usize,
     api: NativeToolPluginV1,
     generation: u64,
+    ready: bool,
+}
+
+struct PluginLoadFailure {
+    error: NativePluginError,
+    retained_plugin: Option<LoadedPlugin>,
+}
+
+impl PluginLoadFailure {
+    const fn new(error: NativePluginError) -> Self {
+        Self {
+            error,
+            retained_plugin: None,
+        }
+    }
+
+    const fn retained(error: NativePluginError, plugin: LoadedPlugin) -> Self {
+        Self {
+            error,
+            retained_plugin: Some(plugin),
+        }
+    }
+}
+
+impl From<NativePluginError> for PluginLoadFailure {
+    fn from(error: NativePluginError) -> Self {
+        Self::new(error)
+    }
 }
 
 #[derive(Default)]
@@ -87,11 +110,17 @@ fn manager() -> &'static Mutex<PluginManager> {
 }
 
 fn descriptor(tool_id: &str) -> Result<PluginDescriptor, NativePluginError> {
-    PLUGINS
-        .iter()
-        .copied()
-        .find(|plugin| plugin.id == tool_id)
-        .ok_or(NativePluginError::Unknown)
+    let component = crate::native_components::descriptor(tool_id)
+        .filter(|component| component.host == crate::native_components::ComponentHost::Gui)
+        .ok_or(NativePluginError::Unknown)?;
+    Ok(PluginDescriptor {
+        id: component.id,
+        file_name: component
+            .files
+            .first()
+            .copied()
+            .ok_or(NativePluginError::Unknown)?,
+    })
 }
 
 fn plugin_path(file_name: &str) -> Result<PathBuf, NativePluginError> {
@@ -179,7 +208,12 @@ fn tool_id_matches(pointer: *const c_char, expected: &str) -> Result<bool, Nativ
 }
 
 #[cfg(target_os = "windows")]
-fn load_plugin(descriptor: PluginDescriptor) -> Result<LoadedPlugin, NativePluginError> {
+fn unload_module(module: usize) {
+    let _ = unsafe { FreeLibrary(HMODULE(module as *mut c_void)) };
+}
+
+#[cfg(target_os = "windows")]
+fn load_plugin(descriptor: PluginDescriptor) -> Result<LoadedPlugin, PluginLoadFailure> {
     let path = plugin_path(descriptor.file_name)?;
     let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
     wide.push(0);
@@ -190,9 +224,9 @@ fn load_plugin(descriptor: PluginDescriptor) -> Result<LoadedPlugin, NativePlugi
             LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32,
         )
     }
-    .map_err(|_| NativePluginError::LoadFailed)?;
+    .map_err(|_| PluginLoadFailure::new(NativePluginError::LoadFailed))?;
 
-    let loaded = (|| {
+    let api = (|| {
         let symbol = unsafe { GetProcAddress(module, PCSTR(GET_PLUGIN_API_SYMBOL.as_ptr())) }
             .ok_or(NativePluginError::EntryMissing)?;
         let get_api: GetPluginApiFn = unsafe { std::mem::transmute(symbol) };
@@ -215,38 +249,55 @@ fn load_plugin(descriptor: PluginDescriptor) -> Result<LoadedPlugin, NativePlugi
         {
             return Err(NativePluginError::AbiMismatch);
         }
-        let (default_window_icon, default_small_window_icon) = default_window_icons();
-        let host = NativeToolHostV1 {
-            struct_size: size_of::<NativeToolHostV1>() as u32,
-            abi_version: NATIVE_TOOL_ABI_V1,
-            context: std::ptr::null_mut(),
-            log: Some(plugin_log),
-            default_window_icon,
-            default_small_window_icon,
-        };
-        if unsafe { initialize(&host) } != NativeToolResult::Ok {
-            if let Some(shutdown) = api.shutdown {
-                let _ = unsafe { shutdown(PLUGIN_SHUTDOWN_TIMEOUT_MS) };
-            }
-            return Err(NativePluginError::InitFailed);
-        }
-        static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
-        Ok(LoadedPlugin {
-            module: module.0 as usize,
-            api: *api,
-            generation: NEXT_GENERATION.fetch_add(1, Ordering::Relaxed),
-        })
+        Ok((*api, initialize))
     })();
+    let (api, initialize) = match api {
+        Ok(value) => value,
+        Err(error) => {
+            unload_module(module.0 as usize);
+            return Err(PluginLoadFailure::new(error));
+        }
+    };
 
-    if loaded.is_err() {
-        let _ = unsafe { FreeLibrary(module) };
+    static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
+    let mut plugin = LoadedPlugin {
+        module: module.0 as usize,
+        api,
+        generation: NEXT_GENERATION.fetch_add(1, Ordering::Relaxed),
+        ready: false,
+    };
+    let (default_window_icon, default_small_window_icon) = default_window_icons();
+    let host = NativeToolHostV1 {
+        struct_size: size_of::<NativeToolHostV1>() as u32,
+        abi_version: NATIVE_TOOL_ABI_V1,
+        context: std::ptr::null_mut(),
+        log: Some(plugin_log),
+        default_window_icon,
+        default_small_window_icon,
+    };
+    if unsafe { initialize(&host) } != NativeToolResult::Ok {
+        let stopped = plugin
+            .api
+            .shutdown
+            .map(|shutdown| unsafe { shutdown(PLUGIN_SHUTDOWN_TIMEOUT_MS) })
+            == Some(NativeToolResult::Ok);
+        let unloadable = plugin.api.can_unload.map(|check| unsafe { check() }) == Some(true);
+        if stopped && unloadable {
+            unload_module(plugin.module);
+            return Err(PluginLoadFailure::new(NativePluginError::InitFailed));
+        }
+        return Err(PluginLoadFailure::retained(
+            NativePluginError::InitFailed,
+            plugin,
+        ));
     }
-    loaded
+    plugin.ready = true;
+    Ok(plugin)
 }
 
 #[cfg(not(target_os = "windows"))]
-fn load_plugin(_descriptor: PluginDescriptor) -> Result<LoadedPlugin, NativePluginError> {
-    Err(NativePluginError::LoadFailed)
+fn load_plugin(_descriptor: PluginDescriptor) -> Result<LoadedPlugin, PluginLoadFailure> {
+    Err(PluginLoadFailure::new(NativePluginError::LoadFailed))
 }
 
 fn show_plugin(plugin: &LoadedPlugin) -> Result<(), NativePluginError> {
@@ -295,7 +346,7 @@ fn start_unload_monitor(tool_id: &'static str, generation: u64) {
                 if let Some(module) = module_to_free {
                     #[cfg(target_os = "windows")]
                     {
-                        let _ = unsafe { FreeLibrary(HMODULE(module as *mut c_void)) };
+                        unload_module(module);
                     }
                     info!(target: "native_tool", "Unloaded native tool plugin [{tool_id}]");
                     return;
@@ -313,21 +364,38 @@ fn open_native_tool_impl(tool_id: &str) -> Result<(), NativePluginError> {
         .lock()
         .map_err(|_| NativePluginError::StartFailed)?;
     if let Some(plugin) = manager.loaded.get(descriptor.id) {
+        if !plugin.ready {
+            return Err(NativePluginError::InitFailed);
+        }
         return show_plugin(plugin);
     }
 
-    let plugin = load_plugin(descriptor)?;
-    if let Err(error) = show_plugin(&plugin) {
-        if let Some(shutdown) = plugin.api.shutdown {
-            let _ = unsafe { shutdown(PLUGIN_SHUTDOWN_TIMEOUT_MS) };
+    let mut plugin = match load_plugin(descriptor) {
+        Ok(plugin) => plugin,
+        Err(failure) => {
+            if let Some(plugin) = failure.retained_plugin {
+                let generation = plugin.generation;
+                manager.loaded.insert(descriptor.id, plugin);
+                drop(manager);
+                start_unload_monitor(descriptor.id, generation);
+            }
+            return Err(failure.error);
         }
+    };
+    if let Err(error) = show_plugin(&plugin) {
+        let stopped = plugin
+            .api
+            .shutdown
+            .map(|shutdown| unsafe { shutdown(PLUGIN_SHUTDOWN_TIMEOUT_MS) })
+            == Some(NativeToolResult::Ok);
         let unloadable = plugin.api.can_unload.map(|check| unsafe { check() }) == Some(true);
-        if unloadable {
+        if stopped && unloadable {
             #[cfg(target_os = "windows")]
             {
-                let _ = unsafe { FreeLibrary(HMODULE(plugin.module as *mut c_void)) };
+                unload_module(plugin.module);
             }
         } else {
+            plugin.ready = false;
             let generation = plugin.generation;
             manager.loaded.insert(descriptor.id, plugin);
             drop(manager);
@@ -374,8 +442,10 @@ pub fn shutdown_all() {
         })
         .unwrap_or_default();
     for plugin in plugins {
-        if let Some(request_close) = plugin.api.request_close {
-            let _ = unsafe { request_close() };
+        if plugin.ready {
+            if let Some(request_close) = plugin.api.request_close {
+                let _ = unsafe { request_close() };
+            }
         }
         let stopped = plugin
             .api
@@ -386,7 +456,7 @@ pub fn shutdown_all() {
         if stopped && unloadable {
             #[cfg(target_os = "windows")]
             {
-                let _ = unsafe { FreeLibrary(HMODULE(plugin.module as *mut c_void)) };
+                unload_module(plugin.module);
             }
         } else {
             warn!(target: "native_tool", "Native tool plugin remained loaded during GUI shutdown");
@@ -410,5 +480,13 @@ mod tests {
     fn registry_uses_fixed_stylus_filename() {
         let plugin = descriptor("alkaidlab.stylus").expect("stylus plugin must be registered");
         assert_eq!(plugin.file_name, "alkaidlab-plugin-stylus.dll");
+    }
+
+    #[test]
+    fn core_components_cannot_be_loaded_into_the_gui() {
+        assert!(matches!(
+            descriptor(crate::native_components::NVIDIA_RTX_VIDEO_ID),
+            Err(NativePluginError::Unknown)
+        ));
     }
 }

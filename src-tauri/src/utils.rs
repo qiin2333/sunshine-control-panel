@@ -50,29 +50,6 @@ impl ElevatedProcess {
             Ok(Some(exit_code as i32))
         }
     }
-
-    pub(crate) fn wait_for_exit(&self) -> Result<i32, String> {
-        use std::os::windows::io::AsRawHandle;
-        use windows::Win32::Foundation::{HANDLE, WAIT_OBJECT_0};
-        use windows::Win32::System::Threading::{
-            GetExitCodeProcess, INFINITE, WaitForSingleObject,
-        };
-
-        unsafe {
-            let handle = HANDLE(self.handle.as_raw_handle());
-            let result = WaitForSingleObject(handle, INFINITE);
-            if result != WAIT_OBJECT_0 {
-                return Err(format!(
-                    "could not wait for elevated process exit: {result:?}"
-                ));
-            }
-            let mut exit_code = 0;
-            GetExitCodeProcess(handle, &mut exit_code)
-                .map_err(|error| format!("could not read elevated process exit code: {error}"))?;
-            Ok(exit_code as i32)
-        }
-    }
-
     /// Blocking wait for the process to exit, bounded by `timeout`. Returns
     /// `None` when it is still running when the timeout elapses.
     pub(crate) fn wait_for_exit_blocking(
@@ -105,6 +82,7 @@ impl ElevatedProcess {
         }
     }
 }
+
 /// Start the current executable with the Windows `runas` verb.
 ///
 /// Callers pass fixed, internally validated arguments only. `ShellExecuteExW`

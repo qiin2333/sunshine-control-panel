@@ -32,7 +32,6 @@ import {
   Connection,
   MagicStick,
   Brush,
-  Files,
 } from '@element-plus/icons-vue'
 import IconLang from '../desktop/icons/IconLang.vue'
 import IconGamepad from '../desktop/icons/IconGamepad.vue'
@@ -90,13 +89,6 @@ export function createManagementTools(ctx) {
       isActive: () => ctx.router.isRoute(ROUTES.CONTROLLERS)
         || ctx.router.isRoute(ROUTES.DUALSENSE)
         || ctx.router.isRoute(ROUTES.CONTROLLERS_HUB),
-    },
-    {
-      id: 'rtx-hdr',
-      icon: Files,
-      label: 'RTX HDR',
-      action: ctx.openRtxHdr,
-      isActive: () => ctx.router.isRoute(ROUTES.RTX_HDR),
     },
     {
       id: 'ai-assistant',

@@ -107,7 +107,8 @@ export function useSidebarState() {
   const openControllers = () => router.navigate(ROUTES.CONTROLLERS)
   const openDualSense = openControllers
   const openControllersHub = () => router.navigate(ROUTES.CONTROLLERS_HUB)
-  const openRtxHdr = () => router.navigate(ROUTES.RTX_HDR)
+  // RTX HDR 的定向入口也进入公共 HDR 管理页；具体实现由页面内的组件卡片负责。
+  const openRtxHdr = () => router.navigate(ROUTES.HDR_ENHANCED)
   const goHome = () => router.goHome()
 
   /**

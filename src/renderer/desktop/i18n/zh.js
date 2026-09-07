@@ -967,6 +967,7 @@ export const zh = {
     webStream: 'Web 串流',
     aiAssistant: '米塔',
     deviceHub: '设备中心',
+    hdrEnhanced: 'HDR 增强',
     controllers: '控制器',
     controllersHub: '控制器中心',
     dualSense: 'DualSense 模拟',
@@ -991,6 +992,10 @@ export const zh = {
     intro: '管理 Sunshine 的虚拟控制器。',
   },
 
+  hdrEnhanced: {
+    description: '管理可选的 HDR 画面处理组件。不同后端有各自的硬件要求和安装方式。',
+    open: '管理 HDR 增强',
+  },
   deviceHub: {
     eyebrow: 'MANAGE / DEVICE HUB',
     title: '设备中心',

@@ -2,22 +2,41 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { rtxHdrMessages } from './rtxHdrMessages.js'
+import { en } from '../desktop/i18n/en.js'
+import { zh } from '../desktop/i18n/zh.js'
+
+test('HDR management is vendor-neutral while the backend keeps its identity', () => {
+  for (const [locale, messages] of Object.entries({ en, zh })) {
+    assert.ok(messages.sidebar.hdrEnhanced.includes('HDR'))
+    assert.ok(!messages.sidebar.hdrEnhanced.includes('RTX'))
+    assert.ok(messages.hdrEnhanced.description)
+    assert.equal(rtxHdrMessages[locale].title, 'NVIDIA RTX HDR')
+  }
+})
 
 test('RTX HDR component copy preserves the local-only licensing boundary', () => {
   for (const locale of ['en', 'zh']) {
     const text = rtxHdrMessages[locale]
     assert.ok(text.title.includes('RTX HDR'))
-    assert.match(text.boundary, /不会下载|never downloads/)
+    assert.match(text.boundary, /不会下载|does not download/)
     assert.match(text.securityHint, /不会再分发|not redistributed/)
     assert.match(text.securityHint, /不会在 GUI 进程内执行|does not execute selected DLLs/)
   }
+})
+
+test('RTX HDR locale keys stay complete and sorted', () => {
+  const englishKeys = Object.keys(rtxHdrMessages.en)
+  const chineseKeys = Object.keys(rtxHdrMessages.zh)
+  assert.deepEqual(englishKeys, [...englishKeys].sort())
+  assert.deepEqual(chineseKeys, [...chineseKeys].sort())
+  assert.deepEqual(chineseKeys, englishKeys)
 })
 
 test('RTX HDR component copy covers every manager state', () => {
   for (const locale of ['en', 'zh']) {
     assert.deepEqual(
       Object.keys(rtxHdrMessages[locale].states).sort(),
-      ['in_use', 'loading', 'not_installed', 'ready', 'repair_required'],
+      ['active', 'configured', 'degraded', 'in_use', 'loading', 'not_installed', 'repair_required', 'selected'],
     )
   }
 })

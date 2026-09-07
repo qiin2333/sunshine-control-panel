@@ -967,6 +967,7 @@ Output only one short sentence, no explanation. Reply in English.`,
     webStream: 'Web Stream',
     aiAssistant: 'Mita',
     deviceHub: 'Device Hub',
+    hdrEnhanced: 'HDR Enhancement',
     controllers: 'Controllers',
     controllersHub: 'Controllers Hub',
     dualSense: 'DualSense Emulation',
@@ -991,6 +992,10 @@ Output only one short sentence, no explanation. Reply in English.`,
     intro: 'Manage Sunshine virtual controllers.',
   },
 
+  hdrEnhanced: {
+    description: 'Manage optional HDR processing components. Each backend has its own hardware requirements and installation method.',
+    open: 'Manage HDR enhancement',
+  },
   deviceHub: {
     eyebrow: 'MANAGE / DEVICE HUB',
     title: 'Device Hub',

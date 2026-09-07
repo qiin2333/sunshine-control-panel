@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-native-tools",
+  "description": "Allows only the bundled main Control Panel window to open registered native tools.",
+  "windows": ["main"],
+  "local": true,
+  "permissions": ["allow-open-native-tool"]
+}

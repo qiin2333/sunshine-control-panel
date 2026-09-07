@@ -24,7 +24,9 @@ mod native_tools;
 mod power;
 mod proxy_server;
 mod rtss;
-mod rtx_hdr;
+use native_components::providers::nvidia_rtx_hdr as rtx_hdr;
+mod hdr_enhanced;
+mod native_components;
 #[cfg(target_os = "windows")]
 mod shell_context_menu;
 mod sunshine;
@@ -241,9 +243,12 @@ fn main() {
             proxy_server::get_proxy_health_check,
             proxy_server::refresh_sunshine_target,
             proxy_server::wait_for_proxy_ready,
-            rtx_hdr::rtx_hdr_get_status,
-            rtx_hdr::rtx_hdr_install,
-            rtx_hdr::rtx_hdr_uninstall,
+            native_components::native_component_get_status,
+            native_components::hdr_enhanced_select_backend,
+            native_components::list_native_components,
+            native_components::native_component_import,
+            native_components::native_component_remove,
+            native_components::native_component_recover,
             utils::open_external_url,
             utils::open_local_path,
             utils::restart_graphics_driver,

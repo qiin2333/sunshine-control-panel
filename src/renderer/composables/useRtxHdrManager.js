@@ -8,15 +8,16 @@ import { useRtxHdrI18n } from './rtxHdrI18n.js'
 const emptyStatus = () => ({
   state: 'loading',
   installed: false,
+  enabled: false,
   ready: false,
   in_use: false,
-  backend_present: false,
+  maintenance: false,
+  bridge_present: false,
   runtime_present: false,
   configured: false,
   managed_path: '',
-  backend_sha256: '',
+  bridge_sha256: '',
   runtime_sha256: '',
-  detail: '',
 })
 
 export function useRtxHdrManager() {
@@ -33,10 +34,10 @@ export function useRtxHdrManager() {
   const shortHash = (value) => value ? `${value.slice(0, 12)}…` : text.value.notAvailable
   const healthRows = computed(() => [
     {
-      label: text.value.backend,
-      state: status.value.backend_present ? text.value.present : text.value.missing,
-      detail: shortHash(status.value.backend_sha256),
-      tone: status.value.backend_present ? 'ok' : 'bad',
+      label: text.value.bridge,
+      state: status.value.bridge_present ? text.value.present : text.value.missing,
+      detail: shortHash(status.value.bridge_sha256),
+      tone: status.value.bridge_present ? 'ok' : 'bad',
     },
     {
       label: text.value.runtime,
@@ -76,27 +77,29 @@ export function useRtxHdrManager() {
   })
 
   const install = async () => {
-    if (controlsBusy.value || status.value.in_use) return
-    let backendPath
+    if (controlsBusy.value || status.value.in_use || status.value.maintenance) return
+    operation.value = 'selecting'
     let runtimePath
     try {
-      backendPath = await selectDll(text.value.selectBackend, 'foundation_truehdr_backend.dll')
-      if (!backendPath) return
       runtimePath = await selectDll(text.value.selectRuntime, 'nvngx_truehdr.dll')
-      if (!runtimePath) return
+      if (!runtimePath) {
+        operation.value = ''
+        return
+      }
       await ElMessageBox.confirm(
         text.value.installConfirm,
         status.value.installed ? text.value.repairTitle : text.value.installTitle,
         { type: 'warning', confirmButtonText: actionLabel.value },
       )
     } catch {
+      operation.value = ''
       return
     }
 
     operation.value = 'install'
     operationError.value = ''
     try {
-      const result = await rtxHdr.install(backendPath, runtimePath)
+      const result = await rtxHdr.install(runtimePath)
       if (!result.success) throw new Error(result.message)
       status.value = { ...emptyStatus(), ...result.data }
       statusKnown.value = true
@@ -111,13 +114,15 @@ export function useRtxHdrManager() {
   }
 
   const uninstall = async () => {
-    if (controlsBusy.value || status.value.in_use || !status.value.installed) return
+    if (controlsBusy.value || status.value.in_use || status.value.maintenance || !status.value.installed) return
+    operation.value = 'confirming'
     try {
       await ElMessageBox.confirm(text.value.uninstallConfirm, text.value.uninstallTitle, {
         type: 'warning',
         confirmButtonText: text.value.uninstall,
       })
     } catch {
+      operation.value = ''
       return
     }
     operation.value = 'uninstall'
@@ -137,13 +142,49 @@ export function useRtxHdrManager() {
     }
   }
 
+  const setEnabled = async (enabled) => {
+    if (controlsBusy.value || !statusKnown.value || status.value.maintenance) return
+    operation.value = 'saving'
+    operationError.value = ''
+    try {
+      const result = await rtxHdr.setEnabled(enabled)
+      if (!result.success) throw new Error(result.message)
+      status.value = { ...emptyStatus(), ...result.data }
+      statusKnown.value = true
+      ElMessage.success(text.value.saveSuccess)
+    } catch (error) {
+      operationError.value = String(error?.message || error)
+      await refresh(true)
+    } finally {
+      operation.value = ''
+    }
+  }
+
   const openFolder = async () => {
-    const directory = status.value.managed_path.replace(/[\\/]foundation_truehdr_backend\.dll$/i, '')
+    const directory = status.value.managed_path.replace(/[\\/]foundation_rtx_video_bridge\.dll$/i, '')
     if (!directory) return
     try {
       await invoke('open_local_path', { path: directory })
     } catch (error) {
       operationError.value = String(error?.message || error)
+    }
+  }
+
+  const showAcquisition = () => ElMessageBox.alert(text.value.acquisitionDescription, text.value.acquisitionTitle).catch(() => {})
+
+  const recover = async () => {
+    if (controlsBusy.value) return
+    operation.value = 'recovering'
+    operationError.value = ''
+    try {
+      const result = await rtxHdr.recover()
+      if (!result.success) throw new Error(result.message)
+      status.value = { ...emptyStatus(), ...result.data }
+      statusKnown.value = true
+    } catch (error) {
+      operationError.value = String(error?.message || error)
+    } finally {
+      operation.value = ''
     }
   }
 
@@ -162,6 +203,9 @@ export function useRtxHdrManager() {
     refresh,
     install,
     uninstall,
+    setEnabled,
+    showAcquisition,
+    recover,
     openFolder,
   }
 }

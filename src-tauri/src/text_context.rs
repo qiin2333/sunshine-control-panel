@@ -1,8 +1,5 @@
 //! User-session observer for Windows InputPane and UI Automation text focus.
 
-#[path = "text_context_policy.rs"]
-mod policy;
-
 use std::cell::Cell;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -269,6 +266,12 @@ struct State {
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
 
+fn is_confirmed_editor(is_edit_control: bool, value_read_only: Option<bool>) -> bool {
+    // TextEditPattern can exist on a read-only Chromium Document. Missing or
+    // failed ValuePattern reads remain unknown, never evidence of editability.
+    is_edit_control && value_read_only == Some(false)
+}
+
 fn inspect_focused_element(
     automation: &IUIAutomation,
     cache: &IUIAutomationCacheRequest,
@@ -295,7 +298,7 @@ fn inspect_focused_element(
             .ok()
             .and_then(|pattern| unsafe { pattern.CachedIsReadOnly() }.ok())
             .map(|value| value.as_bool());
-    let editable = policy::is_confirmed_editor(
+    let editable = is_confirmed_editor(
         control_type == UIA_EditControlTypeId.0,
         value_read_only,
     );
@@ -688,6 +691,20 @@ pub fn stop() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_explicitly_writable_edit_is_confirmed() {
+        for (is_edit, read_only, expected) in [
+            (true, Some(false), true),
+            (true, Some(true), false),
+            (true, None, false),
+            (false, Some(true), false), // Chrome read-only Document
+            (false, Some(false), false),
+            (false, None, false),
+        ] {
+            assert_eq!(is_confirmed_editor(is_edit, read_only), expected);
+        }
+    }
 
     fn observation(source: &'static str, active: bool) -> Observation {
         Observation {

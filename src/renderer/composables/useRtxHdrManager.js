@@ -31,25 +31,16 @@ export function useRtxHdrManager() {
   const controlsBusy = computed(() => refreshing.value || Boolean(operation.value))
   const stateLabel = computed(() => text.value.states[status.value.state] || status.value.state)
   const actionLabel = computed(() => status.value.installed ? text.value.repair : text.value.install)
-  const shortHash = (value) => value ? `${value.slice(0, 12)}…` : text.value.notAvailable
   const healthRows = computed(() => [
     {
       label: text.value.bridge,
       state: status.value.bridge_present ? text.value.present : text.value.missing,
-      detail: shortHash(status.value.bridge_sha256),
       tone: status.value.bridge_present ? 'ok' : 'bad',
     },
     {
       label: text.value.runtime,
       state: status.value.runtime_present ? text.value.present : text.value.missing,
-      detail: shortHash(status.value.runtime_sha256),
       tone: status.value.runtime_present ? 'ok' : 'bad',
-    },
-    {
-      label: text.value.configuration,
-      state: status.value.configured ? text.value.configured : text.value.notConfigured,
-      detail: status.value.managed_path,
-      tone: status.value.configured ? 'ok' : 'warn',
     },
   ])
 

@@ -14,13 +14,15 @@ test('HDR management is vendor-neutral while the backend keeps its identity', ()
   }
 })
 
-test('RTX HDR component copy preserves the local-only licensing boundary', () => {
+test('RTX HDR component copy explains how to resolve missing files', () => {
   for (const locale of ['en', 'zh']) {
     const text = rtxHdrMessages[locale]
     assert.ok(text.title.includes('RTX HDR'))
-    assert.match(text.boundary, /不会下载|does not download/)
-    assert.match(text.securityHint, /不会再分发|not redistributed/)
-    assert.match(text.securityHint, /不会在 GUI 进程内执行|does not execute selected DLLs/)
+    assert.match(text.acquisitionDescription, /nvngx_truehdr\.dll/)
+    assert.match(text.bridgeMissingNotice, /重新安装|reinstall/)
+    assert.match(text.runtimeMissingNotice, /nvngx_truehdr\.dll/)
+    assert.equal(text.ownershipTitle, undefined)
+    assert.equal(text.securityTitle, undefined)
   }
 })
 

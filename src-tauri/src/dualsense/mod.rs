@@ -24,9 +24,7 @@ pub(crate) use install::ensure_pinned_usbip;
 #[cfg(target_os = "windows")]
 pub(crate) use packages::{UsbipInstallResult, component_root};
 #[cfg(target_os = "windows")]
-pub(crate) use probe::{
-    ensure_no_active_session, installed_usbip_version, usbip_uninstall_entries,
-};
+pub(crate) use probe::ensure_no_active_session;
 
 #[cfg(test)]
 pub(crate) use {
@@ -49,7 +47,7 @@ pub(crate) use {
     },
     probe::{
         component_is_verified, component_state, component_test_failure, local_uninstalled_status,
-        pinned_usbip_installed, run_with_timeout, validate_requested_profile,
+        run_with_timeout, usbip_discovery_status, validate_requested_profile,
     },
 };
 
@@ -73,11 +71,6 @@ pub(crate) const HIDMAESTRO_URL: &str =
     "https://github.com/hifihedgehog/HIDMaestro/releases/download/v1.6.2/HIDMaestro-v1.6.2.zip";
 pub(crate) const HIDMAESTRO_SHA256: &str =
     "6ae8df0cf317baf7e65777e2929f618916a67831b5ff1162205310f2c08b80ff";
-pub(crate) const USBIP_VERSION: &str = "0.9.7.7";
-pub(crate) const USBIP_URL: &str =
-    "https://github.com/vadimgrn/usbip-win2/releases/download/v.0.9.7.7/USBip-0.9.7.7-x64.exe";
-pub(crate) const USBIP_SHA256: &str =
-    "51620fa5f9f8be5932bc9d786deee557ce06d5407a99cab490dcfac71f185fea";
 pub(crate) const MAX_ARCHIVE_BYTES: u64 = 160 * 1024 * 1024;
 pub(crate) const MAX_USBIP_INSTALLER_BYTES: u64 = 48 * 1024 * 1024;
 pub(crate) const MAX_EXTRACTED_BYTES: u64 = 200 * 1024 * 1024;

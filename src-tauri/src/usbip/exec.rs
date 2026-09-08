@@ -1,90 +1,19 @@
 //! Locates the pinned transport and runs `usbip.exe`, parsing its output.
 
 use super::{
-    COMMAND_TIMEOUT, DEFAULT_TCP_PORT, MAX_OUTPUT_BYTES, PINNED_VERSION, UsbipAttachedDevice,
+    COMMAND_TIMEOUT, DEFAULT_TCP_PORT, MAX_OUTPUT_BYTES, MINIMUM_VERSION, UsbipAttachedDevice,
     UsbipRemoteDevice, validate_bus_id,
 };
-#[cfg(target_os = "windows")]
-use super::UsbipInstallation;
-
-#[cfg(target_os = "windows")]
-pub(super) fn find_installation() -> Result<UsbipInstallation, String> {
-    let mut fallback = None;
-    let mut last_error = None;
-    for entry in crate::dualsense::usbip_uninstall_entries() {
-        let version = entry
-            .key
-            .get_value::<String, _>("DisplayVersion")
-            .unwrap_or_else(|_| {
-                entry
-                    .display_name
-                    .trim_start_matches("USBip version ")
-                    .to_string()
-            });
-        let candidate = (|| -> Result<UsbipInstallation, String> {
-            let install_location =
-                entry
-                    .key
-                    .get_value::<String, _>("InstallLocation")
-                    .map_err(|_| {
-                        "USBIP-SETUP-002: USB/IP install location is missing".to_string()
-                    })?;
-            let root = std::path::PathBuf::from(install_location)
-                .canonicalize()
-                .map_err(|error| {
-                    format!("USBIP-SETUP-002: USB/IP install location is invalid: {error}")
-                })?;
-            let executable = root.join("usbip.exe").canonicalize().map_err(|error| {
-                format!(
-                    "USBIP-SETUP-002: usbip.exe is missing from the installed transport: {error}"
-                )
-            })?;
-            if !executable.starts_with(&root)
-                || !executable
-                    .file_name()
-                    .is_some_and(|name| name.eq_ignore_ascii_case("usbip.exe"))
-            {
-                return Err(
-                    "USBIP-SETUP-002: the installed USB/IP executable path is unsafe".to_string(),
-                );
-            }
-            Ok(UsbipInstallation {
-                version,
-                executable,
-            })
-        })();
-        match candidate {
-            Ok(installation) if installation.version == PINNED_VERSION => {
-                return Ok(installation);
-            }
-            Ok(installation) => {
-                fallback.get_or_insert(installation);
-            }
-            Err(error) => {
-                last_error = Some(error);
-            }
-        }
-    }
-    fallback.map_or_else(
-        || {
-            Err(last_error.unwrap_or_else(|| {
-                "USBIP-SETUP-001: USB/IP transport is not installed".to_string()
-            }))
-        },
-        Ok,
-    )
-}
-
 #[cfg(target_os = "windows")]
 pub(super) async fn run_usbip(arguments: Vec<String>) -> Result<std::process::Output, String> {
     use std::os::windows::process::CommandExt;
     use std::process::Stdio;
 
-    let installation = find_installation()?;
-    if installation.version != PINNED_VERSION {
+    let installation = super::manager::find_installation()?;
+    if !super::supported_usbip_installed(Some(&installation.version)) {
         return Err(format!(
-            "USBIP-SETUP-003: USB/IP {} is installed; version {} is required",
-            installation.version, PINNED_VERSION
+            "USBIP-SETUP-003: USB/IP {} is installed; version {} or newer is required",
+            installation.version, MINIMUM_VERSION
         ));
     }
     let mut command = tokio::process::Command::new(installation.executable);
@@ -171,7 +100,10 @@ fn command_text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).trim().to_string()
 }
 
-pub(super) fn require_success(output: std::process::Output, action: &str) -> Result<String, String> {
+pub(super) fn require_success(
+    output: std::process::Output,
+    action: &str,
+) -> Result<String, String> {
     if output.status.success() {
         return Ok(command_text(&output.stdout));
     }

@@ -61,6 +61,7 @@ beta = []
 
 [target.'cfg(windows)'.dependencies]
 tauri-winrt-notification = "0.7.3"
+clipboard-win = "5.4"
 windows = { version = "0.62.2", features = [
     "Win32",
     "Win32_Foundation",

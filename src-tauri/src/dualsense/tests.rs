@@ -14,7 +14,7 @@ use super::{
 use super::{
     ElevatedMessage, ElevatedOperation, MAX_ELEVATED_MESSAGE_BYTES, read_limited_elevated_line,
 };
-use crate::usbip::{USBIP_SHA256, pinned_usbip_installed};
+use crate::usbip::{USBIP_SHA256, supported_usbip_installed};
 use reqwest::header::HeaderValue;
 use std::io::Write as _;
 use std::process::Command;
@@ -638,10 +638,12 @@ fn offline_uninstall_status_is_locally_complete() {
 }
 
 #[test]
-fn usbip_requires_the_exact_pinned_version() {
-    assert!(pinned_usbip_installed(Some("0.9.7.7")));
-    assert!(!pinned_usbip_installed(Some("0.9.7.3")));
-    assert!(!pinned_usbip_installed(None));
+fn usbip_accepts_user_installed_versions_at_or_above_minimum() {
+    assert!(supported_usbip_installed(Some("0.9.7.7")));
+    assert!(supported_usbip_installed(Some("0.9.7.8")));
+    assert!(supported_usbip_installed(Some("0.9.7.10")));
+    assert!(!supported_usbip_installed(Some("0.9.7.3")));
+    assert!(!supported_usbip_installed(None));
 }
 
 #[cfg(target_os = "windows")]

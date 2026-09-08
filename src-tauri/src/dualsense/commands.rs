@@ -23,7 +23,7 @@ use super::{
     COMPONENT_OPERATION, DualSenseStatus, DualSenseTuningResult, MAX_LOCAL_COMPONENT_PACKAGES,
     observe_config_revision,
 };
-use crate::usbip::{installed_usbip_version, pinned_usbip_installed};
+use crate::usbip::{installed_usbip_version, supported_usbip_installed};
 
 #[tauri::command]
 pub async fn dualsense_set_haptics_tuning(
@@ -117,9 +117,9 @@ pub async fn dualsense_set_config(
         let probe = tokio::task::spawn_blocking(run_installed_probe)
             .await
             .map_err(|error| format!("DS5-PKG-003: sidecar probe task failed: {error}"))??;
-        let usbip_version = installed_usbip_version();
+        let usbip_version = installed_usbip_version()?;
         let usbip_available =
-            probe.usbip_available && pinned_usbip_installed(usbip_version.as_deref());
+            probe.usbip_available && supported_usbip_installed(usbip_version.as_deref());
         if genshin_compatibility && !probe.genshin_compatibility_identity {
             return Err(
                 "DS5-PROTO-001: the installed sidecar does not support Genshin compatibility mode"

@@ -1,7 +1,7 @@
 //! Locates the pinned transport and runs `usbip.exe`, parsing its output.
 
 use super::{
-    COMMAND_TIMEOUT, DEFAULT_TCP_PORT, MAX_OUTPUT_BYTES, PINNED_VERSION, UsbipAttachedDevice,
+    COMMAND_TIMEOUT, DEFAULT_TCP_PORT, MAX_OUTPUT_BYTES, MINIMUM_VERSION, UsbipAttachedDevice,
     UsbipRemoteDevice, validate_bus_id,
 };
 #[cfg(target_os = "windows")]
@@ -10,10 +10,10 @@ pub(super) async fn run_usbip(arguments: Vec<String>) -> Result<std::process::Ou
     use std::process::Stdio;
 
     let installation = super::manager::find_installation()?;
-    if installation.version != PINNED_VERSION {
+    if !super::supported_usbip_installed(Some(&installation.version)) {
         return Err(format!(
-            "USBIP-SETUP-003: USB/IP {} is installed; version {} is required",
-            installation.version, PINNED_VERSION
+            "USBIP-SETUP-003: USB/IP {} is installed; version {} or newer is required",
+            installation.version, MINIMUM_VERSION
         ));
     }
     let mut command = tokio::process::Command::new(installation.executable);
@@ -100,7 +100,10 @@ fn command_text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).trim().to_string()
 }
 
-pub(super) fn require_success(output: std::process::Output, action: &str) -> Result<String, String> {
+pub(super) fn require_success(
+    output: std::process::Output,
+    action: &str,
+) -> Result<String, String> {
     if output.status.success() {
         return Ok(command_text(&output.stdout));
     }

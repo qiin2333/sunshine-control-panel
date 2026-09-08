@@ -1,6 +1,6 @@
 //! Transport status probing.
 
-use super::{PINNED_VERSION, UsbipStatus};
+use super::{MINIMUM_VERSION, UsbipStatus};
 
 /// Spawns a `usbip.exe port` subprocess on every call to enumerate attached
 /// devices. Intended for on-demand refreshes — do not poll at high frequency.
@@ -25,17 +25,17 @@ pub async fn usbip_get_status() -> Result<UsbipStatus, String> {
         // report a clean transport. Propagating the error surfaces the probe
         // as unavailable, hiding install and attach actions.
         let interfaces = super::device::enumerate_vhci_interfaces()?;
-        let devnodes = super::device::enumerate_vhci_devnodes();
+        let devnodes = super::device::enumerate_vhci_devnodes()?;
         let installation = match super::manager::find_installation() {
             Ok(installation) => installation,
             Err(detail) => {
                 let registered_version = super::installed_usbip_version();
-                let partially_installed = registered_version.is_some();
+                let partially_installed = !matches!(registered_version, Ok(None));
                 return Ok(UsbipStatus {
                     supported: true,
                     installed: partially_installed,
                     ready: false,
-                    version: registered_version.unwrap_or_default(),
+                    version: registered_version.ok().flatten().unwrap_or_default(),
                     version_valid: false,
                     reboot_recommended: false,
                     // A registration without a usable executable is also a
@@ -48,8 +48,8 @@ pub async fn usbip_get_status() -> Result<UsbipStatus, String> {
                 });
             }
         };
-        let version_valid = installation.version == PINNED_VERSION;
-        let vhci_residual = interfaces.len() > 1;
+        let version_valid = super::supported_usbip_installed(Some(&installation.version));
+        let vhci_residual = super::device::has_vhci_residual(&interfaces, &devnodes);
         if !version_valid {
             return Ok(UsbipStatus {
                 supported: true,
@@ -60,7 +60,7 @@ pub async fn usbip_get_status() -> Result<UsbipStatus, String> {
                 reboot_recommended: false,
                 vhci_residual,
                 attached_devices: Vec::new(),
-                detail: format!("USB/IP {PINNED_VERSION} is required"),
+                detail: format!("USB/IP {MINIMUM_VERSION} or newer is required"),
             });
         }
         match super::exec::list_attached().await {

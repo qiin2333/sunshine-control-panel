@@ -13,7 +13,7 @@ use super::packages::{
     installed_component_manifest, sidecar_path, validate_sidecar_integrity,
 };
 use super::{COMPONENT_VERSION, DualSenseStatus, PROTOCOL_VERSION, observe_config_revision};
-use crate::usbip::{installed_usbip_version, pinned_usbip_installed};
+use crate::usbip::{installed_usbip_version, supported_usbip_installed};
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
@@ -306,7 +306,7 @@ pub(crate) async fn ensure_no_active_session_for_uninstall() -> Result<(), Strin
 }
 
 pub(crate) fn local_uninstalled_status() -> DualSenseStatus {
-    let usbip_version = installed_usbip_version().unwrap_or_default();
+    let usbip_version = installed_usbip_version().ok().flatten().unwrap_or_default();
     DualSenseStatus {
         state: "not_installed".to_string(),
         installed: false,
@@ -328,7 +328,7 @@ pub(crate) fn local_uninstalled_status() -> DualSenseStatus {
         sidecar_path: sidecar_path().to_string_lossy().to_string(),
         driver_installed: false,
         usbip_available: false,
-        usbip_version_valid: pinned_usbip_installed(Some(usbip_version.as_str())),
+        usbip_version_valid: supported_usbip_installed(Some(usbip_version.as_str())),
         usbip_version,
         reboot_recommended: false,
         standard_profile: false,
@@ -402,8 +402,8 @@ pub(crate) async fn dualsense_get_status_with_config(
             .to_string();
         detail = config_error;
     }
-    let usbip_version = installed_usbip_version().unwrap_or_default();
-    let usbip_version_valid = pinned_usbip_installed(Some(usbip_version.as_str()));
+    let usbip_version = installed_usbip_version().ok().flatten().unwrap_or_default();
+    let usbip_version_valid = supported_usbip_installed(Some(usbip_version.as_str()));
     let usbip_available = result.usbip_available && usbip_version_valid;
     let manifest = installed.then(installed_component_manifest).flatten();
     let update_available = installed && component_update_available(manifest.as_ref());

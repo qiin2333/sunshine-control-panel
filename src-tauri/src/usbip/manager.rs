@@ -6,6 +6,7 @@
 //! transport underneath the other.
 
 pub(crate) const PINNED_VERSION: &str = "0.9.7.7";
+pub(super) const MINIMUM_VERSION: &str = "0.9.7.7";
 pub(crate) const INSTALLER_URL: &str =
     "https://github.com/vadimgrn/usbip-win2/releases/download/v.0.9.7.7/USBip-0.9.7.7-x64.exe";
 pub(crate) const INSTALLER_SHA256: &str =
@@ -17,15 +18,15 @@ pub(crate) enum InstallDisposition {
     Install,
 }
 
-/// Installing a different release invokes usbip-win2's system-wide upgrade or
-/// downgrade path. That can tear down devices owned by either feature and has
-/// left duplicate VHCI nodes in practice, so replacement is always explicit:
-/// clean the shared transport first, then install the pinned release.
+/// Automatic downloads remain pinned, but a user's newer installation is reused.
+/// Replacing an unsupported installation requires explicit shared cleanup.
 pub(crate) fn install_disposition(
     installed_version: Option<&str>,
 ) -> Result<InstallDisposition, String> {
     match installed_version {
-        Some(PINNED_VERSION) => Ok(InstallDisposition::Ready),
+        Some(version) if supported_version_installed(Some(version)) => {
+            Ok(InstallDisposition::Ready)
+        }
         None => Ok(InstallDisposition::Install),
         Some(version) => Err(format!(
             "USBIP-SETUP-008: USB/IP {version} is installed; clean the shared transport before installing {PINNED_VERSION}"
@@ -33,8 +34,51 @@ pub(crate) fn install_disposition(
     }
 }
 
-pub(crate) fn pinned_version_installed(installed_version: Option<&str>) -> bool {
-    installed_version == Some(PINNED_VERSION)
+pub(crate) fn supported_version_installed(installed_version: Option<&str>) -> bool {
+    installed_version
+        .and_then(parse_version)
+        .is_some_and(|version| {
+            version >= parse_version(MINIMUM_VERSION).expect("valid minimum USB/IP version")
+        })
+}
+
+fn parse_version(value: &str) -> Option<[u32; 4]> {
+    let components: Vec<_> = value.split('.').collect();
+    if components.len() != 4 {
+        return None;
+    }
+    let mut version = [0; 4];
+    for (index, component) in components.iter().enumerate() {
+        if component.is_empty() || !component.bytes().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        version[index] = component.parse().ok()?;
+    }
+    Some(version)
+}
+
+fn consistent_version(
+    versions: impl IntoIterator<Item = String>,
+) -> Result<Option<String>, String> {
+    let mut found: Option<String> = None;
+    for value in versions {
+        let parsed = parse_version(&value).ok_or_else(|| {
+            "USBIP-SETUP-008: invalid USB/IP registration; clean the shared transport first"
+                .to_string()
+        })?;
+        if found
+            .as_deref()
+            .and_then(parse_version)
+            .is_some_and(|previous| previous != parsed)
+        {
+            return Err(
+                "USBIP-SETUP-008: conflicting USB/IP versions; clean the shared transport first"
+                    .to_string(),
+            );
+        }
+        found.get_or_insert(value);
+    }
+    Ok(found)
 }
 
 #[cfg(target_os = "windows")]
@@ -44,7 +88,7 @@ pub(crate) struct UninstallEntry {
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn uninstall_entries() -> Vec<UninstallEntry> {
+pub(crate) fn uninstall_entries() -> Result<Vec<UninstallEntry>, String> {
     use winreg::RegKey;
     use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY};
 
@@ -52,12 +96,27 @@ pub(crate) fn uninstall_entries() -> Vec<UninstallEntry> {
     let uninstall = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
     let mut entries = Vec::new();
     for view in [KEY_READ | KEY_WOW64_64KEY, KEY_READ | KEY_WOW64_32KEY] {
-        let Ok(root) = hklm.open_subkey_with_flags(uninstall, view) else {
-            continue;
+        let root = match hklm.open_subkey_with_flags(uninstall, view) {
+            Ok(root) => root,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!(
+                    "USBIP-SETUP-002: cannot inspect uninstall registry: {error}"
+                ));
+            }
         };
-        for name in root.enum_keys().flatten() {
-            let Ok(key) = root.open_subkey_with_flags(&name, view) else {
-                continue;
+        for name in root.enum_keys() {
+            let name = name.map_err(|error| {
+                format!("USBIP-SETUP-002: cannot enumerate uninstall registry: {error}")
+            })?;
+            let key = match root.open_subkey_with_flags(&name, view) {
+                Ok(key) => key,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(format!(
+                        "USBIP-SETUP-002: cannot inspect uninstall entry: {error}"
+                    ));
+                }
             };
             let display_name = key
                 .get_value::<String, _>("DisplayName")
@@ -67,26 +126,30 @@ pub(crate) fn uninstall_entries() -> Vec<UninstallEntry> {
             }
         }
     }
-    entries
+    Ok(entries)
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn installed_version() -> Option<String> {
-    for entry in uninstall_entries() {
-        if let Ok(version) = entry.key.get_value::<String, _>("DisplayVersion") {
-            return Some(version);
-        }
-        return entry
-            .display_name
-            .strip_prefix("USBip version ")
-            .map(str::to_string);
-    }
-    None
+pub(crate) fn installed_version() -> Result<Option<String>, String> {
+    consistent_version(uninstall_entries()?.iter().map(entry_version))
+}
+
+#[cfg(target_os = "windows")]
+fn entry_version(entry: &UninstallEntry) -> String {
+    entry
+        .key
+        .get_value::<String, _>("DisplayVersion")
+        .unwrap_or_else(|_| {
+            entry
+                .display_name
+                .trim_start_matches("USBip version ")
+                .to_string()
+        })
 }
 
 #[cfg(not(target_os = "windows"))]
-pub(crate) fn installed_version() -> Option<String> {
-    None
+pub(crate) fn installed_version() -> Result<Option<String>, String> {
+    Ok(None)
 }
 
 #[cfg(target_os = "windows")]
@@ -98,18 +161,11 @@ pub(super) struct Installation {
 
 #[cfg(target_os = "windows")]
 pub(super) fn find_installation() -> Result<Installation, String> {
-    let mut fallback = None;
-    let mut last_error = None;
-    for entry in uninstall_entries() {
-        let version = entry
-            .key
-            .get_value::<String, _>("DisplayVersion")
-            .unwrap_or_else(|_| {
-                entry
-                    .display_name
-                    .trim_start_matches("USBip version ")
-                    .to_string()
-            });
+    let entries = uninstall_entries()?;
+    let version = consistent_version(entries.iter().map(entry_version))?
+        .ok_or_else(|| "USBIP-SETUP-001: USB/IP transport is not installed".to_string())?;
+    let mut installation = None;
+    for entry in entries {
         let candidate = (|| -> Result<Installation, String> {
             let install_location = entry
                 .key
@@ -135,28 +191,15 @@ pub(super) fn find_installation() -> Result<Installation, String> {
                 );
             }
             Ok(Installation {
-                version,
+                version: version.clone(),
                 executable,
             })
         })();
-        match candidate {
-            Ok(installation) if installation.version == PINNED_VERSION => {
-                return Ok(installation);
-            }
-            Ok(installation) => {
-                fallback.get_or_insert(installation);
-            }
-            Err(error) => last_error = Some(error),
-        }
+        // A valid registration must not hide another broken registration.
+        let candidate = candidate?;
+        installation.get_or_insert(candidate);
     }
-    fallback.map_or_else(
-        || {
-            Err(last_error.unwrap_or_else(|| {
-                "USBIP-SETUP-001: USB/IP transport is not installed".to_string()
-            }))
-        },
-        Ok,
-    )
+    installation.ok_or_else(|| "USBIP-SETUP-001: USB/IP transport is not installed".to_string())
 }
 
 #[cfg(test)]
@@ -173,6 +216,46 @@ mod tests {
             install_disposition(None).unwrap(),
             InstallDisposition::Install
         );
-        assert!(install_disposition(Some("0.9.7.8")).is_err());
+        assert_eq!(
+            install_disposition(Some("0.9.7.8")).unwrap(),
+            InstallDisposition::Ready
+        );
+        assert!(install_disposition(Some("0.9.7.6")).is_err());
+    }
+
+    #[test]
+    fn supported_versions_are_compared_numerically() {
+        for version in ["0.9.7.7", "0.9.7.8", "0.9.7.10", "0.10.0.0", "1.0.0.0"] {
+            assert!(supported_version_installed(Some(version)), "{version}");
+        }
+        for version in [
+            "0.9.7.6",
+            "0.8.99.99",
+            "",
+            "0.9.7",
+            "0.9.7.8-beta",
+            "0.9.7.+8",
+            "0.9.7.4294967296",
+        ] {
+            assert!(!supported_version_installed(Some(version)), "{version}");
+        }
+        assert!(!supported_version_installed(None));
+    }
+
+    #[test]
+    fn all_registrations_must_agree_regardless_of_order() {
+        for versions in [
+            vec!["0.9.7.7", "0.9.7.8"],
+            vec!["0.9.7.8", "0.9.7.7"],
+            vec!["0.9.7.7", ""],
+            vec!["bad", "0.9.7.8"],
+        ] {
+            assert!(consistent_version(versions.into_iter().map(str::to_string)).is_err());
+        }
+        assert_eq!(
+            consistent_version(["0.9.7.8".into(), "0.9.7.8".into()]).unwrap(),
+            Some("0.9.7.8".into())
+        );
+        assert_eq!(consistent_version(Vec::new()).unwrap(), None);
     }
 }

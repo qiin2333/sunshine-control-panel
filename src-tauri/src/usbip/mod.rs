@@ -13,7 +13,7 @@ mod status;
 
 use serde::{Deserialize, Serialize};
 
-use manager::PINNED_VERSION;
+use manager::MINIMUM_VERSION;
 const DEFAULT_TCP_PORT: u16 = 3240;
 const MAX_OUTPUT_BYTES: usize = 256 * 1024;
 const MAX_ELEVATED_RESPONSE_BYTES: usize = 16 * 1024;
@@ -95,12 +95,13 @@ struct ElevatedResponse {
     message: String,
 }
 
+#[cfg(target_os = "windows")]
+pub(crate) use manager::uninstall_entries as usbip_uninstall_entries;
 pub(crate) use manager::{
     INSTALLER_SHA256 as USBIP_SHA256, INSTALLER_URL as USBIP_URL, InstallDisposition,
     PINNED_VERSION as USBIP_VERSION, install_disposition,
     installed_version as installed_usbip_version,
-    pinned_version_installed as pinned_usbip_installed,
-    uninstall_entries as usbip_uninstall_entries,
+    supported_version_installed as supported_usbip_installed,
 };
 
 fn validate_remote(remote: &str) -> Result<String, String> {
@@ -193,7 +194,7 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[tokio::test]
-    #[ignore = "requires the pinned USB/IP transport on the local Windows host"]
+    #[ignore = "requires a supported USB/IP transport on the local Windows host"]
     async fn installed_transport_reports_ready() {
         let status = usbip_get_status().await.unwrap();
         assert!(status.installed);
@@ -203,7 +204,7 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[tokio::test]
-    #[ignore = "requires the pinned USB/IP transport on the local Windows host"]
+    #[ignore = "requires a supported USB/IP transport on the local Windows host"]
     async fn unreachable_exporter_fails_cleanly() {
         let error = usbip_list_remote("127.0.0.1".to_string(), Some(43241))
             .await
@@ -213,7 +214,7 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[tokio::test]
-    #[ignore = "requires the pinned USB/IP transport on the local Windows host"]
+    #[ignore = "requires a supported USB/IP transport on the local Windows host"]
     async fn discovers_a_device_from_a_standard_usbip_exporter() {
         use std::io::{Read, Write};
 

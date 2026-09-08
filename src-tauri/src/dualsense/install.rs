@@ -327,8 +327,15 @@ pub(crate) async fn ensure_pinned_usbip(
     component_root: &Path,
     local_installer: Option<&Path>,
 ) -> Result<UsbipInstallResult, String> {
-    match install_disposition(installed_usbip_version().as_deref())? {
+    match install_disposition(installed_usbip_version()?.as_deref())? {
         InstallDisposition::Ready => {
+            let status = crate::usbip::usbip_get_status().await?;
+            if !status.ready {
+                return Err(format!(
+                    "USBIP-SETUP-008: existing USB/IP transport needs repair before reuse: {}",
+                    status.detail
+                ));
+            }
             return Ok(UsbipInstallResult::Ready);
         }
         InstallDisposition::Install => {}
@@ -393,7 +400,7 @@ pub(crate) async fn ensure_pinned_usbip(
             }
         })?;
         let install_result = classify_usbip_installer_exit_code(output.status.code())?;
-        if installed_usbip_version().as_deref() != Some(USBIP_VERSION) {
+        if installed_usbip_version()?.as_deref() != Some(USBIP_VERSION) {
             return Err(format!(
                 "DS5-DRV-001: USB/IP installer completed but version {USBIP_VERSION} is not registered"
             ));

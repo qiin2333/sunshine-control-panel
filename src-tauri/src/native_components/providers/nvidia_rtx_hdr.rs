@@ -108,7 +108,9 @@ fn build_status(
         .get(NVIDIA_RTX_VIDEO_ID)
         .map(|value| value.version.as_str());
     let directory = component_root();
-    let manifest = version.and_then(|_| read_manifest(&directory));
+    let manifest = version.and_then(|version| {
+        read_manifest(&directory).filter(|manifest| manifest.component_id == version)
+    });
     let bridge = directory.join(BRIDGE_FILE);
     let bridge_present = bridge.is_file();
     let runtime_present = directory.join(RUNTIME_FILE).is_file();

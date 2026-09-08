@@ -155,9 +155,16 @@ struct EchoEntry {
     expires: Instant,
 }
 
+#[derive(Clone, Copy)]
+struct ImageEchoEntry {
+    hash: u64,
+    expires: Instant,
+}
+
 #[derive(Default)]
 struct EchoState {
     recent: VecDeque<EchoEntry>,
+    recent_images: VecDeque<ImageEchoEntry>,
 }
 
 impl EchoState {
@@ -178,6 +185,22 @@ impl EchoState {
         let h = hash_payload(payload);
         self.recent.iter().any(|e| e.kind == kind && e.hash == h)
     }
+
+    fn record_image(&mut self, hash: u64) {
+        if self.recent_images.len() >= 16 {
+            self.recent_images.pop_front();
+        }
+        self.recent_images.push_back(ImageEchoEntry {
+            hash,
+            expires: Instant::now() + ECHO_TTL,
+        });
+    }
+
+    fn is_image_echo(&mut self, hash: u64) -> bool {
+        let now = Instant::now();
+        self.recent_images.retain(|e| e.expires > now);
+        self.recent_images.iter().any(|e| e.hash == hash)
+    }
 }
 
 fn hash_payload(bytes: &[u8]) -> u64 {
@@ -186,6 +209,20 @@ fn hash_payload(bytes: &[u8]) -> u64 {
     let mut h = DefaultHasher::new();
     bytes.hash(&mut h);
     h.finish()
+}
+
+/// Pixel identity of an image. The platform clipboard re-encodes image data
+/// on every write/read round trip (Windows stores CF_DIB and macOS
+/// synthesizes new flavors), so payload bytes are not a stable echo key for
+/// images; pixels survive those lossless conversions.
+fn hash_image_pixels(img: &RustImageData) -> Option<u64> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash as _, Hasher as _};
+    let rgba = img.to_rgba8().ok()?;
+    let mut h = DefaultHasher::new();
+    rgba.dimensions().hash(&mut h);
+    rgba.as_raw().hash(&mut h);
+    Some(h.finish())
 }
 
 #[derive(Default)]
@@ -271,6 +308,57 @@ fn snapshot_and_post(echo: &Arc<Mutex<EchoState>>) {
         }
     };
 
+    // Image takes precedence: browsers and IM clients attach a fallback text
+    // label (source URL, file path, alt text) alongside a copied bitmap, and
+    // the old text-first order sent that label instead of the picture — or
+    // aborted the snapshot entirely on an empty text flavor. Extract the
+    // bitmap first, mirroring the Qt client's extraction order so both ends
+    // agree on what a mixed clipboard means.
+    if let Ok(files) = ctx.get_files() {
+        // Explorer file copies may include a thumbnail/icon bitmap; the
+        // protocol cannot carry file references, so skip the snapshot rather
+        // than sync (and later echo-replace) the fallback image. Mirrors the
+        // Qt client's hasFileReferences() guard.
+        if !files.is_empty() {
+            debug!("local file clipboard detected; sync skipped");
+            return;
+        }
+    }
+
+    if let Ok(img) = ctx.get_image() {
+        let pixel_hash = hash_image_pixels(&img);
+        let png = match img.to_png() {
+            Ok(p) => p,
+            Err(e) => {
+                debug!("clipboard image to_png failed: {e}");
+                return;
+            }
+        };
+        let bytes = png.get_bytes().to_vec();
+        if bytes.len() > MAX_IMAGE_BYTES {
+            warn!(
+                "local clipboard png {}B exceeds {}B cap; dropped",
+                bytes.len(),
+                MAX_IMAGE_BYTES
+            );
+            return;
+        }
+        {
+            let mut st = echo.lock().unwrap();
+            if st.is_echo(Kind::Png, &bytes) {
+                return;
+            }
+            if let Some(h) = pixel_hash {
+                if st.is_image_echo(h) {
+                    return;
+                }
+                st.record_image(h);
+            }
+        }
+        post_outbound(Kind::Png, bytes, MIME_PNG);
+        return;
+    }
+
     if let Ok(text) = ctx.get_text() {
         if text.is_empty() {
             return;
@@ -288,30 +376,6 @@ fn snapshot_and_post(echo: &Arc<Mutex<EchoState>>) {
             return;
         }
         post_outbound(Kind::Text, bytes, MIME_TEXT);
-        return;
-    }
-
-    if let Ok(img) = ctx.get_image() {
-        let png = match img.to_png() {
-            Ok(p) => p,
-            Err(e) => {
-                debug!("clipboard image to_png failed: {e}");
-                return;
-            }
-        };
-        let bytes = png.get_bytes().to_vec();
-        if bytes.len() > MAX_IMAGE_BYTES {
-            warn!(
-                "local clipboard png {}B exceeds {}B cap; dropped",
-                bytes.len(),
-                MAX_IMAGE_BYTES
-            );
-            return;
-        }
-        if echo.lock().unwrap().is_echo(Kind::Png, &bytes) {
-            return;
-        }
-        post_outbound(Kind::Png, bytes, MIME_PNG);
     }
 }
 
@@ -527,6 +591,18 @@ async fn apply_inbound_ref(frame: Frame, echo: Arc<Mutex<EchoState>>) {
 }
 
 fn apply_inbound_inline(frame: Frame, echo: &Arc<Mutex<EchoState>>) {
+    // Preserve a local file clipboard: Explorer/Finder copies can carry a
+    // thumbnail image, and overwriting them with remote content would
+    // destroy the pending file paste. Mirrors the Qt client's guard.
+    if let Ok(ctx) = ClipboardContext::new() {
+        if let Ok(files) = ctx.get_files() {
+            if !files.is_empty() {
+                debug!("local file clipboard detected; inbound dropped");
+                return;
+            }
+        }
+    }
+
     // Record BEFORE writing so the watcher sees the hash and suppresses.
     echo.lock().unwrap().record(frame.kind, &frame.payload);
 
@@ -572,6 +648,12 @@ fn apply_inbound_inline(frame: Frame, echo: &Arc<Mutex<EchoState>>) {
                     return;
                 }
             };
+            // Record the pixel identity alongside the payload hash recorded
+            // above: after set_image the platform re-encodes the bitmap and
+            // the watcher's payload bytes no longer match, but pixels do.
+            if let Some(h) = hash_image_pixels(&img) {
+                echo.lock().unwrap().record_image(h);
+            }
             if let Err(e) = ctx.set_image(img) {
                 warn!("inbound set_image failed: {e}");
             }

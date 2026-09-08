@@ -21,22 +21,34 @@
 //! transferred out-of-band over HTTPS (`/api/v1/clipboard/blob[/<id>]`) so we
 //! can move payloads larger than the single-packet 65 KB wire ceiling.
 //!
+//! Compound clipboard (no wire-format change): a clipboard change carrying
+//! BOTH text and an image is emitted as two consecutive frames sharing a
+//! non-zero token, text frame first, image frame second. Peers without
+//! aggregation apply the frames in order and end with the image — the exact
+//! v1 outcome — so no version negotiation is needed. This agent applies each
+//! frame as it arrives (zero added latency) and retains the text payload;
+//! when the image lands — inline or after its REF blob fetch — the clipboard
+//! is upgraded with one compound write carrying both flavors. Single-flavor
+//! changes keep the legacy token=0 single frame. Burst text is always inline
+//! (a REF text frame would race the image frame onto the wire and flip
+//! legacy peers' final state to text); the image frame may still use REF.
+//!
 //! Echo suppression: every locally-applied inbound payload's hash is recorded
 //! before we touch the clipboard; the watcher's resulting on_clipboard_change
 //! sees the matching hash and drops the candidate, breaking the otherwise
 //! infinite write→watch→post→write loop.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{
-    Arc, Mutex,
     atomic::{AtomicBool, AtomicI64, AtomicU8, Ordering},
+    Arc, Mutex,
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use clipboard_rs::{
-    Clipboard, ClipboardContext, ClipboardHandler, ClipboardWatcher, ClipboardWatcherContext,
-    RustImageData, WatcherShutdown, common::RustImage as _,
+    common::RustImage as _, Clipboard, ClipboardContext, ClipboardHandler, ClipboardWatcher,
+    ClipboardWatcherContext, RustImageData, WatcherShutdown,
 };
 use log::{debug, info, warn};
 use serde::Serialize;
@@ -59,6 +71,16 @@ const MAX_IMAGE_PIXELS: u64 = 32 * 1024 * 1024;
 /// to out-of-band blob transfer (KIND_REF). Single-packet wire ceiling is
 /// ~65525 bytes of payload, so 60000 leaves comfortable headroom.
 const INLINE_THRESHOLD: usize = 60_000;
+
+/// The service rejects /item bodies above 65500 bytes; a burst text frame
+/// (10-byte header + payload) must stay inline, so larger text degrades the
+/// change to image-only rather than racing a REF text frame.
+const BURST_TEXT_MAX_INLINE: usize = 65_490;
+
+/// How long burst text stays retained after its frame applied — purely a
+/// memory bound; application is immediate on arrival (see module docs).
+const BURST_RETENTION: Duration = Duration::from_secs(5);
+const MAX_PENDING_BURSTS: usize = 32;
 
 const MIME_TEXT: &str = "text/plain; charset=utf-8";
 const MIME_PNG: &str = "image/png";
@@ -155,9 +177,16 @@ struct EchoEntry {
     expires: Instant,
 }
 
+#[derive(Clone, Copy)]
+struct ImageEchoEntry {
+    hash: u64,
+    expires: Instant,
+}
+
 #[derive(Default)]
 struct EchoState {
     recent: VecDeque<EchoEntry>,
+    recent_images: VecDeque<ImageEchoEntry>,
 }
 
 impl EchoState {
@@ -178,6 +207,22 @@ impl EchoState {
         let h = hash_payload(payload);
         self.recent.iter().any(|e| e.kind == kind && e.hash == h)
     }
+
+    fn record_image(&mut self, hash: u64) {
+        if self.recent_images.len() >= 16 {
+            self.recent_images.pop_front();
+        }
+        self.recent_images.push_back(ImageEchoEntry {
+            hash,
+            expires: Instant::now() + ECHO_TTL,
+        });
+    }
+
+    fn is_image_echo(&mut self, hash: u64) -> bool {
+        let now = Instant::now();
+        self.recent_images.retain(|e| e.expires > now);
+        self.recent_images.iter().any(|e| e.hash == hash)
+    }
 }
 
 fn hash_payload(bytes: &[u8]) -> u64 {
@@ -186,6 +231,20 @@ fn hash_payload(bytes: &[u8]) -> u64 {
     let mut h = DefaultHasher::new();
     bytes.hash(&mut h);
     h.finish()
+}
+
+/// Pixel identity of an image. The platform clipboard re-encodes image data
+/// on every write/read round trip (Windows stores CF_DIB and macOS
+/// synthesizes new flavors), so payload bytes are not a stable echo key for
+/// images; pixels survive those lossless conversions.
+fn hash_image_pixels(img: &RustImageData) -> Option<u64> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash as _, Hasher as _};
+    let rgba = img.to_rgba8().ok()?;
+    let mut h = DefaultHasher::new();
+    rgba.dimensions().hash(&mut h);
+    rgba.as_raw().hash(&mut h);
+    Some(h.finish())
 }
 
 #[derive(Default)]
@@ -271,48 +330,170 @@ fn snapshot_and_post(echo: &Arc<Mutex<EchoState>>) {
         }
     };
 
-    if let Ok(text) = ctx.get_text() {
-        if text.is_empty() {
+    // A mixed clipboard (image + fallback text label from browsers/IM, or a
+    // genuinely compound copy) is emitted as a compound burst: text frame
+    // first, image second, one shared non-zero token. Peers without
+    // aggregation apply the frames in order and keep the image — the exact
+    // v1 outcome. Single-flavor changes keep the legacy token=0 single frame.
+    if let Ok(files) = ctx.get_files() {
+        // Explorer file copies may include a thumbnail/icon bitmap; the
+        // protocol cannot carry file references, so skip the snapshot rather
+        // than sync (and later echo-replace) the fallback image. Mirrors the
+        // Qt client's hasFileReferences() guard.
+        if !files.is_empty() {
+            debug!("local file clipboard detected; sync skipped");
             return;
         }
-        let bytes = text.into_bytes();
-        if bytes.len() > MAX_TEXT_BYTES {
-            warn!(
-                "local clipboard text {}B exceeds {}B cap; dropped",
-                bytes.len(),
-                MAX_TEXT_BYTES
-            );
-            return;
-        }
-        if echo.lock().unwrap().is_echo(Kind::Text, &bytes) {
-            return;
-        }
-        post_outbound(Kind::Text, bytes, MIME_TEXT);
-        return;
     }
 
-    if let Ok(img) = ctx.get_image() {
-        let png = match img.to_png() {
-            Ok(p) => p,
-            Err(e) => {
-                debug!("clipboard image to_png failed: {e}");
-                return;
+    let text = match ctx.get_text() {
+        Ok(t) if !t.is_empty() => Some(t),
+        _ => None,
+    };
+    let img = ctx.get_image().ok().filter(|i| !i.is_empty());
+    let png_bytes = img.as_ref().and_then(|i| match i.to_png() {
+        Ok(p) => {
+            let bytes = p.get_bytes().to_vec();
+            if bytes.is_empty() {
+                None
+            } else {
+                Some(bytes)
             }
-        };
-        let bytes = png.get_bytes().to_vec();
-        if bytes.len() > MAX_IMAGE_BYTES {
+        }
+        Err(e) => {
+            debug!("clipboard image to_png failed: {e}");
+            None
+        }
+    });
+    let pixel_hash = img.as_ref().and_then(hash_image_pixels);
+
+    if let Some(pb) = &png_bytes {
+        if pb.len() > MAX_IMAGE_BYTES {
             warn!(
                 "local clipboard png {}B exceeds {}B cap; dropped",
-                bytes.len(),
+                pb.len(),
                 MAX_IMAGE_BYTES
             );
             return;
         }
-        if echo.lock().unwrap().is_echo(Kind::Png, &bytes) {
+    }
+
+    let text_bytes = match text {
+        Some(t) => {
+            let bytes = t.into_bytes();
+            if bytes.len() > MAX_TEXT_BYTES {
+                warn!(
+                    "local clipboard text {}B exceeds {}B cap; dropped",
+                    bytes.len(),
+                    MAX_TEXT_BYTES
+                );
+                return;
+            }
+            Some(bytes)
+        }
+        None => None,
+    };
+
+    match (text_bytes, png_bytes) {
+        (Some(tb), Some(pb)) => {
+            if tb.len() > BURST_TEXT_MAX_INLINE {
+                // Burst text must stay inline (a REF text frame would race
+                // the image frame onto the wire and flip legacy peers'
+                // final state to text); degrade to image-only.
+                info!(
+                    "clipboard burst text {}B exceeds inline cap; sending image only",
+                    tb.len()
+                );
+                if !png_payload_is_echo(echo, &pb, pixel_hash) {
+                    post_outbound(Kind::Png, pb, MIME_PNG);
+                }
+                return;
+            }
+
+            let (text_echo, png_echo) = {
+                let mut st = echo.lock().unwrap();
+                let te = st.is_echo(Kind::Text, &tb);
+                let pe =
+                    st.is_echo(Kind::Png, &pb) || pixel_hash.map_or(false, |h| st.is_image_echo(h));
+                if !te {
+                    st.record(Kind::Text, &tb);
+                }
+                if !pe {
+                    if let Some(h) = pixel_hash {
+                        st.record_image(h);
+                    }
+                }
+                (te, pe)
+            };
+
+            match (text_echo, png_echo) {
+                (true, true) => {}
+                (true, false) => post_outbound(Kind::Png, pb, MIME_PNG),
+                (false, true) => post_outbound(Kind::Text, tb, MIME_TEXT),
+                (false, false) => post_burst(tb, pb),
+            }
+        }
+        (None, Some(pb)) => {
+            if !png_payload_is_echo(echo, &pb, pixel_hash) {
+                post_outbound(Kind::Png, pb, MIME_PNG);
+            }
+        }
+        (Some(tb), None) => {
+            if !echo.lock().unwrap().is_echo(Kind::Text, &tb) {
+                post_outbound(Kind::Text, tb, MIME_TEXT);
+            }
+        }
+        (None, None) => {}
+    }
+}
+
+/// Echo check for an outbound image payload (byte hash + pixel hash). The
+/// pixel hash is recorded when the payload passes so a delayed platform
+/// re-encode of the same image is still recognized as an echo.
+fn png_payload_is_echo(echo: &Arc<Mutex<EchoState>>, png: &[u8], pixel_hash: Option<u64>) -> bool {
+    let mut st = echo.lock().unwrap();
+    if st.is_echo(Kind::Png, png) {
+        return true;
+    }
+    if let Some(h) = pixel_hash {
+        if st.is_image_echo(h) {
+            return true;
+        }
+        st.record_image(h);
+    }
+    false
+}
+
+/// Emit a compound burst: one spawned task posting the text frame and then
+/// the image frame with sequential awaits — two independent HTTP POSTs have
+/// no ordering guarantee, and legacy peers rely on text-first ordering to
+/// end with the image.
+fn post_burst(text: Vec<u8>, png: Vec<u8>) {
+    let token = next_token();
+    tauri::async_runtime::spawn(async move {
+        let text_frame = encode_frame(&Frame {
+            kind: Kind::Text,
+            token,
+            payload: text,
+        });
+        if let Err(e) = post_item(text_frame).await {
+            warn!("clipboard burst text POST failed: {e}");
             return;
         }
-        post_outbound(Kind::Png, bytes, MIME_PNG);
-    }
+
+        if png.len() <= INLINE_THRESHOLD {
+            let frame = encode_frame(&Frame {
+                kind: Kind::Png,
+                token,
+                payload: png,
+            });
+            if let Err(e) = post_item(frame).await {
+                warn!("clipboard burst image POST failed: {e}");
+            }
+        } else if let Err(e) = upload_and_post_ref(png, MIME_PNG, token).await {
+            warn!("clipboard burst blob transfer failed: {e}");
+        }
+    });
 }
 
 /// Decide inline vs out-of-band based on payload size, then dispatch.
@@ -325,10 +506,11 @@ fn post_outbound(kind: Kind, payload: Vec<u8>, mime: &'static str) {
 }
 
 fn post_inline(kind: Kind, payload: Vec<u8>) {
-    let token = next_token();
+    // Single-flavor changes stay token=0: standalone frames apply
+    // immediately on aggregating peers and are never coalesced.
     let body = encode_frame(&Frame {
         kind,
-        token,
+        token: 0,
         payload,
     });
     tauri::async_runtime::spawn(async move {
@@ -339,40 +521,31 @@ fn post_inline(kind: Kind, payload: Vec<u8>) {
 }
 
 fn post_via_blob(kind: Kind, payload: Vec<u8>, mime: &'static str) {
-    let size = payload.len() as u64;
     tauri::async_runtime::spawn(async move {
-        let id = match upload_blob(payload, mime).await {
-            Ok(id) => id,
-            Err(e) => {
-                warn!(
-                    "clipboard blob upload failed (kind={:?}, size={}): {e}",
-                    kind, size
-                );
-                return;
-            }
-        };
-        let meta = RefMeta {
-            id,
-            mime: mime.to_string(),
-            size,
-        };
-        let json = match serde_json::to_vec(&meta) {
-            Ok(v) => v,
-            Err(e) => {
-                warn!("clipboard ref json encode failed: {e}");
-                return;
-            }
-        };
-        let token = next_token();
-        let body = encode_frame(&Frame {
-            kind: Kind::Ref,
-            token,
-            payload: json,
-        });
-        if let Err(e) = post_item(body).await {
-            warn!("clipboard /item POST (ref) failed: {e}");
+        if let Err(e) = upload_and_post_ref(payload, mime, 0).await {
+            warn!("clipboard blob upload failed (kind={:?}): {e}", kind);
         }
     });
+}
+
+/// Upload a payload as an out-of-band blob and post the KIND_REF descriptor
+/// frame. Used by single-flavor changes (token 0) and the image frame of a
+/// compound burst (the burst token, so aggregating peers can group it).
+async fn upload_and_post_ref(payload: Vec<u8>, mime: &str, token: u32) -> Result<(), String> {
+    let size = payload.len() as u64;
+    let id = upload_blob(payload, mime).await?;
+    let meta = RefMeta {
+        id,
+        mime: mime.to_string(),
+        size,
+    };
+    let json = serde_json::to_vec(&meta).map_err(|e| format!("ref json encode failed: {e}"))?;
+    let body = encode_frame(&Frame {
+        kind: Kind::Ref,
+        token,
+        payload: json,
+    });
+    post_item(body).await
 }
 
 fn next_token() -> u32 {
@@ -482,10 +655,75 @@ async fn fetch_blob(id: &str) -> Result<(Vec<u8>, String), String> {
 
 // ---------- Inbound apply ----------
 
-fn apply_inbound(frame: Frame, echo: &Arc<Mutex<EchoState>>) {
-    // Non-REF path is fully synchronous; REF path is dispatched by the caller
-    // onto the async runtime instead (see sse_pump).
-    apply_inbound_inline(frame, echo);
+/// Retained text payloads of in-flight compound bursts (frames sharing a
+/// non-zero token). Text applies on arrival; the image later upgrades the
+/// clipboard to one compound write using the retained bytes.
+static BURSTS: once_cell::sync::Lazy<Mutex<HashMap<u32, (Vec<u8>, Instant)>>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(HashMap::new()));
+
+fn prune_bursts(map: &mut HashMap<u32, (Vec<u8>, Instant)>) {
+    map.retain(|_, (_, ts)| ts.elapsed() < BURST_RETENTION);
+}
+
+fn retain_burst_text(token: u32, text: Vec<u8>) {
+    let mut map = BURSTS.lock().unwrap();
+    prune_bursts(&mut map);
+    if map.len() >= MAX_PENDING_BURSTS {
+        // Defensive bound against a pathological sender.
+        if let Some(oldest) = map.iter().min_by_key(|(_, (_, ts))| *ts).map(|(k, _)| *k) {
+            map.remove(&oldest);
+        }
+    }
+    map.insert(token, (text, Instant::now()));
+}
+
+fn take_burst_text(token: u32) -> Option<Vec<u8>> {
+    let mut map = BURSTS.lock().unwrap();
+    prune_bursts(&mut map);
+    map.remove(&token).map(|(text, _)| text)
+}
+
+/// Frames are applied synchronously here, in SSE stream order: the
+/// compound-upgrade logic relies on text-before-image processing, which
+/// per-frame spawns onto a thread pool cannot guarantee (and which, prior
+/// to this, could reorder plain v1 multi-frame applies too).
+fn handle_inbound_frame(frame: Frame, echo: &Arc<Mutex<EchoState>>) {
+    match frame.kind {
+        Kind::Ref => {
+            let echo = echo.clone();
+            tauri::async_runtime::spawn(async move {
+                apply_inbound_ref(frame, echo).await;
+            });
+        }
+        _ if frame.token == 0 => apply_inbound_inline(frame, echo),
+        Kind::Text => {
+            retain_burst_text(frame.token, frame.payload.clone());
+            apply_inbound_inline(frame, echo);
+        }
+        Kind::Png => {
+            let token = frame.token;
+            deliver_burst_png(token, &frame.payload, echo);
+        }
+        Kind::FileOffer => {
+            // Keep the legacy warn-and-drop path (apply_inbound_inline
+            // rejects file offers on the host agent).
+            apply_inbound_inline(frame, echo);
+        }
+    }
+}
+
+fn deliver_burst_png(token: u32, png: &[u8], echo: &Arc<Mutex<EchoState>>) {
+    match take_burst_text(token) {
+        Some(text) => apply_compound(&text, png, echo),
+        None => apply_inbound_inline(
+            Frame {
+                kind: Kind::Png,
+                token,
+                payload: png.to_vec(),
+            },
+            echo,
+        ),
+    }
 }
 
 async fn apply_inbound_ref(frame: Frame, echo: Arc<Mutex<EchoState>>) {
@@ -517,16 +755,162 @@ async fn apply_inbound_ref(frame: Frame, echo: Arc<Mutex<EchoState>>) {
             return;
         }
     };
+    let token = frame.token;
+
+    if token != 0 && matches!(kind, Kind::Text | Kind::Png) {
+        // Blob payload of a compound burst: route through the aggregator so
+        // the image can upgrade the already-applied text flavor.
+        match kind {
+            Kind::Text => {
+                retain_burst_text(token, bytes.clone());
+                let _ = tauri::async_runtime::spawn_blocking(move || {
+                    apply_inbound_inline(
+                        Frame {
+                            kind: Kind::Text,
+                            token,
+                            payload: bytes,
+                        },
+                        &echo,
+                    )
+                })
+                .await;
+            }
+            Kind::Png => {
+                let _ = tauri::async_runtime::spawn_blocking(move || {
+                    deliver_burst_png(token, &bytes, &echo)
+                })
+                .await;
+            }
+            _ => unreachable!(),
+        }
+        return;
+    }
+
     let frame = Frame {
         kind,
-        token: frame.token,
+        token,
         payload: bytes,
     };
     let echo = echo.clone();
     let _ = tauri::async_runtime::spawn_blocking(move || apply_inbound_inline(frame, &echo)).await;
 }
 
+/// Write text + image flavors in one clipboard transaction. Records every
+/// echo identity first so the watcher's snapshot of the compound write is
+/// suppressed (byte hashes + pixel hash).
+fn apply_compound(text: &[u8], png: &[u8], echo: &Arc<Mutex<EchoState>>) {
+    // Preserve a pending local file paste (mirrors the inline-path guard).
+    if let Ok(ctx) = ClipboardContext::new() {
+        if let Ok(files) = ctx.get_files() {
+            if !files.is_empty() {
+                debug!("local file clipboard detected; inbound compound dropped");
+                return;
+            }
+        }
+    }
+
+    let text_str = match std::str::from_utf8(text) {
+        Ok(s) if !s.is_empty() && !s.contains('\0') => s,
+        _ => {
+            warn!("inbound compound text unusable; applying image only");
+            apply_inbound_inline(
+                Frame {
+                    kind: Kind::Png,
+                    token: 0,
+                    payload: png.to_vec(),
+                },
+                echo,
+            );
+            return;
+        }
+    };
+
+    // Bound decoded pixel count (mirrors the inline PNG path).
+    let cursor = std::io::Cursor::new(png);
+    if let Ok(reader) = image::ImageReader::new(cursor).with_guessed_format() {
+        if let Ok((w, h)) = reader.into_dimensions() {
+            if (w as u64) * (h as u64) > MAX_IMAGE_PIXELS {
+                warn!(
+                    "inbound image {}x{} exceeds {} pixel cap; dropped",
+                    w, h, MAX_IMAGE_PIXELS
+                );
+                return;
+            }
+        }
+    }
+    let img = match RustImageData::from_bytes(png) {
+        Ok(i) => i,
+        Err(e) => {
+            warn!("RustImageData::from_bytes failed: {e}");
+            return;
+        }
+    };
+    let pixel_hash = hash_image_pixels(&img);
+
+    {
+        let mut st = echo.lock().unwrap();
+        st.record(Kind::Text, text);
+        st.record(Kind::Png, png);
+        if let Some(h) = pixel_hash {
+            st.record_image(h);
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        match img.to_rgba8() {
+            Ok(rgba) => match crate::win_clipboard::write_compound(text_str, &rgba, png) {
+                Ok(()) => {
+                    debug!(
+                        "applied compound clipboard (text {}B + PNG {}B)",
+                        text.len(),
+                        png.len()
+                    );
+                    return;
+                }
+                Err(e) => {
+                    warn!("compound clipboard write failed: {e}; falling back to image only");
+                }
+            },
+            Err(e) => {
+                warn!("compound rgba conversion failed: {e}; falling back to image only");
+            }
+        }
+        if let Ok(ctx) = ClipboardContext::new() {
+            let _ = ctx.set_image(img);
+        }
+        return;
+    }
+
+    #[cfg(not(windows))]
+    {
+        // clipboard-rs has no compound write off-Windows; degrade to
+        // sequential writes, image last (v1 outcome).
+        if let Ok(ctx) = ClipboardContext::new() {
+            let _ = ctx.set_text(text_str.to_string());
+            let _ = ctx.set_image(img);
+        }
+        debug!(
+            "applied compound clipboard via sequential fallback (text {}B + PNG {}B)",
+            text.len(),
+            png.len()
+        );
+    }
+}
+
 fn apply_inbound_inline(frame: Frame, echo: &Arc<Mutex<EchoState>>) {
+    // Preserve a local file clipboard: Explorer/Finder copies can carry a
+    // thumbnail image, and overwriting them with remote content would
+    // destroy the pending file paste. Mirrors the Qt client's guard.
+    if let Ok(ctx) = ClipboardContext::new() {
+        if let Ok(files) = ctx.get_files() {
+            if !files.is_empty() {
+                debug!("local file clipboard detected; inbound dropped");
+                return;
+            }
+        }
+    }
+
     // Record BEFORE writing so the watcher sees the hash and suppresses.
     echo.lock().unwrap().record(frame.kind, &frame.payload);
 
@@ -572,6 +956,12 @@ fn apply_inbound_inline(frame: Frame, echo: &Arc<Mutex<EchoState>>) {
                     return;
                 }
             };
+            // Record the pixel identity alongside the payload hash recorded
+            // above: after set_image the platform re-encodes the bitmap and
+            // the watcher's payload bytes no longer match, but pixels do.
+            if let Some(h) = hash_image_pixels(&img) {
+                echo.lock().unwrap().record_image(h);
+            }
             if let Err(e) = ctx.set_image(img) {
                 warn!("inbound set_image failed: {e}");
             }
@@ -667,14 +1057,7 @@ async fn sse_pump(stop: Arc<Notify>, echo: Arc<Mutex<EchoState>>) {
                         while let Some(end) = find_event_end(&buf) {
                             let raw = buf.drain(..end + 2).collect::<Vec<u8>>();
                             if let Some(frame) = parse_sse_event(&raw) {
-                                let echo = echo.clone();
-                                if frame.kind == Kind::Ref {
-                                    tauri::async_runtime::spawn(async move {
-                                        apply_inbound_ref(frame, echo).await;
-                                    });
-                                } else {
-                                    tauri::async_runtime::spawn_blocking(move || apply_inbound(frame, &echo));
-                                }
+                                handle_inbound_frame(frame, &echo);
                             }
                         }
                     }

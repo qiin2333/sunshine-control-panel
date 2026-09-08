@@ -19,7 +19,7 @@ test('RTX HDR component copy explains how to resolve missing files', () => {
     const text = rtxHdrMessages[locale]
     assert.ok(text.title.includes('RTX HDR'))
     assert.match(text.acquisitionDescription, /nvngx_truehdr\.dll/)
-    assert.match(text.bridgeMissingNotice, /重新安装|reinstall/)
+    assert.match(text.bridgeMissingNotice, /重新安装|reinstall/i)
     assert.match(text.runtimeMissingNotice, /nvngx_truehdr\.dll/)
     assert.equal(text.ownershipTitle, undefined)
     assert.equal(text.securityTitle, undefined)

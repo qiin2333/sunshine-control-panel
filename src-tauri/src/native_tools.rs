@@ -442,10 +442,8 @@ pub fn shutdown_all() {
         })
         .unwrap_or_default();
     for plugin in plugins {
-        if plugin.ready {
-            if let Some(request_close) = plugin.api.request_close {
-                let _ = unsafe { request_close() };
-            }
+        if let Some(request_close) = plugin.api.request_close {
+            let _ = unsafe { request_close() };
         }
         let stopped = plugin
             .api

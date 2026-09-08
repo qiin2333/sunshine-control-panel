@@ -4888,6 +4888,7 @@ dependencies = [
  "bytes",
  "chrono",
  "clipboard-rs",
+ "clipboard-win",
  "dirs",
  "encoding_rs",
  "env_logger",

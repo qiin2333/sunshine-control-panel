@@ -23,7 +23,7 @@ const ELEVATED_REMOVE_ARG: &str = "--elevated-rtx-hdr-remove";
 #[cfg(target_os = "windows")]
 const ELEVATED_RECOVER_ARG: &str = "--elevated-rtx-hdr-recover";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ComponentManifest {
     schema: u32,
     component_id: String,
@@ -71,6 +71,53 @@ fn read_manifest(directory: &Path) -> Option<ComponentManifest> {
     serde_json::from_slice(&bytes).ok()
 }
 
+fn trusted_manifest(component_id: &str) -> Result<ComponentManifest, String> {
+    let path = crate::sunshine::install_dir()
+        .join("assets")
+        .join("hdr-components.json");
+    let file = File::open(path)
+        .map_err(|_| "HDR-PKG-009: trusted component versions are not configured".to_string())?;
+    let mut bytes = Vec::new();
+    file.take(64 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "HDR-PKG-009: unable to read trusted component versions".to_string())?;
+    if bytes.len() > 64 * 1024 {
+        return Err("HDR-PKG-009: invalid trusted component versions".to_string());
+    }
+    let catalog: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|_| "HDR-PKG-009: invalid trusted component versions".to_string())?;
+    if catalog
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64)
+        != Some(1)
+    {
+        return Err("HDR-PKG-009: unsupported trusted component schema".to_string());
+    }
+    let trusted = catalog
+        .get("components")
+        .and_then(|components| components.get(NVIDIA_RTX_VIDEO_ID))
+        .and_then(|versions| versions.get(component_id))
+        .ok_or_else(|| {
+            "HDR-PKG-009: this component version is not trusted by this installation".to_string()
+        })?;
+    let bridge_sha256 = trusted
+        .get(BRIDGE_FILE)
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .ok_or_else(|| "HDR-PKG-009: invalid trusted component versions".to_string())?;
+    let runtime_sha256 = trusted
+        .get(RUNTIME_FILE)
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .ok_or_else(|| "HDR-PKG-009: invalid trusted component versions".to_string())?;
+    Ok(ComponentManifest {
+        schema: 1,
+        component_id: component_id.to_string(),
+        bridge_sha256: bridge_sha256.to_ascii_lowercase(),
+        runtime_sha256: runtime_sha256.to_ascii_lowercase(),
+    })
+}
+
 fn validate_version(directory: &Path, expected: &ComponentManifest) -> bool {
     let bridge = directory.join(BRIDGE_FILE);
     let runtime = directory.join(RUNTIME_FILE);
@@ -108,9 +155,7 @@ fn build_status(
         .get(NVIDIA_RTX_VIDEO_ID)
         .map(|value| value.version.as_str());
     let directory = component_root();
-    let manifest = version.and_then(|version| {
-        read_manifest(&directory).filter(|manifest| manifest.component_id == version)
-    });
+    let manifest = version.and_then(|version| trusted_manifest(version).ok());
     let bridge = directory.join(BRIDGE_FILE);
     let bridge_present = bridge.is_file();
     let runtime_present = directory.join(RUNTIME_FILE).is_file();
@@ -206,31 +251,7 @@ async fn status_for_config(
 }
 
 fn verify_source_trust(manifest: &ComponentManifest) -> Result<(), String> {
-    let path = crate::sunshine::install_dir()
-        .join("assets")
-        .join("hdr-components.json");
-    let file = File::open(path)
-        .map_err(|_| "HDR-PKG-009: trusted component versions are not configured".to_string())?;
-    let mut bytes = Vec::new();
-    file.take(64 * 1024 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| "HDR-PKG-009: unable to read trusted component versions".to_string())?;
-    if bytes.len() > 64 * 1024 {
-        return Err("HDR-PKG-009: invalid trusted component versions".to_string());
-    }
-    let catalog: serde_json::Value = serde_json::from_slice(&bytes)
-        .map_err(|_| "HDR-PKG-009: invalid trusted component versions".to_string())?;
-    if catalog
-        .get("schema_version")
-        .and_then(serde_json::Value::as_u64)
-        != Some(1)
-    {
-        return Err("HDR-PKG-009: unsupported trusted component schema".to_string());
-    }
-    let trusted = &catalog["components"][NVIDIA_RTX_VIDEO_ID][&manifest.component_id];
-    if trusted[BRIDGE_FILE].as_str() != Some(manifest.bridge_sha256.as_str())
-        || trusted[RUNTIME_FILE].as_str() != Some(manifest.runtime_sha256.as_str())
-    {
+    if trusted_manifest(&manifest.component_id)? != *manifest {
         return Err(
             "HDR-PKG-009: this component version is not trusted by this installation".to_string(),
         );

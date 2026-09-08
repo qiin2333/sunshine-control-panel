@@ -7,8 +7,9 @@ use super::{
     extract_sidecar_package, local_uninstalled_status, read_sidecar_package_manifest,
     recover_interrupted_activation, require_entity_tag, resolve_core_config,
     rollback_activated_component, run_with_timeout, sha256_file, update_config_fields,
-    update_tuning_fields, validate_core_ds5_response, validate_requested_profile,
-    validate_sidecar_integrity, validate_sidecar_package_manifest, validate_strong_entity_tag,
+    update_tuning_fields, usbip_discovery_status, validate_core_ds5_response,
+    validate_requested_profile, validate_sidecar_integrity, validate_sidecar_package_manifest,
+    validate_strong_entity_tag,
 };
 #[cfg(target_os = "windows")]
 use super::{
@@ -644,6 +645,30 @@ fn usbip_accepts_user_installed_versions_at_or_above_minimum() {
     assert!(supported_usbip_installed(Some("0.9.7.10")));
     assert!(!supported_usbip_installed(Some("0.9.7.3")));
     assert!(!supported_usbip_installed(None));
+}
+
+#[test]
+fn usbip_discovery_preserves_errors_without_misreporting_missing_transport() {
+    let (version, valid, error_code, detail) = usbip_discovery_status(Err(
+        "USBIP-SETUP-008: conflicting USB/IP versions".to_string(),
+    ));
+    assert!(version.is_empty());
+    assert!(!valid);
+    assert_eq!(error_code, "USBIP-SETUP-008");
+    assert_eq!(detail, "USBIP-SETUP-008: conflicting USB/IP versions");
+
+    let (version, valid, error_code, detail) =
+        usbip_discovery_status(Ok(Some("0.9.7.8".to_string())));
+    assert_eq!(version, "0.9.7.8");
+    assert!(valid);
+    assert!(error_code.is_empty());
+    assert!(detail.is_empty());
+
+    let (version, valid, error_code, detail) = usbip_discovery_status(Ok(None));
+    assert!(version.is_empty());
+    assert!(!valid);
+    assert!(error_code.is_empty());
+    assert!(detail.is_empty());
 }
 
 #[cfg(target_os = "windows")]

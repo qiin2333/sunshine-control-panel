@@ -305,8 +305,30 @@ pub(crate) async fn ensure_no_active_session_for_uninstall() -> Result<(), Strin
     }
 }
 
+pub(crate) fn usbip_discovery_status(
+    discovery: Result<Option<String>, String>,
+) -> (String, bool, String, String) {
+    match discovery {
+        Ok(version) => {
+            let version = version.unwrap_or_default();
+            let valid = supported_usbip_installed(Some(version.as_str()));
+            (version, valid, String::new(), String::new())
+        }
+        Err(detail) => {
+            let error_code = detail
+                .split(':')
+                .next()
+                .filter(|code| !code.is_empty())
+                .unwrap_or("USBIP-SETUP-002")
+                .to_string();
+            (String::new(), false, error_code, detail)
+        }
+    }
+}
+
 pub(crate) fn local_uninstalled_status() -> DualSenseStatus {
-    let usbip_version = installed_usbip_version().ok().flatten().unwrap_or_default();
+    let (usbip_version, usbip_version_valid, error_code, detail) =
+        usbip_discovery_status(installed_usbip_version());
     DualSenseStatus {
         state: "not_installed".to_string(),
         installed: false,
@@ -328,14 +350,14 @@ pub(crate) fn local_uninstalled_status() -> DualSenseStatus {
         sidecar_path: sidecar_path().to_string_lossy().to_string(),
         driver_installed: false,
         usbip_available: false,
-        usbip_version_valid: supported_usbip_installed(Some(usbip_version.as_str())),
+        usbip_version_valid,
         usbip_version,
         reboot_recommended: false,
         standard_profile: false,
         composite_profile: false,
         in_use: false,
-        error_code: String::new(),
-        detail: String::new(),
+        error_code,
+        detail,
     }
 }
 
@@ -402,8 +424,8 @@ pub(crate) async fn dualsense_get_status_with_config(
             .to_string();
         detail = config_error;
     }
-    let usbip_version = installed_usbip_version().ok().flatten().unwrap_or_default();
-    let usbip_version_valid = supported_usbip_installed(Some(usbip_version.as_str()));
+    let (usbip_version, usbip_version_valid, usbip_error_code, usbip_detail) =
+        usbip_discovery_status(installed_usbip_version());
     let usbip_available = result.usbip_available && usbip_version_valid;
     let manifest = installed.then(installed_component_manifest).flatten();
     let update_available = installed && component_update_available(manifest.as_ref());
@@ -417,6 +439,10 @@ pub(crate) async fn dualsense_get_status_with_config(
     if probe_succeeded && !update_available && !matches_current_runtime {
         error_code = "DS5-PROTO-001".to_string();
         detail = "DS5-PROTO-001: the installed component metadata or capabilities do not match this Control Panel build".to_string();
+    }
+    if error_code.is_empty() && !usbip_error_code.is_empty() {
+        error_code = usbip_error_code;
+        detail = usbip_detail;
     }
     let state = component_state(
         installed,

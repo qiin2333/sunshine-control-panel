@@ -47,7 +47,7 @@ pub(crate) use {
     },
     probe::{
         component_is_verified, component_state, component_test_failure, local_uninstalled_status,
-        run_with_timeout, validate_requested_profile,
+        run_with_timeout, usbip_discovery_status, validate_requested_profile,
     },
 };
 

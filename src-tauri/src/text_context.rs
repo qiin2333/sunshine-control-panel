@@ -1,5 +1,8 @@
 //! User-session observer for Windows InputPane and UI Automation text focus.
 
+#[path = "text_context_policy.rs"]
+mod policy;
+
 use std::cell::Cell;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -26,10 +29,10 @@ use windows::Win32::System::Ole::{
 };
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationCacheRequest, IUIAutomationElement,
-    IUIAutomationTextEditPattern, IUIAutomationTextPattern2, IUIAutomationValuePattern,
+    IUIAutomationTextPattern2, IUIAutomationValuePattern,
     SetWinEventHook, UIA_BoundingRectanglePropertyId, UIA_ControlTypePropertyId,
     UIA_EditControlTypeId, UIA_HasKeyboardFocusPropertyId, UIA_IsEnabledPropertyId,
-    UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId, UIA_TextEditPatternId, UIA_TextPattern2Id,
+    UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId, UIA_TextPattern2Id,
     UIA_ValueIsReadOnlyPropertyId, UIA_ValuePatternId, UnhookWinEvent, HWINEVENTHOOK,
 };
 use windows::Win32::UI::Shell::IFrameworkInputPane;
@@ -287,17 +290,15 @@ fn inspect_focused_element(
     let password = unsafe { element.CachedIsPassword() }
         .map(|v| v.as_bool())
         .unwrap_or(false);
-    let has_text_edit = unsafe {
-        element.GetCachedPatternAs::<IUIAutomationTextEditPattern>(UIA_TextEditPatternId)
-    }
-    .is_ok();
-    let writable_value =
+    let value_read_only =
         unsafe { element.GetCachedPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) }
             .ok()
             .and_then(|pattern| unsafe { pattern.CachedIsReadOnly() }.ok())
-            .map(|value| !value.as_bool())
-            .unwrap_or(false);
-    let editable = has_text_edit || (control_type == UIA_EditControlTypeId.0 && writable_value);
+            .map(|value| value.as_bool());
+    let editable = policy::is_confirmed_editor(
+        control_type == UIA_EditControlTypeId.0,
+        value_read_only,
+    );
     let caret_rect = editable.then(|| inspect_caret(&element)).flatten();
     let signature = FocusSignature {
         control_type,
@@ -396,7 +397,6 @@ fn observer_loop(
             let _ = request.AddProperty(UIA_ControlTypePropertyId);
             let _ = request.AddProperty(UIA_IsPasswordPropertyId);
             let _ = request.AddProperty(UIA_ValueIsReadOnlyPropertyId);
-            let _ = request.AddPattern(UIA_TextEditPatternId);
             let _ = request.AddPattern(UIA_ValuePatternId);
             let _ = request.AddPattern(UIA_TextPattern2Id);
         }

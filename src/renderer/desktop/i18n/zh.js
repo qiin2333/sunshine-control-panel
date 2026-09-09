@@ -315,6 +315,7 @@ export const zh = {
     dpiScaling: 'DPI 缩放调节',
     shortcutGuide: 'Moonlight 快捷键手册',
     stylusInputProbe: '手写笔输入检测',
+    stylusInputProbeCleanupPending: '手写笔输入检测插件正在完成清理，请稍后重试。如果持续无法打开，请重新启动控制面板。',
     stylusInputProbeStarted: '手写笔输入检测工具已启动。',
     stylusInputProbeErrorTitle: '无法启动工具',
     stylusInputProbeMissing: '未找到手写笔输入检测插件。请修复或重新安装 Sunshine 后重试。',

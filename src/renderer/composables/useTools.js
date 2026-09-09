@@ -117,6 +117,7 @@ export function useTools() {
     } catch (error) {
       const errorCode = String(error || '')
       const missing = errorCode.includes('NATIVE_PLUGIN_NOT_FOUND')
+      const cleanupPending = errorCode.includes('NATIVE_PLUGIN_CLEANUP_PENDING')
       const incompatible = [
         'NATIVE_PLUGIN_PATH_INVALID',
         'NATIVE_PLUGIN_LOAD_FAILED',
@@ -130,9 +131,11 @@ export function useTools() {
         await ElMessageBox.alert(
           missing
             ? t.value.tools.stylusInputProbeMissing
-            : incompatible
-              ? t.value.tools.stylusInputProbeUntrusted
-              : t.value.tools.stylusInputProbeLaunchFailed,
+            : cleanupPending
+              ? t.value.tools.stylusInputProbeCleanupPending
+              : incompatible
+                ? t.value.tools.stylusInputProbeUntrusted
+                : t.value.tools.stylusInputProbeLaunchFailed,
           t.value.tools.stylusInputProbeErrorTitle,
           {
             confirmButtonText: t.value.systemTools.confirm,

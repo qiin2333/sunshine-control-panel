@@ -315,6 +315,7 @@ export const en = {
     dpiScaling: 'DPI Scaling Adjustment',
     shortcutGuide: 'Moonlight Shortcuts Guide',
     stylusInputProbe: 'Stylus Input Diagnostics',
+    stylusInputProbeCleanupPending: 'The stylus input diagnostics plugin is finishing cleanup. Try again shortly. If it remains unavailable, restart the Control Panel.',
     stylusInputProbeStarted: 'Stylus input diagnostics started.',
     stylusInputProbeErrorTitle: 'Unable to Start Tool',
     stylusInputProbeMissing: 'The stylus input diagnostics plugin is missing. Repair or reinstall Sunshine, then try again.',

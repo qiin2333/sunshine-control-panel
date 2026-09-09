@@ -46,6 +46,7 @@ enum NativePluginError {
     AbiMismatch,
     IdMismatch,
     InitFailed,
+    CleanupPending,
     StartFailed,
 }
 
@@ -60,6 +61,7 @@ impl NativePluginError {
             Self::AbiMismatch => "NATIVE_PLUGIN_ABI_MISMATCH",
             Self::IdMismatch => "NATIVE_PLUGIN_ID_MISMATCH",
             Self::InitFailed => "NATIVE_PLUGIN_INIT_FAILED",
+            Self::CleanupPending => "NATIVE_PLUGIN_CLEANUP_PENDING",
             Self::StartFailed => "NATIVE_PLUGIN_START_FAILED",
         }
     }
@@ -365,7 +367,7 @@ fn open_native_tool_impl(tool_id: &str) -> Result<(), NativePluginError> {
         .map_err(|_| NativePluginError::StartFailed)?;
     if let Some(plugin) = manager.loaded.get(descriptor.id) {
         if !plugin.ready {
-            return Err(NativePluginError::InitFailed);
+            return Err(NativePluginError::CleanupPending);
         }
         return show_plugin(plugin);
     }

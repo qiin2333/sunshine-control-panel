@@ -135,7 +135,11 @@ WebUI 不能取得插件路径、组件维护或任意本机文件操作能力�
 - `NATIVE_PLUGIN_ABI_MISMATCH`
 - `NATIVE_PLUGIN_ID_MISMATCH`
 - `NATIVE_PLUGIN_INIT_FAILED`
+- `NATIVE_PLUGIN_CLEANUP_PENDING`
 - `NATIVE_PLUGIN_START_FAILED`
+
+`NATIVE_PLUGIN_CLEANUP_PENDING` 表示上一次启动失败后的模块仍在安全清理，监视器确认可卸载后，
+再次打开同一工具会重新加载。该状态不使用固定超时推断“必须重启”；持续不恢复时再重启 Panel。
 
 错误消息不得携带本机绝对路径、原始系统异常、命令行或插件内部指针。面向用户的文案由
 Panel 本地化层根据稳定错误码生成。

@@ -26,6 +26,7 @@ static LOCALE_WRITE_LOCK: Lazy<tokio::sync::Mutex<()>> = Lazy::new(|| tokio::syn
 static HTTPS_CLIENT: Lazy<Result<reqwest::Client, String>> = Lazy::new(|| {
     reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))

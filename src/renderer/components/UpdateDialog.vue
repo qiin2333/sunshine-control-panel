@@ -36,6 +36,11 @@
         />
       </div>
 
+      <!-- 安装包已就绪 (下载完成或上次已下载) -->
+      <div v-if="!isLatest && installReady" class="install-ready-panel">
+        <p class="install-note">{{ t.updateDialog.installReadyHint }}</p>
+      </div>
+
       <!-- 安装提示 (仅新版本) -->
       <div v-if="!isLatest && isInstalling" class="install-progress-panel">
         <div class="install-status">
@@ -90,6 +95,8 @@
                 : t.updateDialog.downloading
             }}
           </el-button>
+          <el-button v-if="installReady" @click="handleCancel">{{ t.updateDialog.remindLater }}</el-button>
+          <el-button v-if="installReady" type="primary" @click="handleInstall(downloadedFilePath)">{{ t.updateDialog.installNow }}</el-button>
           <el-button v-if="isInstalling" type="primary" disabled>{{ t.updateDialog.installing }}</el-button>
         </template>
       </div>
@@ -137,6 +144,7 @@ const isDownloading = ref(false)
 const downloadProgress = ref(0)
 const downloadPhase = ref('idle')
 const downloadSource = ref('')
+const downloadedFilePath = ref('')
 const isInstalling = ref(false)
 const installStage = ref('idle')
 const installDetail = ref('')
@@ -171,7 +179,12 @@ const parsedReleaseNotes = computed(() =>
 )
 
 const showDownloadButtons = computed(
-  () => !isDownloading.value && !isInstalling.value && downloadProgress.value === 0
+  () => !isDownloading.value && !isInstalling.value && downloadProgress.value === 0 && !downloadedFilePath.value
+)
+
+// 安装包已就绪：本次下载完成或上次会话已完整下载，可直接安装
+const installReady = computed(
+  () => !!downloadedFilePath.value && !isDownloading.value && !isInstalling.value
 )
 
 const downloadStatusText = computed(() => {
@@ -202,6 +215,7 @@ const resetDownloadState = () => {
   downloadProgress.value = 0
   downloadPhase.value = 'idle'
   downloadSource.value = ''
+  downloadedFilePath.value = ''
 }
 
 const installSteps = computed(() => [
@@ -300,6 +314,23 @@ const getTauriApis = async () => {
   return { invoke, listen }
 }
 
+// 打开对话框时检查 temp 目录是否已有完整下载的安装包（上次取消安装或关闭应用时遗留）
+const checkCachedInstaller = async () => {
+  if (isLatest.value || !props.updateInfo?.download_name) return
+  try {
+    const { invoke } = await getTauriApis()
+    const cached = await invoke('check_cached_update', {
+      filename: props.updateInfo.download_name,
+      expectedSize: props.updateInfo.download_size || null,
+    })
+    if (cached && !isDownloading.value && !isInstalling.value) {
+      downloadedFilePath.value = cached
+    }
+  } catch (error) {
+    console.warn('Failed to check cached installer:', error)
+  }
+}
+
 const handleDownload = async () => {
   const downloadUrl = props.updateInfo?.download_url
   if (!downloadUrl) {
@@ -328,10 +359,13 @@ const handleDownload = async () => {
     progressUnlisten = null
 
     if (result.success) {
+      downloadedFilePath.value = result.file_path
       downloadProgress.value = 100
       downloadPhase.value = 'complete'
-      ElMessage.success(t.value.updateDialog.downloadComplete)
-      await new Promise((resolve) => setTimeout(resolve, 1000))
+      if (!result.cached) {
+        ElMessage.success(t.value.updateDialog.downloadComplete)
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+      }
       isDownloading.value = false
       await handleInstall(result.file_path)
     } else {
@@ -392,8 +426,6 @@ const handleInstall = async (filePath) => {
       clearInstallProgressListener()
       ElMessage.error(t.value.updateDialog.installError.replace('{error}', error))
       isInstalling.value = false
-    } else {
-      downloadProgress.value = 0
     }
   }
 }
@@ -442,7 +474,10 @@ onBeforeUnmount(() => {
 watch(
   () => props.modelValue,
   (newVal) => {
-    if (newVal) resetState()
+    if (newVal) {
+      resetState()
+      checkCachedInstaller()
+    }
   }
 )
 </script>
@@ -522,6 +557,15 @@ watch(
       }
     }
   }
+}
+
+.install-ready-panel {
+  margin-top: 14px;
+  margin-bottom: 4px;
+  padding: 12px 18px;
+  border: 1px solid #d9ecff;
+  border-radius: @border-radius;
+  background: #ecf5ff;
 }
 
 .download-progress {

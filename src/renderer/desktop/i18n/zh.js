@@ -1562,6 +1562,8 @@ export const zh = {
     skipVersion: '忽略此版本',
     remindLater: '稍后提醒',
     downloadAndInstall: '下载并安装',
+    installNow: '立即安装',
+    installReadyHint: '安装包已下载完成，可以直接安装，无需重新下载。',
     installing: '正在安装...',
     preparingInstall: '正在准备安装更新，系统将自动关闭服务并启动安装程序',
     titleLatest: '已经是最新版本——此版本更新内容：{version}',

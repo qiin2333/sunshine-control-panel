@@ -287,6 +287,7 @@ fn main() {
             update::get_include_prerelease_preference,
             update::set_include_prerelease_preference,
             update::download_update,
+            update::check_cached_update,
             update::install_update,
             logger::get_all_logs,
             logger::clear_logs,

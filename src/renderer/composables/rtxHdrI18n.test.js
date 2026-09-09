@@ -21,6 +21,7 @@ test('RTX HDR component copy explains how to resolve missing files', () => {
     assert.match(text.acquisitionDescription, /nvngx_truehdr\.dll/)
     assert.match(text.bridgeMissingNotice, /重新安装|reinstall/i)
     assert.match(text.runtimeMissingNotice, /nvngx_truehdr\.dll/)
+    assert.match(text.vcRuntimeMissingNotice, /Visual C\+\+/)
     assert.equal(text.ownershipTitle, undefined)
     assert.equal(text.securityTitle, undefined)
   }

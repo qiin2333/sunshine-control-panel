@@ -22,7 +22,7 @@
             type="primary"
             class="ds5-action"
             :loading="operation === 'install'"
-            :disabled="!status.host_supported || status.in_use || status.maintenance || controlsBusy"
+            :disabled="!status.host_supported || !status.adapter_present || status.in_use || status.maintenance || controlsBusy"
             @click="install"
           >{{ actionLabel }}</el-button>
           <el-button
@@ -54,6 +54,25 @@
       :closable="false"
       show-icon
     />
+    <el-alert
+      v-else-if="statusKnown && !status.adapter_present"
+      class="ds5-notice"
+      type="warning"
+      :title="text.adapterMissingNotice"
+      :closable="false"
+      show-icon
+    />
+    <div v-else-if="statusKnown && !status.vc_runtime_present" class="ds5-notice">
+      <el-alert
+        type="warning"
+        :title="text.vcRuntimeMissingNotice"
+        :closable="false"
+        show-icon
+      />
+      <el-button class="mt-2" type="primary" plain @click="openVcRuntimeDownload">
+        {{ text.vcRuntimeDownload }}
+      </el-button>
+    </div>
     <el-alert
       v-else-if="statusKnown && !status.runtime_present"
       class="ds5-notice"
@@ -130,6 +149,7 @@ const {
   uninstall,
   setEnabled,
   showAcquisition,
+  openVcRuntimeDownload,
   recover,
   openFolder,
 } = useRtxHdrManager()

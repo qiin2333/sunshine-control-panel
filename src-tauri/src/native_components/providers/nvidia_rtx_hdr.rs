@@ -3,6 +3,15 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+#[cfg(target_os = "windows")]
+use std::os::windows::ffi::OsStrExt;
+#[cfg(target_os = "windows")]
+use windows::Win32::Foundation::FreeLibrary;
+#[cfg(target_os = "windows")]
+use windows::Win32::System::LibraryLoader::{LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW};
+#[cfg(target_os = "windows")]
+use windows::core::PCWSTR;
+
 mod runtime_transaction;
 
 #[cfg(test)]
@@ -38,6 +47,8 @@ pub struct RtxHdrComponentStatus {
     pub in_use: bool,
     pub maintenance: bool,
     pub host_supported: bool,
+    pub adapter_present: bool,
+    pub vc_runtime_present: bool,
     pub runtime_present: bool,
     pub configured: bool,
     pub managed_path: String,
@@ -47,6 +58,35 @@ pub struct RtxHdrComponentStatus {
 fn component_root() -> PathBuf {
     crate::native_components::core_component_root(NVIDIA_RTX_VIDEO_ID)
         .expect("RTX HDR must be registered as a Core component")
+}
+
+#[cfg(target_os = "windows")]
+fn vc_runtime_present() -> bool {
+    ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"]
+        .into_iter()
+        .all(|name| {
+            let mut wide: Vec<u16> = std::ffi::OsStr::new(name).encode_wide().collect();
+            wide.push(0);
+            let module = unsafe {
+                LoadLibraryExW(
+                    PCWSTR(wide.as_ptr()),
+                    None,
+                    LOAD_LIBRARY_SEARCH_SYSTEM32,
+                )
+            };
+            match module {
+                Ok(module) => {
+                    let _ = unsafe { FreeLibrary(module) };
+                    true
+                }
+                Err(_) => false,
+            }
+        })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn vc_runtime_present() -> bool {
+    false
 }
 
 fn read_manifest(directory: &Path) -> Option<ComponentManifest> {
@@ -131,6 +171,11 @@ fn build_status(
         .and_then(|components| components.get(NVIDIA_RTX_VIDEO_ID))
         .and_then(serde_json::Value::as_object)
         .is_some_and(|versions| !versions.is_empty());
+    let adapter_present = runtime_status
+        .get("adapter_present")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let vc_runtime_present = vc_runtime_present();
     let runtime_present = directory.join(RUNTIME_FILE).is_file();
     let integrity_valid = manifest
         .as_ref()
@@ -165,7 +210,11 @@ fn build_status(
         "active"
     } else if version.is_none() {
         "not_installed"
-    } else if !integrity_valid || (enabled && !selection_verified) {
+    } else if !adapter_present
+        || !vc_runtime_present
+        || !integrity_valid
+        || (enabled && !selection_verified)
+    {
         "repair_required"
     } else if enabled {
         "selected"
@@ -185,6 +234,8 @@ fn build_status(
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false),
         host_supported,
+        adapter_present,
+        vc_runtime_present,
         runtime_present,
         configured: version.is_some(),
         managed_path: directory.join(RUNTIME_FILE).to_string_lossy().into_owned(),

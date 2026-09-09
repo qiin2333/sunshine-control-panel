@@ -2,7 +2,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { open } from '@tauri-apps/plugin-dialog'
 import { invoke } from '@tauri-apps/api/core'
-import { rtxHdr } from '../tauri-adapter.js'
+import { openExternalUrl, rtxHdr } from '../tauri-adapter.js'
 import { useRtxHdrI18n } from './rtxHdrI18n.js'
 
 const emptyStatus = () => ({
@@ -13,6 +13,8 @@ const emptyStatus = () => ({
   in_use: false,
   maintenance: false,
   host_supported: false,
+  adapter_present: false,
+  vc_runtime_present: false,
   runtime_present: false,
   configured: false,
   managed_path: '',
@@ -33,8 +35,13 @@ export function useRtxHdrManager() {
   const healthRows = computed(() => [
     {
       label: text.value.bridge,
-      state: status.value.host_supported ? text.value.present : text.value.missing,
-      tone: status.value.host_supported ? 'ok' : 'bad',
+      state: status.value.adapter_present ? text.value.present : text.value.missing,
+      tone: status.value.adapter_present ? 'ok' : 'bad',
+    },
+    {
+      label: text.value.vcRuntime,
+      state: status.value.vc_runtime_present ? text.value.present : text.value.missing,
+      tone: status.value.vc_runtime_present ? 'ok' : 'bad',
     },
     {
       label: text.value.runtime,
@@ -162,6 +169,8 @@ export function useRtxHdrManager() {
 
   const showAcquisition = () => ElMessageBox.alert(text.value.acquisitionDescription, text.value.acquisitionTitle).catch(() => {})
 
+  const openVcRuntimeDownload = () => openExternalUrl('https://aka.ms/vs/17/release/vc_redist.x64.exe')
+
   const recover = async () => {
     if (controlsBusy.value) return
     operation.value = 'recovering'
@@ -195,6 +204,7 @@ export function useRtxHdrManager() {
     uninstall,
     setEnabled,
     showAcquisition,
+    openVcRuntimeDownload,
     recover,
     openFolder,
   }

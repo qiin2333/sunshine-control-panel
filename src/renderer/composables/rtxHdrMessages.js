@@ -2,7 +2,8 @@ export const rtxHdrMessages = {
   "en": {
     "acquisitionDescription": "Get and extract the NVIDIA RTX Video SDK, then choose bin\\Windows\\x64\\rel\\nvngx_truehdr.dll on this page.",
     "acquisitionTitle": "How to install",
-    "bridge": "Sunshine HDR enhancement support",
+    "adapterMissingNotice": "The Sunshine HDR adapter is missing. Reinstall or update Sunshine, then refresh the component status.",
+    "bridge": "Sunshine HDR adapter",
     "bridgeMissingNotice": "This Sunshine installation does not include HDR enhancement support. Reinstall or update Sunshine, then try again.",
     "componentTitle": "NVIDIA RTX HDR",
     "enable": "Enable RTX HDR",
@@ -43,12 +44,16 @@ export const rtxHdrMessages = {
     "uninstallConfirm": "Disable RTX HDR and remove the installed NVIDIA component? Your original file will not be changed.",
     "uninstallFailed": "Unable to remove the component.",
     "uninstallSuccess": "The component was removed and RTX HDR was disabled.",
-    "uninstallTitle": "Remove NVIDIA RTX HDR component"
+    "uninstallTitle": "Remove NVIDIA RTX HDR component",
+    "vcRuntime": "Microsoft Visual C++ runtime",
+    "vcRuntimeDownload": "Download the Microsoft runtime",
+    "vcRuntimeMissingNotice": "Microsoft Visual C++ 2015–2022 Redistributable (x64) is required. Install it, then refresh the component status."
   },
   "zh": {
     "acquisitionDescription": "获取并解压 NVIDIA RTX Video SDK，然后在本页选择 bin\\Windows\\x64\\rel\\nvngx_truehdr.dll。",
     "acquisitionTitle": "如何安装",
-    "bridge": "Sunshine HDR 增强支持",
+    "adapterMissingNotice": "缺少 Sunshine HDR 适配组件。请重新安装或更新 Sunshine，然后刷新组件状态。",
+    "bridge": "Sunshine HDR 适配组件",
     "bridgeMissingNotice": "当前 Sunshine 安装中缺少 HDR 增强支持。请重新安装或更新 Sunshine 后再试。",
     "componentTitle": "NVIDIA RTX HDR",
     "enable": "启用 RTX HDR",
@@ -89,6 +94,9 @@ export const rtxHdrMessages = {
     "uninstallConfirm": "是否关闭 RTX HDR 并删除已安装的 NVIDIA 组件？你原来的文件不会被修改。",
     "uninstallFailed": "组件删除失败。",
     "uninstallSuccess": "组件已删除，RTX HDR 已关闭。",
-    "uninstallTitle": "删除 NVIDIA RTX HDR 组件"
+    "uninstallTitle": "删除 NVIDIA RTX HDR 组件",
+    "vcRuntime": "Microsoft Visual C++ 运行库",
+    "vcRuntimeDownload": "下载 Microsoft 运行库",
+    "vcRuntimeMissingNotice": "需要安装 Microsoft Visual C++ 2015–2022 运行库（x64）。安装完成后，请刷新组件状态。"
   }
 }

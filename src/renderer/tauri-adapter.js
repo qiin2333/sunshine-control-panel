@@ -156,6 +156,17 @@ export const usbip = {
   detach: (port) => wrapResult('usbip_detach', { port }),
 }
 
+export const rtxHdr = {
+  recover: () => wrapResult('native_component_recover', { componentId: 'alkaidlab.nvidia_rtx_video' }),
+  setEnabled: (enabled) => wrapResult('hdr_enhanced_select_backend', { componentId: 'alkaidlab.nvidia_rtx_video', enabled }),
+  getStatus: () => wrapResult('native_component_get_status', { componentId: 'alkaidlab.nvidia_rtx_video' }),
+  install: (runtimePath) => wrapResult('native_component_import', {
+    componentId: 'alkaidlab.nvidia_rtx_video',
+    sources: { 'nvngx_truehdr.dll': runtimePath },
+  }),
+  uninstall: () => wrapResult('native_component_remove', { componentId: 'alkaidlab.nvidia_rtx_video' }),
+}
+
 // ─── Sunshine 配置 ───────────────────────────────────────
 
 export const sunshine = {
@@ -241,6 +252,7 @@ export default {
   virtualMicrophone,
   dualsense,
   usbip,
+  rtxHdr,
   sunshine,
   tools,
   fileMapping,

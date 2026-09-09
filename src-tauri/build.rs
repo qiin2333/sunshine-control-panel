@@ -12,7 +12,14 @@ const GENERATED_CAPABILITY_PATH: &str = "capabilities/app-commands.generated.jso
 /// Their local window-scoped grants live in hand-written capability files.
 const LOCAL_ONLY_COMMANDS: &[&str] = &[
     "capture_screenshot",
+    "hdr_enhanced_select_backend",
+    "list_native_components",
+    "native_component_get_status",
+    "native_component_import",
+    "native_component_recover",
+    "native_component_remove",
     "open_local_path",
+    "open_native_tool",
     "usbip_get_forwarding_config",
     "usbip_save_forwarding_config",
 ];

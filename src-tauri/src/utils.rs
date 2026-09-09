@@ -50,7 +50,6 @@ impl ElevatedProcess {
             Ok(Some(exit_code as i32))
         }
     }
-
     /// Blocking wait for the process to exit, bounded by `timeout`. Returns
     /// `None` when it is still running when the timeout elapses.
     pub(crate) fn wait_for_exit_blocking(
@@ -425,4 +424,3 @@ pub fn execute_powershell_command(command: &str, error_context: &str) -> Result<
 
     Ok(())
 }
-

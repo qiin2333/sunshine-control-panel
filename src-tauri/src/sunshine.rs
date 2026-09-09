@@ -26,6 +26,7 @@ static LOCALE_WRITE_LOCK: Lazy<tokio::sync::Mutex<()>> = Lazy::new(|| tokio::syn
 static HTTPS_CLIENT: Lazy<Result<reqwest::Client, String>> = Lazy::new(|| {
     reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))
@@ -964,6 +965,13 @@ pub async fn post_sunshine_config(
     let sunshine_url = get_sunshine_url()
         .await
         .map_err(|e| format!("Cannot get Sunshine URL: {}", e))?;
+    post_sunshine_config_to(&sunshine_url, config_data).await
+}
+
+async fn post_sunshine_config_to(
+    sunshine_url: &str,
+    config_data: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
     let config_url = format!("{}/api/config", sunshine_url.trim_end_matches('/'));
 
     let client = create_https_client()?;
@@ -1007,6 +1015,7 @@ pub async fn post_sunshine_config(
     }
     validate_config_save_response(&response_body)
 }
+
 
 #[tauri::command]
 pub async fn get_active_sessions() -> Result<Vec<SessionInfo>, String> {

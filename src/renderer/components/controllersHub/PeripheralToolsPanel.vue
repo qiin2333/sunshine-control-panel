@@ -99,6 +99,13 @@
           </div>
         </article>
 
+        <article class="chub-card">
+          <div class="chub-card-head"><strong>{{ t.sidebar.hdrEnhanced }}</strong></div>
+          <div class="chub-card-actions">
+            <el-button size="small" type="primary" @click="emit('open-hdr-enhanced')">{{ t.hdrEnhanced.open }}</el-button>
+          </div>
+        </article>
+
         <!-- 手写笔输入检测 -->
         <article class="chub-card">
           <div class="chub-card-head">
@@ -125,7 +132,7 @@ import { ElMessageBox } from 'element-plus'
 import { usePeripheralTools } from '../../composables/usePeripheralTools.js'
 import { useI18n } from '../../desktop/i18n/index.js'
 
-const emit = defineEmits(['open-controller-meta', 'open-stylus-input-probe'])
+const emit = defineEmits(['open-controller-meta', 'open-stylus-input-probe', 'open-hdr-enhanced'])
 const { t } = useI18n()
 
 const {

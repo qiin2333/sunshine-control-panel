@@ -14,6 +14,7 @@ export const ROUTES = {
   DUALSENSE: 'dualsense',
   // 控制器中心（多控制器类型原型，dev-only）
   CONTROLLERS_HUB: 'controllers-hub',
+  HDR_ENHANCED: 'hdr-enhanced',
 }
 
 /**
@@ -59,6 +60,11 @@ const routeConfig = {
     name: ROUTES.CONTROLLERS_HUB,
     component: 'ControllersHub',
     title: '设备中心',
+  },
+  [ROUTES.HDR_ENHANCED]: {
+    name: ROUTES.HDR_ENHANCED,
+    component: 'HdrEnhancedManager',
+    title: 'HDR 增强',
   },
 }
 

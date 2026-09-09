@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-hdr-enhanced",
+  "description": "Allows only the bundled main Control Panel window to manage native HDR enhancement components.",
+  "windows": ["main"],
+  "local": true,
+  "permissions": [
+    "allow-hdr-enhanced-select-backend",
+    "allow-list-native-components",
+    "allow-native-component-get-status",
+    "allow-native-component-import",
+    "allow-native-component-recover",
+    "allow-native-component-remove",
+    "allow-open-local-path"
+  ]
+}

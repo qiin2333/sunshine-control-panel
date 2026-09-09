@@ -37,6 +37,7 @@ import { ElMessage } from 'element-plus'
 import { invoke } from '@tauri-apps/api/core'
 import { sunshine } from '@/tauri-adapter.js'
 import { checkLocalProxyHealth } from '../utils/proxyHealth.js'
+import { isNativeControlPanelMessage, isTrustedNativeControlPanelMessage } from '../composables/nativeBridge.js'
 import { useI18n } from '../desktop/i18n/index.js'
 import SidebarMenu from './SidebarMenu.vue'
 
@@ -302,15 +303,30 @@ const createMessageHandler = () => {
         ok: opened === true,
       })
     },
+    'native-rtx-hdr-context-request': (_data, event) => {
+      replyToSunshine(event, {
+        type: 'native-rtx-hdr-context',
+        source: 'sunshine-control-panel',
+        available: true,
+      })
+    },
+    'native-rtx-hdr-open-request': (data, event) => {
+      const requestId = typeof data.requestId === 'string' ? data.requestId : ''
+      sidebarMenuRef.value?.openRtxHdr?.()
+      replyToSunshine(event, {
+        type: 'native-rtx-hdr-open-result',
+        source: 'sunshine-control-panel',
+        requestId,
+        ok: true,
+      })
+    },
   }
 
   return async (event) => {
     const { data } = event
-    const isUpdaterMessage = data?.type === 'native-updater-context-request'
-      || data?.type === 'native-update-request'
     if (
-      isUpdaterMessage
-      && (!isTrustedSunshineEvent(event) || data.source !== 'sunshine-webui')
+      isNativeControlPanelMessage(data)
+      && !isTrustedNativeControlPanelMessage(data, isTrustedSunshineEvent(event))
     ) {
       return
     }

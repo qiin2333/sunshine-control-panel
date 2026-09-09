@@ -2041,6 +2041,26 @@ mod update_cache_tests {
         assert!(protected_installer_for_cleanup(&cleanup_dir).is_none());
         assert!(read_update_cache_marker().is_none());
 
+        // 时钟回拨（downloaded_at 晚于当前时间）按过期处理：
+        // 标记大小不参与回退，清理也不持续保护
+        fs::write(&cached_installer, b"payload").unwrap();
+        let future = CachedInstallerMarker {
+            filename: filename.clone(),
+            size,
+            downloaded_at: get_current_timestamp() + 3600,
+        };
+        fs::write(
+            update_cache_marker_path(),
+            serde_json::to_string(&future).unwrap(),
+        )
+        .unwrap();
+        assert!(find_cached_installer(&filename, None).is_none());
+        // 调用方期望值路径不读标记，不受未来时间戳影响
+        assert!(find_cached_installer(&filename, Some(size)).is_some());
+        assert!(protected_installer_for_cleanup(&cleanup_dir).is_none());
+        assert!(!cached_installer.exists());
+        assert!(read_update_cache_marker().is_none());
+
         let _ = fs::remove_dir_all(&cleanup_dir);
         let _ = fs::remove_file(&file_path);
         let _ = fs::remove_file(update_cache_marker_path());
@@ -2251,8 +2271,10 @@ fn protected_installer_for_cleanup(temp_dir: &Path) -> Option<String> {
     }
 
     let cached_path = temp_dir.join(&marker.filename);
-    let expired =
-        get_current_timestamp().saturating_sub(marker.downloaded_at) > UPDATE_CACHE_MAX_AGE_SECS;
+    // 时钟回拨（downloaded_at 晚于当前时间）按过期处理，不无限期保护
+    let expired = get_current_timestamp()
+        .checked_sub(marker.downloaded_at)
+        .map_or(true, |age| age > UPDATE_CACHE_MAX_AGE_SECS);
     if expired || !cached_path.exists() {
         let _ = fs::remove_file(&cached_path);
         let _ = fs::remove_file(update_cache_marker_path());
@@ -2275,8 +2297,9 @@ fn find_cached_installer(filename: &str, expected_size: Option<u64>) -> Option<P
     let expected = expected_size.filter(|size| *size > 0).or_else(|| {
         // 标记大小仅作回退，过期后不再据此复用
         let marker = read_update_cache_marker()?;
-        let fresh = get_current_timestamp().saturating_sub(marker.downloaded_at)
-            <= UPDATE_CACHE_MAX_AGE_SECS;
+        let fresh = get_current_timestamp()
+            .checked_sub(marker.downloaded_at)
+            .is_some_and(|age| age <= UPDATE_CACHE_MAX_AGE_SECS);
         (fresh && marker.filename == filename).then_some(marker.size)
     })?;
     let file_path = std::env::temp_dir().join(filename);

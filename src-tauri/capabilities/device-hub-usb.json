@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "device-hub-usb",
+  "description": "USB forwarding settings are available only to the bundled control panel, not remote Web UI content.",
+  "windows": ["main"],
+  "local": true,
+  "permissions": [
+    "allow-usbip-get-forwarding-config",
+    "allow-usbip-save-forwarding-config"
+  ]
+}

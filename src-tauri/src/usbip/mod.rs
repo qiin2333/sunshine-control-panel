@@ -5,6 +5,7 @@
 //! revalidated in a short-lived elevated copy of this executable.
 
 mod commands;
+mod config;
 mod device;
 mod elevated;
 mod exec;
@@ -164,6 +165,7 @@ fn validate_tcp_port(tcp_port: Option<u16>) -> Result<u16, String> {
 // module. Glob re-exports carry the `#[tauri::command]`-generated hidden items
 // that generate_handler! resolves (same pattern as dualsense).
 pub use commands::*;
+pub use config::*;
 #[cfg(target_os = "windows")]
 pub(crate) use elevated::try_handle_elevated_command;
 pub use status::*;

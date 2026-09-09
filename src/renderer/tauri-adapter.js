@@ -139,6 +139,8 @@ export const dualsense = {
 }
 
 export const usbip = {
+  getForwardingConfig: () => wrapResult('usbip_get_forwarding_config'),
+  saveForwardingConfig: (enabled, port) => wrapResult('usbip_save_forwarding_config', { enabled, port }),
   getStatus: () => wrapResult('usbip_get_status'),
   installTransport: () => wrapResult('usbip_install_transport'),
   cleanupTransport: () => wrapResult('usbip_cleanup_transport'),

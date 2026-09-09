@@ -7,6 +7,7 @@ mod client_fingerprint_rules;
 mod clipboard;
 mod commands;
 mod controller_hub;
+mod device_config;
 mod controllermeta;
 mod desktop_settings;
 mod dualsense;
@@ -262,6 +263,8 @@ fn main() {
             dualsense::dualsense_set_haptics_tuning,
             dualsense::dualsense_self_test,
             usbip::usbip_get_status,
+            usbip::usbip_get_forwarding_config,
+            usbip::usbip_save_forwarding_config,
             usbip::usbip_install_transport,
             usbip::usbip_cleanup_transport,
             usbip::usbip_list_remote,

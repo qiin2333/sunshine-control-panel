@@ -993,7 +993,6 @@ export const zh = {
   },
 
   hdrEnhanced: {
-    description: '管理可选的 HDR 画面处理组件。不同后端有各自的硬件要求和安装方式。',
     open: '管理 HDR 增强',
   },
   deviceHub: {

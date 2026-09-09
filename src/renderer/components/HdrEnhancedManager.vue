@@ -2,7 +2,6 @@
   <section class="ds5-page">
     <header class="ds5-page-header">
       <h1>{{ t.sidebar.hdrEnhanced }}</h1>
-      <p class="ds5-intro">{{ t.hdrEnhanced.description }}</p>
     </header>
     <RtxHdrManager />
   </section>

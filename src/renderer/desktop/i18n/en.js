@@ -993,7 +993,6 @@ Output only one short sentence, no explanation. Reply in English.`,
   },
 
   hdrEnhanced: {
-    description: 'Manage optional HDR processing components. Each backend has its own hardware requirements and installation method.',
     open: 'Manage HDR enhancement',
   },
   deviceHub: {

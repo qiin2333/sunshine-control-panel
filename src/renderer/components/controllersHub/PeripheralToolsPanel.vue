@@ -101,7 +101,6 @@
 
         <article class="chub-card">
           <div class="chub-card-head"><strong>{{ t.sidebar.hdrEnhanced }}</strong></div>
-          <p class="chub-hint">{{ t.hdrEnhanced.description }}</p>
           <div class="chub-card-actions">
             <el-button size="small" type="primary" @click="emit('open-hdr-enhanced')">{{ t.hdrEnhanced.open }}</el-button>
           </div>

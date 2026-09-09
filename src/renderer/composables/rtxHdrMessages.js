@@ -18,7 +18,6 @@ export const rtxHdrMessages = {
     "intro": "Install the required NVIDIA component, then enable RTX HDR for supported streams.",
     "maintenanceNotice": "The previous component operation did not finish. Restore the component controls to continue.",
     "missing": "Missing",
-    "openFolder": "Open component folder",
     "present": "Installed",
     "recover": "Restore component controls",
     "refresh": "Refresh",
@@ -50,7 +49,7 @@ export const rtxHdrMessages = {
     "vcRuntimeMissingNotice": "Microsoft Visual C++ 2015–2022 Redistributable (x64) is required. Install it, then refresh the component status."
   },
   "zh": {
-    "acquisitionDescription": "获取并解压 NVIDIA RTX Video SDK，然后在本页选择 bin\\Windows\\x64\\rel\\nvngx_truehdr.dll。",
+    "acquisitionDescription": "获取 RTX_Video_SDK_v1.1.0.zip 并解压，然后在本页点击【选择组件】，选择 bin\\Windows\\x64\\rel\\nvngx_truehdr.dll。",
     "acquisitionTitle": "如何安装",
     "adapterMissingNotice": "缺少 Sunshine HDR 适配组件。请重新安装或更新 Sunshine，然后刷新组件状态。",
     "bridge": "Sunshine HDR 适配组件",
@@ -68,7 +67,6 @@ export const rtxHdrMessages = {
     "intro": "安装所需的 NVIDIA 组件后，即可为支持的串流启用 RTX HDR。",
     "maintenanceNotice": "上次组件操作没有完成，请先恢复组件操作。",
     "missing": "缺失",
-    "openFolder": "打开组件目录",
     "present": "已安装",
     "recover": "恢复组件操作",
     "refresh": "刷新",

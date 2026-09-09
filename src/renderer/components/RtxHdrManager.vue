@@ -112,7 +112,6 @@
         <span class="ds5-health-state"><i :class="item.tone" aria-hidden="true"></i>{{ item.state }}</span>
       </div>
       <footer class="ds5-panel-footer">
-        <el-button v-if="status.installed" link @click="openFolder">{{ text.openFolder }}</el-button>
         <el-button
           v-if="status.installed"
           link
@@ -151,7 +150,6 @@ const {
   showAcquisition,
   openVcRuntimeDownload,
   recover,
-  openFolder,
 } = useRtxHdrManager()
 </script>
 

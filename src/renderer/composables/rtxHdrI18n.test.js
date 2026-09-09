@@ -9,7 +9,7 @@ test('HDR management is vendor-neutral while the backend keeps its identity', ()
   for (const [locale, messages] of Object.entries({ en, zh })) {
     assert.ok(messages.sidebar.hdrEnhanced.includes('HDR'))
     assert.ok(!messages.sidebar.hdrEnhanced.includes('RTX'))
-    assert.ok(messages.hdrEnhanced.description)
+    assert.equal(messages.hdrEnhanced.description, undefined)
     assert.equal(rtxHdrMessages[locale].title, 'NVIDIA RTX HDR')
   }
 })

@@ -1,7 +1,6 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { open } from '@tauri-apps/plugin-dialog'
-import { invoke } from '@tauri-apps/api/core'
 import { openExternalUrl, rtxHdr } from '../tauri-adapter.js'
 import { useRtxHdrI18n } from './rtxHdrI18n.js'
 
@@ -157,16 +156,6 @@ export function useRtxHdrManager() {
     }
   }
 
-  const openFolder = async () => {
-    const directory = status.value.managed_path.replace(/[\\/]nvngx_truehdr\.dll$/i, '')
-    if (!directory) return
-    try {
-      await invoke('open_local_path', { path: directory })
-    } catch (error) {
-      operationError.value = String(error?.message || error)
-    }
-  }
-
   const showAcquisition = () => ElMessageBox.alert(text.value.acquisitionDescription, text.value.acquisitionTitle).catch(() => {})
 
   const openVcRuntimeDownload = () => openExternalUrl('https://aka.ms/vs/17/release/vc_redist.x64.exe')
@@ -206,6 +195,5 @@ export function useRtxHdrManager() {
     showAcquisition,
     openVcRuntimeDownload,
     recover,
-    openFolder,
   }
 }

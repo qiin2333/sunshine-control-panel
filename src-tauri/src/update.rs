@@ -1997,6 +1997,51 @@ mod update_cache_tests {
         assert!(read_update_cache_marker().is_none());
         assert!(find_cached_installer(&filename, None).is_none());
 
+        // 标记大小回退路径同样受保留期约束；调用方传入的期望值不受影响
+        let stale = CachedInstallerMarker {
+            filename: filename.clone(),
+            size,
+            downloaded_at: get_current_timestamp() - UPDATE_CACHE_MAX_AGE_SECS - 60,
+        };
+        fs::write(
+            update_cache_marker_path(),
+            serde_json::to_string(&stale).unwrap(),
+        )
+        .unwrap();
+        assert!(find_cached_installer(&filename, None).is_none());
+        assert!(find_cached_installer(&filename, Some(size)).is_some());
+
+        // 清理保护判定：过期标记 → 安装包与标记一并清除
+        let cleanup_dir =
+            std::env::temp_dir().join(format!("sunshine-cache-test-dir-{}", std::process::id()));
+        fs::create_dir_all(&cleanup_dir).unwrap();
+        let cached_installer = cleanup_dir.join(&filename);
+        fs::write(&cached_installer, b"payload").unwrap();
+
+        assert!(protected_installer_for_cleanup(&cleanup_dir).is_none());
+        assert!(!cached_installer.exists(), "过期安装包应被删除");
+        assert!(read_update_cache_marker().is_none(), "过期标记应被删除");
+
+        // 有效标记 → 返回受保护的文件名
+        fs::write(&cached_installer, b"payload").unwrap();
+        write_update_cache_marker(&filename, size);
+        assert_eq!(
+            protected_installer_for_cleanup(&cleanup_dir).as_deref(),
+            Some(filename.as_str())
+        );
+
+        // 非法文件名的标记 → 标记被清除且不保护任何路径
+        write_update_cache_marker("../escape.exe", size);
+        assert!(protected_installer_for_cleanup(&cleanup_dir).is_none());
+        assert!(read_update_cache_marker().is_none());
+
+        // 标记指向的文件丢失 → 标记被清除
+        write_update_cache_marker(&filename, size);
+        let _ = fs::remove_file(&cached_installer);
+        assert!(protected_installer_for_cleanup(&cleanup_dir).is_none());
+        assert!(read_update_cache_marker().is_none());
+
+        let _ = fs::remove_dir_all(&cleanup_dir);
         let _ = fs::remove_file(&file_path);
         let _ = fs::remove_file(update_cache_marker_path());
     }
@@ -2192,9 +2237,35 @@ fn write_update_cache_marker(filename: &str, size: u64) {
     }
 }
 
+/// 决定本次清理应保护的安装包，返回其文件名。
+///
+/// 标记文件位于 temp 目录、内容不完全受我们控制，因此文件名必须先通过
+/// `validate_download_filename` 才能据此拼路径或删除文件；标记非法、
+/// 过期或指向的文件已丢失时解除保护并清掉标记本身。
+fn protected_installer_for_cleanup(temp_dir: &Path) -> Option<String> {
+    let marker = read_update_cache_marker()?;
+
+    if validate_download_filename(&marker.filename).is_err() {
+        let _ = fs::remove_file(update_cache_marker_path());
+        return None;
+    }
+
+    let cached_path = temp_dir.join(&marker.filename);
+    let expired =
+        get_current_timestamp().saturating_sub(marker.downloaded_at) > UPDATE_CACHE_MAX_AGE_SECS;
+    if expired || !cached_path.exists() {
+        let _ = fs::remove_file(&cached_path);
+        let _ = fs::remove_file(update_cache_marker_path());
+        return None;
+    }
+
+    Some(marker.filename)
+}
+
 /// 返回已完整下载且大小一致的安装包路径，命中时无需重新下载。
 ///
-/// 大小以调用方传入的期望值为准，缺省时回退到缓存标记中记录的大小；
+/// 大小以调用方传入的期望值为准——它来自当前这次更新检查，天然新鲜；
+/// 缺省时回退到缓存标记中记录的大小，此时与清理逻辑同样受保留期约束。
 /// 无法确定期望大小时保守地视为未命中。
 fn find_cached_installer(filename: &str, expected_size: Option<u64>) -> Option<PathBuf> {
     if validate_download_filename(filename).is_err() {
@@ -2202,9 +2273,11 @@ fn find_cached_installer(filename: &str, expected_size: Option<u64>) -> Option<P
     }
 
     let expected = expected_size.filter(|size| *size > 0).or_else(|| {
-        read_update_cache_marker()
-            .filter(|marker| marker.filename == filename)
-            .map(|marker| marker.size)
+        // 标记大小仅作回退，过期后不再据此复用
+        let marker = read_update_cache_marker()?;
+        let fresh = get_current_timestamp().saturating_sub(marker.downloaded_at)
+            <= UPDATE_CACHE_MAX_AGE_SECS;
+        (fresh && marker.filename == filename).then_some(marker.size)
     })?;
     let file_path = std::env::temp_dir().join(filename);
     let actual = fs::metadata(&file_path).ok()?.len();
@@ -2217,19 +2290,8 @@ fn cleanup_old_installers() {
     let temp_dir = std::env::temp_dir();
 
     // 用户取消安装后保留已下载的安装包，避免下次被迫重新下载；
-    // 标记过期或文件已丢失时解除保护。
-    let protected = read_update_cache_marker().and_then(|marker| {
-        let cached_path = temp_dir.join(&marker.filename);
-        let expired = get_current_timestamp().saturating_sub(marker.downloaded_at)
-            > UPDATE_CACHE_MAX_AGE_SECS;
-        if expired || !cached_path.exists() {
-            let _ = fs::remove_file(&cached_path);
-            let _ = fs::remove_file(update_cache_marker_path());
-            None
-        } else {
-            Some(marker.filename)
-        }
-    });
+    // 标记非法、过期或文件已丢失时解除保护。
+    let protected = protected_installer_for_cleanup(&temp_dir);
 
     info!("🧹 检查并清理临时目录中的旧安装包...");
 

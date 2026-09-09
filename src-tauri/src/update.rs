@@ -28,6 +28,11 @@ const HTTP_TIMEOUT_SECS: u64 = 3;
 const GITHUB_RELEASE_HOST: &str = "github.com";
 const MAX_RELEASES_TO_CHECK: usize = 10; // 最多检查的发布数量
 
+/// temp 目录中记录“已下载待安装”安装包的标记文件名。
+const UPDATE_CACHE_MARKER_FILE: &str = "sunshine-update-cache.json";
+/// 已下载安装包的最长保留期，超过后随临时目录清理一起删除。
+const UPDATE_CACHE_MAX_AGE_SECS: u64 = 14 * 24 * 60 * 60;
+
 // GitHub API 加速代理列表（按优先级排序）
 const API_PROXY_PREFIXES: &[&str] = &["https://ghapi.hackhub.cn/", "https://mirror.ghproxy.com/"];
 
@@ -68,6 +73,14 @@ struct GitHubAsset {
     browser_download_url: String,
     #[serde(default)]
     size: u64,
+}
+
+/// temp 目录中已下载安装包的缓存标记，用于跳过重复下载并免于被清理。
+#[derive(Debug, Serialize, Deserialize)]
+struct CachedInstallerMarker {
+    filename: String,
+    size: u64,
+    downloaded_at: u64,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -1749,6 +1762,20 @@ pub async fn download_update(
     let partial_path = download_dir.join(format!("{}.part", filename));
     let window = app_handle.get_webview_window("main");
 
+    // 安装包已完整下载（例如用户在上次确认框点了取消）时直接复用
+    if let Some(cached_path) = find_cached_installer(&filename, expected_size) {
+        info!("♻️ 已存在完整安装包，跳过下载: {}", filename);
+        write_update_cache_marker(
+            &filename,
+            fs::metadata(&cached_path).map(|m| m.len()).unwrap_or(0),
+        );
+        return Ok(serde_json::json!({
+            "success": true,
+            "file_path": cached_path.to_string_lossy().to_string(),
+            "cached": true,
+        }));
+    }
+
     remove_file_if_exists(
         &partial_path,
         DownloadErrorCode::FilePreparationFailed,
@@ -1828,6 +1855,14 @@ pub async fn download_update(
         return Err(error);
     }
 
+    // 记录缓存标记：即使本次安装被取消，重启或下次检查时也可直接复用
+    write_update_cache_marker(
+        &filename,
+        fs::metadata(&file_path)
+            .map(|m| m.len())
+            .unwrap_or(outcome.downloaded),
+    );
+
     info!(
         "✅ 下载完成: {} bytes，来源: {}",
         outcome.downloaded, outcome.source
@@ -1847,6 +1882,12 @@ pub async fn download_update(
         "file_path": file_path.to_string_lossy().to_string(),
         "source": outcome.source
     }))
+}
+
+/// 查询更新安装包是否已在 temp 目录中完整下载（未命中返回 `None`）。
+#[tauri::command]
+pub fn check_cached_update(filename: String, expected_size: Option<u64>) -> Option<String> {
+    find_cached_installer(&filename, expected_size).map(|path| path.to_string_lossy().to_string())
 }
 
 #[cfg(test)]
@@ -1914,6 +1955,115 @@ mod download_source_tests {
             serialized["detail"],
             "diagnostic details stay out of the localized UI"
         );
+    }
+}
+
+#[cfg(test)]
+mod update_cache_tests {
+    use super::*;
+
+    #[test]
+    fn cached_installer_reuse_and_marker_roundtrip() {
+        let filename = format!("sunshine-cache-test-{}.exe", std::process::id());
+        let file_path = std::env::temp_dir().join(&filename);
+        let _ = fs::remove_file(&file_path);
+        let _ = fs::remove_file(update_cache_marker_path());
+
+        // 文件不存在时不应命中
+        assert!(find_cached_installer(&filename, Some(123)).is_none());
+
+        fs::write(&file_path, b"payload-payload").unwrap();
+        let size = fs::metadata(&file_path).unwrap().len();
+
+        // 大小一致才复用
+        assert!(find_cached_installer(&filename, Some(size)).is_some());
+        assert!(find_cached_installer(&filename, Some(size + 1)).is_none());
+
+        // 期望大小缺省（或为 0）时回退到缓存标记
+        write_update_cache_marker(&filename, size);
+        assert!(find_cached_installer(&filename, None).is_some());
+        assert!(find_cached_installer(&filename, Some(0)).is_some());
+
+        // 非法文件名始终不命中
+        assert!(find_cached_installer("../escape.exe", Some(size)).is_none());
+
+        write_update_cache_marker("Sunshine-1.2.3.exe", 42);
+        let marker = read_update_cache_marker().unwrap();
+        assert_eq!(marker.filename, "Sunshine-1.2.3.exe");
+        assert_eq!(marker.size, 42);
+
+        // 损坏的标记文件按未命中处理
+        fs::write(update_cache_marker_path(), "not json").unwrap();
+        assert!(read_update_cache_marker().is_none());
+        assert!(find_cached_installer(&filename, None).is_none());
+
+        // 标记大小回退路径同样受保留期约束；调用方传入的期望值不受影响
+        let stale = CachedInstallerMarker {
+            filename: filename.clone(),
+            size,
+            downloaded_at: get_current_timestamp() - UPDATE_CACHE_MAX_AGE_SECS - 60,
+        };
+        fs::write(
+            update_cache_marker_path(),
+            serde_json::to_string(&stale).unwrap(),
+        )
+        .unwrap();
+        assert!(find_cached_installer(&filename, None).is_none());
+        assert!(find_cached_installer(&filename, Some(size)).is_some());
+
+        // 清理保护判定：过期标记 → 安装包与标记一并清除
+        let cleanup_dir =
+            std::env::temp_dir().join(format!("sunshine-cache-test-dir-{}", std::process::id()));
+        fs::create_dir_all(&cleanup_dir).unwrap();
+        let cached_installer = cleanup_dir.join(&filename);
+        fs::write(&cached_installer, b"payload").unwrap();
+
+        assert!(protected_installer_for_cleanup(&cleanup_dir).is_none());
+        assert!(!cached_installer.exists(), "过期安装包应被删除");
+        assert!(read_update_cache_marker().is_none(), "过期标记应被删除");
+
+        // 有效标记 → 返回受保护的文件名
+        fs::write(&cached_installer, b"payload").unwrap();
+        write_update_cache_marker(&filename, size);
+        assert_eq!(
+            protected_installer_for_cleanup(&cleanup_dir).as_deref(),
+            Some(filename.as_str())
+        );
+
+        // 非法文件名的标记 → 标记被清除且不保护任何路径
+        write_update_cache_marker("../escape.exe", size);
+        assert!(protected_installer_for_cleanup(&cleanup_dir).is_none());
+        assert!(read_update_cache_marker().is_none());
+
+        // 标记指向的文件丢失 → 标记被清除
+        write_update_cache_marker(&filename, size);
+        let _ = fs::remove_file(&cached_installer);
+        assert!(protected_installer_for_cleanup(&cleanup_dir).is_none());
+        assert!(read_update_cache_marker().is_none());
+
+        // 时钟回拨（downloaded_at 晚于当前时间）按过期处理：
+        // 标记大小不参与回退，清理也不持续保护
+        fs::write(&cached_installer, b"payload").unwrap();
+        let future = CachedInstallerMarker {
+            filename: filename.clone(),
+            size,
+            downloaded_at: get_current_timestamp() + 3600,
+        };
+        fs::write(
+            update_cache_marker_path(),
+            serde_json::to_string(&future).unwrap(),
+        )
+        .unwrap();
+        assert!(find_cached_installer(&filename, None).is_none());
+        // 调用方期望值路径不读标记，不受未来时间戳影响
+        assert!(find_cached_installer(&filename, Some(size)).is_some());
+        assert!(protected_installer_for_cleanup(&cleanup_dir).is_none());
+        assert!(!cached_installer.exists());
+        assert!(read_update_cache_marker().is_none());
+
+        let _ = fs::remove_dir_all(&cleanup_dir);
+        let _ = fs::remove_file(&file_path);
+        let _ = fs::remove_file(update_cache_marker_path());
     }
 }
 
@@ -2080,9 +2230,91 @@ pub async fn install_update(
     }
 }
 
+fn update_cache_marker_path() -> PathBuf {
+    std::env::temp_dir().join(UPDATE_CACHE_MARKER_FILE)
+}
+
+fn read_update_cache_marker() -> Option<CachedInstallerMarker> {
+    let raw = fs::read_to_string(update_cache_marker_path()).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+fn write_update_cache_marker(filename: &str, size: u64) {
+    let marker = CachedInstallerMarker {
+        filename: filename.to_string(),
+        size,
+        downloaded_at: get_current_timestamp(),
+    };
+    let raw = match serde_json::to_string(&marker) {
+        Ok(raw) => raw,
+        Err(e) => {
+            warn!("⚠️ 序列化更新缓存标记失败: {}", e);
+            return;
+        }
+    };
+    if let Err(e) = fs::write(update_cache_marker_path(), raw) {
+        warn!("⚠️ 写入更新缓存标记失败: {}", e);
+    }
+}
+
+/// 决定本次清理应保护的安装包，返回其文件名。
+///
+/// 标记文件位于 temp 目录、内容不完全受我们控制，因此文件名必须先通过
+/// `validate_download_filename` 才能据此拼路径或删除文件；标记非法、
+/// 过期或指向的文件已丢失时解除保护并清掉标记本身。
+fn protected_installer_for_cleanup(temp_dir: &Path) -> Option<String> {
+    let marker = read_update_cache_marker()?;
+
+    if validate_download_filename(&marker.filename).is_err() {
+        let _ = fs::remove_file(update_cache_marker_path());
+        return None;
+    }
+
+    let cached_path = temp_dir.join(&marker.filename);
+    // 时钟回拨（downloaded_at 晚于当前时间）按过期处理，不无限期保护
+    let expired = get_current_timestamp()
+        .checked_sub(marker.downloaded_at)
+        .map_or(true, |age| age > UPDATE_CACHE_MAX_AGE_SECS);
+    if expired || !cached_path.exists() {
+        let _ = fs::remove_file(&cached_path);
+        let _ = fs::remove_file(update_cache_marker_path());
+        return None;
+    }
+
+    Some(marker.filename)
+}
+
+/// 返回已完整下载且大小一致的安装包路径，命中时无需重新下载。
+///
+/// 大小以调用方传入的期望值为准——它来自当前这次更新检查，天然新鲜；
+/// 缺省时回退到缓存标记中记录的大小，此时与清理逻辑同样受保留期约束。
+/// 无法确定期望大小时保守地视为未命中。
+fn find_cached_installer(filename: &str, expected_size: Option<u64>) -> Option<PathBuf> {
+    if validate_download_filename(filename).is_err() {
+        return None;
+    }
+
+    let expected = expected_size.filter(|size| *size > 0).or_else(|| {
+        // 标记大小仅作回退，过期后不再据此复用
+        let marker = read_update_cache_marker()?;
+        let fresh = get_current_timestamp()
+            .checked_sub(marker.downloaded_at)
+            .is_some_and(|age| age <= UPDATE_CACHE_MAX_AGE_SECS);
+        (fresh && marker.filename == filename).then_some(marker.size)
+    })?;
+    let file_path = std::env::temp_dir().join(filename);
+    let actual = fs::metadata(&file_path).ok()?.len();
+
+    (actual == expected).then_some(file_path)
+}
+
 /// 清理临时目录中的旧安装包
 fn cleanup_old_installers() {
     let temp_dir = std::env::temp_dir();
+
+    // 用户取消安装后保留已下载的安装包，避免下次被迫重新下载；
+    // 标记非法、过期或文件已丢失时解除保护。
+    let protected = protected_installer_for_cleanup(&temp_dir);
 
     info!("🧹 检查并清理临时目录中的旧安装包...");
 
@@ -2105,6 +2337,12 @@ fn cleanup_old_installers() {
             }
 
             let file_name = path.file_name()?.to_str()?;
+
+            // 已下载待安装的安装包不清理
+            if protected.as_deref() == Some(file_name) {
+                return None;
+            }
+
             let file_name_lower = file_name.to_lowercase();
 
             // 检查是否包含 sunshine 相关关键词

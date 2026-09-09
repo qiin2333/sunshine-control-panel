@@ -315,15 +315,25 @@ const getTauriApis = async () => {
 }
 
 // 打开对话框时检查 temp 目录是否已有完整下载的安装包（上次取消安装或关闭应用时遗留）
+let cacheCheckId = 0
 const checkCachedInstaller = async () => {
   if (isLatest.value || !props.updateInfo?.download_name) return
+  const checkId = ++cacheCheckId
+  const filename = props.updateInfo.download_name
   try {
     const { invoke } = await getTauriApis()
     const cached = await invoke('check_cached_update', {
-      filename: props.updateInfo.download_name,
+      filename,
       expectedSize: props.updateInfo.download_size || null,
     })
-    if (cached && !isDownloading.value && !isInstalling.value) {
+    if (
+      cached &&
+      checkId === cacheCheckId &&
+      visible.value &&
+      props.updateInfo?.download_name === filename &&
+      !isDownloading.value &&
+      !isInstalling.value
+    ) {
       downloadedFilePath.value = cached
     }
   } catch (error) {

@@ -26,10 +26,10 @@ use windows::Win32::System::Ole::{
 };
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationCacheRequest, IUIAutomationElement,
-    IUIAutomationTextEditPattern, IUIAutomationTextPattern2, IUIAutomationValuePattern,
+    IUIAutomationTextPattern2, IUIAutomationValuePattern,
     SetWinEventHook, UIA_BoundingRectanglePropertyId, UIA_ControlTypePropertyId,
     UIA_EditControlTypeId, UIA_HasKeyboardFocusPropertyId, UIA_IsEnabledPropertyId,
-    UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId, UIA_TextEditPatternId, UIA_TextPattern2Id,
+    UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId, UIA_TextPattern2Id,
     UIA_ValueIsReadOnlyPropertyId, UIA_ValuePatternId, UnhookWinEvent, HWINEVENTHOOK,
 };
 use windows::Win32::UI::Shell::IFrameworkInputPane;
@@ -266,6 +266,12 @@ struct State {
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
 
+fn is_confirmed_editor(is_edit_control: bool, value_read_only: Option<bool>) -> bool {
+    // TextEditPattern can exist on a read-only Chromium Document. Missing or
+    // failed ValuePattern reads remain unknown, never evidence of editability.
+    is_edit_control && value_read_only == Some(false)
+}
+
 fn inspect_focused_element(
     automation: &IUIAutomation,
     cache: &IUIAutomationCacheRequest,
@@ -287,17 +293,15 @@ fn inspect_focused_element(
     let password = unsafe { element.CachedIsPassword() }
         .map(|v| v.as_bool())
         .unwrap_or(false);
-    let has_text_edit = unsafe {
-        element.GetCachedPatternAs::<IUIAutomationTextEditPattern>(UIA_TextEditPatternId)
-    }
-    .is_ok();
-    let writable_value =
+    let value_read_only =
         unsafe { element.GetCachedPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) }
             .ok()
             .and_then(|pattern| unsafe { pattern.CachedIsReadOnly() }.ok())
-            .map(|value| !value.as_bool())
-            .unwrap_or(false);
-    let editable = has_text_edit || (control_type == UIA_EditControlTypeId.0 && writable_value);
+            .map(|value| value.as_bool());
+    let editable = is_confirmed_editor(
+        control_type == UIA_EditControlTypeId.0,
+        value_read_only,
+    );
     let caret_rect = editable.then(|| inspect_caret(&element)).flatten();
     let signature = FocusSignature {
         control_type,
@@ -396,7 +400,6 @@ fn observer_loop(
             let _ = request.AddProperty(UIA_ControlTypePropertyId);
             let _ = request.AddProperty(UIA_IsPasswordPropertyId);
             let _ = request.AddProperty(UIA_ValueIsReadOnlyPropertyId);
-            let _ = request.AddPattern(UIA_TextEditPatternId);
             let _ = request.AddPattern(UIA_ValuePatternId);
             let _ = request.AddPattern(UIA_TextPattern2Id);
         }
@@ -688,6 +691,20 @@ pub fn stop() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_explicitly_writable_edit_is_confirmed() {
+        for (is_edit, read_only, expected) in [
+            (true, Some(false), true),
+            (true, Some(true), false),
+            (true, None, false),
+            (false, Some(true), false), // Chrome read-only Document
+            (false, Some(false), false),
+            (false, None, false),
+        ] {
+            assert_eq!(is_confirmed_editor(is_edit, read_only), expected);
+        }
+    }
 
     fn observation(source: &'static str, active: bool) -> Observation {
         Observation {

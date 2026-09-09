@@ -1,6 +1,7 @@
+use crate::device_config::{DEVICE_CONFIG_LOCK, read_device_api_response};
 use crate::sunshine;
 use log::{debug, info};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize};
 
 /// 控制器中心相关的 sunshine.conf 配置（仿真模式 / DS4 行为 / DSU 体感服务器）
 #[derive(Debug, Serialize, Clone)]
@@ -40,43 +41,6 @@ pub struct MicrophoneTestResult {
     pub success: bool,
     pub error_code: String,
     pub backend: String,
-}
-
-const MAX_DEVICE_API_RESPONSE_BYTES: usize = 64 * 1024;
-static CONTROLLER_HUB_CONFIG_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-async fn read_device_api_response<T: DeserializeOwned>(
-    mut response: reqwest::Response,
-    operation: &str,
-) -> Result<T, String> {
-    let status = response.status();
-    if response
-        .content_length()
-        .is_some_and(|size| size > MAX_DEVICE_API_RESPONSE_BYTES as u64)
-    {
-        return Err(format!("{operation} response exceeds 64 KiB"));
-    }
-    let mut bytes = Vec::with_capacity(
-        response
-            .content_length()
-            .unwrap_or_default()
-            .min(MAX_DEVICE_API_RESPONSE_BYTES as u64) as usize,
-    );
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|error| format!("Unable to read {operation} response: {error}"))?
-    {
-        if bytes.len().saturating_add(chunk.len()) > MAX_DEVICE_API_RESPONSE_BYTES {
-            return Err(format!("{operation} response exceeds 64 KiB"));
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    if !status.is_success() {
-        let detail = String::from_utf8_lossy(&bytes);
-        return Err(format!("{operation} failed ({status}): {detail}"));
-    }
-    serde_json::from_slice(&bytes).map_err(|error| format!("Invalid {operation} response: {error}"))
 }
 
 async fn device_api_url(path: &str) -> Result<String, String> {
@@ -176,7 +140,7 @@ pub async fn save_controller_hub_config(
 
     // Serialize the read/modify/write cycle so independent controls cannot
     // overwrite one another when users change them in quick succession.
-    let _config_guard = CONTROLLER_HUB_CONFIG_LOCK.lock().await;
+    let _config_guard = DEVICE_CONFIG_LOCK.lock().await;
     let mut config_map = crate::vdd::read_full_sunshine_config().await?;
 
     let mut changed: Vec<&str> = Vec::new();

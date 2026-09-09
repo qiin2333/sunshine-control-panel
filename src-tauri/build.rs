@@ -20,6 +20,8 @@ const LOCAL_ONLY_COMMANDS: &[&str] = &[
     "native_component_remove",
     "open_local_path",
     "open_native_tool",
+    "usbip_get_forwarding_config",
+    "usbip_save_forwarding_config",
 ];
 
 /// 允许 sunshine backend remote origin 调用 app commands 的 URL 列表。

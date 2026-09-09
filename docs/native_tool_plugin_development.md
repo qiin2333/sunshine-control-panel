@@ -12,6 +12,9 @@ WebView 中实现的独立工具。普通设置页面和低频业务逻辑继续
 `ComponentHost::Gui` 且声明单个固定 DLL 的条目可以进入本协议定义的插件加载器。
 Core 组件不实现本 ABI，也不得由 GUI 通过 `LoadLibrary` 加载。
 
+跨宿主的身份、文件角色、安装及运行边界遵守 [原生侧载组件接入合同](native_component_contract.md)。
+本协议只定义 GUI 工具 DLL 的执行接口，不要求厂商运行库或 Core 内置适配代码实现该 ABI。
+
 ## 2. 身份与发现
 
 - 组件身份、宿主、固定文件名和分发策略编译在 GUI 中。

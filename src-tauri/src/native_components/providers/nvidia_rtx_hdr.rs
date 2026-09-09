@@ -11,10 +11,7 @@ use crate::native_components::install::{permission_error, sha256_file, validate_
 use crate::native_components::operation::COMPONENT_OPERATION;
 #[cfg(target_os = "windows")]
 use crate::native_components::operation::{ensure_helper_finished, wait_for_component_helper};
-use crate::native_components::{
-    NVIDIA_RTX_VIDEO_ID, RTX_HDR_RUNTIME as RUNTIME_FILE, RTX_VIDEO_BRIDGE as BRIDGE_FILE,
-};
-const MAX_BRIDGE_BYTES: u64 = 64 * 1024 * 1024;
+use crate::native_components::{NVIDIA_RTX_VIDEO_ID, RTX_HDR_RUNTIME as RUNTIME_FILE};
 const MAX_RUNTIME_BYTES: u64 = 512 * 1024 * 1024;
 #[cfg(target_os = "windows")]
 const ELEVATED_INSTALL_ARG: &str = "--elevated-rtx-hdr-install";
@@ -27,7 +24,6 @@ const ELEVATED_RECOVER_ARG: &str = "--elevated-rtx-hdr-recover";
 struct ComponentManifest {
     schema: u32,
     component_id: String,
-    bridge_sha256: String,
     runtime_sha256: String,
 }
 
@@ -41,21 +37,16 @@ pub struct RtxHdrComponentStatus {
     pub ready: bool,
     pub in_use: bool,
     pub maintenance: bool,
-    pub bridge_present: bool,
+    pub host_supported: bool,
     pub runtime_present: bool,
     pub configured: bool,
     pub managed_path: String,
-    pub bridge_sha256: String,
     pub runtime_sha256: String,
 }
 
 fn component_root() -> PathBuf {
     crate::native_components::core_component_root(NVIDIA_RTX_VIDEO_ID)
         .expect("RTX HDR must be registered as a Core component")
-}
-
-fn component_id(bridge_hash: &str, runtime_hash: &str) -> String {
-    format!("{}-{}", &bridge_hash[..16], &runtime_hash[..16])
 }
 
 fn read_manifest(directory: &Path) -> Option<ComponentManifest> {
@@ -71,27 +62,16 @@ fn read_manifest(directory: &Path) -> Option<ComponentManifest> {
     serde_json::from_slice(&bytes).ok()
 }
 
-fn trusted_manifest(component_id: &str) -> Result<ComponentManifest, String> {
-    let path = crate::sunshine::install_dir()
-        .join("assets")
-        .join("hdr-components.json");
-    let file = File::open(path)
-        .map_err(|_| "HDR-PKG-009: trusted component versions are not configured".to_string())?;
-    let mut bytes = Vec::new();
-    file.take(64 * 1024 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| "HDR-PKG-009: unable to read trusted component versions".to_string())?;
-    if bytes.len() > 64 * 1024 {
-        return Err("HDR-PKG-009: invalid trusted component versions".to_string());
-    }
-    let catalog: serde_json::Value = serde_json::from_slice(&bytes)
-        .map_err(|_| "HDR-PKG-009: invalid trusted component versions".to_string())?;
+fn trusted_manifest(
+    catalog: &serde_json::Value,
+    component_id: &str,
+) -> Result<ComponentManifest, String> {
     if catalog
         .get("schema_version")
         .and_then(serde_json::Value::as_u64)
         != Some(1)
     {
-        return Err("HDR-PKG-009: unsupported trusted component schema".to_string());
+        return Err("HDR-PKG-009: unsupported Core component description".to_string());
     }
     let trusted = catalog
         .get("components")
@@ -100,11 +80,6 @@ fn trusted_manifest(component_id: &str) -> Result<ComponentManifest, String> {
         .ok_or_else(|| {
             "HDR-PKG-009: this component version is not trusted by this installation".to_string()
         })?;
-    let bridge_sha256 = trusted
-        .get(BRIDGE_FILE)
-        .and_then(serde_json::Value::as_str)
-        .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
-        .ok_or_else(|| "HDR-PKG-009: invalid trusted component versions".to_string())?;
     let runtime_sha256 = trusted
         .get(RUNTIME_FILE)
         .and_then(serde_json::Value::as_str)
@@ -113,13 +88,11 @@ fn trusted_manifest(component_id: &str) -> Result<ComponentManifest, String> {
     Ok(ComponentManifest {
         schema: 1,
         component_id: component_id.to_string(),
-        bridge_sha256: bridge_sha256.to_ascii_lowercase(),
         runtime_sha256: runtime_sha256.to_ascii_lowercase(),
     })
 }
 
 fn validate_version(directory: &Path, expected: &ComponentManifest) -> bool {
-    let bridge = directory.join(BRIDGE_FILE);
     let runtime = directory.join(RUNTIME_FILE);
     let Some(stored) = read_manifest(directory) else {
         return false;
@@ -127,7 +100,7 @@ fn validate_version(directory: &Path, expected: &ComponentManifest) -> bool {
     let Ok(canonical_directory) = directory.canonicalize() else {
         return false;
     };
-    if [bridge.as_path(), runtime.as_path()].iter().any(|path| {
+    if [runtime.as_path()].iter().any(|path| {
         path.canonicalize().ok().as_deref().and_then(Path::parent)
             != Some(canonical_directory.as_path())
     }) {
@@ -135,12 +108,8 @@ fn validate_version(directory: &Path, expected: &ComponentManifest) -> bool {
     }
     stored.schema == 1
         && stored.component_id == expected.component_id
-        && stored.bridge_sha256 == expected.bridge_sha256
         && stored.runtime_sha256 == expected.runtime_sha256
-        && validate_named_dll(&bridge, BRIDGE_FILE, MAX_BRIDGE_BYTES).is_ok()
         && validate_named_dll(&runtime, RUNTIME_FILE, MAX_RUNTIME_BYTES).is_ok()
-        && sha256_file(&bridge, MAX_BRIDGE_BYTES).ok().as_deref()
-            == Some(expected.bridge_sha256.as_str())
         && sha256_file(&runtime, MAX_RUNTIME_BYTES).ok().as_deref()
             == Some(expected.runtime_sha256.as_str())
 }
@@ -155,9 +124,13 @@ fn build_status(
         .get(NVIDIA_RTX_VIDEO_ID)
         .map(|value| value.version.as_str());
     let directory = component_root();
-    let manifest = version.and_then(|version| trusted_manifest(version).ok());
-    let bridge = directory.join(BRIDGE_FILE);
-    let bridge_present = bridge.is_file();
+    let catalog = &runtime_status["trusted_components"];
+    let manifest = version.and_then(|version| trusted_manifest(catalog, version).ok());
+    let host_supported = catalog
+        .get("components")
+        .and_then(|components| components.get(NVIDIA_RTX_VIDEO_ID))
+        .and_then(serde_json::Value::as_object)
+        .is_some_and(|versions| !versions.is_empty());
     let runtime_present = directory.join(RUNTIME_FILE).is_file();
     let integrity_valid = manifest
         .as_ref()
@@ -211,14 +184,10 @@ fn build_status(
             .get("maintenance")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false),
-        bridge_present,
+        host_supported,
         runtime_present,
         configured: version.is_some(),
-        managed_path: bridge.to_string_lossy().into_owned(),
-        bridge_sha256: manifest
-            .as_ref()
-            .map(|value| value.bridge_sha256.clone())
-            .unwrap_or_default(),
+        managed_path: directory.join(RUNTIME_FILE).to_string_lossy().into_owned(),
         runtime_sha256: manifest
             .as_ref()
             .map(|value| value.runtime_sha256.clone())
@@ -250,8 +219,11 @@ async fn status_for_config(
         .map_err(|_| "HDR-PKG-004: component status check failed".to_string())
 }
 
-fn verify_source_trust(manifest: &ComponentManifest) -> Result<(), String> {
-    if trusted_manifest(&manifest.component_id)? != *manifest {
+fn verify_source_trust(
+    catalog: &serde_json::Value,
+    manifest: &ComponentManifest,
+) -> Result<(), String> {
+    if trusted_manifest(catalog, &manifest.component_id)? != *manifest {
         return Err(
             "HDR-PKG-009: this component version is not trusted by this installation".to_string(),
         );
@@ -280,16 +252,8 @@ fn install_runtime(
     manifest: &ComponentManifest,
     commit_config: impl FnOnce() -> Result<(), String>,
 ) -> Result<PathBuf, String> {
-    verify_source_trust(manifest)?;
     validate_named_dll(runtime_source, RUNTIME_FILE, MAX_RUNTIME_BYTES)?;
     let root = validate_component_root()?;
-    let bridge = root.join(BRIDGE_FILE);
-    validate_named_dll(&bridge, BRIDGE_FILE, MAX_BRIDGE_BYTES)?;
-    if sha256_file(&bridge, MAX_BRIDGE_BYTES).ok().as_deref()
-        != Some(manifest.bridge_sha256.as_str())
-    {
-        return Err("HDR-PKG-009: installed bridge does not match trusted metadata".to_string());
-    }
     if validate_version(&root, manifest) {
         commit_config()?;
         return Ok(root);
@@ -379,26 +343,15 @@ async fn recover_runtime_files() -> Result<(), String> {
     .map_err(|_| "HDR-PKG-004: component recovery failed".to_string())?
 }
 
-fn manifest_for_sources(
-    bridge_source: &Path,
-    runtime_source: &Path,
-) -> Result<ComponentManifest, String> {
-    validate_named_dll(bridge_source, BRIDGE_FILE, MAX_BRIDGE_BYTES)?;
+fn manifest_for_runtime(runtime_source: &Path) -> Result<ComponentManifest, String> {
     validate_named_dll(runtime_source, RUNTIME_FILE, MAX_RUNTIME_BYTES)?;
-    let bridge_hash = sha256_file(bridge_source, MAX_BRIDGE_BYTES)
-        .map_err(|error| format!("RTXHDR-PKG-004: hash bridge failed: {error}"))?;
     let runtime_hash = sha256_file(runtime_source, MAX_RUNTIME_BYTES)
-        .map_err(|error| format!("RTXHDR-PKG-004: hash runtime failed: {error}"))?;
+        .map_err(|_| "HDR-PKG-004: unable to hash NVIDIA runtime".to_string())?;
     Ok(ComponentManifest {
         schema: 1,
-        component_id: component_id(&bridge_hash, &runtime_hash),
-        bridge_sha256: bridge_hash,
+        component_id: runtime_hash.clone(),
         runtime_sha256: runtime_hash,
     })
-}
-
-fn manifest_for_runtime(runtime_source: &Path) -> Result<ComponentManifest, String> {
-    manifest_for_sources(&component_root().join(BRIDGE_FILE), runtime_source)
 }
 
 fn remove_managed_runtime() -> Result<(), String> {
@@ -450,6 +403,8 @@ pub(crate) fn try_handle_elevated_command() -> Option<i32> {
             executor.block_on(recover_runtime_files())?;
             if let Some(runtime) = runtime {
                 let manifest = manifest_for_runtime(&runtime)?;
+                let status = executor.block_on(crate::hdr_enhanced::get_status())?;
+                verify_source_trust(&status["trusted_components"], &manifest)?;
                 install_runtime(&runtime, &manifest, || {
                     executor.block_on(publish_installed_version(&manifest, &id))
                 })?;
@@ -576,11 +531,12 @@ pub async fn rtx_hdr_install(runtime_path: String) -> Result<RtxHdrComponentStat
         .try_lock()
         .map_err(|_| "HDR-OP-001: another component operation is running".to_string())?;
     ensure_idle().await?;
+    let status = crate::hdr_enhanced::get_status().await?;
     let runtime_source = PathBuf::from(runtime_path);
     let runtime = runtime_source.clone();
     let manifest = tokio::task::spawn_blocking(move || {
         let manifest = manifest_for_runtime(&runtime)?;
-        verify_source_trust(&manifest)?;
+        verify_source_trust(&status["trusted_components"], &manifest)?;
         Ok::<_, String>(manifest)
     })
     .await
@@ -684,6 +640,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn runtime_identity_is_independent_of_the_adapter_build() {
+        let hash = "a".repeat(64);
+        let manifest = ComponentManifest {
+            schema: 1,
+            component_id: hash.clone(),
+            runtime_sha256: hash.clone(),
+        };
+        let mut catalog = serde_json::json!({
+            "schema_version": 1,
+            "components": { NVIDIA_RTX_VIDEO_ID: { hash.clone(): { RUNTIME_FILE: hash } } }
+        });
+        assert!(verify_source_trust(&catalog, &manifest).is_ok());
+        let mut changed = manifest.clone();
+        changed.runtime_sha256 = "b".repeat(64);
+        assert!(verify_source_trust(&catalog, &changed).is_err());
+        catalog["schema_version"] = serde_json::json!(2);
+        assert!(verify_source_trust(&catalog, &manifest).is_err());
+    }
+
+    #[test]
     fn configuration_is_not_runtime_verification() {
         let config = crate::hdr_enhanced::ConfigState {
             settings: crate::hdr_enhanced::Settings {
@@ -735,11 +711,9 @@ mod tests {
     fn static_integrity_check_does_not_execute_imported_dlls() {
         let root = std::env::temp_dir().join(format!("rtx-hdr-status-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
-        let bridge = root.join(BRIDGE_FILE);
         let runtime = root.join(RUNTIME_FILE);
-        write_test_pe(&bridge, 0x8664, true, 0x20b, 1);
         write_test_pe(&runtime, 0x8664, true, 0x20b, 1);
-        let manifest = manifest_for_sources(&bridge, &runtime).unwrap();
+        let manifest = manifest_for_runtime(&runtime).unwrap();
         fs::write(
             root.join("component.json"),
             serde_json::to_vec(&manifest).unwrap(),
@@ -761,11 +735,9 @@ mod tests {
         let root = std::env::temp_dir().join(format!("hdr-committed-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&root).unwrap();
         let root = root.canonicalize().unwrap();
-        let bridge = root.join(BRIDGE_FILE);
         let runtime = root.join(RUNTIME_FILE);
-        write_test_pe(&bridge, 0x8664, true, 0x20b, 1);
         write_test_pe(&runtime, 0x8664, true, 0x20b, 1);
-        let manifest = manifest_for_sources(&bridge, &runtime).unwrap();
+        let manifest = manifest_for_runtime(&runtime).unwrap();
         fs::remove_file(&runtime).unwrap();
         runtime_transaction::prepare(&root, &manifest).unwrap();
         write_test_pe(&runtime, 0x8664, true, 0x20b, 1);
@@ -816,9 +788,9 @@ mod tests {
     fn accepts_x64_pe32_plus_dll() {
         let root = std::env::temp_dir().join(format!("rtx-hdr-pe-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
-        let path = root.join(BRIDGE_FILE);
+        let path = root.join(RUNTIME_FILE);
         write_test_pe(&path, 0x8664, true, 0x20b, 1);
-        assert!(validate_named_dll(&path, BRIDGE_FILE, MAX_BRIDGE_BYTES).is_ok());
+        assert!(validate_named_dll(&path, RUNTIME_FILE, MAX_RUNTIME_BYTES).is_ok());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -848,7 +820,7 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let path = root.join("unknown.dll");
         write_test_pe(&path, 0x8664, true, 0x20b, 1);
-        assert!(validate_named_dll(&path, BRIDGE_FILE, MAX_BRIDGE_BYTES).is_err());
+        assert!(validate_named_dll(&path, RUNTIME_FILE, MAX_RUNTIME_BYTES).is_err());
         let _ = fs::remove_dir_all(root);
     }
 }

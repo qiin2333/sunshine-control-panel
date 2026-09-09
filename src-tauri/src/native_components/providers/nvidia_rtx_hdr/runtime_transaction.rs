@@ -145,7 +145,6 @@ mod tests {
         let manifest = ComponentManifest {
             schema: 1,
             component_id: "new-version".into(),
-            bridge_sha256: "a".repeat(64),
             runtime_sha256: "b".repeat(64),
         };
         prepare(&root, &manifest).unwrap();
@@ -172,7 +171,6 @@ mod tests {
         let manifest = ComponentManifest {
             schema: 1,
             component_id: "new-version".into(),
-            bridge_sha256: "a".repeat(64),
             runtime_sha256: "b".repeat(64),
         };
         prepare(&root, &manifest).unwrap();

@@ -12,11 +12,10 @@ const emptyStatus = () => ({
   ready: false,
   in_use: false,
   maintenance: false,
-  bridge_present: false,
+  host_supported: false,
   runtime_present: false,
   configured: false,
   managed_path: '',
-  bridge_sha256: '',
   runtime_sha256: '',
 })
 
@@ -34,8 +33,8 @@ export function useRtxHdrManager() {
   const healthRows = computed(() => [
     {
       label: text.value.bridge,
-      state: status.value.bridge_present ? text.value.present : text.value.missing,
-      tone: status.value.bridge_present ? 'ok' : 'bad',
+      state: status.value.host_supported ? text.value.present : text.value.missing,
+      tone: status.value.host_supported ? 'ok' : 'bad',
     },
     {
       label: text.value.runtime,
@@ -152,7 +151,7 @@ export function useRtxHdrManager() {
   }
 
   const openFolder = async () => {
-    const directory = status.value.managed_path.replace(/[\\/]foundation_rtx_video_bridge\.dll$/i, '')
+    const directory = status.value.managed_path.replace(/[\\/]nvngx_truehdr\.dll$/i, '')
     if (!directory) return
     try {
       await invoke('open_local_path', { path: directory })

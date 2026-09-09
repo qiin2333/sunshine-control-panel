@@ -7,7 +7,6 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 pub const NVIDIA_RTX_VIDEO_ID: &str = "alkaidlab.nvidia_rtx_video";
-pub const RTX_VIDEO_BRIDGE: &str = "foundation_rtx_video_bridge.dll";
 pub const RTX_HDR_RUNTIME: &str = "nvngx_truehdr.dll";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]

@@ -22,7 +22,7 @@
             type="primary"
             class="ds5-action"
             :loading="operation === 'install'"
-            :disabled="!status.bridge_present || status.in_use || status.maintenance || controlsBusy"
+            :disabled="!status.host_supported || status.in_use || status.maintenance || controlsBusy"
             @click="install"
           >{{ actionLabel }}</el-button>
           <el-button
@@ -47,7 +47,7 @@
     </article>
 
     <el-alert
-      v-if="statusKnown && !status.bridge_present"
+      v-if="statusKnown && !status.host_supported"
       class="ds5-notice"
       type="warning"
       :title="text.bridgeMissingNotice"

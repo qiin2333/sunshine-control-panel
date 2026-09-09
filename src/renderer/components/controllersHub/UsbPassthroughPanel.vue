@@ -1,5 +1,6 @@
 <template>
   <section class="chub-panel">
+    <UsbForwardingSettings :transport-ready="status.ready && !statusProbeFailed" />
     <div class="chub-window" :class="statusClass">
       <span class="chub-window-tab">USB/IP TRANSPORT</span>
       <div class="chub-hud-row">
@@ -35,7 +36,8 @@
       />
     </div>
 
-    <div class="chub-section">
+    <details class="chub-section">
+      <summary>{{ t.deviceHub.usb.manualTitle }}</summary>
       <div class="chub-section-head">
         <span class="chub-section-label">◈ {{ t.deviceHub.usb.exporterTitle }}</span>
         <span class="chub-section-rule"></span>
@@ -80,7 +82,8 @@
           >{{ t.deviceHub.usb.attach }}</el-button>
         </article>
       </div>
-    </div>
+      <p class="chub-hint">{{ t.deviceHub.usb.securityHint }}</p>
+    </details>
 
     <div class="chub-section chub-usb-attached-section">
       <div class="chub-section-head">
@@ -113,10 +116,6 @@
     </div>
 
     <div class="chub-context-note">
-      <strong>{{ t.deviceHub.usb.securityTitle }}</strong>
-      <span>{{ t.deviceHub.usb.securityHint }}</span>
-    </div>
-    <div class="chub-context-note">
       <strong>{{ t.deviceHub.usb.boundaryTitle }}</strong>
       <span>{{ t.deviceHub.usb.boundaryHint }}</span>
     </div>
@@ -128,6 +127,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { usbip } from '../../tauri-adapter.js'
 import { useI18n } from '../../desktop/i18n/index.js'
+import UsbForwardingSettings from './UsbForwardingSettings.vue'
 
 const { t } = useI18n()
 const status = reactive({
@@ -339,3 +339,8 @@ watch([remote, tcpPort], () => {
 
 onMounted(() => refreshStatus())
 </script>
+
+<style scoped>
+.chub-hud-actions { flex-shrink: 0; gap: 12px; }
+summary { cursor: pointer; padding: 10px 0; }
+</style>

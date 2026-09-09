@@ -36,12 +36,12 @@
       />
     </div>
 
-    <details class="chub-section">
-      <summary>{{ t.deviceHub.usb.manualTitle }}</summary>
-      <div class="chub-section-head">
-        <span class="chub-section-label">◈ {{ t.deviceHub.usb.exporterTitle }}</span>
+    <details class="chub-section chub-disclosure chub-disclosure--section">
+      <summary>
+        <span class="chub-section-label">◈ {{ t.deviceHub.usb.manualTitle }}</span>
         <span class="chub-section-rule"></span>
-      </div>
+        <span class="chub-disclosure-mark" aria-hidden="true">▸</span>
+      </summary>
       <p class="chub-hint">{{ t.deviceHub.usb.exporterHint }}</p>
       <form class="chub-usb-discovery" @submit.prevent="discover">
         <el-input
@@ -340,7 +340,3 @@ watch([remote, tcpPort], () => {
 onMounted(() => refreshStatus())
 </script>
 
-<style scoped>
-.chub-hud-actions { flex-shrink: 0; gap: 12px; }
-summary { cursor: pointer; padding: 10px 0; }
-</style>

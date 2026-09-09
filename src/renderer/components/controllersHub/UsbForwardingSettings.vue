@@ -1,44 +1,46 @@
 <template>
-  <div class="chub-section usb-forwarding-settings" aria-live="polite">
+  <div class="chub-section usb-forwarding-settings">
     <div class="chub-section-head">
       <span class="chub-section-label">◈ {{ text.forwardingTitle }}</span>
       <span class="chub-section-rule"></span>
     </div>
     <p class="chub-hint">{{ text.forwardingHint }}</p>
-    <p v-if="loading" role="status">{{ text.loadingConfig }}</p>
+    <div v-if="loading" role="status" :aria-label="text.loadingConfig">
+      <el-skeleton :rows="2" animated />
+    </div>
     <template v-else-if="loadError">
-      <el-alert type="error" :closable="false" :title="text.loadConfigFailed" />
-      <el-button size="small" @click="load">{{ t.deviceHub.refresh }}</el-button>
+      <el-alert class="chub-notice" type="error" :closable="false" :title="text.loadConfigFailed" />
+      <el-button size="small" @click="load">{{ text.retryLoad }}</el-button>
     </template>
-    <el-alert v-else-if="!supported" type="info" :closable="false" :title="text.updateHost" />
+    <el-alert v-else-if="!supported" class="chub-notice" type="info" :closable="false" :title="text.updateHost" />
     <template v-else>
       <div class="forwarding-row">
         <label for="usb-forwarding-enabled">{{ text.allowClients }}</label>
         <el-switch id="usb-forwarding-enabled" v-model="enabled" :disabled="saving" :aria-label="text.allowClients" />
       </div>
       <p v-if="enabled && !transportReady" class="chub-hint">{{ text.prepareTransport }}</p>
-      <details>
-        <summary>{{ text.advancedPort }}</summary>
+      <details class="chub-disclosure chub-disclosure--inline">
+        <summary>{{ text.advancedPort }}<span class="chub-disclosure-mark" aria-hidden="true">▸</span></summary>
         <label class="forwarding-row" for="usb-forwarding-port">
           <span>{{ text.forwardingPort }}</span>
           <el-input-number id="usb-forwarding-port" v-model="port" :min="0" :max="65535"
             :controls="false" :disabled="saving" :aria-label="text.forwardingPort" />
         </label>
         <p class="chub-hint">{{ text.autoPortHint }}</p>
-        <p v-if="!validPort" role="alert" class="chub-status-error">{{ text.invalidForwardingPort }}</p>
       </details>
+      <p v-if="!validPort" aria-live="polite" class="chub-status-error">{{ text.invalidForwardingPort }}</p>
       <div class="forwarding-actions">
         <el-button type="primary" :loading="saving" :disabled="!dirty || !validPort || saving" @click="save">{{ text.saveConfig }}</el-button>
         <span class="chub-hint">{{ text.restartHint }}</span>
       </div>
-      <el-alert v-if="saveError" type="error" :closable="false" :title="text.saveConfigFailed" />
-      <el-alert v-if="saved && !dirty" type="warning" :closable="false" :title="text.savedRestart" />
+      <el-alert v-if="saveError" class="chub-notice" type="error" :closable="false" :title="text.saveConfigFailed" />
     </template>
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { usbip } from '../../tauri-adapter.js'
 import { useI18n } from '../../desktop/i18n/index.js'
 
@@ -50,7 +52,6 @@ const loadError = ref(false)
 const supported = ref(false)
 const saving = ref(false)
 const saveError = ref(false)
-const saved = ref(false)
 const enabled = ref(false)
 const port = ref(0)
 const baseline = ref({ enabled: false, port: 0 })
@@ -82,7 +83,7 @@ async function save() {
     const result = await usbip.saveForwardingConfig(enabled.value, port.value)
     if (!result?.success) throw new Error('save failed')
     baseline.value = { enabled: enabled.value, port: port.value }
-    saved.value = true
+    ElMessage.success(text.value.savedToast)
   } catch {
     saveError.value = true
   } finally {
@@ -95,6 +96,4 @@ onMounted(load)
 <style scoped>
 .forwarding-row, .forwarding-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 12px 0; }
 .forwarding-actions { justify-content: flex-start; }
-summary { cursor: pointer; padding: 10px 0; }
-.el-alert { margin: 12px 0; }
 </style>

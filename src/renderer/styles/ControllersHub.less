@@ -52,7 +52,7 @@
 // 词汇表：
 //   大按钮   = 方角 + 2px 边 + 硬投影按压手感（主操作）
 //   小按钮   = [ 方括号 ] 文本操作（块内低权重动作）
-//   方角控件 = 标签 / 输入 / 步进器 / 复选框 / 进度条 一律直角
+//   方角控件 = 标签 / 输入 / 步进器 / 复选框 / 开关 / 进度条 一律直角
 // 本层同时覆盖内嵌 ds5-page：ds5 仅在 .chub-page 内渲染，
 // 自身不再重复按钮与方角规则（text 模式的 .ds5-action 除外）。
 // ============================================
@@ -95,6 +95,17 @@
 }
 .chub-page .el-checkbox__inner {
   border-radius: 0;
+}
+.chub-page .el-switch__core {
+  border-radius: 0;
+
+  .el-switch__action {
+    border-radius: 0;
+  }
+}
+.chub-page .el-switch.is-checked .el-switch__core {
+  border-color: var(--chub-primary);
+  background-color: var(--chub-primary);
 }
 .chub-page .el-progress-bar__outer,
 .chub-page .el-progress-bar__inner {
@@ -237,6 +248,7 @@
   padding: 0;
 }
 .chub-panel > .chub-section + .chub-section,
+.chub-panel > .chub-section + .chub-window,
 .chub-panel > .chub-window + .chub-section,
 .chub-panel > .chub-window + .chub-notice {
   margin-top: 26px;
@@ -303,8 +315,9 @@
 }
 .chub-hud-actions {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
-  gap: 4px;
+  gap: 12px;
   flex-wrap: wrap;
 }
 .chub-runtime-grid {
@@ -450,6 +463,54 @@
   margin: 0 0 14px;
   color: var(--el-text-color-secondary);
   font-size: 13px;
+}
+
+// ============ 可折叠分区 ============
+// 统一 disclosure 词汇：替换浏览器默认展开三角，summary 承担分区头或轻量文本行。
+// 分区级（--section）：summary 即 ◈ 标签 + 渐隐线 + 指示符，折叠态也是完整分区头；
+// 区内子级（--inline）：轻量文本行，样式对齐 .chub-diagnostics-details 的 summary。
+.chub-disclosure > summary {
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+
+  &::-webkit-details-marker {
+    display: none;
+  }
+
+  .chub-disclosure-mark {
+    color: var(--chub-primary);
+    font-size: 12px;
+    transition: transform 0.2s ease;
+  }
+}
+.chub-disclosure--section > summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+
+  &:hover .chub-section-label {
+    color: var(--chub-primary-deep);
+  }
+}
+.chub-disclosure--inline > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  padding: 10px 0;
+  color: var(--chub-primary-deep);
+  font-family: var(--pix-font);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+
+  &:hover {
+    color: var(--chub-primary);
+  }
+}
+.chub-disclosure[open] > summary .chub-disclosure-mark {
+  transform: rotate(90deg);
 }
 
 // ============ 仿真模式选择 ============

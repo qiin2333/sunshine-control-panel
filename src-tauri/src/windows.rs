@@ -33,6 +33,19 @@ static HEARTBEAT_MAP: Lazy<Mutex<HashMap<String, HeartbeatState>>> =
 /// treat it as crashed while it sits in this set.
 static SUSPENDED_WEBVIEWS: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 
+/// 窗口所在显示器的分辨率/缩放快照。纯分辨率变化只广播 WM_DISPLAYCHANGE，
+/// Tauri 不会产生任何窗口事件，只能在心跳巡检里轮询对比，
+/// 作为 ScaleFactorChanged 事件路径的兜底。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct DisplaySignature {
+    scale_permille: u32,
+    width: u32,
+    height: u32,
+}
+
+static DISPLAY_SIGNATURES: Lazy<Mutex<HashMap<String, DisplaySignature>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
 #[derive(Default)]
 struct ToolWindowMoveSave {
     version: u64,
@@ -435,6 +448,39 @@ fn check_and_recover_webview<R: Runtime>(window: &WebviewWindow<R>) {
     }
 }
 
+/// 心跳巡检兜底：对比窗口所在显示器当前分辨率/缩放与上次快照，发现变化则
+/// 触发与 ScaleFactorChanged 事件相同的合成器刷新。首个快照只记基线不打扰。
+#[cfg(target_os = "windows")]
+fn check_display_change<R: Runtime>(ww: &WebviewWindow<R>) {
+    let Ok(Some(monitor)) = ww.current_monitor() else {
+        return;
+    };
+    let signature = DisplaySignature {
+        scale_permille: (ww.scale_factor().unwrap_or(1.0) * 1000.0).round() as u32,
+        width: monitor.size().width,
+        height: monitor.size().height,
+    };
+
+    let label = ww.label().to_string();
+    let mut signatures = DISPLAY_SIGNATURES.lock().unwrap();
+    match signatures.get(&label) {
+        Some(prev) if *prev == signature => {}
+        None => {
+            signatures.insert(label, signature);
+        }
+        Some(prev) => {
+            debug!(
+                "🖥️ 显示配置变化 [{}]: {:?} -> {:?}，刷新 WebView 合成器",
+                label, prev, signature
+            );
+            signatures.insert(label, signature);
+            // 先释放锁，再向主线程派发 COM 刷新
+            drop(signatures);
+            kick_webview_compositor(ww);
+        }
+    }
+}
+
 /// 启动 WebView 心跳监控后台任务
 /// 定期检查可见窗口的心跳状态，若检测到崩溃则自动恢复
 pub fn start_heartbeat_monitor(app: AppHandle) {
@@ -460,6 +506,10 @@ pub fn start_heartbeat_monitor(app: AppHandle) {
                     if is_visible && !is_minimized {
                         #[cfg(target_os = "windows")]
                         check_and_recover_webview(&win);
+                        // 纯分辨率变化（WM_DISPLAYCHANGE）没有对应的 Tauri 事件，
+                        // 在这里轮询兜底
+                        #[cfg(target_os = "windows")]
+                        check_display_change(&win);
                     }
                 }
             }
@@ -1169,6 +1219,47 @@ fn resume_webview<R: Runtime>(ww: &WebviewWindow<R>) {
 #[cfg(not(target_os = "windows"))]
 fn resume_webview<R: Runtime>(_ww: &WebviewWindow<R>) {}
 
+/// 强制 WebView2 按当前设备参数重新合成一帧。
+///
+/// 显示器缩放/分辨率变化后 WebView2 合成器可能停滞：窗口与渲染进程都活着、
+/// 心跳正常，但画面冻结（AlkaidLab/foundation-sunshine#1049，WebView2 生态
+/// 的已知问题类别）。对 controller bounds 做一次 +1 物理像素往返，并通知父
+/// 窗口位置变化，可强制合成器用新 DPI/分辨率重新布局与提交帧。
+#[cfg(target_os = "windows")]
+fn kick_webview_compositor<R: Runtime>(ww: &WebviewWindow<R>) {
+    // RECT 必须取自 webview2-com 同版本的 windows crate（0.61），
+    // GUI 直依赖的 0.62 类型与其不互通。
+    use wv2_windows::Win32::Foundation::RECT;
+
+    let label = ww.label().to_string();
+    let closure_label = label.clone();
+    let _ = ww.with_webview(move |webview| {
+        let controller = webview.controller();
+        unsafe {
+            let mut bounds = RECT::default();
+            if controller.Bounds(&mut bounds).is_ok() {
+                let nudged = RECT {
+                    right: bounds.right + 1,
+                    ..bounds
+                };
+                if let Err(e) = controller.SetBounds(nudged) {
+                    debug!("⚠️ bounds 微调失败 [{}]: {}", closure_label, e);
+                }
+                if let Err(e) = controller.SetBounds(bounds) {
+                    log::warn!("⚠️ bounds 还原失败 [{}]: {}", closure_label, e);
+                }
+            }
+            if let Err(e) = controller.NotifyParentWindowPositionChanged() {
+                debug!("⚠️ NotifyParentWindowPositionChanged 失败 [{}]: {}", closure_label, e);
+            }
+        }
+    });
+    debug!("☀️ 已刷新 WebView 合成器 [{}]", label);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn kick_webview_compositor<R: Runtime>(_ww: &WebviewWindow<R>) {}
+
 /// Notify the page so it can pause animations and suspend expensive content.
 /// The native window already controls WebView2 composition. Toggling the
 /// controller's IsVisible property separately can leave transparent WebViews
@@ -1191,6 +1282,25 @@ pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
             if window.label() == TOOL_WINDOW_ID {
                 schedule_tool_window_position_save(window.app_handle().clone(), *position);
             }
+        }
+        tauri::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+            // 显示器缩放变化时 WebView2 合成器可能停滞（画面冻结但进程存活）。
+            // tao 在本事件之后才应用新窗口尺寸，延迟到窗口尺寸稳定后再刷新合成器。
+            let app_handle = window.app_handle().clone();
+            let label = window.label().to_string();
+            let new_scale = *scale_factor;
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                if let Some(ww) = app_handle.get_webview_window(&label)
+                    && ww.is_visible().unwrap_or(false)
+                {
+                    debug!(
+                        "🖥️ 缩放变化为 {:.3} [{}]，刷新 WebView 合成器",
+                        new_scale, label
+                    );
+                    kick_webview_compositor(&ww);
+                }
+            });
         }
         tauri::WindowEvent::CloseRequested { .. } => {
             end_webview_heartbeat(window.label());

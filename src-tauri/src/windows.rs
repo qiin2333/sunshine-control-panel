@@ -470,7 +470,9 @@ fn check_display_change<R: Runtime>(ww: &WebviewWindow<R>) {
             signatures.insert(label, signature);
         }
         Some(prev) => {
-            debug!(
+            // info 级：显示变化是罕见事件，这两条标记是用户导出日志里
+            // 判定 workaround 是否生效的依据（默认收集级别为 Info）。
+            info!(
                 "🖥️ 显示配置变化 [{}]: {:?} -> {:?}，刷新 WebView 合成器",
                 label, prev, signature
             );
@@ -1269,7 +1271,8 @@ fn kick_webview_compositor<R: Runtime>(ww: &WebviewWindow<R>) -> bool {
     });
     match dispatched {
         Ok(()) => {
-            debug!("☀️ 已刷新 WebView 合成器 [{}]", label);
+            // info 级：与 check_display_change 的标记配套，见其注释
+            info!("☀️ 已刷新 WebView 合成器 [{}]", label);
             true
         }
         Err(e) => {
@@ -1318,7 +1321,8 @@ pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
                 if let Some(ww) = app_handle.get_webview_window(&label)
                     && ww.is_visible().unwrap_or(false)
                 {
-                    debug!(
+                    // info 级：见 check_display_change 中关于日志级别的注释
+                    info!(
                         "🖥️ 缩放变化为 {:.3} [{}]，刷新 WebView 合成器",
                         new_scale, label
                     );

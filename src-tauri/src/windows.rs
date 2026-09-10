@@ -66,6 +66,7 @@ const ABOUT_WINDOW_ID: &str = "about";
 const LOG_CONSOLE_WINDOW_ID: &str = "log_console";
 const PIN_WINDOW_ID: &str = "pin_pairing";
 const DESKTOP_WINDOW_ID: &str = "desktop";
+const TOOLBAR_WINDOW_ID: &str = "toolbar";
 const TOOL_WINDOW_ID: &str = "tool_window";
 #[cfg(debug_assertions)]
 const DEBUG_PAGE_WINDOW_ID: &str = "debug_page";
@@ -473,10 +474,10 @@ fn check_display_change<R: Runtime>(ww: &WebviewWindow<R>) {
                 "🖥️ 显示配置变化 [{}]: {:?} -> {:?}，刷新 WebView 合成器",
                 label, prev, signature
             );
-            signatures.insert(label, signature);
-            // 先释放锁，再向主线程派发 COM 刷新
-            drop(signatures);
-            kick_webview_compositor(ww);
+            // 仅在刷新已成功派发时提交新快照；失败保留旧值，下个心跳周期重试
+            if kick_webview_compositor(ww) {
+                signatures.insert(label, signature);
+            }
         }
     }
 }
@@ -491,8 +492,9 @@ pub fn start_heartbeat_monitor(app: AppHandle) {
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(30)).await;
 
-            // 只检查可见的主要窗口（main / desktop）
-            for label in &[MAIN_WINDOW_ID, DESKTOP_WINDOW_ID] {
+            // 心跳检查只覆盖注册过的 main / desktop；桌宠工具栏是常驻窗口，
+            // 只参与显示变化兜底检查（begin_webview_heartbeat 未对其注册）。
+            for label in &[MAIN_WINDOW_ID, DESKTOP_WINDOW_ID, TOOLBAR_WINDOW_ID] {
                 // 挂起中的 WebView JS 定时器被冻结，心跳缺失是预期行为，
                 // 不能按崩溃恢复（否则会在挂起期间强制重载页面）。
                 if SUSPENDED_WEBVIEWS.lock().unwrap().contains(*label) {
@@ -502,10 +504,12 @@ pub fn start_heartbeat_monitor(app: AppHandle) {
                     let is_visible = win.is_visible().unwrap_or(false);
                     let is_minimized = win.is_minimized().unwrap_or(true);
 
-                    // 仅当窗口可见且未最小化时检查心跳
+                    // 仅当窗口可见且未最小化时检查
                     if is_visible && !is_minimized {
-                        #[cfg(target_os = "windows")]
-                        check_and_recover_webview(&win);
+                        if *label != TOOLBAR_WINDOW_ID {
+                            #[cfg(target_os = "windows")]
+                            check_and_recover_webview(&win);
+                        }
                         // 纯分辨率变化（WM_DISPLAYCHANGE）没有对应的 Tauri 事件，
                         // 在这里轮询兜底
                         #[cfg(target_os = "windows")]
@@ -1225,28 +1229,37 @@ fn resume_webview<R: Runtime>(_ww: &WebviewWindow<R>) {}
 /// 心跳正常，但画面冻结（AlkaidLab/foundation-sunshine#1049，WebView2 生态
 /// 的已知问题类别）。对 controller bounds 做一次 +1 物理像素往返，并通知父
 /// 窗口位置变化，可强制合成器用新 DPI/分辨率重新布局与提交帧。
+///
+/// 返回刷新闭包是否成功派发到主线程。COM 调用在闭包内异步执行，其失败只能
+/// 记录日志、无法同步回传；派发失败（窗口/WebView 正在销毁）返回 false，
+/// 调用方可据此保留旧状态择机重试。
 #[cfg(target_os = "windows")]
-fn kick_webview_compositor<R: Runtime>(ww: &WebviewWindow<R>) {
+fn kick_webview_compositor<R: Runtime>(ww: &WebviewWindow<R>) -> bool {
     // RECT 必须取自 webview2-com 同版本的 windows crate（0.61），
     // GUI 直依赖的 0.62 类型与其不互通。
     use wv2_windows::Win32::Foundation::RECT;
 
     let label = ww.label().to_string();
     let closure_label = label.clone();
-    let _ = ww.with_webview(move |webview| {
+    let dispatched = ww.with_webview(move |webview| {
         let controller = webview.controller();
         unsafe {
             let mut bounds = RECT::default();
-            if controller.Bounds(&mut bounds).is_ok() {
-                let nudged = RECT {
-                    right: bounds.right + 1,
-                    ..bounds
-                };
-                if let Err(e) = controller.SetBounds(nudged) {
-                    debug!("⚠️ bounds 微调失败 [{}]: {}", closure_label, e);
+            match controller.Bounds(&mut bounds) {
+                Ok(()) => {
+                    let nudged = RECT {
+                        right: bounds.right + 1,
+                        ..bounds
+                    };
+                    if let Err(e) = controller.SetBounds(nudged) {
+                        log::warn!("⚠️ bounds 微调失败 [{}]: {}", closure_label, e);
+                    }
+                    if let Err(e) = controller.SetBounds(bounds) {
+                        log::warn!("⚠️ bounds 还原失败 [{}]: {}", closure_label, e);
+                    }
                 }
-                if let Err(e) = controller.SetBounds(bounds) {
-                    log::warn!("⚠️ bounds 还原失败 [{}]: {}", closure_label, e);
+                Err(e) => {
+                    log::warn!("⚠️ 读取 bounds 失败 [{}]: {}", closure_label, e);
                 }
             }
             if let Err(e) = controller.NotifyParentWindowPositionChanged() {
@@ -1254,11 +1267,22 @@ fn kick_webview_compositor<R: Runtime>(ww: &WebviewWindow<R>) {
             }
         }
     });
-    debug!("☀️ 已刷新 WebView 合成器 [{}]", label);
+    match dispatched {
+        Ok(()) => {
+            debug!("☀️ 已刷新 WebView 合成器 [{}]", label);
+            true
+        }
+        Err(e) => {
+            log::warn!("⚠️ WebView 合成器刷新派发失败 [{}]: {}", label, e);
+            false
+        }
+    }
 }
 
 #[cfg(not(target_os = "windows"))]
-fn kick_webview_compositor<R: Runtime>(_ww: &WebviewWindow<R>) {}
+fn kick_webview_compositor<R: Runtime>(_ww: &WebviewWindow<R>) -> bool {
+    true
+}
 
 /// Notify the page so it can pause animations and suspend expensive content.
 /// The native window already controls WebView2 composition. Toggling the

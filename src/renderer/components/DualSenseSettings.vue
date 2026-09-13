@@ -70,15 +70,6 @@
         <el-progress :percentage="operationProgress" :show-text="false" />
       </article>
 
-      <div class="ds5-headline">
-        <p>{{ t.dualSense.intro }}</p>
-        <el-checkbox
-          v-model="enabled"
-          class="ds5-enable-control"
-          :disabled="!componentOperational || status.in_use || componentControlsBusy"
-          @change="saveSettings"
-        >{{ t.dualSense.enableShort }}</el-checkbox>
-      </div>
     </article>
 
     <el-alert
@@ -252,7 +243,7 @@
         </div>
         <el-checkbox
           v-model="genshinCompatibility"
-          :disabled="!status.genshin_compatibility_available || !status.usbip_available || !enabled || !audioHaptics || status.in_use || componentControlsBusy"
+          :disabled="!status.genshin_compatibility_available || !status.usbip_available || !audioHaptics || status.in_use || componentControlsBusy"
           @change="setGenshinCompatibility"
         >{{ genshinCompatibility ? t.dualSense.enabledLabel : t.dualSense.disabledLabel }}</el-checkbox>
       </div>
@@ -329,9 +320,9 @@ defineProps({
 })
 
 const {
-  status, statusKnown, saving, refreshing,
+  status, statusKnown, refreshing,
   operation, operationProgress, operationStage, operationError,
-  enabled, audioHaptics, genshinCompatibility,
+  audioHaptics, genshinCompatibility,
   legacyStrength, legacyCurve, legacyNoiseGate,
   tuningStrengthFeel, tuningCurveFeel, tuningGateFeel,
   tuningSaving, tuningDirty, testCompleted, expandedSections,
@@ -339,7 +330,7 @@ const {
   stateLabel, nextAction, overallVersion, canTestAudioHaptics,
   showNotice, healthRows, safeStatusDetail,
   install, installFromPackage, refresh,
-  saveSettings, setAudioHaptics, setGenshinCompatibility,
+  setAudioHaptics, setGenshinCompatibility,
   applyDefaultPreset, applyErmPreset, saveTuning,
   test, uninstall,
 } = useDualSenseSettings()

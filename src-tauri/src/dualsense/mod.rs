@@ -114,7 +114,6 @@ pub struct DualSenseStatus {
     pub state: String,
     pub installed: bool,
     pub verified: bool,
-    pub enabled: bool,
     pub audio_haptics: bool,
     pub genshin_compatibility: bool,
     pub genshin_compatibility_available: bool,

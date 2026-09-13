@@ -84,13 +84,25 @@ fn parse_bool(value: &str) -> Option<bool> {
 /// 读取控制器中心配置，缺失键回退到核心默认值
 #[tauri::command]
 pub async fn get_controller_hub_config() -> Result<ControllerHubConfig, String> {
-    let config_map = crate::vdd::read_full_sunshine_config().await?;
+    let endpoint = device_api_url("/api/gamepad/config").await?;
+    let response = sunshine::create_https_client()?
+        .get(endpoint)
+        .send()
+        .await
+        .map_err(|error| {
+            format!(
+                "Unable to query controller configuration: {}",
+                error.without_url()
+            )
+        })?;
+    let response: serde_json::Value =
+        read_device_api_response(response, "controller configuration").await?;
+    if response.get("status").and_then(serde_json::Value::as_str) != Some("true") {
+        return Err("Sunshine could not read the controller configuration".to_string());
+    }
 
     let get_str = |key: &str| -> Option<String> {
-        config_map
-            .get(key)
-            .and_then(|v| v.as_str())
-            .map(String::from)
+        response.get(key).and_then(|v| v.as_str()).map(String::from)
     };
 
     let gamepad = get_str("gamepad")
@@ -116,8 +128,7 @@ pub async fn get_controller_hub_config() -> Result<ControllerHubConfig, String> 
     })
 }
 
-/// 保存控制器中心配置；仅更新传入的字段（None 跳过）。
-/// 值一律以字符串写入（核心 /api/config 按字符串解析，布尔/数字直接写 JSON 类型会解析失败）。
+/// 保存控制器中心配置；仅向 Core 提交发生变化的字段。
 #[tauri::command]
 pub async fn save_controller_hub_config(
     gamepad: Option<String>,
@@ -138,14 +149,13 @@ pub async fn save_controller_hub_config(
         return Err(format!("DSU 端口必须在 1024-65535 之间: {port}"));
     }
 
-    // Serialize the read/modify/write cycle so independent controls cannot
-    // overwrite one another when users change them in quick succession.
+    // Serialize this Panel process's writes. Core merges the patch under its
+    // own config-file lock, so unrelated settings are never written back.
     let _config_guard = DEVICE_CONFIG_LOCK.lock().await;
-    let mut config_map = crate::vdd::read_full_sunshine_config().await?;
-
+    let mut patch = serde_json::Map::new();
     let mut changed: Vec<&str> = Vec::new();
     if let Some(mode) = gamepad.as_deref() {
-        config_map.insert("gamepad".to_string(), serde_json::json!(mode));
+        patch.insert("gamepad".to_string(), serde_json::json!(mode));
         changed.push("gamepad");
     }
     for (key, value) in [
@@ -155,7 +165,7 @@ pub async fn save_controller_hub_config(
         ("enable_dsu_server", enable_dsu_server),
     ] {
         if let Some(v) = value {
-            config_map.insert(
+            patch.insert(
                 key.to_string(),
                 serde_json::json!(if v { "true" } else { "false" }),
             );
@@ -163,7 +173,7 @@ pub async fn save_controller_hub_config(
         }
     }
     if let Some(port) = dsu_server_port {
-        config_map.insert(
+        patch.insert(
             "dsu_server_port".to_string(),
             serde_json::json!(port.to_string()),
         );
@@ -175,7 +185,23 @@ pub async fn save_controller_hub_config(
     }
 
     debug!("📝 控制器中心更新配置项: {:?}", changed);
-    sunshine::post_sunshine_config(&config_map).await?;
+    let endpoint = device_api_url("/api/gamepad/config").await?;
+    let response = sunshine::create_https_client()?
+        .post(endpoint)
+        .json(&patch)
+        .send()
+        .await
+        .map_err(|error| {
+            format!(
+                "Unable to save controller configuration: {}",
+                error.without_url()
+            )
+        })?;
+    let response: serde_json::Value =
+        read_device_api_response(response, "controller configuration save").await?;
+    if response.get("status").and_then(serde_json::Value::as_str) != Some("true") {
+        return Err("Sunshine could not save the controller configuration".to_string());
+    }
     info!("✅ 控制器中心配置已保存: {:?}", changed);
-    Ok("控制器设置已保存，重启 Sunshine 后生效".to_string())
+    Ok("saved".to_string())
 }

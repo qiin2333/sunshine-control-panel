@@ -333,7 +333,6 @@ pub(crate) fn local_uninstalled_status() -> DualSenseStatus {
         state: "not_installed".to_string(),
         installed: false,
         verified: false,
-        enabled: false,
         audio_haptics: true,
         genshin_compatibility: false,
         genshin_compatibility_available: false,
@@ -362,17 +361,13 @@ pub(crate) fn local_uninstalled_status() -> DualSenseStatus {
 }
 
 pub(crate) fn validate_requested_profile(
-    enabled: bool,
     audio_haptics: bool,
     genshin_compatibility: bool,
     usbip_available: bool,
 ) -> Result<(), String> {
-    if genshin_compatibility && (!enabled || !audio_haptics) {
-        Err(
-            "DS5-RUN-004: Genshin compatibility mode requires enabled four-channel haptics"
-                .to_string(),
-        )
-    } else if enabled && audio_haptics && !usbip_available {
+    if genshin_compatibility && !audio_haptics {
+        Err("DS5-RUN-004: Genshin compatibility mode requires four-channel haptics".to_string())
+    } else if audio_haptics && !usbip_available {
         Err(
             "DS5-RUN-003: four-channel haptics requires the USB/IP transport; disable audio haptics or repair the transport"
                 .to_string(),
@@ -456,7 +451,6 @@ pub(crate) async fn dualsense_get_status_with_config(
         state: state.to_string(),
         installed,
         verified,
-        enabled: settings.ds5_enabled,
         audio_haptics: settings.ds5_audio_haptics,
         genshin_compatibility: settings.ds5_genshin_compatibility,
         genshin_compatibility_available: result.genshin_compatibility_identity,

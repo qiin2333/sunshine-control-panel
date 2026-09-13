@@ -13,9 +13,9 @@
     <div class="chub-pane">
       <DeviceOverviewPanel v-if="activeTab === 'overview'" @navigate="activeTab = $event" />
       <template v-else-if="activeTab === 'controllers'">
-        <GamepadTypePicker @mode-change="controllerMode = $event" />
+        <GamepadTypePicker @ds5-selection-change="ds5Selected = $event" />
         <DualSenseSettings
-          v-if="controllerMode === 'ds5'"
+          v-if="ds5Selected"
           embedded
           @open-controller-meta="emit('open-controller-meta')"
         />
@@ -58,7 +58,7 @@ import { useI18n } from '../../desktop/i18n/index.js'
 const emit = defineEmits(['open-controller-meta', 'open-stylus-input-probe', 'open-hdr-enhanced'])
 const { t } = useI18n()
 const activeTab = ref('overview')
-const controllerMode = ref('auto')
+const ds5Selected = ref(false)
 const controllerAdvancedOpen = ref([])
 const tabs = computed(() => [
   { value: 'overview', label: t.value.deviceHub.tabs.overview },

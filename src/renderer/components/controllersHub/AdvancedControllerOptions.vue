@@ -85,7 +85,7 @@ async function saveKey(key, value) {
   try {
     const result = await controllerHub.saveConfig({ [key]: value })
     if (result?.success) {
-      ElMessage.success(result.data)
+      ElMessage.success(t.value.controllersHub.emulation.advancedSaveSuccess)
     } else {
       config.value[key] = prev
       ElMessage.error(result?.message || t.value.controllersHub.emulation.saveFailed)

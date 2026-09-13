@@ -1,5 +1,4 @@
 export const dualSenseConfigUiState = (data, preserveTuning = false) => ({
-  enabled: data.enabled,
   audioHaptics: data.audio_haptics,
   genshinCompatibility: data.genshin_compatibility ?? false,
   tuning: preserveTuning
@@ -15,23 +14,15 @@ export const dualSenseConfigReadable = (data) => data?.config_readable === true
 
 export const dualSenseConfigMatches = (data, requested) =>
   dualSenseConfigReadable(data)
-  && data.enabled === requested.enabled
   && data.audio_haptics === requested.audioHaptics
   && (data.genshin_compatibility ?? false) === requested.genshinCompatibility
 
 export const dualSenseConfigAfterInstall = (status, wasInstalled = false) => wasInstalled
   ? null
   : {
-      enabled: true,
       audioHaptics: Boolean(status?.usbip_available && status?.composite_profile),
       genshinCompatibility: false,
     }
-
-export const dualSenseConfigAfterUninstall = () => ({
-  enabled: false,
-  audioHaptics: true,
-  genshinCompatibility: false,
-})
 
 export const createLatestIntentQueue = (run, { debounceMs = 0 } = {}) => {
   let active = null
@@ -77,7 +68,6 @@ export const mergeDualSenseStatus = (current, incoming) => {
 
   return {
     ...incoming,
-    enabled: current.enabled,
     audio_haptics: current.audio_haptics,
     genshin_compatibility: current.genshin_compatibility,
     legacy_strength: current.legacy_strength,

@@ -83,13 +83,13 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { controllerHub, sunshine } from '../../tauri-adapter.js'
 import { useI18n } from '../../desktop/i18n/index.js'
 
 const { t } = useI18n()
-const emit = defineEmits(['mode-change'])
+const emit = defineEmits(['ds5-selection-change'])
 
 const APPS_TIMEOUT_MS = 8000
 
@@ -132,6 +132,11 @@ const appModeOptions = computed(() => {
   ]
 })
 
+const hasDs5Selection = computed(() =>
+  config.value.gamepad === 'ds5' || apps.value.some((app) => app.gamepad === 'ds5'))
+
+watch(hasDs5Selection, (selected) => emit('ds5-selection-change', selected), { immediate: true })
+
 async function loadConfig() {
   loading.value = true
   unreachable.value = false
@@ -139,7 +144,6 @@ async function loadConfig() {
     const result = await controllerHub.getConfig()
     if (result?.success) {
       config.value.gamepad = result.data.gamepad
-      emit('mode-change', config.value.gamepad)
     } else {
       unreachable.value = true
     }
@@ -158,8 +162,7 @@ async function saveKey(key, value) {
   try {
     const result = await controllerHub.saveConfig({ [key]: value })
     if (result?.success) {
-      emit('mode-change', value)
-      ElMessage.success(result.data)
+      ElMessage.success(t.value.controllersHub.emulation.saveSuccess)
     } else {
       config.value[key] = prev
       ElMessage.error(result?.message || t.value.controllersHub.emulation.saveFailed)

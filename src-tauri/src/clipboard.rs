@@ -354,6 +354,19 @@ fn snapshot_and_post(echo: &Arc<Mutex<EchoState>>) {
             None
         }
     };
+    // Bound the pixel count BEFORE encoding: to_png() on a stray huge
+    // bitmap allocates the full encoded buffer only to fail the byte cap
+    // below. Mirrors the inbound MAX_IMAGE_PIXELS guard.
+    if let Some(i) = &img {
+        let (w, h) = i.get_size();
+        if (w as u64) * (h as u64) > MAX_IMAGE_PIXELS {
+            warn!(
+                "local clipboard image {}x{} exceeds {} pixel cap; dropped",
+                w, h, MAX_IMAGE_PIXELS
+            );
+            return;
+        }
+    }
     let png_bytes = img.as_ref().and_then(|i| match i.to_png() {
         Ok(p) => {
             let bytes = p.get_bytes().to_vec();

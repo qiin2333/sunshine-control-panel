@@ -1355,7 +1355,7 @@ export const zh = {
       sunshineUnreachable: '无法读取 Sunshine 配置，请确认 Sunshine 正在运行。',
       retry: '重试',
       saveFailed: '保存失败，已恢复原设置。',
-      saveSuccess: '手柄类型已保存，将从下一次串流开始生效。',
+      saveSuccess: '手柄类型已保存，后续新建的虚拟手柄将使用此设置；当前手柄不变，无需重启 Sunshine。',
       perAppTitle: '每个游戏的单独设置',
       perAppHint: '为单个游戏单独指定手柄类型，优先于上面的全局选择。',
       noApps: '暂无应用，请先在 Sunshine WebUI 中添加。',

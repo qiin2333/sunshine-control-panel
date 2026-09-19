@@ -102,5 +102,7 @@ windows = { version = "0.62.2", features = [
 webview2-com = "0.38"
 # webview2-com 使用 windows-core 0.61，需要此版本的 Interface trait 来调用 .cast()
 wv2-windows-core = { package = "windows-core", version = "0.61" }
+# webview2-com 的 RECT 等 Win32 类型来自 windows 0.61，与 GUI 直依赖的 0.62 不互通
+wv2-windows = { package = "windows", version = "0.61", features = ["Win32_Foundation"] }
 winreg = "0.55"
 image = "0.25.9"

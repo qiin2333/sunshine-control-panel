@@ -167,6 +167,16 @@ export const rtxHdr = {
   uninstall: () => wrapResult('native_component_remove', { componentId: 'alkaidlab.nvidia_rtx_video' }),
 }
 
+export const dlssNr = {
+  recover: () => wrapResult('native_component_recover', { componentId: 'alkaidlab.nvidia_dlssnr' }),
+  setEnabled: (enabled) => wrapResult('hdr_enhanced_select_backend', { componentId: 'alkaidlab.nvidia_dlssnr', enabled }),
+  getStatus: () => wrapResult('native_component_get_status', { componentId: 'alkaidlab.nvidia_dlssnr' }),
+  install: (runtimePath) => wrapResult('native_component_import', {
+    componentId: 'alkaidlab.nvidia_dlssnr', sources: { 'nvngx_dlssnr.dll': runtimePath },
+  }),
+  uninstall: () => wrapResult('native_component_remove', { componentId: 'alkaidlab.nvidia_dlssnr' }),
+}
+
 // ─── Sunshine 配置 ───────────────────────────────────────
 
 export const sunshine = {

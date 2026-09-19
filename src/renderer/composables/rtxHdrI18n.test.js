@@ -7,7 +7,7 @@ import { zh } from '../desktop/i18n/zh.js'
 
 test('HDR management is vendor-neutral while the backend keeps its identity', () => {
   for (const [locale, messages] of Object.entries({ en, zh })) {
-    assert.ok(messages.sidebar.hdrEnhanced.includes('HDR'))
+    assert.ok(messages.sidebar.hdrEnhanced.length > 0)
     assert.ok(!messages.sidebar.hdrEnhanced.includes('RTX'))
     assert.equal(messages.hdrEnhanced.description, undefined)
     assert.equal(rtxHdrMessages[locale].title, 'NVIDIA RTX HDR')

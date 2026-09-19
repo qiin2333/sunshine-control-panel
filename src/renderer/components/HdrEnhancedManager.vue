@@ -4,6 +4,7 @@
       <h1>{{ t.sidebar.hdrEnhanced }}</h1>
     </header>
     <RtxHdrManager />
+    <RtxHdrManager kind="nr" />
   </section>
 </template>
 

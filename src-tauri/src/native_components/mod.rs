@@ -7,6 +7,8 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 pub const NVIDIA_RTX_VIDEO_ID: &str = "alkaidlab.nvidia_rtx_video";
+pub const NVIDIA_DLSSNR_ID: &str = "alkaidlab.nvidia_dlssnr";
+pub const DLSSNR_RUNTIME: &str = "nvngx_dlssnr.dll";
 pub const RTX_HDR_RUNTIME: &str = "nvngx_truehdr.dll";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -68,6 +70,18 @@ pub const COMPONENTS: &[ComponentDescriptor] = &[
         },
         install_subdirectory: Some("hdr_enhanced/nvidia_rtx_video"),
     },
+    ComponentDescriptor {
+        id: NVIDIA_DLSSNR_ID,
+        category: ComponentCategory::HdrEnhanced,
+        host: ComponentHost::Core,
+        files: &[DLSSNR_RUNTIME],
+        distribution: DistributionPolicy {
+            bundled: false,
+            download: false,
+            local_import: true,
+        },
+        install_subdirectory: Some("hdr_enhanced/nvidia_dlssnr"),
+    },
 ];
 
 pub fn descriptor(id: &str) -> Option<&'static ComponentDescriptor> {
@@ -92,9 +106,10 @@ pub fn list_native_components() -> Vec<ComponentDescriptor> {
 }
 
 fn require_hdr_component(id: &str) -> Result<(), String> {
-    if descriptor(id)
-        .is_some_and(|item| item.id == NVIDIA_RTX_VIDEO_ID && item.host == ComponentHost::Core)
-    {
+    if descriptor(id).is_some_and(|item| {
+        matches!(item.id, NVIDIA_RTX_VIDEO_ID | NVIDIA_DLSSNR_ID)
+            && item.host == ComponentHost::Core
+    }) {
         Ok(())
     } else {
         Err("COMPONENT-UNKNOWN: unsupported component operation".to_string())
@@ -104,52 +119,76 @@ fn require_hdr_component(id: &str) -> Result<(), String> {
 #[tauri::command]
 pub async fn native_component_recover(
     component_id: String,
-) -> Result<providers::nvidia_rtx_hdr::RtxHdrComponentStatus, String> {
+) -> Result<providers::EnhancementComponentStatus, String> {
     require_hdr_component(&component_id)?;
     let _operation = operation::COMPONENT_OPERATION
         .try_lock()
         .map_err(|_| "HDR-OP-001: another operation is running".to_string())?;
-    providers::nvidia_rtx_hdr::rtx_hdr_recover().await
+    if component_id == NVIDIA_DLSSNR_ID {
+        providers::nvidia_dlssnr::component_recover().await
+    } else {
+        providers::nvidia_rtx_hdr::component_recover().await
+    }
 }
 
 #[tauri::command]
 pub async fn native_component_get_status(
     component_id: String,
-) -> Result<providers::nvidia_rtx_hdr::RtxHdrComponentStatus, String> {
+) -> Result<providers::EnhancementComponentStatus, String> {
     require_hdr_component(&component_id)?;
-    providers::nvidia_rtx_hdr::rtx_hdr_get_status().await
+    if component_id == NVIDIA_DLSSNR_ID {
+        providers::nvidia_dlssnr::component_get_status().await
+    } else {
+        providers::nvidia_rtx_hdr::component_get_status().await
+    }
 }
 
 #[tauri::command]
 pub async fn native_component_import(
     component_id: String,
     sources: std::collections::BTreeMap<String, String>,
-) -> Result<providers::nvidia_rtx_hdr::RtxHdrComponentStatus, String> {
+) -> Result<providers::EnhancementComponentStatus, String> {
     require_hdr_component(&component_id)?;
     if sources.len() != 1 {
         return Err("COMPONENT-FILES: expected exactly one runtime file".to_string());
     }
     let runtime = sources
-        .get(RTX_HDR_RUNTIME)
+        .get(if component_id == NVIDIA_DLSSNR_ID {
+            DLSSNR_RUNTIME
+        } else {
+            RTX_HDR_RUNTIME
+        })
         .ok_or("COMPONENT-FILES: missing runtime file")?;
-    providers::nvidia_rtx_hdr::rtx_hdr_install(runtime.clone()).await
+    if component_id == NVIDIA_DLSSNR_ID {
+        providers::nvidia_dlssnr::component_install(runtime.clone()).await
+    } else {
+        providers::nvidia_rtx_hdr::component_install(runtime.clone()).await
+    }
 }
 
 #[tauri::command]
 pub async fn native_component_remove(
     component_id: String,
-) -> Result<providers::nvidia_rtx_hdr::RtxHdrComponentStatus, String> {
+) -> Result<providers::EnhancementComponentStatus, String> {
     require_hdr_component(&component_id)?;
-    providers::nvidia_rtx_hdr::rtx_hdr_uninstall().await
+    if component_id == NVIDIA_DLSSNR_ID {
+        providers::nvidia_dlssnr::component_uninstall().await
+    } else {
+        providers::nvidia_rtx_hdr::component_uninstall().await
+    }
 }
 
 #[tauri::command]
 pub async fn hdr_enhanced_select_backend(
     component_id: String,
     enabled: bool,
-) -> Result<providers::nvidia_rtx_hdr::RtxHdrComponentStatus, String> {
+) -> Result<providers::EnhancementComponentStatus, String> {
     require_hdr_component(&component_id)?;
-    providers::nvidia_rtx_hdr::rtx_hdr_set_enabled(enabled).await
+    if component_id == NVIDIA_DLSSNR_ID {
+        providers::nvidia_dlssnr::component_set_enabled(enabled).await
+    } else {
+        providers::nvidia_rtx_hdr::component_set_enabled(enabled).await
+    }
 }
 
 #[cfg(test)]

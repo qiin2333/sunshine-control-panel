@@ -161,9 +161,11 @@ export function useRtxHdrManager({ api = rtxHdr, messages, runtimeName = 'nvngx_
   const openVcRuntimeDownload = () => openExternalUrl('https://aka.ms/vs/17/release/vc_redist.x64.exe')
 
   const openApplicationSettings = async () => {
+    operationError.value = ''
     try {
       const base = await sunshine.getUrl()
-      await openExternalUrl(new URL('/apps', base).href)
+      const opened = await openExternalUrl(new URL('/apps', base).href)
+      if (!opened) throw new Error(text.value.appSettingsFailed || 'Could not open the Sunshine application settings')
     } catch (error) {
       operationError.value = String(error?.message || error)
     }

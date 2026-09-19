@@ -12,6 +12,7 @@ export function dlssNrText(locale) {
   return {
     ...text,
     title: 'NVIDIA DLSS NR',
+    appSettingsFailed: chinese ? '无法打开应用设置，请检查 Sunshine 是否正在运行后重试。' : 'Could not open application settings. Check that Sunshine is running and try again.',
     appSettings: chinese ? '打开应用设置' : 'Open application settings',
     bridgeMissingNotice: chinese ? '当前 Sunshine 不支持 DLSS NR，请更新主程序后重试。' : 'This Sunshine installation does not support DLSS NR. Update Sunshine and try again.',
     intro: chinese

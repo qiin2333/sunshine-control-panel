@@ -310,12 +310,23 @@ async fn ensure_idle() -> Result<(), String> {
     Ok(())
 }
 
+fn require_supported_schema(schema_version: u32) -> Result<(), String> {
+    if IS_NR && schema_version != 2 {
+        return Err("HDR-CFG-007: update Sunshine to use DLSS NR".into());
+    }
+    Ok(())
+}
+
+async fn supported_config() -> Result<crate::hdr_enhanced::ConfigState, String> {
+    let config = crate::hdr_enhanced::get_config().await?;
+    require_supported_schema(config.settings.schema_version)?;
+    Ok(config)
+}
+
 async fn status_for_config(
     config: crate::hdr_enhanced::ConfigState,
 ) -> Result<EnhancementComponentStatus, String> {
-    if IS_NR && config.settings.schema_version != 2 {
-        return Err("HDR-CFG-007: update Sunshine to use DLSS NR".into());
-    }
+    require_supported_schema(config.settings.schema_version)?;
     let runtime = crate::hdr_enhanced::get_status().await?;
     tokio::task::spawn_blocking(move || build_status(&config, &runtime))
         .await
@@ -424,7 +435,7 @@ async fn publish_installed_version(
     manifest: &ComponentManifest,
     operation_id: &str,
 ) -> Result<(), String> {
-    let mut current = crate::hdr_enhanced::get_config().await?;
+    let mut current = supported_config().await?;
     current.settings.backends.insert(
         COMPONENT_ID.to_string(),
         crate::hdr_enhanced::BackendSettings {
@@ -437,7 +448,7 @@ async fn publish_installed_version(
 }
 
 async fn recover_runtime_files() -> Result<(), String> {
-    let current = crate::hdr_enhanced::get_config().await?;
+    let current = supported_config().await?;
     let version = current
         .settings
         .backends
@@ -628,7 +639,7 @@ async fn remove_component_with_elevation(
 }
 
 pub async fn component_get_status() -> Result<EnhancementComponentStatus, String> {
-    status_for_config(crate::hdr_enhanced::get_config().await?).await
+    status_for_config(supported_config().await?).await
 }
 
 async fn finish_operation(operation_id: &str) -> Result<(), String> {
@@ -641,6 +652,8 @@ pub async fn component_install(runtime_path: String) -> Result<EnhancementCompon
     let _operation = COMPONENT_OPERATION
         .try_lock()
         .map_err(|_| "HDR-OP-001: another component operation is running".to_string())?;
+    // Reject unsupported NR hosts before reserving maintenance or touching files.
+    supported_config().await?;
     ensure_idle().await?;
     let status = crate::hdr_enhanced::get_status().await?;
     let runtime_source = PathBuf::from(runtime_path);
@@ -704,7 +717,7 @@ pub async fn component_set_enabled(enabled: bool) -> Result<EnhancementComponent
     let _operation = COMPONENT_OPERATION
         .try_lock()
         .map_err(|_| "HDR-OP-001: another component operation is running".to_string())?;
-    let mut current = crate::hdr_enhanced::get_config().await?;
+    let mut current = supported_config().await?;
     if enabled && !current.settings.backends.contains_key(COMPONENT_ID) {
         return Err("HDR-PKG-006: import the component before selecting it".to_string());
     }
@@ -718,7 +731,7 @@ pub async fn component_uninstall() -> Result<EnhancementComponentStatus, String>
         .try_lock()
         .map_err(|_| "HDR-OP-001: another component operation is running".to_string())?;
     ensure_idle().await?;
-    let mut current = crate::hdr_enhanced::get_config().await?;
+    let mut current = supported_config().await?;
     let operation_id = crate::hdr_enhanced::begin_maintenance(COMPONENT_ID).await?;
     if selected_backend(&current.settings).as_deref() == Some(COMPONENT_ID) {
         *selected_backend_mut(&mut current.settings) = None;
@@ -749,6 +762,19 @@ pub async fn component_uninstall() -> Result<EnhancementComponentStatus, String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn schema_gate_preserves_legacy_hdr_but_rejects_legacy_nr() {
+        assert!(require_supported_schema(2).is_ok());
+        if IS_NR {
+            assert_eq!(
+                require_supported_schema(1).unwrap_err(),
+                "HDR-CFG-007: update Sunshine to use DLSS NR"
+            );
+        } else {
+            assert!(require_supported_schema(1).is_ok());
+        }
+    }
 
     #[test]
     fn runtime_identity_is_independent_of_the_adapter_build() {

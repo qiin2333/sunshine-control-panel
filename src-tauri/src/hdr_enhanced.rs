@@ -8,13 +8,79 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BackendSettings {
     pub version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_sha256: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(try_from = "SettingsDocument")]
 pub struct Settings {
     pub schema_version: u32,
     pub selected_backend: Option<String>,
+    pub selected_nr_backend: Option<String>,
     pub backends: BTreeMap<String, BackendSettings>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SelectedBackends {
+    hdr: Option<String>,
+    nr: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SettingsDocument {
+    schema_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    selected_backend: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    selected: Option<SelectedBackends>,
+    backends: BTreeMap<String, BackendSettings>,
+}
+
+impl TryFrom<SettingsDocument> for Settings {
+    type Error = String;
+
+    fn try_from(document: SettingsDocument) -> Result<Self, Self::Error> {
+        let (hdr, nr) = match document.schema_version {
+            1 if document.selected.is_none() => (document.selected_backend, None),
+            2 if document.selected_backend.is_none() => {
+                let selected = document.selected.ok_or("missing capability selections")?;
+                (selected.hdr, selected.nr)
+            }
+            _ => return Err("unsupported enhancement configuration schema".to_string()),
+        };
+        if hdr
+            .as_deref()
+            .is_some_and(|id| id != "alkaidlab.nvidia_rtx_video")
+            || nr
+                .as_deref()
+                .is_some_and(|id| id != "alkaidlab.nvidia_dlssnr")
+        {
+            return Err("invalid enhancement capability selection".to_string());
+        }
+        Ok(Self {
+            schema_version: document.schema_version,
+            selected_backend: hdr,
+            selected_nr_backend: nr,
+            backends: document.backends,
+        })
+    }
+}
+
+impl Serialize for Settings {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let document = if self.schema_version == 1 {
+            json!({"schema_version": 1, "selected_backend": self.selected_backend,
+                "backends": self.backends})
+        } else {
+            json!({"schema_version": 2, "selected": {
+                "hdr": self.selected_backend, "nr": self.selected_nr_backend},
+                "backends": self.backends})
+        };
+        document.serialize(serializer)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -101,7 +167,7 @@ fn decode_config(body: Value, etag: Option<HeaderValue>) -> Result<ConfigState, 
         .filter(|value| {
             value.to_str().is_ok_and(|text| {
                 text.len() == 73
-                    && text.starts_with("\"hdr-v1-")
+                    && (text.starts_with("\"hdr-v1-") || text.starts_with("\"hdr-v2-"))
                     && text.ends_with('"')
                     && text.as_bytes()[8..72]
                         .iter()
@@ -112,9 +178,6 @@ fn decode_config(body: Value, etag: Option<HeaderValue>) -> Result<ConfigState, 
     let settings: Settings =
         serde_json::from_value(body.get("config").cloned().unwrap_or(Value::Null))
             .map_err(|_| "HDR-CFG-002: invalid configuration document".to_string())?;
-    if settings.schema_version != 1 {
-        return Err("HDR-CFG-007: unsupported configuration schema".to_string());
-    }
     Ok(ConfigState { settings, etag })
 }
 
@@ -138,24 +201,35 @@ pub async fn get_status() -> Result<Value, String> {
     Ok(body.get("runtime").cloned().unwrap_or(Value::Null))
 }
 
-pub async fn begin_maintenance() -> Result<Maintenance, String> {
-    maintenance_identity("begin", None).await
+fn maintenance_route(backend: &str) -> Result<String, String> {
+    if !matches!(
+        backend,
+        "alkaidlab.nvidia_rtx_video" | "alkaidlab.nvidia_dlssnr"
+    ) {
+        return Err("COMPONENT-UNKNOWN: unsupported component operation".into());
+    }
+    Ok(format!("components/{backend}/maintenance"))
 }
 
-pub async fn inspect_maintenance() -> Result<Maintenance, String> {
-    maintenance_identity("inspect", None).await
+pub async fn begin_maintenance(backend: &str) -> Result<Maintenance, String> {
+    maintenance_identity(backend, "begin", None).await
 }
 
-pub async fn verify_maintenance(operation_id: &str) -> Result<Maintenance, String> {
-    maintenance_identity("verify", Some(operation_id)).await
+pub async fn inspect_maintenance(backend: &str) -> Result<Maintenance, String> {
+    maintenance_identity(backend, "inspect", None).await
+}
+
+pub async fn verify_maintenance(backend: &str, operation_id: &str) -> Result<Maintenance, String> {
+    maintenance_identity(backend, "verify", Some(operation_id)).await
 }
 
 async fn maintenance_identity(
+    backend: &str,
     action: &str,
     operation_id: Option<&str>,
 ) -> Result<Maintenance, String> {
     let (body, _) = request(
-        "components/alkaidlab.nvidia_rtx_video/maintenance",
+        &maintenance_route(backend)?,
         Some(json!({"action":action, "operation_id":operation_id})),
         None,
         None,
@@ -186,9 +260,9 @@ async fn maintenance_identity(
     })
 }
 
-pub async fn finish_maintenance(operation_id: &str) -> Result<(), String> {
+pub async fn finish_maintenance(backend: &str, operation_id: &str) -> Result<(), String> {
     request(
-        "components/alkaidlab.nvidia_rtx_video/maintenance",
+        &maintenance_route(backend)?,
         Some(json!({"action":"commit", "operation_id":operation_id})),
         None,
         None,
@@ -197,13 +271,54 @@ pub async fn finish_maintenance(operation_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub async fn recover_maintenance() -> Result<(), String> {
+pub async fn recover_maintenance(backend: &str) -> Result<(), String> {
     request(
-        "components/alkaidlab.nvidia_rtx_video/maintenance",
+        &maintenance_route(backend)?,
         Some(json!({"action":"recover"})),
         None,
         None,
     )
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn etag(schema: u32) -> HeaderValue {
+        HeaderValue::from_str(&format!("\"hdr-v{schema}-{}\"", "a".repeat(64))).unwrap()
+    }
+
+    #[test]
+    fn legacy_null_selection_roundtrips_without_extra_fields() {
+        let original = json!({"schema_version":1,"selected_backend":null,"backends":{}});
+        let config = decode_config(json!({"config":original}), Some(etag(1))).unwrap();
+        assert_eq!(serde_json::to_value(config.settings).unwrap(), original);
+    }
+
+    #[test]
+    fn changing_hdr_preserves_nr_selection_and_runtime_pin() {
+        let original = json!({"schema_version":2,
+            "selected":{"hdr":null,"nr":"alkaidlab.nvidia_dlssnr"},
+            "backends":{"alkaidlab.nvidia_dlssnr":{"version":"310-8-0-0","runtime_sha256":"b".repeat(64)}}});
+        let mut config = decode_config(json!({"config":original}), Some(etag(2))).unwrap();
+        config.settings.selected_backend = Some("alkaidlab.nvidia_rtx_video".to_string());
+        let saved = serde_json::to_value(config.settings).unwrap();
+        assert_eq!(saved["selected"]["nr"], original["selected"]["nr"]);
+        assert_eq!(saved["backends"], original["backends"]);
+        assert!(saved.get("selected_backend").is_none());
+        assert_eq!(saved.as_object().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn unsupported_schema_and_wrong_capability_are_rejected() {
+        for config in [
+            json!({"schema_version":3,"selected":{"hdr":null,"nr":null},"backends":{}}),
+            json!({"schema_version":2,"selected":{"hdr":"alkaidlab.nvidia_dlssnr","nr":null},"backends":{}}),
+            json!({"schema_version":2,"backends":{}}),
+        ] {
+            assert!(decode_config(json!({"config":config}), Some(etag(2))).is_err());
+        }
+    }
 }

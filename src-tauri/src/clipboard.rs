@@ -330,27 +330,43 @@ fn snapshot_and_post(echo: &Arc<Mutex<EchoState>>) {
         }
     };
 
-    // A mixed clipboard (image + fallback text label from browsers/IM, or a
-    // genuinely compound copy) is emitted as a compound burst: text frame
-    // first, image second, one shared non-zero token. Peers without
-    // aggregation apply the frames in order and keep the image — the exact
-    // v1 outcome. Single-flavor changes keep the legacy token=0 single frame.
-    if let Ok(files) = ctx.get_files() {
-        // Explorer file copies may include a thumbnail/icon bitmap; the
-        // protocol cannot carry file references, so skip the snapshot rather
-        // than sync (and later echo-replace) the fallback image. Mirrors the
-        // Qt client's hasFileReferences() guard.
-        if !files.is_empty() {
-            debug!("local file clipboard detected; sync skipped");
-            return;
-        }
-    }
-
+    // Read text and image BEFORE deciding on the file guard: QQ/WeChat
+    // image-message copies attach a cache-file reference (CF_HDROP) AND the
+    // real bitmap, and skipping every file clipboard silently dropped those
+    // syncs. Explorer file copies carry no bitmap at all, so the guard only
+    // needs to fire when nothing transferable came out — a pure file
+    // clipboard must not leak its file names as text.
     let text = match ctx.get_text() {
         Ok(t) if !t.is_empty() => Some(t),
         _ => None,
     };
-    let img = ctx.get_image().ok().filter(|i| !i.is_empty());
+    // A silent get_image failure here is indistinguishable from "the
+    // clipboard had no bitmap" in the logs, which cost a full round of
+    // host-side debugging; surface the distinction.
+    let img = match ctx.get_image() {
+        Ok(i) if !i.is_empty() => Some(i),
+        Ok(_) => {
+            debug!("clipboard snapshot: image flavor present but empty");
+            None
+        }
+        Err(e) => {
+            debug!("clipboard snapshot: get_image failed: {e}");
+            None
+        }
+    };
+    // Bound the pixel count BEFORE encoding: to_png() on a stray huge
+    // bitmap allocates the full encoded buffer only to fail the byte cap
+    // below. Mirrors the inbound MAX_IMAGE_PIXELS guard.
+    if let Some(i) = &img {
+        let (w, h) = i.get_size();
+        if (w as u64) * (h as u64) > MAX_IMAGE_PIXELS {
+            warn!(
+                "local clipboard image {}x{} exceeds {} pixel cap; dropped",
+                w, h, MAX_IMAGE_PIXELS
+            );
+            return;
+        }
+    }
     let png_bytes = img.as_ref().and_then(|i| match i.to_png() {
         Ok(p) => {
             let bytes = p.get_bytes().to_vec();
@@ -394,6 +410,23 @@ fn snapshot_and_post(echo: &Arc<Mutex<EchoState>>) {
         None => None,
     };
 
+    // File guard, evaluated with the payload in hand: skip only when the
+    // file references came with nothing transferable (Explorer copies carry
+    // no bitmap). QQ/WeChat image-message copies attach CF_HDROP + the real
+    // bitmap and sync the bitmap below; inbound applies keep the strict
+    // guard so remote content never clobbers a pending local file paste.
+    if let Ok(files) = ctx.get_files() {
+        if !files.is_empty() && text_bytes.is_none() && png_bytes.is_none() {
+            debug!("local file clipboard without transferable payload; sync skipped");
+            return;
+        }
+    }
+
+    // A mixed clipboard (image + fallback text label from browsers/IM, or a
+    // genuinely compound copy) is emitted as a compound burst: text frame
+    // first, image second, one shared non-zero token. Peers without
+    // aggregation apply the frames in order and keep the image — the exact
+    // v1 outcome. Single-flavor changes keep the legacy token=0 single frame.
     match (text_bytes, png_bytes) {
         (Some(tb), Some(pb)) => {
             if tb.len() > BURST_TEXT_MAX_INLINE {
@@ -443,7 +476,11 @@ fn snapshot_and_post(echo: &Arc<Mutex<EchoState>>) {
                 post_outbound(Kind::Text, tb, MIME_TEXT);
             }
         }
-        (None, None) => {}
+        (None, None) => {
+            debug!(
+                "clipboard snapshot produced no text or image payload; nothing to sync"
+            );
+        }
     }
 }
 

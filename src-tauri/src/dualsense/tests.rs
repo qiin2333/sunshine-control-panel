@@ -51,22 +51,19 @@ fn write_valid_component(directory: &std::path::Path, marker: &[u8]) {
 
 #[test]
 fn composite_profile_requires_usbip() {
-    let error = validate_requested_profile(true, true, false, false).unwrap_err();
+    let error = validate_requested_profile(true, false, false).unwrap_err();
     assert!(error.starts_with("DS5-RUN-003:"));
 }
 
 #[test]
 fn hid_only_profile_remains_available_without_usbip() {
-    assert!(validate_requested_profile(true, false, false, false).is_ok());
-    assert!(validate_requested_profile(false, true, false, false).is_ok());
+    assert!(validate_requested_profile(false, false, false).is_ok());
 }
 
 #[test]
-fn genshin_compatibility_requires_enabled_composite_profile() {
-    assert!(validate_requested_profile(true, true, true, true).is_ok());
-    let error = validate_requested_profile(true, false, true, true).unwrap_err();
-    assert!(error.starts_with("DS5-RUN-004:"));
-    let error = validate_requested_profile(false, true, true, true).unwrap_err();
+fn genshin_compatibility_requires_composite_profile() {
+    assert!(validate_requested_profile(true, true, true).is_ok());
+    let error = validate_requested_profile(false, true, true).unwrap_err();
     assert!(error.starts_with("DS5-RUN-004:"));
 }
 
@@ -474,7 +471,6 @@ fn component_download_and_install_timeouts_cover_slow_release_assets() {
 #[test]
 fn core_settings_payload_contains_only_independent_ds5_fields() {
     let payload = serde_json::to_value(CoreDualSenseSettings {
-        ds5_enabled: true,
         ds5_audio_haptics: false,
         ds5_legacy_haptics_strength: 1.5,
         ds5_legacy_haptics_curve: 0.5,
@@ -483,7 +479,8 @@ fn core_settings_payload_contains_only_independent_ds5_fields() {
     })
     .unwrap();
     let object = payload.as_object().unwrap();
-    assert_eq!(object.len(), 6);
+    assert_eq!(object.len(), 5);
+    assert!(!object.contains_key("ds5_enabled"));
     assert!(!object.contains_key("gamepad"));
     assert!(!object.contains_key("ds5_sidecar_path"));
 }
@@ -553,7 +550,6 @@ async fn confirmed_save_result_skips_a_failing_config_refresh() {
         revision: 12,
         changed: Some(true),
         settings: CoreDualSenseSettings {
-            ds5_enabled: true,
             ds5_audio_haptics: false,
             ds5_legacy_haptics_strength: 1.4,
             ds5_legacy_haptics_curve: 0.7,
@@ -569,7 +565,6 @@ async fn confirmed_save_result_skips_a_failing_config_refresh() {
     .await;
 
     assert!(!fetch_called.load(Ordering::Relaxed));
-    assert!(settings.ds5_enabled);
     assert!(!settings.ds5_audio_haptics);
     assert_eq!(settings.ds5_legacy_haptics_strength, 1.4);
     assert_eq!(settings.ds5_legacy_haptics_curve, 0.7);
@@ -582,8 +577,7 @@ async fn confirmed_save_result_skips_a_failing_config_refresh() {
 fn field_updates_preserve_unrelated_settings() {
     let mut settings = CoreDualSenseSettings::default();
     update_tuning_fields(&mut settings, 1.25, 0.7, 0.006);
-    update_config_fields(&mut settings, true, true, true);
-    assert!(settings.ds5_enabled);
+    update_config_fields(&mut settings, true, true);
     assert!(settings.ds5_audio_haptics);
     assert!(settings.ds5_genshin_compatibility);
     assert_eq!(settings.ds5_legacy_haptics_strength, 1.25);
@@ -591,7 +585,6 @@ fn field_updates_preserve_unrelated_settings() {
     assert_eq!(settings.ds5_legacy_haptics_noise_gate, 0.006);
 
     update_tuning_fields(&mut settings, 1.5, 0.9, 0.010);
-    assert!(settings.ds5_enabled);
     assert!(settings.ds5_audio_haptics);
     assert!(settings.ds5_genshin_compatibility);
     assert_eq!(settings.ds5_legacy_haptics_strength, 1.5);
@@ -623,6 +616,7 @@ fn core_response_requires_applied_revision_and_valid_values() {
     assert!(validate_core_ds5_response(invalid_value).is_err());
 
     let mut invalid_profile = valid();
+    invalid_profile.settings.ds5_audio_haptics = false;
     invalid_profile.settings.ds5_genshin_compatibility = true;
     assert!(validate_core_ds5_response(invalid_profile).is_err());
 }
@@ -632,7 +626,6 @@ fn offline_uninstall_status_is_locally_complete() {
     let status = local_uninstalled_status();
     assert_eq!(status.state, "not_installed");
     assert!(!status.installed);
-    assert!(!status.enabled);
     assert!(status.audio_haptics);
     assert!(!status.config_readable);
     assert!(!status.in_use);

@@ -11,7 +11,6 @@ pub(crate) const CORE_CONFIG_RETRY_DELAY: std::time::Duration =
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub(crate) struct CoreDualSenseSettings {
-    pub(crate) ds5_enabled: bool,
     pub(crate) ds5_audio_haptics: bool,
     pub(crate) ds5_legacy_haptics_strength: f64,
     pub(crate) ds5_legacy_haptics_curve: f64,
@@ -22,7 +21,6 @@ pub(crate) struct CoreDualSenseSettings {
 impl Default for CoreDualSenseSettings {
     fn default() -> Self {
         Self {
-            ds5_enabled: false,
             ds5_audio_haptics: true,
             ds5_legacy_haptics_strength: 1.0,
             ds5_legacy_haptics_curve: 0.5,
@@ -132,7 +130,7 @@ pub(crate) fn validate_core_ds5_response(
     )) {
         return Err("DS5-CFG-001: Sunshine returned invalid DualSense values".to_string());
     }
-    if values.ds5_genshin_compatibility && (!values.ds5_enabled || !values.ds5_audio_haptics) {
+    if values.ds5_genshin_compatibility && !values.ds5_audio_haptics {
         return Err("DS5-CFG-001: Sunshine returned invalid DualSense values".to_string());
     }
     Ok(result)
@@ -270,11 +268,9 @@ pub(crate) fn clamp_tuning(strength: f64, curve: f64, noise_gate: f64) -> Option
 
 pub(crate) fn update_config_fields(
     settings: &mut CoreDualSenseSettings,
-    enabled: bool,
     audio_haptics: bool,
     genshin_compatibility: bool,
 ) {
-    settings.ds5_enabled = enabled;
     settings.ds5_audio_haptics = audio_haptics;
     settings.ds5_genshin_compatibility = genshin_compatibility;
 }

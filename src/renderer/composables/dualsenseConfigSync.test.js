@@ -4,7 +4,6 @@ import test from 'node:test'
 import {
   createLatestIntentQueue,
   dualSenseConfigAfterInstall,
-  dualSenseConfigAfterUninstall,
   dualSenseConfigMatches,
   dualSenseConfigReadable,
   dualSenseConfigUiState,
@@ -12,7 +11,6 @@ import {
 } from './dualsenseConfigSync.js'
 
 const response = {
-  enabled: true,
   audio_haptics: false,
   genshin_compatibility: false,
   legacy_strength: 1.4,
@@ -23,7 +21,6 @@ const response = {
 
 test('keeps locally edited tuning out of a non-tuning save response', () => {
   assert.deepEqual(dualSenseConfigUiState(response, true), {
-    enabled: true,
     audioHaptics: false,
     genshinCompatibility: false,
     tuning: null,
@@ -32,7 +29,6 @@ test('keeps locally edited tuning out of a non-tuning save response', () => {
 
 test('synchronizes tuning from Core when there are no local edits', () => {
   assert.deepEqual(dualSenseConfigUiState(response), {
-    enabled: true,
     audioHaptics: false,
     genshinCompatibility: false,
     tuning: {
@@ -43,19 +39,16 @@ test('synchronizes tuning from Core when there are no local edits', () => {
   })
 })
 
-test('recognizes a requested switch state after an ambiguous save response', () => {
+test('recognizes requested haptics settings after an ambiguous save response', () => {
   assert.equal(dualSenseConfigMatches(response, {
-    enabled: true,
     audioHaptics: false,
     genshinCompatibility: false,
   }), true)
   assert.equal(dualSenseConfigMatches(response, {
-    enabled: false,
-    audioHaptics: false,
-    genshinCompatibility: false,
+    audioHaptics: true,
+    genshinCompatibility: true,
   }), false)
   assert.equal(dualSenseConfigMatches({ ...response, config_readable: false }, {
-    enabled: true,
     audioHaptics: false,
     genshinCompatibility: false,
   }), false)
@@ -66,7 +59,6 @@ test('enables the available DualSense capabilities after a fresh install', () =>
     usbip_available: true,
     composite_profile: true,
   }), {
-    enabled: true,
     audioHaptics: true,
     genshinCompatibility: false,
   })
@@ -74,7 +66,6 @@ test('enables the available DualSense capabilities after a fresh install', () =>
     usbip_available: false,
     composite_profile: true,
   }), {
-    enabled: true,
     audioHaptics: false,
     genshinCompatibility: false,
   })
@@ -82,14 +73,6 @@ test('enables the available DualSense capabilities after a fresh install', () =>
     usbip_available: true,
     composite_profile: true,
   }, true), null)
-})
-
-test('disables DualSense after component removal while restoring audio defaults', () => {
-  assert.deepEqual(dualSenseConfigAfterUninstall(), {
-    enabled: false,
-    audioHaptics: true,
-    genshinCompatibility: false,
-  })
 })
 
 test('serializes config saves and keeps only the latest pending intent', async () => {
@@ -137,7 +120,6 @@ test('preserves confirmed config when a status refresh cannot read Core settings
   }
   const incoming = {
     ...response,
-    enabled: false,
     audio_haptics: true,
     genshin_compatibility: true,
     legacy_strength: 1,
@@ -152,7 +134,6 @@ test('preserves confirmed config when a status refresh cannot read Core settings
   assert.equal(dualSenseConfigReadable(incoming), false)
   assert.deepEqual(mergeDualSenseStatus(current, incoming), {
     ...incoming,
-    enabled: true,
     audio_haptics: false,
     genshin_compatibility: false,
     legacy_strength: 1.4,

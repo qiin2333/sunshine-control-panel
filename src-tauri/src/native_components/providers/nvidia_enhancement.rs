@@ -726,6 +726,32 @@ pub async fn component_set_enabled(enabled: bool) -> Result<EnhancementComponent
     status_for_config(saved).await
 }
 
+async fn clear_uninstalled_config<Load, LoadFuture, Save, SaveFuture>(
+    mut load: Load,
+    mut save: Save,
+) -> Result<crate::hdr_enhanced::ConfigState, String>
+where
+    Load: FnMut() -> LoadFuture,
+    LoadFuture: std::future::Future<Output = Result<crate::hdr_enhanced::ConfigState, String>>,
+    Save: FnMut(crate::hdr_enhanced::ConfigState) -> SaveFuture,
+    SaveFuture: std::future::Future<Output = Result<crate::hdr_enhanced::ConfigState, String>>,
+{
+    for attempt in 0..3 {
+        // File removal can outlive another window's edit. Merge only this
+        // component into the latest document and use its fresh validator.
+        let mut current = load().await?;
+        if selected_backend(&current.settings).as_deref() == Some(COMPONENT_ID) {
+            *selected_backend_mut(&mut current.settings) = None;
+        }
+        current.settings.backends.remove(COMPONENT_ID);
+        match save(current).await {
+            Err(error) if error.starts_with("HDR-CFG-006:") && attempt < 2 => continue,
+            result => return result,
+        }
+    }
+    unreachable!("the final save attempt always returns")
+}
+
 pub async fn component_uninstall() -> Result<EnhancementComponentStatus, String> {
     let _operation = COMPONENT_OPERATION
         .try_lock()
@@ -738,30 +764,113 @@ pub async fn component_uninstall() -> Result<EnhancementComponentStatus, String>
     }
     // 先停止新会话使用；文件删除成功后再去掉版本记录，失败时仍保留卸载/修复入口。
     let saved = crate::hdr_enhanced::save_config(current, Some(&operation_id.id)).await;
-    let saved = match saved {
-        Ok(saved) => saved,
-        Err(error) => {
-            let _ = finish_operation(&operation_id.id).await;
-            return Err(error);
-        }
-    };
+    if let Err(error) = saved {
+        let _ = finish_operation(&operation_id.id).await;
+        return Err(error);
+    }
     let removed = remove_component_with_elevation(&operation_id).await;
     if let Err(error) = removed {
         let _ = finish_operation(&operation_id.id).await;
         return Err(error);
     }
-    let mut cleared = saved;
-    cleared.settings.backends.remove(COMPONENT_ID);
-    let saved = crate::hdr_enhanced::save_config(cleared, Some(&operation_id.id)).await;
-    let finished = finish_operation(&operation_id.id).await;
-    let saved = saved?;
-    finished?;
+    let saved = clear_uninstalled_config(supported_config, |current| {
+        crate::hdr_enhanced::save_config(current, Some(&operation_id.id))
+    })
+    .await?;
+    // Keep maintenance pending if the final configuration could not be saved.
+    finish_operation(&operation_id.id).await?;
     status_for_config(saved).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn uninstall_config(revision: usize) -> crate::hdr_enhanced::ConfigState {
+        let other = if IS_NR {
+            "alkaidlab.nvidia_rtx_video"
+        } else {
+            "alkaidlab.nvidia_dlssnr"
+        };
+        let mut settings = crate::hdr_enhanced::Settings {
+            schema_version: 2,
+            selected_backend: Some("alkaidlab.nvidia_rtx_video".to_string()),
+            selected_nr_backend: Some("alkaidlab.nvidia_dlssnr".to_string()),
+            backends: Default::default(),
+        };
+        for id in [COMPONENT_ID, other] {
+            settings.backends.insert(
+                id.to_string(),
+                crate::hdr_enhanced::BackendSettings {
+                    version: revision.to_string(),
+                    runtime_sha256: None,
+                },
+            );
+        }
+        crate::hdr_enhanced::ConfigState {
+            settings,
+            etag: reqwest::header::HeaderValue::from_str(&format!("\"revision-{revision}\""))
+                .unwrap(),
+        }
+    }
+
+    #[tokio::test]
+    async fn uninstall_reloads_after_conflict_and_preserves_other_component_edits() {
+        let loads = std::cell::Cell::new(0);
+        let saves = std::cell::Cell::new(0);
+        let result = clear_uninstalled_config(
+            || {
+                loads.set(loads.get() + 1);
+                std::future::ready(Ok(uninstall_config(loads.get())))
+            },
+            |current| {
+                saves.set(saves.get() + 1);
+                assert!(selected_backend(&current.settings).is_none());
+                assert!(!current.settings.backends.contains_key(COMPONENT_ID));
+                assert_eq!(current.etag, format!("\"revision-{}\"", saves.get()));
+                std::future::ready(if saves.get() == 1 {
+                    Err("HDR-CFG-006: settings changed in another window".to_string())
+                } else {
+                    Ok(current)
+                })
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(loads.get(), 2);
+        let other = if IS_NR {
+            "alkaidlab.nvidia_rtx_video"
+        } else {
+            "alkaidlab.nvidia_dlssnr"
+        };
+        assert_eq!(result.settings.backends[other].version, "2");
+        let other_selection = if IS_NR {
+            result.settings.selected_backend
+        } else {
+            result.settings.selected_nr_backend
+        };
+        assert_eq!(other_selection.as_deref(), Some(other));
+    }
+
+    #[tokio::test]
+    async fn uninstall_conflicts_are_bounded_and_transport_errors_are_not_retried() {
+        for (error, expected_attempts) in [
+            ("HDR-CFG-006: conflict", 3),
+            ("HDR-CFG-001: unavailable", 1),
+        ] {
+            let loads = std::cell::Cell::new(0);
+            let result = clear_uninstalled_config(
+                || {
+                    loads.set(loads.get() + 1);
+                    std::future::ready(Ok(uninstall_config(loads.get())))
+                },
+                |_| std::future::ready(Err(error.to_string())),
+            )
+            .await;
+            assert_eq!(result.unwrap_err(), error);
+            assert_eq!(loads.get(), expected_attempts);
+        }
+    }
 
     #[test]
     fn schema_gate_preserves_legacy_hdr_but_rejects_legacy_nr() {

@@ -89,6 +89,15 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 const SSE_RECONNECT_BACKOFF: Duration = Duration::from_secs(3);
 const ECHO_TTL: Duration = Duration::from_secs(5);
 
+// Supervisor cadence and stuck thresholds. The supervisor treats each child
+// (sse task / heartbeat task / watcher thread) as independently restartable:
+// a finished task or a wedged watcher is respawned in place, rate-limited by
+// RESPAWN_MIN_GAP so a crash-looping child degrades to periodic retries.
+const SUPERVISOR_INTERVAL: Duration = Duration::from_secs(10);
+const WATCHER_BUSY_STUCK: Duration = Duration::from_secs(60);
+const SSE_DISCONNECTED_STUCK: Duration = Duration::from_secs(180);
+const RESPAWN_MIN_GAP: Duration = Duration::from_secs(30);
+
 const TRANSPORT_STOPPED: u8 = 0;
 const TRANSPORT_CONNECTING: u8 = 1;
 const TRANSPORT_CONNECTED: u8 = 2;
@@ -97,6 +106,16 @@ const TRANSPORT_DISCONNECTED: u8 = 3;
 static TRANSPORT_STATE: AtomicU8 = AtomicU8::new(TRANSPORT_STOPPED);
 static LAST_CONNECTED_AT_MS: AtomicI64 = AtomicI64::new(0);
 static LAST_TRANSPORT_ERROR: Mutex<Option<String>> = Mutex::new(None);
+/// Epoch ms since the transport entered (and continuously stayed in)
+/// TRANSPORT_DISCONNECTED; 0 when connected/connecting/stopped.
+static DISCONNECTED_SINCE_MS: AtomicI64 = AtomicI64::new(0);
+
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+}
 
 fn create_sse_client() -> Result<reqwest::Client, String> {
     create_sse_https_client().map_err(|e| format!("创建 SSE HTTP 客户端失败: {}", e))
@@ -252,10 +271,16 @@ struct State {
     enabled: bool,
     sse_task: Option<JoinHandle<()>>,
     heartbeat_task: Option<JoinHandle<()>>,
+    supervisor_task: Option<JoinHandle<()>>,
+    /// Liveness of the spawned tasks. tauri's JoinHandle has no
+    /// is_finished(), so each wrapper task clears its flag on exit.
+    sse_alive: Arc<AtomicBool>,
+    heartbeat_alive: Arc<AtomicBool>,
     watcher_shutdown: Option<WatcherShutdown>,
     watcher_thread: Option<std::thread::JoinHandle<()>>,
     stop: Option<Arc<Notify>>,
     echo: Arc<Mutex<EchoState>>,
+    busy: Option<Arc<AtomicI64>>,
     next_token: u32,
 }
 
@@ -276,13 +301,24 @@ pub struct ClipboardStatus {
 
 fn set_transport_state(state: u8, error: Option<String>) {
     TRANSPORT_STATE.store(state, Ordering::Release);
-    *LAST_TRANSPORT_ERROR.lock().unwrap() = error;
+    *LAST_TRANSPORT_ERROR
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = error;
+    match state {
+        TRANSPORT_CONNECTED | TRANSPORT_STOPPED => {
+            DISCONNECTED_SINCE_MS.store(0, Ordering::Release)
+        }
+        TRANSPORT_DISCONNECTED => {
+            // Keep the contiguous-disconnected window open across CONNECTING
+            // retries; only a successful connect closes it.
+            DISCONNECTED_SINCE_MS
+                .compare_exchange(0, now_ms(), Ordering::AcqRel, Ordering::Acquire)
+                .ok();
+        }
+        _ => {}
+    }
     if state == TRANSPORT_CONNECTED {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as i64;
-        LAST_CONNECTED_AT_MS.store(now, Ordering::Release);
+        LAST_CONNECTED_AT_MS.store(now_ms(), Ordering::Release);
     }
 }
 
@@ -299,13 +335,15 @@ fn transport_state_name(state: u8) -> &'static str {
 
 struct WatcherCallbacks {
     echo: Arc<Mutex<EchoState>>,
-    busy: Arc<AtomicBool>,
+    /// Epoch-ms timestamp of the in-flight snapshot; 0 = idle. Storing the
+    /// time (instead of a bool) lets the supervisor detect a wedged watcher.
+    busy: Arc<AtomicI64>,
 }
 
 impl ClipboardHandler for WatcherCallbacks {
     fn on_clipboard_change(&mut self) {
         // Coalesce: if we're already mid-snapshot drop additional fires.
-        if self.busy.swap(true, Ordering::AcqRel) {
+        if self.busy.swap(now_ms(), Ordering::AcqRel) != 0 {
             return;
         }
         let echo = self.echo.clone();
@@ -316,7 +354,7 @@ impl ClipboardHandler for WatcherCallbacks {
             tauri::async_runtime::spawn_blocking(move || snapshot_and_post(&echo))
                 .await
                 .ok();
-            busy.store(false, Ordering::Release);
+            busy.store(0, Ordering::Release);
         });
     }
 }
@@ -444,7 +482,7 @@ fn snapshot_and_post(echo: &Arc<Mutex<EchoState>>) {
             }
 
             let (text_echo, png_echo) = {
-                let mut st = echo.lock().unwrap();
+                let mut st = echo.lock().unwrap_or_else(|e| e.into_inner());
                 let te = st.is_echo(Kind::Text, &tb);
                 let pe =
                     st.is_echo(Kind::Png, &pb) || pixel_hash.map_or(false, |h| st.is_image_echo(h));
@@ -472,14 +510,16 @@ fn snapshot_and_post(echo: &Arc<Mutex<EchoState>>) {
             }
         }
         (Some(tb), None) => {
-            if !echo.lock().unwrap().is_echo(Kind::Text, &tb) {
+            if !echo
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_echo(Kind::Text, &tb)
+            {
                 post_outbound(Kind::Text, tb, MIME_TEXT);
             }
         }
         (None, None) => {
-            debug!(
-                "clipboard snapshot produced no text or image payload; nothing to sync"
-            );
+            debug!("clipboard snapshot produced no text or image payload; nothing to sync");
         }
     }
 }
@@ -488,7 +528,7 @@ fn snapshot_and_post(echo: &Arc<Mutex<EchoState>>) {
 /// pixel hash is recorded when the payload passes so a delayed platform
 /// re-encode of the same image is still recognized as an echo.
 fn png_payload_is_echo(echo: &Arc<Mutex<EchoState>>, png: &[u8], pixel_hash: Option<u64>) -> bool {
-    let mut st = echo.lock().unwrap();
+    let mut st = echo.lock().unwrap_or_else(|e| e.into_inner());
     if st.is_echo(Kind::Png, png) {
         return true;
     }
@@ -586,7 +626,7 @@ async fn upload_and_post_ref(payload: Vec<u8>, mime: &str, token: u32) -> Result
 }
 
 fn next_token() -> u32 {
-    let mut st = AGENT.lock().unwrap();
+    let mut st = AGENT.lock().unwrap_or_else(|e| e.into_inner());
     st.next_token = st.next_token.wrapping_add(1).max(1);
     st.next_token
 }
@@ -703,7 +743,7 @@ fn prune_bursts(map: &mut HashMap<u32, (Vec<u8>, Instant)>) {
 }
 
 fn retain_burst_text(token: u32, text: Vec<u8>) {
-    let mut map = BURSTS.lock().unwrap();
+    let mut map = BURSTS.lock().unwrap_or_else(|e| e.into_inner());
     prune_bursts(&mut map);
     if map.len() >= MAX_PENDING_BURSTS {
         // Defensive bound against a pathological sender.
@@ -715,7 +755,7 @@ fn retain_burst_text(token: u32, text: Vec<u8>) {
 }
 
 fn take_burst_text(token: u32) -> Option<Vec<u8>> {
-    let mut map = BURSTS.lock().unwrap();
+    let mut map = BURSTS.lock().unwrap_or_else(|e| e.into_inner());
     prune_bursts(&mut map);
     map.remove(&token).map(|(text, _)| text)
 }
@@ -885,7 +925,7 @@ fn apply_compound(text: &[u8], png: &[u8], echo: &Arc<Mutex<EchoState>>) {
     let pixel_hash = hash_image_pixels(&img);
 
     {
-        let mut st = echo.lock().unwrap();
+        let mut st = echo.lock().unwrap_or_else(|e| e.into_inner());
         st.record(Kind::Text, text);
         st.record(Kind::Png, png);
         if let Some(h) = pixel_hash {
@@ -949,7 +989,9 @@ fn apply_inbound_inline(frame: Frame, echo: &Arc<Mutex<EchoState>>) {
     }
 
     // Record BEFORE writing so the watcher sees the hash and suppresses.
-    echo.lock().unwrap().record(frame.kind, &frame.payload);
+    echo.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .record(frame.kind, &frame.payload);
 
     let ctx = match ClipboardContext::new() {
         Ok(c) => c,
@@ -997,7 +1039,9 @@ fn apply_inbound_inline(frame: Frame, echo: &Arc<Mutex<EchoState>>) {
             // above: after set_image the platform re-encodes the bitmap and
             // the watcher's payload bytes no longer match, but pixels do.
             if let Some(h) = hash_image_pixels(&img) {
-                echo.lock().unwrap().record_image(h);
+                echo.lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .record_image(h);
             }
             if let Err(e) = ctx.set_image(img) {
                 warn!("inbound set_image failed: {e}");
@@ -1163,60 +1207,260 @@ async fn heartbeat_pump(stop: Arc<Notify>) {
     }
 }
 
+// ---------- Supervisor ----------
+//
+// Every child task/thread of the agent is fire-and-forget by nature: a panic
+// or a wedged blocking call produces no signal, and the failure modes are
+// silent (a dead heartbeat keeps transport_state CONNECTED while the service
+// expires gui_alive and drops Mac→host traffic; a wedged watcher snapshot
+// swallows every subsequent local change). The supervisor is the single
+// liveness owner: it periodically checks each child and respawns it in place,
+// rate-limited so a crash-looping child degrades to periodic retries.
+
+static LAST_SSE_RESPAWN_MS: AtomicI64 = AtomicI64::new(0);
+static LAST_HEARTBEAT_RESPAWN_MS: AtomicI64 = AtomicI64::new(0);
+static LAST_WATCHER_RESPAWN_MS: AtomicI64 = AtomicI64::new(0);
+
+fn lock_agent() -> std::sync::MutexGuard<'static, State> {
+    AGENT.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn respawn_allowed(now: i64, last: &AtomicI64) -> bool {
+    let l = last.load(Ordering::Acquire);
+    l == 0 || now.saturating_sub(l) >= RESPAWN_MIN_GAP.as_millis() as i64
+}
+
+async fn supervisor(stop: Arc<Notify>) {
+    loop {
+        if wait_or_stop(&stop, SUPERVISOR_INTERVAL).await {
+            return;
+        }
+        supervise_once();
+    }
+}
+
+/// One supervision pass. Locks are taken briefly and never held across an
+/// await; at most one action runs per pass to keep respawn bookkeeping
+/// simple.
+fn supervise_once() {
+    let now = now_ms();
+
+    let (sse_dead, hb_dead, watcher_dead) = {
+        let st = lock_agent();
+        (
+            !st.sse_alive.load(Ordering::Acquire),
+            !st.heartbeat_alive.load(Ordering::Acquire),
+            st.watcher_thread
+                .as_ref()
+                .map(|t| t.is_finished())
+                .unwrap_or(false),
+        )
+    };
+
+    // Dead tokio task = it panicked or exited outside the stop path. Respawn
+    // a fresh one; abort() on an already-finished handle is a no-op.
+    if sse_dead && respawn_allowed(now, &LAST_SSE_RESPAWN_MS) {
+        warn!("clipboard supervisor: sse task died; respawning");
+        respawn_sse(now);
+        return;
+    }
+    if hb_dead && respawn_allowed(now, &LAST_HEARTBEAT_RESPAWN_MS) {
+        warn!("clipboard supervisor: heartbeat task died; respawning");
+        respawn_heartbeat(now);
+        return;
+    }
+    if watcher_dead && respawn_allowed(now, &LAST_WATCHER_RESPAWN_MS) {
+        warn!("clipboard supervisor: watcher thread died; respawning");
+        respawn_watcher(now);
+        return;
+    }
+
+    // Wedged watcher: a snapshot that never returns swallows every
+    // subsequent change. Rebuild the watcher and release the flag.
+    if let Some(busy) = lock_agent().busy.clone() {
+        let started = busy.load(Ordering::Acquire);
+        if started != 0
+            && now.saturating_sub(started) > WATCHER_BUSY_STUCK.as_millis() as i64
+            && respawn_allowed(now, &LAST_WATCHER_RESPAWN_MS)
+        {
+            warn!(
+                "clipboard supervisor: watcher snapshot stuck {}ms; restarting watcher",
+                now - started
+            );
+            respawn_watcher(now);
+            busy.store(0, Ordering::Release);
+            return;
+        }
+    }
+
+    // Transport wedged in DISCONNECTED while enabled: the sse task is alive
+    // but its retry loop keeps failing. Recycle it for a fresh client stack.
+    let since = DISCONNECTED_SINCE_MS.load(Ordering::Acquire);
+    if since != 0 && now.saturating_sub(since) > SSE_DISCONNECTED_STUCK.as_millis() as i64 {
+        if respawn_allowed(now, &LAST_SSE_RESPAWN_MS) {
+            warn!(
+                "clipboard supervisor: transport disconnected {}ms; recycling sse task",
+                now - since
+            );
+            respawn_sse(now);
+            DISCONNECTED_SINCE_MS.store(now_ms(), Ordering::Release);
+        }
+    }
+}
+
+fn respawn_sse(now: i64) {
+    let (stop, echo, alive, old) = {
+        let mut st = lock_agent();
+        (
+            st.stop.clone(),
+            st.echo.clone(),
+            st.sse_alive.clone(),
+            st.sse_task.take(),
+        )
+    };
+    let Some(stop) = stop else { return };
+    if let Some(old) = old {
+        old.abort();
+    }
+    let new = spawn_sse_task(&stop, &echo, &alive);
+    lock_agent().sse_task = Some(new);
+    LAST_SSE_RESPAWN_MS.store(now, Ordering::Release);
+}
+
+fn respawn_heartbeat(now: i64) {
+    let (stop, alive, old) = {
+        let mut st = lock_agent();
+        (
+            st.stop.clone(),
+            st.heartbeat_alive.clone(),
+            st.heartbeat_task.take(),
+        )
+    };
+    let Some(stop) = stop else { return };
+    if let Some(old) = old {
+        old.abort();
+    }
+    let new = spawn_heartbeat_task(&stop, &alive);
+    lock_agent().heartbeat_task = Some(new);
+    LAST_HEARTBEAT_RESPAWN_MS.store(now, Ordering::Release);
+}
+
+fn respawn_watcher(now: i64) {
+    let (echo, busy) = {
+        let st = lock_agent();
+        (st.echo.clone(), st.busy.clone())
+    };
+    // echo is always present while the agent runs; only busy is optional.
+    let Some(busy) = busy else {
+        return;
+    };
+    // Drop the dead/wedged watcher's handles before rebuilding.
+    {
+        let mut st = lock_agent();
+        st.watcher_shutdown = None;
+        st.watcher_thread = None;
+    }
+    match spawn_watcher_thread(&echo, &busy) {
+        Ok((shutdown, handle)) => {
+            let mut st = lock_agent();
+            st.watcher_shutdown = Some(shutdown);
+            st.watcher_thread = Some(handle);
+            LAST_WATCHER_RESPAWN_MS.store(now, Ordering::Release);
+        }
+        Err(e) => warn!("clipboard supervisor: watcher respawn failed: {e}"),
+    }
+}
+
 // ---------- Public API: enable / disable / status ----------
 
+fn spawn_sse_task(
+    stop: &Arc<Notify>,
+    echo: &Arc<Mutex<EchoState>>,
+    alive: &Arc<AtomicBool>,
+) -> JoinHandle<()> {
+    let stop = stop.clone();
+    let echo = echo.clone();
+    let alive = alive.clone();
+    alive.store(true, Ordering::Release);
+    tauri::async_runtime::spawn(async move {
+        sse_pump(stop, echo).await;
+        alive.store(false, Ordering::Release);
+    })
+}
+
+fn spawn_heartbeat_task(stop: &Arc<Notify>, alive: &Arc<AtomicBool>) -> JoinHandle<()> {
+    let stop = stop.clone();
+    let alive = alive.clone();
+    alive.store(true, Ordering::Release);
+    tauri::async_runtime::spawn(async move {
+        heartbeat_pump(stop).await;
+        alive.store(false, Ordering::Release);
+    })
+}
+
+fn spawn_watcher_thread(
+    echo: &Arc<Mutex<EchoState>>,
+    busy: &Arc<AtomicI64>,
+) -> Result<(WatcherShutdown, std::thread::JoinHandle<()>), String> {
+    let mut watcher =
+        ClipboardWatcherContext::new().map_err(|e| format!("ClipboardWatcherContext: {e}"))?;
+    let shutdown = watcher
+        .add_handler(WatcherCallbacks {
+            echo: echo.clone(),
+            busy: busy.clone(),
+        })
+        .get_shutdown_channel();
+    let handle = std::thread::Builder::new()
+        .name("clipboard-watcher".into())
+        .spawn(move || {
+            watcher.start_watch();
+        })
+        .map_err(|e| format!("spawn watcher thread: {e}"))?;
+    Ok((shutdown, handle))
+}
+
+fn spawn_supervisor_task(stop: &Arc<Notify>) -> JoinHandle<()> {
+    let stop = stop.clone();
+    tauri::async_runtime::spawn(async move { supervisor(stop).await })
+}
+
 pub fn start() -> Result<(), String> {
-    let mut st = AGENT.lock().unwrap();
+    let mut st = lock_agent();
     if st.enabled {
         return Ok(());
     }
     set_transport_state(TRANSPORT_CONNECTING, None);
 
     let stop = Arc::new(Notify::new());
-    let echo = st.echo.clone();
-    let busy = Arc::new(AtomicBool::new(false));
+    let busy = Arc::new(AtomicI64::new(0));
 
     // Spawn watcher thread (blocking; the crate's start_watch() is sync).
-    let watcher_echo = echo.clone();
-    let (shutdown_tx, watcher_handle) = {
-        let mut watcher =
-            ClipboardWatcherContext::new().map_err(|e| format!("ClipboardWatcherContext: {e}"))?;
-        let shutdown = watcher
-            .add_handler(WatcherCallbacks {
-                echo: watcher_echo,
-                busy,
-            })
-            .get_shutdown_channel();
-        let handle = std::thread::Builder::new()
-            .name("clipboard-watcher".into())
-            .spawn(move || {
-                watcher.start_watch();
-            })
-            .map_err(|e| format!("spawn watcher thread: {e}"))?;
-        (shutdown, handle)
-    };
+    let (shutdown_tx, watcher_handle) = spawn_watcher_thread(&st.echo, &busy)?;
 
-    let sse_stop = stop.clone();
-    let sse_echo = echo.clone();
-    let sse_task = tauri::async_runtime::spawn(async move { sse_pump(sse_stop, sse_echo).await });
-
-    let hb_stop = stop.clone();
-    let heartbeat_task = tauri::async_runtime::spawn(async move { heartbeat_pump(hb_stop).await });
+    let sse_alive = Arc::new(AtomicBool::new(false));
+    let heartbeat_alive = Arc::new(AtomicBool::new(false));
+    let sse_task = spawn_sse_task(&stop, &st.echo, &sse_alive);
+    let heartbeat_task = spawn_heartbeat_task(&stop, &heartbeat_alive);
+    let supervisor_task = spawn_supervisor_task(&stop);
 
     st.enabled = true;
     st.stop = Some(stop);
+    st.busy = Some(busy);
+    st.sse_alive = sse_alive;
+    st.heartbeat_alive = heartbeat_alive;
     st.sse_task = Some(sse_task);
     st.heartbeat_task = Some(heartbeat_task);
     st.watcher_shutdown = Some(shutdown_tx);
     st.watcher_thread = Some(watcher_handle);
+    st.supervisor_task = Some(supervisor_task);
     info!("clipboard sync agent started");
     Ok(())
 }
 
 #[allow(dead_code)]
 pub fn stop() {
-    let (stop_tx, sse, hb, watcher_shutdown, watcher_thread) = {
-        let mut st = AGENT.lock().unwrap();
+    let (stop_tx, sse, hb, sup, watcher_shutdown, watcher_thread) = {
+        let mut st = lock_agent();
         if !st.enabled {
             return;
         }
@@ -1225,6 +1469,7 @@ pub fn stop() {
             st.stop.take(),
             st.sse_task.take(),
             st.heartbeat_task.take(),
+            st.supervisor_task.take(),
             st.watcher_shutdown.take(),
             st.watcher_thread.take(),
         )
@@ -1244,12 +1489,15 @@ pub fn stop() {
     if let Some(t) = hb {
         t.abort();
     }
+    if let Some(t) = sup {
+        t.abort();
+    }
     set_transport_state(TRANSPORT_STOPPED, None);
     info!("clipboard sync agent stopped");
 }
 
 fn agent_active() -> bool {
-    AGENT.lock().unwrap().enabled
+    lock_agent().enabled
 }
 
 async fn query_service_allowed() -> Option<bool> {
@@ -1299,7 +1547,10 @@ pub async fn clipboard_sync_status() -> ClipboardStatus {
         service_allowed: query_service_allowed().await,
         transport_state: transport_state_name(transport_state),
         last_connected_at_ms: (last_connected_at_ms > 0).then_some(last_connected_at_ms),
-        last_error: LAST_TRANSPORT_ERROR.lock().unwrap().clone(),
+        last_error: LAST_TRANSPORT_ERROR
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone(),
     }
 }
 

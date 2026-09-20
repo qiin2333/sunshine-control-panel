@@ -1260,7 +1260,9 @@ fn supervise_once() {
             st.watcher_thread
                 .as_ref()
                 .map(|t| t.is_finished())
-                .unwrap_or(false),
+                // A missing thread (failed respawn) must count as dead, or
+                // clipboard monitoring stops forever after one spawn error.
+                .unwrap_or(true),
         )
     };
 
@@ -1330,10 +1332,15 @@ fn respawn_sse(now: i64) {
         return;
     };
     let echo = st.echo.clone();
-    let alive = st.sse_alive.clone();
+    // A fresh flag per generation: abort() cancels asynchronously, so the
+    // dead generation's AliveGuard may drop AFTER the replacement stores
+    // true — sharing the flag would let that late drop mark the healthy
+    // new task as dead and loop the supervisor.
+    let alive = Arc::new(AtomicBool::new(false));
     if let Some(old) = st.sse_task.take() {
         old.abort();
     }
+    st.sse_alive = alive.clone();
     st.sse_task = Some(spawn_sse_task(&stop, &echo, &alive));
     LAST_SSE_RESPAWN_MS.store(now, Ordering::Release);
 }
@@ -1346,10 +1353,12 @@ fn respawn_heartbeat(now: i64) {
     let Some(stop) = st.stop.clone() else {
         return;
     };
-    let alive = st.heartbeat_alive.clone();
+    // Fresh flag per generation (see respawn_sse).
+    let alive = Arc::new(AtomicBool::new(false));
     if let Some(old) = st.heartbeat_task.take() {
         old.abort();
     }
+    st.heartbeat_alive = alive.clone();
     st.heartbeat_task = Some(spawn_heartbeat_task(&stop, &alive));
     LAST_HEARTBEAT_RESPAWN_MS.store(now, Ordering::Release);
 }
@@ -1363,16 +1372,18 @@ fn respawn_watcher(now: i64) {
         return;
     }
     let echo = st.echo.clone();
-    let Some(busy) = st.busy.clone() else {
-        return;
-    };
+    // A fresh busy flag per generation: a wedged old snapshot keeps holding
+    // the previous Arc with a stuck non-zero value, and sharing it would make
+    // the new watcher's compare_exchange(0, ...) reject every event forever.
+    let busy = Arc::new(AtomicI64::new(0));
     // Signal the old watcher BEFORE building the replacement so the rebuild
     // window produces at most one in-flight duplicate snapshot (coalesced by
-    // the shared busy flag). Signal only — joining here would block while
-    // the AGENT lock is held.
+    // the generation-local busy flag). Signal only — joining here would
+    // block while the AGENT lock is held.
     if let Some(sd) = st.watcher_shutdown.take() {
         sd.stop();
     }
+    st.busy = Some(busy.clone());
     st.watcher_thread = None;
     match spawn_watcher_thread(&echo, &busy) {
         Ok((shutdown, handle)) => {

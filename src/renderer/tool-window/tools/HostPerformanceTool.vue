@@ -104,6 +104,17 @@
             <strong>{{ formatUptime(currentSession.uptime_ms) }}</strong>
           </div>
         </div>
+        <div class="stop-row">
+          <button
+            class="stop-btn"
+            :class="{ armed: stopArmed }"
+            :disabled="stopBusy"
+            @click="requestStopAll"
+          >
+            {{ stopArmed ? t.performanceTool.confirmStopAll : t.performanceTool.stopAllSessions }}
+          </button>
+          <span v-if="stopMessage" class="stop-message">{{ stopMessage }}</span>
+        </div>
       </div>
     </template>
   </div>
@@ -158,6 +169,39 @@ const currentSession = computed(() => {
 
 const hostLatency = computed(() => currentSession.value?.host_latency ?? {})
 const pipeline = computed(() => currentSession.value?.pipeline ?? {})
+
+// 断开所有会话:两段式确认(第一次点击只上膛,3 秒自动解除)
+const stopArmed = ref(false)
+const stopBusy = ref(false)
+const stopMessage = ref('')
+let stopArmTimer = null
+let stopMessageTimer = null
+
+async function requestStopAll() {
+  if (!stopArmed.value) {
+    stopArmed.value = true
+    clearTimeout(stopArmTimer)
+    stopArmTimer = setTimeout(() => {
+      stopArmed.value = false
+    }, 3000)
+    return
+  }
+  stopArmed.value = false
+  clearTimeout(stopArmTimer)
+  stopBusy.value = true
+  try {
+    await sunshine.stopAllSessions()
+    stopMessage.value = t.value.performanceTool.stopAllOk
+  } catch (e) {
+    stopMessage.value = t.value.performanceTool.stopAllFailed.replace('{error}', String(e))
+  } finally {
+    stopBusy.value = false
+    clearTimeout(stopMessageTimer)
+    stopMessageTimer = setTimeout(() => {
+      stopMessage.value = ''
+    }, 3000)
+  }
+}
 
 const frameBudgetMs = computed(() => {
   const fps = currentSession.value?.fps || 60
@@ -371,6 +415,8 @@ onUnmounted(() => {
     window.clearInterval(pollTimer)
     pollTimer = null
   }
+  clearTimeout(stopArmTimer)
+  clearTimeout(stopMessageTimer)
 })
 </script>
 
@@ -712,6 +758,45 @@ onUnmounted(() => {
 
 .session-grid {
   grid-template-columns: 1.4fr 0.8fr 0.8fr;
+}
+
+.stop-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.stop-btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--perf-text-secondary, #b4552f);
+  background: var(--perf-surface);
+  border: 1px solid var(--perf-border-muted);
+
+  &:hover {
+    border-color: currentColor;
+  }
+
+  &.armed {
+    color: #c0392b;
+    font-weight: 600;
+    border-color: #c0392b;
+    background: rgba(192, 57, 43, 0.08);
+  }
+
+  &:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+}
+
+.stop-message {
+  font-size: 11px;
+  color: var(--perf-text-secondary, inherit);
+  opacity: 0.85;
 }
 
 .pipeline-list {

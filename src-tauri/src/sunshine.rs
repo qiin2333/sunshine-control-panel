@@ -1109,6 +1109,42 @@ pub async fn get_active_sessions() -> Result<Vec<SessionInfo>, String> {
 }
 
 #[tauri::command]
+pub async fn stop_all_sessions() -> Result<String, String> {
+    let sunshine_url = get_sunshine_url().await?;
+    let stop_url = format!(
+        "{}/api/runtime/sessions/stop",
+        sunshine_url.trim_end_matches('/')
+    );
+
+    info!("📡 请求断开所有串流会话: {}", stop_url);
+
+    let client = create_https_client()?;
+    let response = client
+        .post(&stop_url)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .map_err(|e| format!("请求断开会话失败: {}", e))?;
+
+    let status = response.status();
+    let response_text = response
+        .text()
+        .await
+        .map_err(|e| format!("读取断开会话响应失败: {}", e))?;
+
+    if !status.is_success() {
+        error!("❌ 断开会话失败 (状态: {}): {}", status, response_text);
+        return Err(format!(
+            "断开会话失败 (状态: {}): {}",
+            status, response_text
+        ));
+    }
+
+    info!("✅ 已请求断开所有串流会话");
+    Ok(response_text)
+}
+
+#[tauri::command]
 pub async fn change_bitrate(client_name: String, bitrate: u32) -> Result<String, String> {
     // 验证码率范围
     if !(1..=800000).contains(&bitrate) {

@@ -505,6 +505,11 @@ export const zh = {
     broadcastQueue: 'Bcast q',
     totalPipeline: 'Total',
     samples: '{count} samples',
+    stopAllSessions: '断开所有会话',
+    confirmStopAll: '确认断开所有会话?',
+    stopAllHint: '会终止全部串流会话(含其他客户端)',
+    stopAllOk: '已请求断开全部串流会话',
+    stopAllFailed: '断开失败: {error}',
     status: {
       idle: 'Idle',
       waiting: 'Waiting',
@@ -968,7 +973,7 @@ export const zh = {
     webStream: 'Web 串流',
     aiAssistant: '米塔',
     deviceHub: '设备中心',
-    hdrEnhanced: 'HDR 增强',
+    hdrEnhanced: '画面增强',
     controllers: '控制器',
     controllersHub: '控制器中心',
     dualSense: 'DualSense 模拟',
@@ -994,7 +999,7 @@ export const zh = {
   },
 
   hdrEnhanced: {
-    open: '管理 HDR 增强',
+    open: '管理画面增强',
   },
   deviceHub: {
     eyebrow: 'MANAGE / DEVICE HUB',

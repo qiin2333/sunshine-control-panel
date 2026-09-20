@@ -1,8 +1,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { open } from '@tauri-apps/plugin-dialog'
-import { openExternalUrl, rtxHdr } from '../tauri-adapter.js'
-import { useRtxHdrI18n } from './rtxHdrI18n.js'
+import { openExternalUrl, sunshine } from '../tauri-adapter.js'
 
 const emptyStatus = () => ({
   state: 'loading',
@@ -20,10 +19,13 @@ const emptyStatus = () => ({
   runtime_sha256: '',
 })
 
-export function useRtxHdrManager() {
-  const text = useRtxHdrI18n()
+export function useEnhancementManager({ api, messages: text, runtimeName }) {
   const status = ref(emptyStatus())
   const statusKnown = ref(false)
+  const applyStatus = (data) => {
+    status.value = { ...emptyStatus(), ...data }
+    statusKnown.value = true
+  }
   const refreshing = ref(false)
   const operation = ref('')
   const operationError = ref('')
@@ -47,18 +49,19 @@ export function useRtxHdrManager() {
       state: status.value.runtime_present ? text.value.present : text.value.missing,
       tone: status.value.runtime_present ? 'ok' : 'bad',
     },
-  ])
+  ].map(row => statusKnown.value ? row : { ...row, state: text.value.unknown, tone: 'unknown' }))
 
   const refresh = async (quiet = false) => {
     if (controlsBusy.value && !quiet) return
     if (!quiet) refreshing.value = true
+    if (!statusKnown.value) status.value.state = 'loading'
     try {
-      const result = await rtxHdr.getStatus()
+      const result = await api.getStatus()
       if (!result.success) throw new Error(result.message)
-      status.value = { ...emptyStatus(), ...result.data }
-      statusKnown.value = true
+      applyStatus(result.data)
       if (!quiet) operationError.value = ''
     } catch (error) {
+      if (!statusKnown.value) status.value.state = 'unavailable'
       if (!quiet) operationError.value = String(error?.message || error)
     } finally {
       if (!quiet) refreshing.value = false
@@ -77,7 +80,7 @@ export function useRtxHdrManager() {
     operation.value = 'selecting'
     let runtimePath
     try {
-      runtimePath = await selectDll(text.value.selectRuntime, 'nvngx_truehdr.dll')
+      runtimePath = await selectDll(text.value.selectRuntime, runtimeName)
       if (!runtimePath) {
         operation.value = ''
         return
@@ -95,10 +98,9 @@ export function useRtxHdrManager() {
     operation.value = 'install'
     operationError.value = ''
     try {
-      const result = await rtxHdr.install(runtimePath)
+      const result = await api.install(runtimePath)
       if (!result.success) throw new Error(result.message)
-      status.value = { ...emptyStatus(), ...result.data }
-      statusKnown.value = true
+      applyStatus(result.data)
       ElMessage.success(text.value.installSuccess)
     } catch (error) {
       operationError.value = String(error?.message || error)
@@ -124,10 +126,9 @@ export function useRtxHdrManager() {
     operation.value = 'uninstall'
     operationError.value = ''
     try {
-      const result = await rtxHdr.uninstall()
+      const result = await api.uninstall()
       if (!result.success) throw new Error(result.message)
-      status.value = { ...emptyStatus(), ...result.data }
-      statusKnown.value = true
+      applyStatus(result.data)
       ElMessage.success(text.value.uninstallSuccess)
     } catch (error) {
       operationError.value = String(error?.message || error)
@@ -143,10 +144,9 @@ export function useRtxHdrManager() {
     operation.value = 'saving'
     operationError.value = ''
     try {
-      const result = await rtxHdr.setEnabled(enabled)
+      const result = await api.setEnabled(enabled)
       if (!result.success) throw new Error(result.message)
-      status.value = { ...emptyStatus(), ...result.data }
-      statusKnown.value = true
+      applyStatus(result.data)
       ElMessage.success(text.value.saveSuccess)
     } catch (error) {
       operationError.value = String(error?.message || error)
@@ -160,15 +160,25 @@ export function useRtxHdrManager() {
 
   const openVcRuntimeDownload = () => openExternalUrl('https://aka.ms/vs/17/release/vc_redist.x64.exe')
 
+  const openApplicationSettings = async () => {
+    operationError.value = ''
+    try {
+      const base = await sunshine.getUrl()
+      const opened = await openExternalUrl(new URL('/apps', base).href)
+      if (!opened) throw new Error(text.value.appSettingsFailed || 'Could not open the Sunshine application settings')
+    } catch (error) {
+      operationError.value = String(error?.message || error)
+    }
+  }
+
   const recover = async () => {
     if (controlsBusy.value) return
     operation.value = 'recovering'
     operationError.value = ''
     try {
-      const result = await rtxHdr.recover()
+      const result = await api.recover()
       if (!result.success) throw new Error(result.message)
-      status.value = { ...emptyStatus(), ...result.data }
-      statusKnown.value = true
+      applyStatus(result.data)
     } catch (error) {
       operationError.value = String(error?.message || error)
     } finally {
@@ -194,6 +204,7 @@ export function useRtxHdrManager() {
     setEnabled,
     showAcquisition,
     openVcRuntimeDownload,
+    openApplicationSettings,
     recover,
   }
 }

@@ -3,13 +3,14 @@
     <header class="ds5-page-header">
       <h1>{{ t.sidebar.hdrEnhanced }}</h1>
     </header>
-    <RtxHdrManager />
+    <EnhancementManager />
+    <EnhancementManager kind="nr" />
   </section>
 </template>
 
 <script setup>
 import { useI18n } from '../desktop/i18n/index.js'
-import RtxHdrManager from './RtxHdrManager.vue'
+import EnhancementManager from './EnhancementManager.vue'
 
 const { t } = useI18n()
 </script>

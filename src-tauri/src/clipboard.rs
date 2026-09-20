@@ -343,7 +343,14 @@ struct WatcherCallbacks {
 impl ClipboardHandler for WatcherCallbacks {
     fn on_clipboard_change(&mut self) {
         // Coalesce: if we're already mid-snapshot drop additional fires.
-        if self.busy.swap(now_ms(), Ordering::AcqRel) != 0 {
+        // Only claim the 0 -> now transition: refreshing the timestamp on
+        // coalesced events would keep pushing the supervisor's stuck-detection
+        // deadline forward forever while events keep arriving.
+        if self
+            .busy
+            .compare_exchange(0, now_ms(), Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
             return;
         }
         let echo = self.echo.clone();
@@ -1276,21 +1283,27 @@ fn supervise_once() {
     }
 
     // Wedged watcher: a snapshot that never returns swallows every
-    // subsequent change. Rebuild the watcher and release the flag.
-    if let Some(busy) = lock_agent().busy.clone() {
-        let started = busy.load(Ordering::Acquire);
-        if started != 0
-            && now.saturating_sub(started) > WATCHER_BUSY_STUCK.as_millis() as i64
-            && respawn_allowed(now, &LAST_WATCHER_RESPAWN_MS)
-        {
-            warn!(
-                "clipboard supervisor: watcher snapshot stuck {}ms; restarting watcher",
-                now - started
-            );
-            respawn_watcher(now);
-            busy.store(0, Ordering::Release);
-            return;
-        }
+    // subsequent change. Read the flag in a short scope — the MutexGuard
+    // temporary of an `if let` scrutinee would stay alive across the branch
+    // body and deadlock respawn_watcher's own lock_agent() — then let
+    // respawn_watcher re-validate `enabled` under its own lock.
+    let busy_started = {
+        let st = lock_agent();
+        st.busy
+            .as_ref()
+            .map(|b| b.load(Ordering::Acquire))
+            .unwrap_or(0)
+    };
+    if busy_started != 0
+        && now.saturating_sub(busy_started) > WATCHER_BUSY_STUCK.as_millis() as i64
+        && respawn_allowed(now, &LAST_WATCHER_RESPAWN_MS)
+    {
+        warn!(
+            "clipboard supervisor: watcher snapshot stuck {}ms; restarting watcher",
+            now - busy_started
+        );
+        respawn_watcher(now);
+        return;
     }
 
     // Transport wedged in DISCONNECTED while enabled: the sse task is alive
@@ -1309,60 +1322,60 @@ fn supervise_once() {
 }
 
 fn respawn_sse(now: i64) {
-    let (stop, echo, alive, old) = {
-        let mut st = lock_agent();
-        (
-            st.stop.clone(),
-            st.echo.clone(),
-            st.sse_alive.clone(),
-            st.sse_task.take(),
-        )
+    let mut st = lock_agent();
+    if !st.enabled {
+        return;
+    }
+    let Some(stop) = st.stop.clone() else {
+        return;
     };
-    let Some(stop) = stop else { return };
-    if let Some(old) = old {
+    let echo = st.echo.clone();
+    let alive = st.sse_alive.clone();
+    if let Some(old) = st.sse_task.take() {
         old.abort();
     }
-    let new = spawn_sse_task(&stop, &echo, &alive);
-    lock_agent().sse_task = Some(new);
+    st.sse_task = Some(spawn_sse_task(&stop, &echo, &alive));
     LAST_SSE_RESPAWN_MS.store(now, Ordering::Release);
 }
 
 fn respawn_heartbeat(now: i64) {
-    let (stop, alive, old) = {
-        let mut st = lock_agent();
-        (
-            st.stop.clone(),
-            st.heartbeat_alive.clone(),
-            st.heartbeat_task.take(),
-        )
+    let mut st = lock_agent();
+    if !st.enabled {
+        return;
+    }
+    let Some(stop) = st.stop.clone() else {
+        return;
     };
-    let Some(stop) = stop else { return };
-    if let Some(old) = old {
+    let alive = st.heartbeat_alive.clone();
+    if let Some(old) = st.heartbeat_task.take() {
         old.abort();
     }
-    let new = spawn_heartbeat_task(&stop, &alive);
-    lock_agent().heartbeat_task = Some(new);
+    st.heartbeat_task = Some(spawn_heartbeat_task(&stop, &alive));
     LAST_HEARTBEAT_RESPAWN_MS.store(now, Ordering::Release);
 }
 
 fn respawn_watcher(now: i64) {
-    let (echo, busy) = {
-        let st = lock_agent();
-        (st.echo.clone(), st.busy.clone())
-    };
-    // echo is always present while the agent runs; only busy is optional.
-    let Some(busy) = busy else {
+    // One lock scope covers the enabled check, the take of the old handles
+    // and the store of the new ones: a concurrent stop() can then never
+    // strand a watcher rebuilt after the shutdown finished.
+    let mut st = lock_agent();
+    if !st.enabled {
+        return;
+    }
+    let echo = st.echo.clone();
+    let Some(busy) = st.busy.clone() else {
         return;
     };
-    // Drop the dead/wedged watcher's handles before rebuilding.
-    {
-        let mut st = lock_agent();
-        st.watcher_shutdown = None;
-        st.watcher_thread = None;
+    // Signal the old watcher BEFORE building the replacement so the rebuild
+    // window produces at most one in-flight duplicate snapshot (coalesced by
+    // the shared busy flag). Signal only — joining here would block while
+    // the AGENT lock is held.
+    if let Some(sd) = st.watcher_shutdown.take() {
+        sd.stop();
     }
+    st.watcher_thread = None;
     match spawn_watcher_thread(&echo, &busy) {
         Ok((shutdown, handle)) => {
-            let mut st = lock_agent();
             st.watcher_shutdown = Some(shutdown);
             st.watcher_thread = Some(handle);
             LAST_WATCHER_RESPAWN_MS.store(now, Ordering::Release);
@@ -1372,6 +1385,18 @@ fn respawn_watcher(now: i64) {
 }
 
 // ---------- Public API: enable / disable / status ----------
+
+/// Clears the owning task's alive flag on every exit path — normal return,
+/// panic unwind, or cancellation — so the supervisor can always detect death.
+/// A plain `store(false)` after the await misses panics and aborts, which are
+/// exactly the failure modes the supervisor exists to catch.
+struct AliveGuard(Arc<AtomicBool>);
+
+impl Drop for AliveGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
 
 fn spawn_sse_task(
     stop: &Arc<Notify>,
@@ -1383,8 +1408,8 @@ fn spawn_sse_task(
     let alive = alive.clone();
     alive.store(true, Ordering::Release);
     tauri::async_runtime::spawn(async move {
+        let _alive = AliveGuard(alive);
         sse_pump(stop, echo).await;
-        alive.store(false, Ordering::Release);
     })
 }
 
@@ -1393,8 +1418,8 @@ fn spawn_heartbeat_task(stop: &Arc<Notify>, alive: &Arc<AtomicBool>) -> JoinHand
     let alive = alive.clone();
     alive.store(true, Ordering::Release);
     tauri::async_runtime::spawn(async move {
+        let _alive = AliveGuard(alive);
         heartbeat_pump(stop).await;
-        alive.store(false, Ordering::Release);
     })
 }
 
@@ -1465,6 +1490,7 @@ pub fn stop() {
             return;
         }
         st.enabled = false;
+        st.busy = None;
         (
             st.stop.take(),
             st.sse_task.take(),

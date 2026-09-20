@@ -181,6 +181,7 @@ export const sunshine = {
   getLocale: () => wrapDefault('get_sunshine_locale', 'en'),
   setLocale: (locale) => invoke('set_sunshine_locale', { locale }),
   changeBitrate: (clientName, bitrate) => invoke('change_bitrate', { clientName, bitrate }),
+  stopAllSessions: () => invoke('stop_all_sessions'),
 }
 
 // ─── 系统工具 ────────────────────────────────────────────

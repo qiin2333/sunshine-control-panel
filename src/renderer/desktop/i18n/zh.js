@@ -505,6 +505,11 @@ export const zh = {
     broadcastQueue: 'Bcast q',
     totalPipeline: 'Total',
     samples: '{count} samples',
+    stopAllSessions: '断开所有会话',
+    confirmStopAll: '确认断开所有会话?',
+    stopAllHint: '会终止全部串流会话(含其他客户端)',
+    stopAllOk: '已请求断开全部串流会话',
+    stopAllFailed: '断开失败: {error}',
     status: {
       idle: 'Idle',
       waiting: 'Waiting',

@@ -237,6 +237,7 @@ fn main() {
             sunshine::get_sunshine_locale,
             sunshine::set_sunshine_locale,
             sunshine::get_active_sessions,
+            sunshine::stop_all_sessions,
             sunshine::change_bitrate,
             sunshine::toggle_sunshine_mode,
             sunshine::is_sunshine_running_in_user_mode,

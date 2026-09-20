@@ -973,7 +973,7 @@ Output only one short sentence, no explanation. Reply in English.`,
     webStream: 'Web Stream',
     aiAssistant: 'Mita',
     deviceHub: 'Device Hub',
-    hdrEnhanced: 'HDR Enhancement',
+    hdrEnhanced: 'Image Enhancement',
     controllers: 'Controllers',
     controllersHub: 'Controllers Hub',
     dualSense: 'DualSense Emulation',
@@ -999,7 +999,7 @@ Output only one short sentence, no explanation. Reply in English.`,
   },
 
   hdrEnhanced: {
-    open: 'Manage HDR enhancement',
+    open: 'Manage image enhancement',
   },
   deviceHub: {
     eyebrow: 'MANAGE / DEVICE HUB',

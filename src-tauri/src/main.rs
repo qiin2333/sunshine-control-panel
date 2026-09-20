@@ -118,6 +118,9 @@ fn main() {
     configure_loopback_proxy_bypass();
 
     #[cfg(target_os = "windows")]
+    if let Some(exit_code) = native_components::providers::nvidia_dlssnr::try_handle_elevated_command() {
+        std::process::exit(exit_code);
+    }
     if let Some(exit_code) = rtx_hdr::try_handle_elevated_command() {
         std::process::exit(exit_code);
     }

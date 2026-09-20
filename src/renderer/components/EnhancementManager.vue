@@ -43,6 +43,7 @@
           @change="setEnabled"
         />
         <p>{{ text.enableHint }}</p>
+        <el-button v-if="kind === 'nr' && status.enabled" @click="openApplicationSettings">{{ text.appSettings }}</el-button>
       </div>
     </article>
 
@@ -127,11 +128,18 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
+import { dlssNr, rtxHdr } from '../tauri-adapter.js'
+import { dlssNrText } from '../composables/dlssNrMessages.js'
+import { useI18n } from '../desktop/i18n/index.js'
 import { Refresh } from '@element-plus/icons-vue'
 import { useRtxHdrI18n } from '../composables/rtxHdrI18n.js'
-import { useRtxHdrManager } from '../composables/useRtxHdrManager.js'
+import { useEnhancementManager } from '../composables/useEnhancementManager.js'
 
-const text = useRtxHdrI18n()
+const props = defineProps({ kind: { type: String, default: 'hdr' } })
+const { locale } = useI18n()
+const hdrText = useRtxHdrI18n()
+const text = computed(() => props.kind === 'nr' ? dlssNrText(locale.value) : hdrText.value)
 
 const {
   status,
@@ -149,8 +157,13 @@ const {
   setEnabled,
   showAcquisition,
   openVcRuntimeDownload,
+  openApplicationSettings,
   recover,
-} = useRtxHdrManager()
+} = useEnhancementManager({
+  api: props.kind === 'nr' ? dlssNr : rtxHdr,
+  messages: text,
+  runtimeName: props.kind === 'nr' ? 'nvngx_dlssnr.dll' : 'nvngx_truehdr.dll',
+})
 </script>
 
 <style scoped lang="less">

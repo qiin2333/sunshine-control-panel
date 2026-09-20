@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { webcrypto } from 'node:crypto'
 import { createSSRApp, ref } from 'vue'
 import { renderToString } from 'vue/server-renderer'
 import 'element-plus'
@@ -9,7 +10,8 @@ import { dlssNrText } from './dlssNrMessages.js'
 
 // The desktop locale module updates the document language during import.
 globalThis.document = { documentElement: {} }
-globalThis.window = { addEventListener() {}, crypto: globalThis.crypto }
+Object.defineProperty(globalThis, 'navigator', { value: { language: 'en' }, configurable: true })
+globalThis.window = { addEventListener() {}, crypto: webcrypto }
 mockIPC(() => undefined, { shouldMockEvents: true })
 const { useRtxHdrManager } = await import('./useRtxHdrManager.js')
 

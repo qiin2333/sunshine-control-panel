@@ -16,8 +16,8 @@ export function dlssNrText(locale) {
     appSettings: chinese ? '打开应用设置' : 'Open application settings',
     bridgeMissingNotice: chinese ? '当前 Sunshine 不支持 DLSS NR，请更新主程序后重试。' : 'This Sunshine installation does not support DLSS NR. Update Sunshine and try again.',
     intro: chinese
-      ? '实验性 SDR 画面增强。在编码前处理游戏画面，会增加 GPU 开销，也可能改变人物与纹理。当前尚无运动估计，默认关闭。'
-      : 'Experimental SDR enhancement before encoding. Adds GPU work and may change faces and textures. Motion estimation is not yet available. Disabled by default.',
+      ? '实验性 SDR 画面增强。在编码前处理游戏画面，会增加 GPU 开销，也可能改变人物与纹理。默认关闭；支持光流的主程序可在应用设置中单独开启运动估计。'
+      : 'Experimental SDR enhancement before encoding. Adds GPU work and may change faces and textures. Disabled by default; compatible Sunshine builds offer optional optical-flow motion estimation in application settings.',
     enableHint: chinese
       ? '启用组件后，还需在应用设置中开启 DLSS NR，并以 SDR 模式重新连接。HDR 串流会跳过此处理。'
       : 'After enabling the component, enable DLSS NR in the application settings and reconnect in SDR mode. HDR streams bypass this processing.',

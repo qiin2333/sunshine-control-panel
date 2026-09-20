@@ -1,8 +1,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { open } from '@tauri-apps/plugin-dialog'
-import { openExternalUrl, rtxHdr, sunshine } from '../tauri-adapter.js'
-import { useRtxHdrI18n } from './rtxHdrI18n.js'
+import { openExternalUrl, sunshine } from '../tauri-adapter.js'
 
 const emptyStatus = () => ({
   state: 'loading',
@@ -20,10 +19,13 @@ const emptyStatus = () => ({
   runtime_sha256: '',
 })
 
-export function useRtxHdrManager({ api = rtxHdr, messages, runtimeName = 'nvngx_truehdr.dll' } = {}) {
-  const text = messages || useRtxHdrI18n()
+export function useEnhancementManager({ api, messages: text, runtimeName }) {
   const status = ref(emptyStatus())
   const statusKnown = ref(false)
+  const applyStatus = (data) => {
+    status.value = { ...emptyStatus(), ...data }
+    statusKnown.value = true
+  }
   const refreshing = ref(false)
   const operation = ref('')
   const operationError = ref('')
@@ -56,8 +58,7 @@ export function useRtxHdrManager({ api = rtxHdr, messages, runtimeName = 'nvngx_
     try {
       const result = await api.getStatus()
       if (!result.success) throw new Error(result.message)
-      status.value = { ...emptyStatus(), ...result.data }
-      statusKnown.value = true
+      applyStatus(result.data)
       if (!quiet) operationError.value = ''
     } catch (error) {
       if (!statusKnown.value) status.value.state = 'unavailable'
@@ -99,8 +100,7 @@ export function useRtxHdrManager({ api = rtxHdr, messages, runtimeName = 'nvngx_
     try {
       const result = await api.install(runtimePath)
       if (!result.success) throw new Error(result.message)
-      status.value = { ...emptyStatus(), ...result.data }
-      statusKnown.value = true
+      applyStatus(result.data)
       ElMessage.success(text.value.installSuccess)
     } catch (error) {
       operationError.value = String(error?.message || error)
@@ -128,8 +128,7 @@ export function useRtxHdrManager({ api = rtxHdr, messages, runtimeName = 'nvngx_
     try {
       const result = await api.uninstall()
       if (!result.success) throw new Error(result.message)
-      status.value = { ...emptyStatus(), ...result.data }
-      statusKnown.value = true
+      applyStatus(result.data)
       ElMessage.success(text.value.uninstallSuccess)
     } catch (error) {
       operationError.value = String(error?.message || error)
@@ -147,8 +146,7 @@ export function useRtxHdrManager({ api = rtxHdr, messages, runtimeName = 'nvngx_
     try {
       const result = await api.setEnabled(enabled)
       if (!result.success) throw new Error(result.message)
-      status.value = { ...emptyStatus(), ...result.data }
-      statusKnown.value = true
+      applyStatus(result.data)
       ElMessage.success(text.value.saveSuccess)
     } catch (error) {
       operationError.value = String(error?.message || error)
@@ -180,8 +178,7 @@ export function useRtxHdrManager({ api = rtxHdr, messages, runtimeName = 'nvngx_
     try {
       const result = await api.recover()
       if (!result.success) throw new Error(result.message)
-      status.value = { ...emptyStatus(), ...result.data }
-      statusKnown.value = true
+      applyStatus(result.data)
     } catch (error) {
       operationError.value = String(error?.message || error)
     } finally {

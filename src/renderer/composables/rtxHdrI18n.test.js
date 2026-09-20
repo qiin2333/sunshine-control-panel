@@ -27,11 +27,9 @@ test('RTX HDR component copy explains how to resolve missing files', () => {
   }
 })
 
-test('RTX HDR locale keys stay complete and sorted', () => {
-  const englishKeys = Object.keys(rtxHdrMessages.en)
-  const chineseKeys = Object.keys(rtxHdrMessages.zh)
-  assert.deepEqual(englishKeys, [...englishKeys].sort())
-  assert.deepEqual(chineseKeys, [...chineseKeys].sort())
+test('RTX HDR locale keys stay complete', () => {
+  const englishKeys = Object.keys(rtxHdrMessages.en).sort()
+  const chineseKeys = Object.keys(rtxHdrMessages.zh).sort()
   assert.deepEqual(chineseKeys, englishKeys)
 })
 

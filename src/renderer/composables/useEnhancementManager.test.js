@@ -13,7 +13,7 @@ globalThis.document = { documentElement: {} }
 Object.defineProperty(globalThis, 'navigator', { value: { language: 'en' }, configurable: true })
 globalThis.window = { addEventListener() {}, crypto: webcrypto }
 mockIPC(() => undefined, { shouldMockEvents: true })
-const { useRtxHdrManager } = await import('./useRtxHdrManager.js')
+const { useEnhancementManager } = await import('./useEnhancementManager.js')
 
 for (const text of [rtxHdrMessages.en, dlssNrText('zh')]) {
   test(`${text.title}: failed initial check stays unknown and a retry restores status`, async () => {
@@ -22,7 +22,7 @@ for (const text of [rtxHdrMessages.en, dlssNrText('zh')]) {
     let manager
     await renderToString(createSSRApp({
       setup() {
-        manager = useRtxHdrManager({ api, messages: ref(text) })
+        manager = useEnhancementManager({ api, messages: ref(text) })
         return () => null
       },
     }))

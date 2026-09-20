@@ -129,12 +129,12 @@
 
 <script setup>
 import { computed } from 'vue'
-import { dlssNr } from '../tauri-adapter.js'
+import { dlssNr, rtxHdr } from '../tauri-adapter.js'
 import { dlssNrText } from '../composables/dlssNrMessages.js'
 import { useI18n } from '../desktop/i18n/index.js'
 import { Refresh } from '@element-plus/icons-vue'
 import { useRtxHdrI18n } from '../composables/rtxHdrI18n.js'
-import { useRtxHdrManager } from '../composables/useRtxHdrManager.js'
+import { useEnhancementManager } from '../composables/useEnhancementManager.js'
 
 const props = defineProps({ kind: { type: String, default: 'hdr' } })
 const { locale } = useI18n()
@@ -159,7 +159,11 @@ const {
   openVcRuntimeDownload,
   openApplicationSettings,
   recover,
-} = useRtxHdrManager(props.kind === 'nr' ? { api: dlssNr, messages: text, runtimeName: 'nvngx_dlssnr.dll' } : {})
+} = useEnhancementManager({
+  api: props.kind === 'nr' ? dlssNr : rtxHdr,
+  messages: text,
+  runtimeName: props.kind === 'nr' ? 'nvngx_dlssnr.dll' : 'nvngx_truehdr.dll',
+})
 </script>
 
 <style scoped lang="less">

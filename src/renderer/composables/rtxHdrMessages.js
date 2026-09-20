@@ -35,7 +35,8 @@ export const rtxHdrMessages = {
       "loading": "Checking component",
       "not_installed": "Not installed",
       "repair_required": "Needs repair",
-      "selected": "Enabled"
+      "selected": "Enabled",
+      "unavailable": "Could not check component · retry with Refresh"
     },
     "technicalDetails": "Technical details",
     "title": "NVIDIA RTX HDR",
@@ -44,6 +45,7 @@ export const rtxHdrMessages = {
     "uninstallFailed": "Unable to remove the component.",
     "uninstallSuccess": "The component was removed and RTX HDR was disabled.",
     "uninstallTitle": "Remove NVIDIA RTX HDR component",
+    "unknown": "Not checked",
     "vcRuntime": "Microsoft Visual C++ runtime",
     "vcRuntimeDownload": "Download the Microsoft runtime",
     "vcRuntimeMissingNotice": "Microsoft Visual C++ 2015–2022 Redistributable (x64) is required. Install it, then refresh the component status."
@@ -84,7 +86,8 @@ export const rtxHdrMessages = {
       "loading": "正在检查组件",
       "not_installed": "未安装",
       "repair_required": "需要修复",
-      "selected": "已启用"
+      "selected": "已启用",
+      "unavailable": "组件检查失败，请刷新重试"
     },
     "technicalDetails": "技术详情",
     "title": "NVIDIA RTX HDR",
@@ -93,6 +96,7 @@ export const rtxHdrMessages = {
     "uninstallFailed": "组件删除失败。",
     "uninstallSuccess": "组件已删除，RTX HDR 已关闭。",
     "uninstallTitle": "删除 NVIDIA RTX HDR 组件",
+    "unknown": "尚未确认",
     "vcRuntime": "Microsoft Visual C++ 运行库",
     "vcRuntimeDownload": "下载 Microsoft 运行库",
     "vcRuntimeMissingNotice": "需要安装 Microsoft Visual C++ 2015–2022 运行库（x64）。安装完成后，请刷新组件状态。"

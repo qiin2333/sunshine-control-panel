@@ -47,11 +47,12 @@ export function useRtxHdrManager({ api = rtxHdr, messages, runtimeName = 'nvngx_
       state: status.value.runtime_present ? text.value.present : text.value.missing,
       tone: status.value.runtime_present ? 'ok' : 'bad',
     },
-  ])
+  ].map(row => statusKnown.value ? row : { ...row, state: text.value.unknown, tone: 'unknown' }))
 
   const refresh = async (quiet = false) => {
     if (controlsBusy.value && !quiet) return
     if (!quiet) refreshing.value = true
+    if (!statusKnown.value) status.value.state = 'loading'
     try {
       const result = await api.getStatus()
       if (!result.success) throw new Error(result.message)
@@ -59,6 +60,7 @@ export function useRtxHdrManager({ api = rtxHdr, messages, runtimeName = 'nvngx_
       statusKnown.value = true
       if (!quiet) operationError.value = ''
     } catch (error) {
+      if (!statusKnown.value) status.value.state = 'unavailable'
       if (!quiet) operationError.value = String(error?.message || error)
     } finally {
       if (!quiet) refreshing.value = false

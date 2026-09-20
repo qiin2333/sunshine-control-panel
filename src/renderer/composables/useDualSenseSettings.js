@@ -393,7 +393,7 @@ export function useDualSenseSettings() {
       const canRetry = refreshedAfterFailure
         && !queue.hasPending()
         && !status.value.in_use
-        && status.value.verified
+        && (!requestedAudioHaptics || status.value.verified)
         && (!requestedAudioHaptics || status.value.usbip_available)
         && (!requestedGenshinCompatibility || status.value.genshin_compatibility_available)
       if (canRetry) {

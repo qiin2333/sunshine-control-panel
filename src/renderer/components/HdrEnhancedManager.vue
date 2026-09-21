@@ -469,6 +469,28 @@ onUnmounted(() => {
 })
 </script>
 <style scoped lang="less">
+:global([data-bs-theme='dark'] .quality-manager) {
+  --quality-surface: #3d3235;
+  --el-text-color-primary: #f0dfc3;
+  --el-text-color-regular: #d6c3a7;
+  --el-text-color-secondary: #b9aca8;
+  --el-text-color-placeholder: #9d9494;
+  --el-color-primary: #d4a5a5;
+  --el-color-primary-light-7: rgba(212, 165, 165, .28);
+  --el-color-primary-light-8: rgba(212, 165, 165, .2);
+  --el-color-primary-light-9: rgba(212, 165, 165, .12);
+  --el-border-color: rgba(230, 213, 184, .22);
+  --el-border-color-light: rgba(230, 213, 184, .16);
+  --el-border-color-lighter: rgba(230, 213, 184, .11);
+  --el-border-color-darker: rgba(230, 213, 184, .3);
+  --el-fill-color-blank: #3d3235;
+  --el-fill-color-light: rgba(255,255,255,.055);
+  color-scheme: dark;
+}
+:global([data-bs-theme='light'] .quality-manager) {
+  color-scheme: light;
+}
+
 .quality-manager {
   max-width: 1180px;
   margin: 0 auto;
@@ -512,7 +534,7 @@ onUnmounted(() => {
   }
 }
 .quality-surface {
-  background: var(--el-bg-color);
+  background: var(--quality-surface, var(--el-bg-color));
   border: 1px solid var(--el-border-color-light);
   border-radius: 18px;
   overflow: hidden;
@@ -567,7 +589,7 @@ onUnmounted(() => {
   gap: 7px;
 }
 .quality-button {
-  background: var(--el-bg-color);
+  background: var(--quality-surface, var(--el-bg-color));
   color: var(--el-text-color-primary);
   border: 1px solid var(--el-border-color);
   border-radius: 6px;
@@ -757,7 +779,7 @@ select {
   display: block;
   margin-top: 8px;
   width: 100%;
-  background: var(--el-bg-color);
+  background: var(--quality-surface, var(--el-bg-color));
   color: var(--el-text-color-primary);
   border: 1px solid var(--el-border-color);
   border-radius: 6px;

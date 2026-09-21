@@ -220,7 +220,7 @@ const {
   padding: 24px;
   border: 1px solid var(--el-border-color-light);
   border-radius: 16px;
-  background: var(--el-bg-color);
+  background: var(--quality-surface, var(--el-bg-color));
   color: var(--el-text-color-primary);
 }
 .component-title-row {

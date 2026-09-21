@@ -541,7 +541,7 @@ export function useTouchWindowDrag(isMaximized = null, options = {}) {
 
     if (event.type === 'pointercancel') { clearDragState(); return }
     const canUseFinalPoint = !settingPosition && !scaleRebasing && Number.isFinite(event.clientX) && Number.isFinite(event.clientY)
-    if (canUseFinalPoint && Number.isFinite(event.clientX) && Number.isFinite(event.clientY)) {
+    if (canUseFinalPoint) {
       latestClientX = event.clientX
       latestClientY = event.clientY
       if (!hasMoved && (Math.abs(latestClientX - startClientX) >= DRAG_THRESHOLD || Math.abs(latestClientY - startClientY) >= DRAG_THRESHOLD)) {

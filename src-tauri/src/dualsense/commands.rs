@@ -105,7 +105,6 @@ pub async fn dualsense_install(
 
 #[tauri::command]
 pub async fn dualsense_set_config(
-    enabled: bool,
     audio_haptics: bool,
     genshin_compatibility: bool,
 ) -> Result<DualSenseStatus, String> {
@@ -113,7 +112,7 @@ pub async fn dualsense_set_config(
         "DS5-RUN-002: another DualSense component operation is still running".to_string()
     })?;
     ensure_no_active_session().await?;
-    if enabled {
+    if audio_haptics {
         let probe = tokio::task::spawn_blocking(run_installed_probe)
             .await
             .map_err(|error| format!("DS5-PKG-003: sidecar probe task failed: {error}"))??;
@@ -126,18 +125,13 @@ pub async fn dualsense_set_config(
                     .to_string(),
             );
         }
-        validate_requested_profile(
-            enabled,
-            audio_haptics,
-            genshin_compatibility,
-            usbip_available,
-        )?;
+        validate_requested_profile(audio_haptics, genshin_compatibility, usbip_available)?;
     } else {
-        validate_requested_profile(enabled, audio_haptics, genshin_compatibility, false)?;
+        validate_requested_profile(audio_haptics, genshin_compatibility, false)?;
     }
     let snapshot = get_core_ds5_settings().await?;
     let mut settings = snapshot.response.settings;
-    update_config_fields(&mut settings, enabled, audio_haptics, genshin_compatibility);
+    update_config_fields(&mut settings, audio_haptics, genshin_compatibility);
     let entity_tag = require_entity_tag(snapshot.entity_tag)?;
     let applied = tokio::time::timeout(
         CONFIG_APPLY_TIMEOUT,

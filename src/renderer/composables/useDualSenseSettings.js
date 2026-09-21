@@ -10,7 +10,6 @@ import {
 import {
   createLatestIntentQueue,
   dualSenseConfigAfterInstall,
-  dualSenseConfigAfterUninstall,
   dualSenseConfigMatches,
   dualSenseConfigReadable,
   dualSenseConfigUiState,
@@ -36,7 +35,6 @@ export function useDualSenseSettings() {
   const operationProgress = ref(0)
   const operationStageKey = ref('preparing')
   const operationError = ref('')
-  const enabled = ref(false)
   const audioHaptics = ref(false)
   const genshinCompatibility = ref(false)
   const legacyStrength = ref(1)
@@ -47,7 +45,7 @@ export function useDualSenseSettings() {
   const expandedSections = ref([])
   const rebootRecommended = ref(false)
   const status = ref({
-    state: 'loading', installed: false, verified: false, enabled: false,
+    state: 'loading', installed: false, verified: false,
     audio_haptics: false, genshin_compatibility: false,
     genshin_compatibility_available: false,
     component_version: '', available_component_version: '', update_available: false,
@@ -212,7 +210,6 @@ export function useDualSenseSettings() {
         status.value = mergeDualSenseStatus(status.value, result.data)
         statusKnown.value = true
         if (configReadable) {
-          enabled.value = result.data.enabled
           audioHaptics.value = result.data.audio_haptics
           genshinCompatibility.value = result.data.genshin_compatibility ?? false
           if (!preserveTuning) {
@@ -284,7 +281,6 @@ export function useDualSenseSettings() {
     status.value = mergeDualSenseStatus(status.value, result.data)
     statusKnown.value = true
     if (configReadable) {
-      enabled.value = result.data.enabled
       audioHaptics.value = result.data.audio_haptics
       genshinCompatibility.value = result.data.genshin_compatibility ?? false
       legacyStrength.value = result.data.legacy_strength
@@ -327,20 +323,17 @@ export function useDualSenseSettings() {
   }
 
   const applyConfigControls = (requested) => {
-    enabled.value = requested.enabled
     audioHaptics.value = requested.audioHaptics
     genshinCompatibility.value = requested.genshinCompatibility
   }
 
   const restoreConfirmedConfigControls = () => {
-    enabled.value = status.value.enabled
     audioHaptics.value = status.value.audio_haptics
     genshinCompatibility.value = status.value.genshin_compatibility ?? false
   }
 
   const synchronizeConfirmedConfig = (preserveTuning) => {
     const uiState = dualSenseConfigUiState(status.value, preserveTuning || tuningDirty.value)
-    enabled.value = uiState.enabled
     audioHaptics.value = uiState.audioHaptics
     genshinCompatibility.value = uiState.genshinCompatibility
     if (uiState.tuning) {
@@ -375,7 +368,6 @@ export function useDualSenseSettings() {
   }
 
   const persistConfigIntent = async (requestedConfig, queue) => {
-    const requestedEnabled = requestedConfig.enabled
     const requestedAudioHaptics = requestedConfig.audioHaptics
     const requestedGenshinCompatibility = requestedConfig.genshinCompatibility
     const preserveTuning = tuningDirty.value
@@ -384,7 +376,6 @@ export function useDualSenseSettings() {
     await waitForTuningSave()
     if (queue.hasPending()) return { success: false, preserveTuning }
     let result = await dualsense.setConfig(
-      requestedEnabled,
       requestedAudioHaptics,
       requestedGenshinCompatibility,
     )
@@ -402,12 +393,11 @@ export function useDualSenseSettings() {
       const canRetry = refreshedAfterFailure
         && !queue.hasPending()
         && !status.value.in_use
-        && (!requestedEnabled || status.value.verified)
-        && (!requestedEnabled || !requestedAudioHaptics || status.value.usbip_available)
+        && (!requestedAudioHaptics || status.value.verified)
+        && (!requestedAudioHaptics || status.value.usbip_available)
         && (!requestedGenshinCompatibility || status.value.genshin_compatibility_available)
       if (canRetry) {
         result = await dualsense.setConfig(
-          requestedEnabled,
           requestedAudioHaptics,
           requestedGenshinCompatibility,
         )
@@ -456,16 +446,13 @@ export function useDualSenseSettings() {
 
   const saveSettings = async () => {
     if (operation.value) {
-      enabled.value = status.value.enabled
       audioHaptics.value = status.value.audio_haptics
       genshinCompatibility.value = status.value.genshin_compatibility ?? false
       return
     }
-    const requestedEnabled = enabled.value
     const requestedAudioHaptics = audioHaptics.value
-    const requestedGenshinCompatibility = requestedEnabled && requestedAudioHaptics && genshinCompatibility.value
+    const requestedGenshinCompatibility = requestedAudioHaptics && genshinCompatibility.value
     const requestedConfig = {
-      enabled: requestedEnabled,
       audioHaptics: requestedAudioHaptics,
       genshinCompatibility: requestedGenshinCompatibility,
     }
@@ -590,7 +577,6 @@ export function useDualSenseSettings() {
     rebootRecommended.value = false
     status.value = mergeDualSenseStatus(status.value, result.data)
     statusKnown.value = true
-    if (!(await applyComponentConfig(dualSenseConfigAfterUninstall()))) return
     ElMessage.success(t.value.dualSense.uninstallSuccess)
   }
 
@@ -620,9 +606,9 @@ export function useDualSenseSettings() {
   })
 
   return {
-    status, statusKnown, saving, refreshing,
+    status, statusKnown, refreshing,
     operation, operationProgress, operationStage, operationError,
-    enabled, audioHaptics, genshinCompatibility,
+    audioHaptics, genshinCompatibility,
     legacyStrength, legacyCurve, legacyNoiseGate,
     tuningStrengthFeel, tuningCurveFeel, tuningGateFeel,
     tuningSaving, tuningDirty, testCompleted, expandedSections,

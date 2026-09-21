@@ -814,10 +814,6 @@
   }
 }
 
-.quality-manager .component-details[open] {
-  margin-top: 18px;
-  padding-top: 16px;
-}
 .quality-manager .component-details > summary {
   color: var(--el-text-color-primary);
   font-weight: 500;

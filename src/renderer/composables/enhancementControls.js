@@ -105,6 +105,7 @@ const messages = {
     disabledKey: '快捷键未设置',
     action: '切换增强',
     errors: {
+      nr_request_invalid: '处理比例必须为 20%–100%，且为 5 的倍数',
       nr_shortcut_invalid: '请使用有效的 Ctrl、Alt 或 Shift 组合键',
       nr_shortcut_duplicate: '两个操作不能使用相同快捷键',
       nr_shortcut_conflict: '快捷键已被占用，原设置保持不变',
@@ -189,6 +190,8 @@ const messages = {
     disabledKey: 'Shortcut not set',
     action: 'Toggle enhancement',
     errors: {
+      nr_request_invalid:
+        'Processing scale must be 20%–100% and a multiple of 5.',
       nr_shortcut_invalid: 'Use a valid Ctrl, Alt or Shift shortcut',
       nr_shortcut_duplicate: 'The two actions need different shortcuts',
       nr_shortcut_conflict:

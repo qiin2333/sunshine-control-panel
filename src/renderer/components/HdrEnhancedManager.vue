@@ -763,6 +763,56 @@ select {
   flex-wrap: wrap;
   margin-top: 20px;
 }
+// A light ink accent around familiar GUI surfaces; controls keep their geometry.
+.quality-title-icon {
+  position: relative;
+  border-radius: 15px 19px 14px 18px;
+  &::after {
+    content: '';
+    position: absolute;
+    inset: -4px 2px 3px -4px;
+    border: 1px solid var(--el-color-primary-light-7);
+    border-radius: 19px 14px 21px 15px;
+    transform: rotate(-7deg);
+    pointer-events: none;
+  }
+}
+.quality-header h1 {
+  position: relative;
+  display: inline-block;
+  &::after {
+    content: '';
+    position: absolute;
+    left: 1px;
+    right: -4px;
+    bottom: -5px;
+    height: 5px;
+    border-top: 2px solid var(--el-color-primary-light-7);
+    border-radius: 50%;
+    transform: rotate(-1deg);
+    pointer-events: none;
+  }
+}
+.quality-tabs button { position: relative; }
+.quality-tabs button[aria-selected=true] {
+  border-bottom-color: transparent;
+  &::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: -2px;
+    bottom: 1px;
+    height: 4px;
+    border-top: 2px solid var(--el-color-primary);
+    border-radius: 45% 55% 30% 60%;
+    transform: rotate(-1.5deg);
+    pointer-events: none;
+  }
+}
+.preview-title {
+  span { border-bottom: 1px dashed var(--el-border-color-darker); padding-bottom: 3px; }
+}
+
 @media (max-width: 760px) {
   .quality-manager {
     padding: 20px 14px;

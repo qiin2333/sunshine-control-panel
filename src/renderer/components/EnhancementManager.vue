@@ -343,6 +343,29 @@ const {
   display: flex;
   justify-content: flex-end;
 }
+.enhancement-card {
+  position: relative;
+  border-radius: 17px 21px 18px 15px / 18px 16px 22px 19px;
+  &::after {
+    content: '';
+    position: absolute;
+    top: 14px;
+    right: 17px;
+    width: 23px;
+    height: 7px;
+    border-top: 1px solid var(--el-color-primary-light-7);
+    border-bottom: 1px solid var(--el-color-primary-light-8);
+    border-radius: 45%;
+    transform: rotate(-13deg);
+    pointer-events: none;
+  }
+}
+.enhancement-icon {
+  border: 1px solid var(--el-color-primary-light-8);
+  border-radius: 12px 15px 11px 14px;
+}
+.component-details { border-top-style: dashed; }
+
 @media (max-width: 600px) {
   .enhancement-card {
     padding: 18px;

@@ -1,10 +1,10 @@
 <template>
-  <section ref="surface" class="nr-overlay" :class="{ expanded }" :style="{ '--panel-alpha': (expanded ? opacity : Math.max(35, opacity - 12)) / 100 }">
+  <section ref="surface" class="nr-overlay" :class="{ expanded, settled }" :style="{ '--panel-alpha': (expanded ? opacity : Math.max(35, opacity - 12)) / 100 }">
     <header class="nr-head">
       <span class="drag-handle" data-tauri-drag-region :title="text.drag"><svg viewBox="0 0 16 24" aria-hidden="true"><circle v-for="(point, i) in [[5,6],[11,6],[5,12],[11,12],[5,18],[11,18]]" :key="i" :cx="point[0]" :cy="point[1]" r="1.5" /></svg></span>
-      <button class="pill" :aria-expanded="expanded" @click="expanded = !expanded">
+      <button class="pill" :aria-expanded="expanded" :aria-label="text.states[state] + (state === 'active' ? ' · ' + (pipeline?.nr_scale_percent ?? 100) + '%' : '')" @click="expanded = !expanded">
         <span class="dot" :class="state" />
-        <span>{{ expanded ? 'DLSS NR' : text.states[state] }}</span>
+        <span>{{ expanded ? 'DLSS NR' : compactLabel }}</span>
         <ArrowDown class="chevron" :class="{ rotated: expanded }" aria-hidden="true" />
       </button>
     </header>
@@ -77,6 +77,14 @@ const error = ref('')
 const shortcut = ref(false)
 const pipeline = computed(() => pipelines.value.find(item => item.id === selectedId.value))
 const state = computed(() => nrOverlayState(pipeline.value, online.value))
+const compactLabel = computed(() => state.value === 'active' ? `NR · ${pipeline.value?.nr_scale_percent ?? 100}%` : text.value.states[state.value])
+const settled = ref(false)
+let settleTimer
+watch(state, (next, previous) => {
+  clearTimeout(settleTimer)
+  settled.value = ['active', 'disabled'].includes(next) && ['warming_up', 'stopping', 'scaling'].includes(previous)
+  if (settled.value) settleTimer = setTimeout(() => { settled.value = false }, 1200)
+})
 const effectActive = computed(() => online.value && pipeline.value?.nr_state === 'active')
 const canToggle = computed(() => online.value && pipeline.value?.nr_toggle_supported && !busy.value && !['warming_up', 'stopping', 'scaling'].includes(state.value))
 const selectedScale = computed(() => pipeline.value?.nr_requested_scale_percent ?? 100)
@@ -151,7 +159,7 @@ onMounted(async () => {
     shortcut.value = await invoke('nr_overlay_shortcut_status')
   } catch {}
 })
-onUnmounted(() => { disposed = true; clearTimeout(timer); observer?.disconnect(); unlisten?.() })
+onUnmounted(() => { disposed = true; clearTimeout(timer); clearTimeout(settleTimer); observer?.disconnect(); unlisten?.() })
 </script>
 
 <style scoped>
@@ -184,7 +192,7 @@ button:disabled { cursor: default; opacity: .5; }
 .live-state { display: flex; align-items: center; gap: 8px; margin-bottom: 17px; font-size: 12px; }
 .dot { display: inline-block; flex: 0 0 8px; width: 8px; height: 8px; border-radius: 0; background: #a1aa93; }
 .dot.active { background: var(--green); }
-.nr-head .dot.active { background: #101508; }
+.expanded .nr-head .dot.active { background: #101508; }
 .dot.degraded, .dot.blocked { background: #f3c74c; }
 .dot.warming_up, .dot.stopping, .dot.scaling { background: transparent; border: 2px solid #768366; border-top-color: currentColor; animation: spin 1s linear infinite; }
 .scale-control { border-top: 1px solid #ffffff38; padding-top: 13px; margin-bottom: 14px; }
@@ -206,6 +214,17 @@ kbd { border: 1px solid #d2dbc6; background: #d2dbc6; color: #101508; padding: 2
 .notice { font-size: 12px; color: #f3c74c; margin: 8px 0 12px; overflow-wrap: anywhere; }
 .notice button { border: 0; background: none; text-decoration: underline; }
 select { width: 100%; margin-top: 10px; background: #151b10; color: #f4f5ef; border: 1px solid #83916f; border-radius: 0; }
+.nr-overlay:not(.expanded) { border-color: #ffffff1c; box-shadow: none; }
+.nr-overlay:not(.expanded) .nr-head { height: 26px; background: transparent; color: #d4dace; padding: 0 7px; }
+.nr-overlay:not(.expanded) .pill { font-size: 11px; font-weight: 600; letter-spacing: .15px; }
+.nr-overlay:not(.expanded) .dot { width: 6px; height: 6px; flex-basis: 6px; }
+.nr-overlay:not(.expanded) .drag-handle { width: 18px; height: 24px; flex-basis: 18px; }
+.nr-overlay:not(.expanded) .drag-handle svg { width: 12px; height: 18px; }
+.nr-overlay:not(.expanded) .drag-handle, .nr-overlay:not(.expanded) .chevron { opacity: 0; }
+.nr-overlay:not(.expanded):hover .drag-handle, .nr-overlay:not(.expanded):hover .chevron,
+.nr-overlay:not(.expanded):focus-within .drag-handle, .nr-overlay:not(.expanded):focus-within .chevron { opacity: .75; }
+.nr-overlay:not(.expanded).settled { border-color: #76b90088; }
+@media (hover: none) { .nr-overlay:not(.expanded) .drag-handle, .nr-overlay:not(.expanded) .chevron { opacity: .65; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .dot { animation: none !important; } .switch > span, .chevron { transition: none; } }
 </style>

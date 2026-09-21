@@ -8,7 +8,7 @@
         <ArrowDown class="chevron" :class="{ rotated: expanded }" aria-hidden="true" />
       </button>
     </header>
-    <div v-if="expanded" class="nr-body">
+    <div class="nr-reveal" :inert="!expanded" :aria-hidden="!expanded"><div class="nr-clip"><div class="nr-body">
       <div class="session-row">
         <span>{{ text.session }}</span>
         <button class="close" :aria-label="text.close" @click="$emit('close')"><Close aria-hidden="true" /></button>
@@ -41,7 +41,7 @@
       <p class="hint">{{ text.onlySession }}</p>
       <label class="opacity-row"><span>{{ text.opacity }}</span><output>{{ opacity }}%</output><input v-model.number="opacity" type="range" min="35" max="95" :aria-label="text.opacity"></label>
       <footer><kbd v-if="shortcut">Ctrl Alt N</kbd><span>{{ shortcut ? text.shortcut : text.shortcutUnavailable }}</span></footer>
-    </div>
+    </div></div></div>
   </section>
 </template>
 
@@ -138,7 +138,7 @@ async function fitWindow() {
   resizing = true
   try {
     const win = getCurrentWindow()
-    const width = expanded.value ? 300 : 190
+    const width = Math.ceil(surface.value.getBoundingClientRect().width) + 8
     const height = Math.ceil(surface.value.getBoundingClientRect().height) + 8
     const [position, old, scale, monitor] = await Promise.all([win.outerPosition(), win.outerSize(), win.scaleFactor(), currentMonitor()])
     const x = position.x + old.width - Math.round(width * scale)
@@ -163,22 +163,24 @@ onUnmounted(() => { disposed = true; clearTimeout(timer); clearTimeout(settleTim
 </script>
 
 <style scoped>
-.nr-overlay { --green: #76b900; width: 182px; margin: 4px; color: #f4f5ef; background: rgb(14 16 13 / var(--panel-alpha)); border: 1px solid #b2c29a66; border-radius: 0; font: 13px/1.5 'Segoe UI', 'Microsoft YaHei', sans-serif; box-shadow: 0 1px 3px #0005; box-sizing: border-box; overflow: hidden; }
+.nr-overlay { --green: #76b900; width: 182px; margin: 4px; color: #f4f5ef; background: rgb(14 16 13 / var(--panel-alpha)); border: 1px solid #b2c29a66; border-radius: 0; font: 13px/1.5 'Segoe UI', 'Microsoft YaHei', sans-serif; box-shadow: 0 1px 3px #0005; box-sizing: border-box; overflow: hidden; transition: width .22s cubic-bezier(.2,.8,.2,1), background-color .22s ease, border-color .22s ease; }
 .nr-overlay.expanded { width: 292px; }
 button, select, input { font: inherit; }
 button { cursor: pointer; color: inherit; }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #fff; outline-offset: -3px; }
 button:disabled { cursor: default; opacity: .5; }
-.nr-head { height: 36px; display: flex; align-items: center; padding: 0 8px; gap: 5px; background: rgb(118 185 0 / .68); color: #080e02; }
+.nr-head { height: 36px; display: flex; align-items: center; padding: 0 8px; gap: 5px; background: transparent; color: #d4dace; transition: height .22s ease, padding .22s ease; }
 .drag-handle { display: grid; place-items: center; width: 22px; height: 30px; flex: 0 0 22px; cursor: grab; touch-action: none; user-select: none; }
 .drag-handle:active { cursor: grabbing; }
 .drag-handle svg { width: 16px; height: 24px; fill: currentColor; pointer-events: none; }
 .pill { display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; background: none; border: 0; padding: 4px 0; text-align: left; white-space: nowrap; font-weight: 800; letter-spacing: .2px; }
 .chevron { width: 14px; height: 14px; flex: 0 0 14px; margin-left: auto; transition: transform .18s ease; }
 .chevron.rotated { transform: rotate(180deg); }
-.expanded .nr-head { height: 48px; padding: 0 14px; border-bottom: 1px solid #b2c29a55; }
-.expanded .pill { font-size: 20px; font-weight: 900; letter-spacing: -.6px; }
-.expanded .pill > .dot { display: none; }
+.expanded .nr-head { height: 36px; padding: 0 12px; border-bottom: 1px solid #ffffff18; }
+.expanded .pill { font-size: 14px; font-weight: 650; letter-spacing: .2px; }
+.nr-reveal { display: grid; grid-template-rows: 0fr; opacity: 0; transform: translateY(-4px); transition: grid-template-rows .22s cubic-bezier(.2,.8,.2,1), opacity .16s ease, transform .22s ease; }
+.expanded .nr-reveal { grid-template-rows: 1fr; opacity: 1; transform: translateY(0); }
+.nr-clip { min-height: 0; overflow: hidden; }
 .nr-body { padding: 0 16px 15px; }
 .session-row { display: flex; justify-content: space-between; align-items: center; color: #b9c1b0; padding: 10px 0; border-bottom: 1px solid #ffffff38; font-size: 11px; font-weight: 600; }
 .close { display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid #ffffff50; background: #0003; }
@@ -192,7 +194,7 @@ button:disabled { cursor: default; opacity: .5; }
 .live-state { display: flex; align-items: center; gap: 8px; margin-bottom: 17px; font-size: 12px; }
 .dot { display: inline-block; flex: 0 0 8px; width: 8px; height: 8px; border-radius: 0; background: #a1aa93; }
 .dot.active { background: var(--green); }
-.expanded .nr-head .dot.active { background: #101508; }
+.expanded .nr-head .dot { width: 6px; height: 6px; flex-basis: 6px; }
 .dot.degraded, .dot.blocked { background: #f3c74c; }
 .dot.warming_up, .dot.stopping, .dot.scaling { background: transparent; border: 2px solid #768366; border-top-color: currentColor; animation: spin 1s linear infinite; }
 .scale-control { border-top: 1px solid #ffffff38; padding-top: 13px; margin-bottom: 14px; }
@@ -226,5 +228,5 @@ select { width: 100%; margin-top: 10px; background: #151b10; color: #f4f5ef; bor
 .nr-overlay:not(.expanded).settled { border-color: #76b90088; }
 @media (hover: none) { .nr-overlay:not(.expanded) .drag-handle, .nr-overlay:not(.expanded) .chevron { opacity: .65; } }
 @keyframes spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .dot { animation: none !important; } .switch > span, .chevron { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .dot { animation: none !important; } .nr-overlay, .nr-head, .nr-reveal, .switch > span, .chevron { transition: none; } }
 </style>

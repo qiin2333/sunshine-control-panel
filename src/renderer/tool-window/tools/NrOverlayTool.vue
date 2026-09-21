@@ -64,7 +64,7 @@ const text = computed(() => locale.value.startsWith('zh') ? {
   scale: 'NR processing scale', processing: 'Processing size', targetSize: 'Planned size', scaleHint: 'Lower scales reduce cost. Original dimensions stay unchanged.', scaleFailed: 'Scale failed; restoration of the previous scale was requested.', choose: 'Select a stream', drag: 'Drag overlay', session: 'Current stream', close: 'Close overlay', enhancement: 'Enhancement', preserved: 'Output preserved', onlySession: 'This session only. App defaults stay unchanged.', opacity: 'Background opacity', shortcut: 'Toggle enhancement', shortcutUnavailable: 'Shortcut unavailable; use the switch', hdrBusy: 'RTX HDR is using the enhancement slot', unsupported: 'This host or capture path does not support live switching', fallback: 'Using the original image. Switch off and on to retry.', wait: 'Waiting for the next frame. First use needs initialization.', retry: 'Retry', disconnected: 'Cannot read host status. Check that Sunshine is running.', ended: 'This stream has ended', failed: 'Could not switch. Try again.',
 })
 const expanded = ref(false)
-const opacity = ref(72)
+const opacity = ref(62)
 try { opacity.value = overlayOpacity(localStorage.getItem('nr-overlay-opacity')) } catch {}
 watch(opacity, value => { try { localStorage.setItem('nr-overlay-opacity', String(overlayOpacity(value))) } catch {} })
 const surface = ref(null)
@@ -155,20 +155,20 @@ onUnmounted(() => { disposed = true; clearTimeout(timer); observer?.disconnect()
 </script>
 
 <style scoped>
-.nr-overlay { --green: #76b900; width: 182px; margin: 4px; color: #f4f5ef; background: rgb(14 16 13 / var(--panel-alpha)); border: 2px solid #080a07; border-radius: 0; font: 13px/1.5 'Segoe UI', 'Microsoft YaHei', sans-serif; box-shadow: 3px 3px 0 var(--green); box-sizing: border-box; overflow: hidden; }
+.nr-overlay { --green: #76b900; width: 182px; margin: 4px; color: #f4f5ef; background: rgb(14 16 13 / var(--panel-alpha)); border: 1px solid #b2c29a66; border-radius: 0; font: 13px/1.5 'Segoe UI', 'Microsoft YaHei', sans-serif; box-shadow: 0 1px 3px #0005; box-sizing: border-box; overflow: hidden; }
 .nr-overlay.expanded { width: 292px; }
 button, select, input { font: inherit; }
 button { cursor: pointer; color: inherit; }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #fff; outline-offset: -3px; }
 button:disabled { cursor: default; opacity: .5; }
-.nr-head { height: 36px; display: flex; align-items: center; padding: 0 8px; gap: 5px; background: var(--green); color: #0a1003; }
+.nr-head { height: 36px; display: flex; align-items: center; padding: 0 8px; gap: 5px; background: rgb(118 185 0 / .68); color: #080e02; }
 .drag-handle { display: grid; place-items: center; width: 22px; height: 30px; flex: 0 0 22px; cursor: grab; touch-action: none; user-select: none; }
 .drag-handle:active { cursor: grabbing; }
 .drag-handle svg { width: 16px; height: 24px; fill: currentColor; pointer-events: none; }
 .pill { display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; background: none; border: 0; padding: 4px 0; text-align: left; white-space: nowrap; font-weight: 800; letter-spacing: .2px; }
 .chevron { width: 14px; height: 14px; flex: 0 0 14px; margin-left: auto; transition: transform .18s ease; }
 .chevron.rotated { transform: rotate(180deg); }
-.expanded .nr-head { height: 48px; padding: 0 14px; border-bottom: 2px solid #080a07; }
+.expanded .nr-head { height: 48px; padding: 0 14px; border-bottom: 1px solid #b2c29a55; }
 .expanded .pill { font-size: 20px; font-weight: 900; letter-spacing: -.6px; }
 .expanded .pill > .dot { display: none; }
 .nr-body { padding: 0 16px 15px; }
@@ -177,7 +177,7 @@ button:disabled { cursor: default; opacity: .5; }
 .close svg { width: 14px; height: 14px; }
 .close:hover { background: #f4f5ef; color: #111; }
 .switch-row { display: flex; align-items: center; justify-content: space-between; margin: 17px 0 12px; font-size: 18px; font-weight: 800; }
-.switch { width: 50px; height: 28px; padding: 3px; border-radius: 0; border: 2px solid #070906; background: #59604f; box-shadow: 2px 2px 0 #d6ddcb; }
+.switch { width: 50px; height: 28px; padding: 3px; border-radius: 0; border: 2px solid #070906; background: #59604f; box-shadow: none; }
 .switch > span { display: block; width: 18px; height: 18px; background: #f4f5ef; transition: transform .15s; }
 .switch.on { background: var(--green); }
 .switch.on > span { transform: translateX(22px); background: #101508; }
@@ -191,7 +191,7 @@ button:disabled { cursor: default; opacity: .5; }
 .scale-label { color: #e3e8dc; font-size: 12px; font-weight: 700; margin-bottom: 9px; }
 .scale-options { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
 .scale-options button { padding: 7px 0; border: 1px solid #8a927b; border-radius: 0; background: #0004; color: #d1d8c7; font: 700 12px/1.5 Consolas, monospace; }
-.scale-options button.selected { background: var(--green); color: #101508; border-color: #a8e03e; box-shadow: 2px 2px 0 #050703; }
+.scale-options button.selected { background: var(--green); color: #101508; border-color: #a8e03e; box-shadow: none; }
 .scale-options button:hover:not(:disabled) { border-color: #fff; }
 .scale-size { margin-top: 11px; color: #e0e7d7; font: 12px/1.5 Consolas, 'Microsoft YaHei', monospace; }
 .scale-control .hint { margin: 5px 0 0; }

@@ -11,7 +11,7 @@ export function nrOverlayState(pipeline, online) {
 
 export function overlayOpacity(value) {
   const number = Number(value)
-  return Number.isFinite(number) && value !== null ? Math.max(35, Math.min(95, number)) : 72
+  return Number.isFinite(number) && value !== null ? Math.max(35, Math.min(95, number)) : 62
 }
 
 export function nrProcessingSize(pipeline, percent) {

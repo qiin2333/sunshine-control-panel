@@ -23,8 +23,8 @@ test('Unavailable, ended, and unsupported sessions cannot appear enabled', () =>
 })
 
 test('Saved opacity has safe defaults and keeps controls legible', () => {
-  assert.equal(overlayOpacity(null), 72)
-  assert.equal(overlayOpacity('invalid'), 72)
+  assert.equal(overlayOpacity(null), 62)
+  assert.equal(overlayOpacity('invalid'), 62)
   assert.equal(overlayOpacity('0'), 35)
   assert.equal(overlayOpacity('100'), 95)
   assert.equal(overlayOpacity('65'), 65)

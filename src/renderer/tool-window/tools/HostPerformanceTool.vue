@@ -121,6 +121,7 @@
 </template>
 
 <script setup>
+import { useTouchWindowDrag } from '../../composables/useTouchWindowDrag.js'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ArrowDown, ArrowUp, Close, Monitor, RefreshRight, Warning } from '@element-plus/icons-vue'
 import { sunshine } from '../../tauri-adapter.js'
@@ -241,7 +242,10 @@ const statusText = computed(() => {
   return t.value.performanceTool.status.slow
 })
 
-const dragRegionAttrs = computed(() => props.embedded ? {} : { 'data-tauri-drag-region': '' })
+const touchDrag = useTouchWindowDrag(null, { restoreMaximized: false })
+const dragRegionAttrs = computed(() => props.embedded ? {} : {
+  'data-tauri-drag-region': '', onPointerdown: touchDrag.onTouchWindowDragStart,
+})
 const expandTitle = computed(() => isExpanded.value ? t.value.performanceTool.collapse : t.value.performanceTool.expand)
 const sessionTitle = computed(() => currentSession.value?.client_name || t.value.performanceTool.noClient)
 
@@ -394,6 +398,7 @@ const adaptiveWidth = computed(() => isExpanded.value ? 430 : 340)
 const { scheduleSyncWindowSize } = useAdaptiveWindowSize(containerRef, {
   enabled: computed(() => !props.embedded),
   width: adaptiveWidth,
+  isDragging: () => touchDrag.active,
   minHeight: 220,
   animate: true,
 })
@@ -507,6 +512,8 @@ onUnmounted(() => {
   .monitor-head,
   .session-block {
     cursor: move;
+    touch-action: none;
+    app-region: drag;
     -webkit-app-region: drag;
   }
 }
@@ -515,6 +522,7 @@ onUnmounted(() => {
   .monitor-head,
   .session-block {
     cursor: default;
+    app-region: no-drag;
     -webkit-app-region: no-drag;
   }
 }
@@ -575,6 +583,8 @@ onUnmounted(() => {
 }
 
 .head-actions {
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
   gap: 6px;
   flex-shrink: 0;
   cursor: default;

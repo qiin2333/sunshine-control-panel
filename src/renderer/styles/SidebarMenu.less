@@ -698,3 +698,15 @@
     width: auto !important;
   }
 }
+
+// Native WebView2 caption regions handle touch/DPI in the OS; the pointer handler
+// is a fallback where app-region is unavailable. Keep controls outside the caption.
+.sidebar-header,
+.drag-region {
+  app-region: drag;
+  -webkit-app-region: drag;
+}
+.window-controls {
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}

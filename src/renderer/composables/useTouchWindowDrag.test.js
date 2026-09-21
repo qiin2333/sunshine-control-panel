@@ -462,3 +462,108 @@ test('recovers from stalled position commits and corrects late writes', async ()
     environment.cleanup()
   }
 })
+
+for (const pointerType of ['touch', 'pen']) {
+  test(`shared floating-window drag preserves a quick ${pointerType} release and reports its position`, async () => {
+    const baseline = deferred(), writes = [], finished = []
+    let moved = 0
+    const environment = installDragEnvironment(async (command, args) => {
+      if (command === 'plugin:event|listen') return 1
+      if (command === 'plugin:window|outer_position') return baseline.promise
+      if (command === 'plugin:window|scale_factor') return 2
+      if (command === 'plugin:window|set_position') { writes.push(args.value.toJSON().Physical); return }
+      throw new Error(`Unexpected command: ${command}`)
+    })
+    const warn = console.warn
+    console.warn = () => {}
+    try {
+      const { useTouchWindowDrag } = await import('./useTouchWindowDrag.js')
+      const drag = useTouchWindowDrag(null, { restoreMaximized: false, onMove: () => ++moved, onFinish: result => finished.push(result) })
+      drag.onTouchWindowDragStart({ pointerType, isPrimary: true, button: 0, pointerId: 1, clientX: 10, clientY: 20, currentTarget: pointerTarget, preventDefault() {}, stopPropagation() {} })
+      assert.equal(drag.active, true)
+      const end = environment.listeners.get('pointerup')({ pointerId: 1, clientX: 35, clientY: 50 })
+      baseline.resolve({ x: -400, y: 200 })
+      await end
+      assert.deepEqual(writes, [{ x: -350, y: 260 }])
+      assert.deepEqual(finished, [{ moved: true, position: { x: -350, y: 260 } }])
+      assert.equal(moved, 1)
+      assert.equal(drag.active, false)
+    } finally { console.warn = warn; environment.cleanup() }
+  })
+}
+test('header controls, mouse and secondary contacts never start the shared touch controller', async () => {
+  let calls = 0
+  const environment = installDragEnvironment(() => { ++calls })
+  const warn = console.warn
+  console.warn = () => {}
+  try {
+    const { useTouchWindowDrag } = await import('./useTouchWindowDrag.js')
+    const drag = useTouchWindowDrag()
+    const event = { pointerType: 'touch', isPrimary: true, button: 0, pointerId: 1 }
+    drag.onTouchWindowDragStart({ ...event, pointerType: 'mouse' })
+    drag.onTouchWindowDragStart({ ...event, isPrimary: false })
+    drag.onTouchWindowDragStart({ ...event, target: { closest: () => ({ tagName: 'BUTTON' }) } })
+    assert.equal(drag.active, false)
+    assert.equal(calls, 0)
+  } finally { console.warn = warn; environment.cleanup() }
+})
+test('pointer cancellation discards an uninitialized move and permits the next gesture', async () => {
+  const baseline = deferred(), writes = [], finished = []
+  const environment = installDragEnvironment(async (command, args) => {
+    if (command === 'plugin:event|listen') return 1
+    if (command === 'plugin:window|outer_position') return baseline.promise
+    if (command === 'plugin:window|scale_factor') return 1
+    if (command === 'plugin:window|set_position') { writes.push(args.value.toJSON().Physical); return }
+    throw new Error(`Unexpected command: ${command}`)
+  })
+  const warn = console.warn
+  console.warn = () => {}
+  try {
+    const { useTouchWindowDrag } = await import('./useTouchWindowDrag.js')
+    const drag = useTouchWindowDrag(null, { restoreMaximized: false, onFinish: result => finished.push(result) })
+    startTouchDrag(drag.onTouchWindowDragStart, 1, 10, 20)
+    moveTouchDrag(environment.listeners, 1, 35, 50)
+    await environment.listeners.get('pointercancel')({ pointerId: 1, type: 'pointercancel' })
+    baseline.resolve({ x: 0, y: 0 })
+    await nextTask()
+    assert.deepEqual(writes, [])
+    assert.equal(drag.active, false)
+    assert.deepEqual(finished, [{ moved: true, position: null }])
+    startTouchDrag(drag.onTouchWindowDragStart, 2, 10, 20)
+    await environment.listeners.get('pointerup')({ pointerId: 2 })
+    assert.deepEqual(finished.at(-1), { moved: false, position: null })
+  } finally { console.warn = warn; environment.cleanup() }
+})
+
+for (const signal of ['lostpointercapture', 'blur']) {
+  test(`shared drag releases capture and ignores delayed initialization after ${signal}`, async () => {
+    const baseline = deferred(), finished = [], writes = []
+    const environment = installDragEnvironment(async (command, args) => {
+      if (command === 'plugin:event|listen') return 1
+      if (command === 'plugin:window|outer_position') return baseline.promise
+      if (command === 'plugin:window|scale_factor') return 1
+      if (command === 'plugin:window|set_position') { writes.push(args.value.toJSON().Physical); return }
+      throw new Error(`Unexpected command: ${command}`)
+    })
+    const windowListeners = new Map()
+    window.addEventListener = (name, listener) => windowListeners.set(name, listener)
+    window.removeEventListener = name => windowListeners.delete(name)
+    const warn = console.warn
+    console.warn = () => {}
+    try {
+      const { useTouchWindowDrag } = await import('./useTouchWindowDrag.js')
+      const drag = useTouchWindowDrag(null, { restoreMaximized: false, onFinish: value => finished.push(value) })
+      startTouchDrag(drag.onTouchWindowDragStart, 1, 10, 20)
+      moveTouchDrag(environment.listeners, 1, 40, 50)
+      if (signal === 'blur') windowListeners.get('blur')()
+      else environment.listeners.get('lostpointercapture')({ pointerId: 1 })
+      baseline.resolve({ x: 0, y: 0 })
+      await nextTask()
+      assert.equal(drag.active, false)
+      assert.deepEqual(writes, [])
+      assert.deepEqual(finished, [{ moved: true, position: null }])
+      assert.equal(environment.listeners.size, 0)
+      assert.equal(windowListeners.size, 0)
+    } finally { console.warn = warn; environment.cleanup() }
+  })
+}

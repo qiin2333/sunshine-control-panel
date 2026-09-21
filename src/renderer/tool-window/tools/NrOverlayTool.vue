@@ -1,7 +1,7 @@
 <template>
   <section ref="surface" class="nr-overlay" :class="{ expanded, settled }" :style="{ '--panel-alpha': (expanded ? opacity : Math.max(35, opacity - 12)) / 100 }">
     <header class="nr-head">
-      <span class="drag-handle" data-tauri-drag-region :title="text.drag"><svg viewBox="0 0 16 24" aria-hidden="true"><circle v-for="(point, i) in [[5,6],[11,6],[5,12],[11,12],[5,18],[11,18]]" :key="i" :cx="point[0]" :cy="point[1]" r="1.5" /></svg></span>
+      <span class="drag-handle" data-tauri-drag-region @pointerdown="touchDrag.start" @pointermove="touchDrag.move" @pointerup="touchDrag.end" @pointercancel="touchDrag.cancel" @lostpointercapture="touchDrag.cancel" :title="text.drag"><svg viewBox="0 0 16 24" aria-hidden="true"><circle v-for="(point, i) in [[5,6],[11,6],[5,12],[11,12],[5,18],[11,18]]" :key="i" :cx="point[0]" :cy="point[1]" r="1.5" /></svg></span>
       <button class="pill" :aria-expanded="expanded" :aria-label="text.states[state] + (state === 'active' ? ' · ' + (pipeline?.nr_scale_percent ?? 100) + '%' : '')" @click="expanded = !expanded">
         <span class="dot" :class="state" />
         <span>{{ expanded ? 'DLSS NR' : compactLabel }}</span>
@@ -93,6 +93,16 @@ import { displayShortcut, enhancementControlsText, enhancementError } from '../.
 import { nrOverlayText } from '../../composables/nrOverlayMessages.js'
 import { nrOverlayState, overlayOpacity, nrProcessingSize, nrPipelines, nrOutputLabel } from '../../composables/nrOverlayState.js'
 
+import { overlayTouchDrag } from '../../composables/overlayTouchDrag.js'
+
+const touchDrag = overlayTouchDrag(
+  async () => {
+    const win = getCurrentWindow()
+    const [position, scale] = await Promise.all([win.outerPosition(), win.scaleFactor()])
+    return { position, scale }
+  },
+  position => getCurrentWindow().setPosition(new PhysicalPosition(position.x, position.y))
+)
 defineEmits(['close'])
 const { locale } = useI18n()
 const text = computed(() => nrOverlayText(locale.value))
@@ -203,13 +213,13 @@ async function sendRequest(enabled, patch = {}) {
 }
 let resizing = false, resizeAgain = false
 async function fitWindow() {
-  if (!surface.value || disposed) return
+  if (!surface.value || disposed || touchDrag.active) return
   if (resizing) { resizeAgain = true; return }
   resizing = true
   try {
     const win = getCurrentWindow()
     const [position, old, scale, monitor] = await Promise.all([win.outerPosition(), win.outerSize(), win.scaleFactor(), currentMonitor()])
-    if (disposed) return
+    if (disposed || touchDrag.active) return
     if (monitor) surface.value.style.setProperty('--panel-max-height', `${Math.max(120, Math.min(640, monitor.size.height / scale - 48))}px`)
     const width = Math.ceil(surface.value.getBoundingClientRect().width) + 8
     const height = Math.ceil(surface.value.getBoundingClientRect().height) + 8
@@ -232,7 +242,7 @@ onMounted(async () => {
   try { applyPreferences(await invoke('nr_overlay_settings')) } catch {}
   if (!disposed) void poll()
 })
-onUnmounted(() => { disposed = true; clearTimeout(timer); clearTimeout(settleTimer); observer?.disconnect(); unlisten.forEach(stop => stop()) })
+onUnmounted(() => { touchDrag.dispose(); disposed = true; clearTimeout(timer); clearTimeout(settleTimer); observer?.disconnect(); unlisten.forEach(stop => stop()) })
 
 </script>
 
@@ -311,6 +321,7 @@ select { width: 100%; margin-top: 10px; background: #151b10; color: #f4f5ef; bor
 .nr-overlay:not(.expanded):hover .drag-handle, .nr-overlay:not(.expanded):hover .chevron,
 .nr-overlay:not(.expanded):focus-within .drag-handle, .nr-overlay:not(.expanded):focus-within .chevron { opacity: .75; }
 .nr-overlay:not(.expanded).settled { border-color: #76b90088; }
+@media (pointer: coarse) { .drag-handle, .nr-overlay:not(.expanded) .drag-handle { width: 36px; height: 40px; flex-basis: 36px; } }
 @media (hover: none) { .nr-overlay:not(.expanded) .drag-handle, .nr-overlay:not(.expanded) .chevron { opacity: .65; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .dot { animation: none !important; } .nr-overlay, .nr-head, .nr-reveal, .switch > span, .chevron { transition: none; } }

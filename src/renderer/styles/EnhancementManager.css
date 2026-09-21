@@ -594,7 +594,6 @@
 }
 .quality-manager .component-details {
   padding-top: 2px;
-  border-top: 1px solid var(--el-border-color-lighter);
   margin-top: 14px;
 }
 .quality-manager .component-details summary {
@@ -818,7 +817,6 @@
 .quality-manager .component-details[open] {
   margin-top: 18px;
   padding-top: 16px;
-  border-top: 1px solid var(--el-border-color-lighter);
 }
 .quality-manager .component-details > summary {
   color: var(--el-text-color-primary);

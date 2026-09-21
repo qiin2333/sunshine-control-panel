@@ -1,6 +1,7 @@
 <template>
-  <section class="quality-manager ds5-page">
+  <section class="quality-manager">
     <header class="quality-header">
+      <span class="quality-title-icon"><MagicStick /></span>
       <div>
         <h1>{{ text.title }}</h1>
         <p>{{ text.intro }}</p>
@@ -27,29 +28,10 @@
           role="tabpanel"
           aria-labelledby="quality-tab-components"
         >
-          <template v-if="!component">
-            <div class="component-cards">
-              <article v-for="item in componentCards" :key="item.kind">
-                <div class="component-title">
-                  <h2>{{ item.name }}</h2>
-                  <span>{{ componentLabel(item.kind) }}</span>
-                </div>
-                <p>{{ item.intro }}</p>
-                <button class="quality-button" @click="component = item.kind">
-                  <Box />{{ text.manage }}
-                </button>
-              </article>
-            </div>
-            <p class="quality-note">{{ text.componentHint }}</p>
-          </template>
-          <template v-else
-            ><button
-              class="quality-link"
-              @click="showComponents"
-            >
-              <ArrowLeft />{{ text.back }}</button
-            ><EnhancementManager :key="component" :kind="component"
-          /></template>
+          <p class="category-description">{{ text.componentHint }}</p>
+          <div class="enhancement-stack">
+            <EnhancementManager kind="nr" /><EnhancementManager kind="hdr" />
+          </div>
         </div>
         <div
           v-show="tab === 'session'"
@@ -242,6 +224,7 @@
           </div>
         </div>
         <div
+          v-if="error || tab === 'settings'"
           class="quality-feedback"
           :class="{ failure: error }"
           role="status"
@@ -263,10 +246,9 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { ArrowLeft, ArrowUp, Box, Monitor, Rank } from '@element-plus/icons-vue'
+import { ArrowUp, MagicStick, Monitor, Rank } from '@element-plus/icons-vue'
 import EnhancementManager from './EnhancementManager.vue'
 import { useI18n } from '../desktop/i18n/index.js'
-import { dlssNr, rtxHdr } from '../tauri-adapter.js'
 import {
   DEFAULT_NR_SHORTCUT,
   displayShortcut,
@@ -285,13 +267,7 @@ import { EditPen as Keyboard } from '@element-plus/icons-vue'
 const { locale } = useI18n()
 const text = computed(() => enhancementControlsText(locale.value)),
   overlayText = computed(() => nrOverlayText(locale.value))
-const tab = ref('components'),
-  component = ref(''),
-  componentStatus = ref({})
-const componentCards = computed(() => [
-  { kind: 'hdr', name: 'RTX HDR', intro: text.value.hdrIntro },
-  { kind: 'nr', name: 'DLSS NR', intro: text.value.nrIntro }
-])
+const tab = ref('components')
 const settings = ref({ nrShortcut: '', overlayShortcut: '', opacity: 62 }),
   registration = ref({})
 const draftOpacity = ref(62),
@@ -395,7 +371,6 @@ async function resetShortcuts() {
 function switchTab(key) {
   void cancelRecording()
   tab.value = key
-  if (key === 'components') void loadComponents()
 }
 async function setVisibility(value) {
   try {
@@ -446,35 +421,6 @@ async function poll() {
   await pollOnce()
   if (!disposed) timer = setTimeout(poll, 1200)
 }
-function showComponents() {
-  component.value = ''
-  void loadComponents()
-}
-async function loadComponents() {
-  const results = await Promise.allSettled([
-    rtxHdr.getStatus(),
-    dlssNr.getStatus()
-  ])
-  if (disposed) return
-  componentStatus.value = Object.fromEntries(
-    results.map((r, i) => [
-      i ? 'nr' : 'hdr',
-      r.status === 'fulfilled' && r.value.success
-        ? r.value.data
-        : { error: true }
-    ])
-  )
-}
-function componentLabel(kind) {
-  const s = componentStatus.value[kind]
-  return !s
-    ? text.value.loading
-    : s.error || !s.host_supported
-      ? text.value.unavailable
-      : s.ready
-        ? text.value.ready
-        : text.value.needsSetup
-}
 onMounted(async () => {
   window.addEventListener('blur', cancelRecording)
   for (const [name, handler] of [
@@ -505,7 +451,6 @@ onMounted(async () => {
   }
   if (!disposed) {
     void poll()
-    void loadComponents()
   }
 })
 onUnmounted(() => {
@@ -517,11 +462,38 @@ onUnmounted(() => {
 })
 </script>
 <style scoped lang="less">
-@import '../styles/DualSenseSettings.less';
 .quality-manager {
-  max-width: 1080px;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 32px;
+  color: var(--el-text-color-primary);
+  font-family: inherit;
+}
+.quality-title-icon {
+  display: inline-flex;
+  padding: 13px;
+  border-radius: 16px;
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+  svg {
+    width: 27px;
+    height: 27px;
+  }
+}
+.category-description {
+  margin: 0 0 20px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.enhancement-stack {
+  display: grid;
+  gap: 20px;
 }
 .quality-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
   margin-bottom: 22px;
   h1 {
     margin: 0;
@@ -535,7 +507,7 @@ onUnmounted(() => {
 .quality-surface {
   background: var(--el-bg-color);
   border: 1px solid var(--el-border-color-light);
-  border-radius: 12px;
+  border-radius: 18px;
   overflow: hidden;
 }
 .quality-tabs {
@@ -762,29 +734,6 @@ input[type='range'] {
   border: 3px solid #76b900;
   background: linear-gradient(90deg, #76b900 50%, #14200b 50%);
 }
-.component-cards {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  article {
-    padding: 20px;
-    border: 1px solid var(--el-border-color-light);
-    border-radius: 9px;
-  }
-  button {
-    margin-top: 15px;
-  }
-}
-.component-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  span {
-    font-size: 12px;
-    color: var(--el-text-color-secondary);
-  }
-}
 .session-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -819,7 +768,6 @@ select {
     padding: 20px 14px;
   }
   .quality-layout,
-  .component-cards,
   .session-grid {
     grid-template-columns: 1fr;
   }

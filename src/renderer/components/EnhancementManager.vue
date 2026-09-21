@@ -43,6 +43,7 @@
           @change="setEnabled"
         />
         <p>{{ text.enableHint }}</p>
+        <el-button v-if="kind === 'nr'" @click="openNrOverlay">{{ locale === 'zh' ? '打开实时浮层' : 'Open live overlay' }}</el-button>
         <el-button v-if="kind === 'nr' && status.enabled" @click="openApplicationSettings">{{ text.appSettings }}</el-button>
       </div>
     </article>
@@ -129,6 +130,7 @@
 
 <script setup>
 import { computed } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 import { dlssNr, rtxHdr } from '../tauri-adapter.js'
 import { dlssNrText } from '../composables/dlssNrMessages.js'
 import { useI18n } from '../desktop/i18n/index.js'
@@ -138,6 +140,10 @@ import { useEnhancementManager } from '../composables/useEnhancementManager.js'
 
 const props = defineProps({ kind: { type: String, default: 'hdr' } })
 const { locale } = useI18n()
+const openNrOverlay = async () => {
+  try { await invoke('open_tool_window', { toolName: 'nr' }) }
+  catch (error) { operationError.value = String(error) }
+}
 const hdrText = useRtxHdrI18n()
 const text = computed(() => props.kind === 'nr' ? dlssNrText(locale.value) : hdrText.value)
 

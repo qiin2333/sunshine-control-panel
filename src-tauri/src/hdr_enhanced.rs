@@ -201,6 +201,18 @@ pub async fn get_status() -> Result<Value, String> {
     Ok(body.get("runtime").cloned().unwrap_or(Value::Null))
 }
 
+#[tauri::command]
+pub async fn nr_live_status() -> Result<Value, String> {
+    let (body, _) = request("sessions", None, None, None).await?;
+    Ok(body)
+}
+
+#[tauri::command]
+pub async fn nr_live_set_enabled(id: u64, enabled: bool) -> Result<(), String> {
+    request("session-nr", Some(json!({"id": id, "enabled": enabled})), None, None).await?;
+    Ok(())
+}
+
 fn maintenance_route(backend: &str) -> Result<String, String> {
     if !matches!(
         backend,

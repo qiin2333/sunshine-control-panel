@@ -27,6 +27,7 @@ mod proxy_server;
 mod rtss;
 use native_components::providers::nvidia_rtx_hdr as rtx_hdr;
 mod hdr_enhanced;
+mod nr_overlay;
 mod native_components;
 #[cfg(target_os = "windows")]
 mod shell_context_menu;
@@ -336,6 +337,9 @@ fn main() {
             windows::webview_heartbeat,
             windows::resize_about_window,
             windows::resize_tool_window,
+            hdr_enhanced::nr_live_status,
+            hdr_enhanced::nr_live_set_enabled,
+            nr_overlay::nr_overlay_shortcut_status,
             rtss::get_rtss_status,
             rtss::rtss_set_osd,
             rtss::rtss_clear_osd,

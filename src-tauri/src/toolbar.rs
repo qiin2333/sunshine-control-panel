@@ -267,13 +267,18 @@ fn default_toolbar_position(
 
 // 辅助函数：创建工具窗口
 pub fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &str) {
-    const TOOL_WINDOW_ID: &str = "tool_window";
-    const PERF_WINDOW_WIDTH: f64 = 340.0;
-    const PERF_WINDOW_HEIGHT: f64 = 260.0;
-    let is_performance_monitor = tool_type == "performance";
+    let is_nr = tool_type == "nr";
+    let tool_window_id = if is_nr { "nr_overlay" } else { "tool_window" };
+    let window_width = if is_nr { 190.0 } else { 340.0 };
+    let window_height = if is_nr { 48.0 } else { 260.0 };
+    let is_performance_monitor = tool_type == "performance" || is_nr;
 
     // 如果窗口已存在，先关闭它
-    if let Some(window) = app.get_webview_window(TOOL_WINDOW_ID) {
+    if let Some(window) = app.get_webview_window(tool_window_id) {
+        if is_nr {
+            let _ = window.show();
+            return;
+        }
         let _ = window.close();
     }
 
@@ -283,26 +288,38 @@ pub fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &s
     debug!("🔧 创建工具窗口 URL: {}", url);
 
     let mut builder =
-        tauri::WebviewWindowBuilder::new(app, TOOL_WINDOW_ID, tauri::WebviewUrl::App(url.into()))
+        tauri::WebviewWindowBuilder::new(app, tool_window_id, tauri::WebviewUrl::App(url.into()))
             .title(&title)
             .decorations(false)
             .transparent(true)
             .shadow(false)
             .always_on_top(true)
             .skip_taskbar(true)
+            .focused(!is_nr)
             .visible(false);
 
     if is_performance_monitor {
         builder = builder
-            .inner_size(PERF_WINDOW_WIDTH, PERF_WINDOW_HEIGHT)
-            .min_inner_size(320.0, 180.0)
-            .resizable(true);
+            .inner_size(window_width, window_height)
+            .resizable(!is_nr);
+        if !is_nr {
+            builder = builder.min_inner_size(320.0, 180.0);
+        }
     } else {
         builder = builder.fullscreen(true);
     }
 
     match builder.build() {
         Ok(window) => {
+            if is_nr {
+                crate::nr_overlay::register(app);
+                let handle = app.clone();
+                window.on_window_event(move |event| {
+                    if matches!(event, tauri::WindowEvent::Destroyed) {
+                        crate::nr_overlay::unregister(&handle);
+                    }
+                });
+            }
             // 在生产环境禁用右键菜单
             windows::disable_context_menu(&window);
 
@@ -329,8 +346,8 @@ pub fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &s
                         let position = clamp_tool_window_position(
                             &window,
                             tauri::PhysicalPosition::new(x as i32, y as i32),
-                            PERF_WINDOW_WIDTH,
-                            PERF_WINDOW_HEIGHT,
+                            window_width,
+                            window_height,
                         );
                         let _ = window.set_position(position);
                     } else if let Ok(Some(monitor)) = window.current_monitor() {
@@ -338,14 +355,14 @@ pub fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &s
                         let monitor_size = monitor.size();
                         let scale = monitor.scale_factor();
                         let margin = (16.0 * scale) as i32;
-                        let width = (PERF_WINDOW_WIDTH * scale) as i32;
+                        let width = (window_width * scale) as i32;
                         let x = monitor_pos.x + monitor_size.width as i32 - width - margin;
                         let y = monitor_pos.y + margin;
                         let position = clamp_tool_window_position(
                             &window,
                             tauri::PhysicalPosition::new(x, y),
-                            PERF_WINDOW_WIDTH,
-                            PERF_WINDOW_HEIGHT,
+                            window_width,
+                            window_height,
                         );
                         let _ = window.set_position(position);
                     }

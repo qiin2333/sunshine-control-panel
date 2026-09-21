@@ -398,6 +398,7 @@ const adaptiveWidth = computed(() => isExpanded.value ? 430 : 340)
 const { scheduleSyncWindowSize } = useAdaptiveWindowSize(containerRef, {
   enabled: computed(() => !props.embedded),
   width: adaptiveWidth,
+  isDragging: () => touchDrag.active,
   minHeight: 220,
   animate: true,
 })

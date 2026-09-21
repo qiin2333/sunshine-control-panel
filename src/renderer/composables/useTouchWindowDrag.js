@@ -92,12 +92,12 @@ export function useTouchWindowDrag(isMaximized = null, options = {}) {
 
     // Tauri window IPC cannot be cancelled. If an older timed-out request
     // finishes late, follow it with the newest requested position.
-    while (true) {
+    while (!disposed) {
       await appWindow.setPosition(new PhysicalPosition(
         requestedPosition.x,
         requestedPosition.y,
       ))
-      if (requestSequence === positionRequestSequence) return
+      if (disposed || requestSequence === positionRequestSequence) return
 
       requestSequence = positionRequestSequence
       requestedPosition = latestRequestedPosition
@@ -189,6 +189,8 @@ export function useTouchWindowDrag(isMaximized = null, options = {}) {
     document.removeEventListener('pointermove', onPointerMove)
     document.removeEventListener('pointerup', onPointerEnd)
     document.removeEventListener('pointercancel', onPointerEnd)
+    document.removeEventListener('lostpointercapture', onCaptureLost)
+    window.removeEventListener?.('blur', onWindowBlur)
   }
 
   const clearDragState = (position = null) => {
@@ -528,6 +530,12 @@ export function useTouchWindowDrag(isMaximized = null, options = {}) {
     queueLatestPosition()
   }
 
+  function onCaptureLost(event) {
+    if (event.pointerId === pointerId && !dragEnding) clearDragState()
+  }
+  function onWindowBlur() {
+    if (pointerId !== null) clearDragState()
+  }
   async function onPointerEnd(event) {
     if (pointerId === null || event.pointerId !== pointerId) return
 
@@ -647,6 +655,8 @@ export function useTouchWindowDrag(isMaximized = null, options = {}) {
     document.addEventListener('pointermove', onPointerMove, { passive: false })
     document.addEventListener('pointerup', onPointerEnd)
     document.addEventListener('pointercancel', onPointerEnd)
+    document.addEventListener('lostpointercapture', onCaptureLost)
+    window.addEventListener?.('blur', onWindowBlur)
 
     let initialPromise
     initialPromise = prepareWindowPosition(pointerId, generation)

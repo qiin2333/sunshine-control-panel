@@ -348,44 +348,86 @@ pub fn resize_about_window(window: tauri::Window, height: f64) -> Result<(), Str
 }
 
 /// Resize the floating tool window to match its web content size.
-#[tauri::command]
-pub fn resize_tool_window(window: tauri::Window, width: f64, height: f64) -> Result<(), String> {
-    if window.label() != TOOL_WINDOW_ID {
-        return Err("resize_tool_window can only be called from the tool window".to_string());
+// These synchronous commands execute on the GUI thread. Do not resize/reposition
+// a caption while Windows owns its native move loop (there are no DOM pointers).
+fn native_window_move_active(window: &tauri::Window) -> Result<bool, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GUI_INMOVESIZE, GUITHREADINFO, GetGUIThreadInfo, GetWindowThreadProcessId,
+        };
+        let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+        let mut info = GUITHREADINFO {
+            cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+            ..Default::default()
+        };
+        unsafe {
+            GetGUIThreadInfo(
+                GetWindowThreadProcessId(windows::Win32::Foundation::HWND(hwnd.0), None),
+                &mut info,
+            )
+        }
+        .map_err(|e| e.to_string())?;
+        return Ok(info.flags.0 & GUI_INMOVESIZE.0 != 0);
     }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = window;
+        Ok(false)
+    }
+}
 
+#[tauri::command]
+pub fn resize_tool_window(window: tauri::Window, width: f64, height: f64) -> Result<bool, String> {
+    let nr = window.label() == "nr_overlay";
+    if window.label() != TOOL_WINDOW_ID && !nr {
+        return Err("resize_tool_window can only be called from an overlay".to_string());
+    }
     if !width.is_finite() || !height.is_finite() {
         return Err("Invalid tool window size".to_string());
     }
-
-    let scale_factor = window
-        .scale_factor()
-        .map_err(|e| format!("Failed to get window scale factor: {}", e))?;
-    let current_size = window
-        .inner_size()
-        .map_err(|e| format!("Failed to get window size: {}", e))?;
-    let current_width = current_size.width as f64 / scale_factor;
-    let current_height = current_size.height as f64 / scale_factor;
+    if native_window_move_active(&window)? {
+        return Ok(false);
+    }
+    let scale_factor = window.scale_factor().map_err(|e| e.to_string())?;
+    let current_size = window.inner_size().map_err(|e| e.to_string())?;
+    let min_height: f64 = if nr { 32.0 } else { 180.0 };
     let max_height = window
         .current_monitor()
         .ok()
         .flatten()
-        .map(|monitor| (monitor.size().height as f64 / scale_factor - 32.0).max(180.0))
+        .map(|monitor| (monitor.size().height as f64 / scale_factor - 32.0).max(min_height))
         .unwrap_or(900.0);
-    let target_width = width.clamp(320.0, 560.0);
-    let target_height = height.clamp(180.0, max_height);
-
-    if (current_width - target_width).abs() >= 1.0 || (current_height - target_height).abs() >= 1.0
+    let target_width = width.clamp(if nr { 120.0 } else { 320.0 }, 560.0);
+    let target_height = height.clamp(min_height, max_height);
+    if (current_size.width as f64 / scale_factor - target_width).abs() >= 1.0
+        || (current_size.height as f64 / scale_factor - target_height).abs() >= 1.0
     {
+        // Read the current anchor here, not in an earlier frontend IPC request.
+        let position = window.outer_position().map_err(|e| e.to_string())?;
         window
             .set_size(tauri::Size::Logical(tauri::LogicalSize::new(
                 target_width,
                 target_height,
             )))
-            .map_err(|e| format!("Failed to resize tool window: {}", e))?;
+            .map_err(|e| e.to_string())?;
+        if nr {
+            window
+                .set_position(tauri::PhysicalPosition::new(
+                    position.x + current_size.width as i32
+                        - (target_width * scale_factor).round() as i32,
+                    position.y,
+                ))
+                .map_err(|e| e.to_string())?;
+        }
     }
-
-    constrain_tool_window_to_visible_area(&window, target_width, target_height, 16.0)
+    constrain_tool_window_to_visible_area(
+        &window,
+        target_width,
+        target_height,
+        if nr { 0.0 } else { 16.0 },
+    )?;
+    Ok(true)
 }
 
 /// 通过 WebView2 COM API 强制重新加载页面（在渲染进程崩溃后仍可工作）

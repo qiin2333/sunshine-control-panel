@@ -87,7 +87,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ArrowDown, Close } from '@element-plus/icons-vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { currentMonitor, getCurrentWindow, LogicalSize, PhysicalPosition } from '@tauri-apps/api/window'
+import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window'
 import { useI18n } from '../../desktop/i18n/index.js'
 import { displayShortcut, enhancementControlsText, enhancementError } from '../../composables/enhancementControls.js'
 import { nrOverlayText } from '../../composables/nrOverlayMessages.js'
@@ -204,7 +204,7 @@ async function sendRequest(enabled, patch = {}) {
     if (!disposed) errorCode.value = String(reason).includes('nr_session_ended') ? 'ended' : 'failed'
   } finally { busy.value = false }
 }
-let resizing = false, resizeAgain = false
+let resizing = false, resizeAgain = false, resizeRetry
 async function fitWindow() {
   if (!surface.value || disposed || touchDrag.active) return
   if (resizing) { resizeAgain = true; return }
@@ -212,16 +212,15 @@ async function fitWindow() {
   try {
     const generation = touchDrag.generation
     const win = getCurrentWindow()
-    const [position, old, scale, monitor] = await Promise.all([win.outerPosition(), win.outerSize(), win.scaleFactor(), currentMonitor()])
+    const [scale, monitor] = await Promise.all([win.scaleFactor(), currentMonitor()])
     if (disposed || touchDrag.active || generation !== touchDrag.generation) return
     if (monitor) surface.value.style.setProperty('--panel-max-height', `${Math.max(120, Math.min(640, monitor.size.height / scale - 48))}px`)
     const width = Math.ceil(surface.value.getBoundingClientRect().width) + 8
     const height = Math.ceil(surface.value.getBoundingClientRect().height) + 8
-    const x = position.x + old.width - Math.round(width * scale)
-    const bounds = monitor ? { x: monitor.position.x, y: monitor.position.y, right: monitor.position.x + monitor.size.width, bottom: monitor.position.y + monitor.size.height } : null
-    await win.setSize(new LogicalSize(width, height))
-    if (disposed || touchDrag.active || generation !== touchDrag.generation) return
-    await win.setPosition(new PhysicalPosition(Math.round(bounds ? Math.max(bounds.x, Math.min(x, bounds.right - width * scale)) : x), Math.round(bounds ? Math.max(bounds.y, Math.min(position.y, bounds.bottom - height * scale)) : position.y)))
+    clearTimeout(resizeRetry)
+    if (await invoke('resize_tool_window', { width, height }) === false && !disposed) {
+      resizeRetry = setTimeout(() => void fitWindow(), 100)
+    }
   } catch (reason) { console.warn('NR overlay resize failed', reason) }
   finally { resizing = false; if (resizeAgain) { resizeAgain = false; void fitWindow() } }
 }
@@ -237,7 +236,7 @@ onMounted(async () => {
   try { applyPreferences(await invoke('nr_overlay_settings')) } catch {}
   if (!disposed) void poll()
 })
-onUnmounted(() => { disposed = true; clearTimeout(timer); clearTimeout(settleTimer); observer?.disconnect(); unlisten.forEach(stop => stop()) })
+onUnmounted(() => { disposed = true; clearTimeout(resizeRetry); clearTimeout(timer); clearTimeout(settleTimer); observer?.disconnect(); unlisten.forEach(stop => stop()) })
 
 </script>
 

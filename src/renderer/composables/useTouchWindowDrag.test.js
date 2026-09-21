@@ -534,3 +534,36 @@ test('pointer cancellation discards an uninitialized move and permits the next g
     assert.deepEqual(finished.at(-1), { moved: false, position: null })
   } finally { console.warn = warn; environment.cleanup() }
 })
+
+for (const signal of ['lostpointercapture', 'blur']) {
+  test(`shared drag releases capture and ignores delayed initialization after ${signal}`, async () => {
+    const baseline = deferred(), finished = [], writes = []
+    const environment = installDragEnvironment(async (command, args) => {
+      if (command === 'plugin:event|listen') return 1
+      if (command === 'plugin:window|outer_position') return baseline.promise
+      if (command === 'plugin:window|scale_factor') return 1
+      if (command === 'plugin:window|set_position') { writes.push(args.value.toJSON().Physical); return }
+      throw new Error(`Unexpected command: ${command}`)
+    })
+    const windowListeners = new Map()
+    window.addEventListener = (name, listener) => windowListeners.set(name, listener)
+    window.removeEventListener = name => windowListeners.delete(name)
+    const warn = console.warn
+    console.warn = () => {}
+    try {
+      const { useTouchWindowDrag } = await import('./useTouchWindowDrag.js')
+      const drag = useTouchWindowDrag(null, { restoreMaximized: false, onFinish: value => finished.push(value) })
+      startTouchDrag(drag.onTouchWindowDragStart, 1, 10, 20)
+      moveTouchDrag(environment.listeners, 1, 40, 50)
+      if (signal === 'blur') windowListeners.get('blur')()
+      else environment.listeners.get('lostpointercapture')({ pointerId: 1 })
+      baseline.resolve({ x: 0, y: 0 })
+      await nextTask()
+      assert.equal(drag.active, false)
+      assert.deepEqual(writes, [])
+      assert.deepEqual(finished, [{ moved: true, position: null }])
+      assert.equal(environment.listeners.size, 0)
+      assert.equal(windowListeners.size, 0)
+    } finally { console.warn = warn; environment.cleanup() }
+  })
+}

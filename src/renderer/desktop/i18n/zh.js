@@ -973,7 +973,7 @@ export const zh = {
     webStream: 'Web 串流',
     aiAssistant: '米塔',
     deviceHub: '设备中心',
-    hdrEnhanced: '画面增强',
+    hdrEnhanced: '画质增强',
     controllers: '控制器',
     controllersHub: '控制器中心',
     dualSense: 'DualSense 模拟',
@@ -999,7 +999,7 @@ export const zh = {
   },
 
   hdrEnhanced: {
-    open: '管理画面增强',
+    open: '管理画质增强',
   },
   deviceHub: {
     eyebrow: 'MANAGE / DEVICE HUB',

@@ -268,6 +268,7 @@ fn default_toolbar_position(
 // 辅助函数：创建工具窗口
 pub fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &str) -> Result<(), String> {
     let is_nr = tool_type == "nr";
+    if is_nr { crate::nr_overlay::request_visibility(app, true); }
     let tool_window_id = if is_nr { "nr_overlay" } else { "tool_window" };
     let window_width = if is_nr { 190.0 } else { 340.0 };
     let window_height = if is_nr { 48.0 } else { 260.0 };
@@ -310,15 +311,6 @@ pub fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &s
 
     match builder.build() {
         Ok(window) => {
-            if is_nr {
-                crate::nr_overlay::register(app);
-                let handle = app.clone();
-                window.on_window_event(move |event| {
-                    if matches!(event, tauri::WindowEvent::Destroyed) {
-                        crate::nr_overlay::unregister(&handle);
-                    }
-                });
-            }
             // 在生产环境禁用右键菜单
             windows::disable_context_menu(&window);
 
@@ -366,7 +358,7 @@ pub fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &s
                         let _ = window.set_position(position);
                     }
                 }
-                let _ = window.show();
+                if !is_nr || crate::nr_overlay::visibility_requested() { let _ = window.show(); }
             });
         }
         Err(e) => {

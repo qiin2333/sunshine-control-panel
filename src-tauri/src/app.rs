@@ -75,6 +75,7 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
         }
     }
     register_global_shortcuts(app, desktop_settings.toolbar_shortcut_enabled)?;
+    crate::nr_overlay::initialize(&app_handle);
     setup_menu_event_handler(app);
 
     // 剪贴板同步：用户会话 agent 默认随面板启动；服务端如果禁用了则 SSE 自然失败，

@@ -7,14 +7,11 @@
         <span>{{ expanded ? 'DLSS NR' : compactLabel }}</span>
         <ArrowDown class="chevron" :class="{ rotated: expanded }" aria-hidden="true" />
       </button>
+      <button v-if="expanded" class="close" :aria-label="text.close" :title="text.close" @click="$emit('close')"><Close aria-hidden="true" /></button>
     </header>
     <div class="nr-reveal" :inert="!expanded" :aria-hidden="!expanded">
       <div class="nr-clip">
         <div class="nr-body">
-          <div class="session-row">
-            <span>{{ text.session }}</span>
-            <button class="close" :aria-label="text.close" :title="text.close" @click="$emit('close')"><Close aria-hidden="true" /></button>
-          </div>
           <select v-if="pipelines.length > 1 || (selectionExpired && pipelines.length)" v-model="selectedId" :aria-label="text.session" :disabled="busy">
             <option :value="null" disabled>{{ text.choose }}</option>
             <option v-for="item in pipelines" :key="item.id" :value="item.id">{{ text.session }} #{{ item.id }} · {{ item.hdr_mode.toUpperCase() }}</option>
@@ -182,8 +179,7 @@ button:disabled { cursor: default; opacity: .5; }
 .expanded .nr-reveal { grid-template-rows: 1fr; opacity: 1; transform: translateY(0); }
 .nr-clip { min-height: 0; overflow: hidden; }
 .nr-body { padding: 0 16px 15px; }
-.session-row { display: flex; justify-content: space-between; align-items: center; color: #b9c1b0; padding: 10px 0; border-bottom: 1px solid #ffffff38; font-size: 11px; font-weight: 600; }
-.close { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; box-sizing: border-box; line-height: 1; border: 1px solid #ffffff50; background: #0003; }
+.close { flex: 0 0 24px; margin-left: 5px; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; box-sizing: border-box; line-height: 1; border: 1px solid transparent; background: transparent; }
 .close svg { display: block; width: 14px; height: 14px; }
 .close:hover { background: #f4f5ef; color: #111; }
 .switch-row { display: flex; align-items: center; justify-content: space-between; margin: 17px 0 12px; font-size: 18px; font-weight: 800; }

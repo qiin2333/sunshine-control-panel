@@ -126,9 +126,9 @@ pub async fn open_tool_window(app: AppHandle, tool_name: String) -> Result<(), S
         "logs" | "log_console" => {
             windows::open_log_console(&app);
         }
-        "nr" => toolbar::create_tool_window_internal(&app, "nr"),
+        "nr" => toolbar::create_tool_window_internal(&app, "nr")?,
         "performance" | "host_performance" => {
-            toolbar::create_tool_window_internal(&app, "performance");
+            toolbar::create_tool_window_internal(&app, "performance")?;
         }
         _ => return Err(format!("Unknown tool name: {}", tool_name)),
     }

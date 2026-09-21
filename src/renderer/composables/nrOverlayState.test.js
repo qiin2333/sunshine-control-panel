@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { nrOverlayState, overlayOpacity } from './nrOverlayState.js'
+import { nrOverlayState, overlayOpacity, nrPipelines } from './nrOverlayState.js'
 
 test('NR indicator reports actual processing, not just requested state', () => {
   const p = { nr_toggle_supported: true, nr_requested_enabled: true, nr_state: 'disabled' }
@@ -37,4 +37,14 @@ test('scale switches remain pending until acknowledged by the pipeline', () => {
   assert.equal(nrOverlayState(p, true), 'active')
   p.nr_requested_enabled = false
   assert.equal(nrOverlayState(p, true), 'stopping')
+})
+
+test('Malformed host sessions cannot enter the overlay or become request targets', () => {
+  const valid = { id: 42, hdr_mode: 'pq' }
+  assert.deepEqual(nrPipelines(null), [])
+  assert.deepEqual(nrPipelines({ pipelines: [] }), [])
+  assert.deepEqual(nrPipelines([null, undefined, 42, {}, { id: 1 },
+    { id: 2, hdr_mode: null }, { id: '3', hdr_mode: 'sdr' },
+    { id: -1, hdr_mode: 'pq' }, { id: 1.5, hdr_mode: 'pq' },
+    { id: Number.MAX_SAFE_INTEGER + 1, hdr_mode: 'pq' }, valid]), [valid])
 })

@@ -54,7 +54,7 @@ import { listen } from '@tauri-apps/api/event'
 import { currentMonitor, getCurrentWindow, LogicalSize, PhysicalPosition } from '@tauri-apps/api/window'
 import { useI18n } from '../../desktop/i18n/index.js'
 import { nrOverlayText } from '../../composables/nrOverlayMessages.js'
-import { nrOverlayState, overlayOpacity, nrProcessingSize } from '../../composables/nrOverlayState.js'
+import { nrOverlayState, overlayOpacity, nrProcessingSize, nrPipelines } from '../../composables/nrOverlayState.js'
 
 defineEmits(['close'])
 const { locale } = useI18n()
@@ -98,7 +98,7 @@ async function refresh() {
   try {
     const result = await invoke('nr_live_status')
     if (disposed) return
-    const next = Array.isArray(result?.pipelines) ? result.pipelines : []
+    const next = nrPipelines(result?.pipelines)
     if (selectedId.value !== null && !next.some(item => item.id === selectedId.value)) {
       selectedId.value = null
       selectionExpired.value = true

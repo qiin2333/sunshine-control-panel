@@ -23,3 +23,10 @@ export function nrProcessingSize(pipeline, percent) {
   if (!width || !height) return ''
   return `${Math.max(1, Math.round(width * percent / 100))} × ${Math.max(1, Math.round(height * percent / 100))}`
 }
+
+// Validate the host response before reactive templates dereference session fields.
+export function nrPipelines(value) {
+  if (!Array.isArray(value)) return []
+  return value.filter(item => item !== null && typeof item === 'object' &&
+    Number.isSafeInteger(item.id) && item.id > 0 && typeof item.hdr_mode === 'string')
+}

@@ -266,7 +266,7 @@ fn default_toolbar_position(
 }
 
 // 辅助函数：创建工具窗口
-pub fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &str) {
+pub fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &str) -> Result<(), String> {
     let is_nr = tool_type == "nr";
     let tool_window_id = if is_nr { "nr_overlay" } else { "tool_window" };
     let window_width = if is_nr { 190.0 } else { 340.0 };
@@ -276,8 +276,7 @@ pub fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &s
     // 如果窗口已存在，先关闭它
     if let Some(window) = app.get_webview_window(tool_window_id) {
         if is_nr {
-            let _ = window.show();
-            return;
+            return window.show().map_err(|e| e.to_string());
         }
         let _ = window.close();
     }
@@ -371,9 +370,10 @@ pub fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &s
             });
         }
         Err(e) => {
-            error!("❌ 创建工具窗口失败: {}", e);
+            return Err(format!("创建工具窗口失败: {}", e));
         }
     }
+    Ok(())
 }
 
 // 处理工具栏菜单事件
@@ -407,19 +407,29 @@ pub fn handle_toolbar_menu_event<R: Runtime>(app: &AppHandle<R>, event_id: &str)
             }
         }
         "dpi" | "toolbar_dpi" => {
-            create_tool_window_internal(app, "dpi");
+            if let Err(e) = create_tool_window_internal(app, "dpi") {
+                error!("创建工具窗口失败: {}", e);
+            }
         }
         "bitrate" | "toolbar_bitrate" => {
-            create_tool_window_internal(app, "bitrate");
+            if let Err(e) = create_tool_window_internal(app, "bitrate") {
+                error!("创建工具窗口失败: {}", e);
+            }
         }
         "performance" | "toolbar_performance" => {
-            create_tool_window_internal(app, "performance");
+            if let Err(e) = create_tool_window_internal(app, "performance") {
+                error!("创建工具窗口失败: {}", e);
+            }
         }
         "shortcuts" | "toolbar_shortcuts" => {
-            create_tool_window_internal(app, "shortcuts");
+            if let Err(e) = create_tool_window_internal(app, "shortcuts") {
+                error!("创建工具窗口失败: {}", e);
+            }
         }
         "pet" | "toolbar_pet" => {
-            create_tool_window_internal(app, "pet");
+            if let Err(e) = create_tool_window_internal(app, "pet") {
+                error!("创建工具窗口失败: {}", e);
+            }
         }
         "close" | "toolbar_close" => {
             if let Some(window) = app.get_webview_window("toolbar") {

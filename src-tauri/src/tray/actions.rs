@@ -51,11 +51,15 @@ pub fn handle_tray_menu_event<R: Runtime + 'static>(app: &AppHandle<R>, menu_id:
         "show_toolbar" => toggle_toolbar(app),
         "rtss_control" => {
             info!("🎯 托盘菜单：打开 RTSS 控制");
-            toolbar::create_tool_window_internal(app, "rtss");
+            if let Err(e) = toolbar::create_tool_window_internal(app, "rtss") {
+                error!("创建工具窗口失败: {}", e);
+            }
         }
         "host_performance" => {
             info!("📊 托盘菜单：打开主机性能监控");
-            toolbar::create_tool_window_internal(app, "performance");
+            if let Err(e) = toolbar::create_tool_window_internal(app, "performance") {
+                error!("创建工具窗口失败: {}", e);
+            }
         }
         "log_console" => windows::open_log_console(app),
         "web_stream" => open_web_stream_settings(app),

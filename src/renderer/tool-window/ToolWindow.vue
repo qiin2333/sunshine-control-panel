@@ -20,7 +20,7 @@ const { t } = useI18n()
 
 const currentTool = shallowRef(null)
 const toolType = shallowRef('dpi')
-const isMonitorTool = computed(() => toolType.value === 'performance')
+const isMonitorTool = computed(() => ['performance', 'nr'].includes(toolType.value))
 
 const closeWindow = async () => {
   try {
@@ -68,6 +68,9 @@ onMounted(async () => {
         break
       case 'rtss':
         currentTool.value = defineAsyncComponent(() => import('./tools/RtssOsdTool.vue'))
+        break
+      case 'nr':
+        currentTool.value = defineAsyncComponent(() => import('./tools/NrOverlayTool.vue'))
         break
       case 'performance':
         currentTool.value = defineAsyncComponent(() => import('./tools/HostPerformanceTool.vue'))

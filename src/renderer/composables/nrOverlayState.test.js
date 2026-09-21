@@ -29,3 +29,12 @@ test('Saved opacity has safe defaults and keeps controls legible', () => {
   assert.equal(overlayOpacity('100'), 95)
   assert.equal(overlayOpacity('65'), 65)
 })
+
+test('scale switches remain pending until acknowledged by the pipeline', () => {
+  const p = { nr_toggle_supported: true, nr_requested_enabled: true, nr_state: 'active', nr_scale_percent: 100, nr_requested_scale_percent: 75 }
+  assert.equal(nrOverlayState(p, true), 'scaling')
+  p.nr_scale_percent = 75
+  assert.equal(nrOverlayState(p, true), 'active')
+  p.nr_requested_enabled = false
+  assert.equal(nrOverlayState(p, true), 'stopping')
+})

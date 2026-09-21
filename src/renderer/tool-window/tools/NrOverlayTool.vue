@@ -19,13 +19,24 @@
       </select>
       <div class="switch-row">
         <span>{{ text.enhancement }}</span>
-        <button class="switch" role="switch" :aria-checked="state === 'active'" :aria-label="text.enhancement" :class="{ on: state === 'active' }" :disabled="!canToggle" @click="toggle"><span /></button>
+        <button class="switch" role="switch" :aria-checked="effectActive" :aria-label="text.enhancement" :class="{ on: effectActive }" :disabled="!canToggle" @click="toggle"><span /></button>
       </div>
       <div class="live-state" aria-live="polite"><span class="dot" :class="state" />{{ text.states[state] }}</div>
       <p v-if="state === 'blocked'" class="notice">{{ pipeline?.backend !== 'none' ? text.hdrBusy : text.unsupported }}</p>
       <p v-else-if="state === 'degraded'" class="notice">{{ text.fallback }}<br><small>{{ pipeline?.nr_reason }}</small></p>
-      <p v-else-if="state === 'warming_up' || state === 'stopping'" class="notice">{{ text.wait }}</p>
+      <p v-else-if="['warming_up', 'stopping', 'scaling'].includes(state)" class="notice">{{ text.wait }}</p>
       <p v-if="error" class="notice error">{{ error }} <button @click="refresh">{{ text.retry }}</button></p>
+      <div v-if="pipeline?.nr_requested_scale_percent !== undefined" class="scale-control">
+        <div class="scale-label">{{ text.scale }}</div>
+        <div class="scale-options" role="group" :aria-label="text.scale">
+          <button v-for="percent in [100, 75, 67, 50]" :key="percent" :disabled="!canToggle"
+            :aria-pressed="selectedScale === percent" :class="{ selected: selectedScale === percent }"
+            @click="setScale(percent)">{{ percent }}%</button>
+        </div>
+        <div v-if="online && processingSize" class="scale-size">{{ pipeline.nr_requested_enabled ? text.processing : text.targetSize }} · {{ processingSize }}</div>
+        <p class="hint">{{ text.scaleHint }}</p>
+        <p v-if="pipeline.nr_scale_failure_reason" class="notice">{{ text.scaleFailed }}</p>
+      </div>
       <div class="signal-row"><span>{{ online && pipeline ? (pipeline.hdr_mode === 'sdr' ? 'SDR' : 'HDR · ' + pipeline.hdr_mode.toUpperCase()) : '—' }}</span><span v-if="online && pipeline" class="badge">{{ text.preserved }}</span></div>
       <p class="hint">{{ text.onlySession }}</p>
       <label class="opacity-row"><span>{{ text.opacity }}</span><output>{{ opacity }}%</output><input v-model.number="opacity" type="range" min="35" max="95" :aria-label="text.opacity"></label>
@@ -41,16 +52,16 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { currentMonitor, getCurrentWindow, LogicalSize, PhysicalPosition } from '@tauri-apps/api/window'
 import { useI18n } from '../../desktop/i18n/index.js'
-import { nrOverlayState, overlayOpacity } from '../../composables/nrOverlayState.js'
+import { nrOverlayState, overlayOpacity, nrProcessingSize } from '../../composables/nrOverlayState.js'
 
 defineEmits(['close'])
 const { locale } = useI18n()
 const text = computed(() => locale.value.startsWith('zh') ? {
-  states: { disabled: 'NR 已关闭', active: 'NR 已开启', warming_up: 'NR 启动中', stopping: 'NR 关闭中', degraded: 'NR 已降级', idle: '等待串流', blocked: 'NR 不可用', unavailable: '主机未连接' },
-  choose: '请选择会话', drag: '拖动浮层', session: '当前串流', close: '关闭浮层', enhancement: '画面增强', preserved: '保持输出', onlySession: '仅影响当前会话，不修改应用默认设置', opacity: '背景不透明度', shortcut: '切换画面增强', shortcutUnavailable: '快捷键不可用，可点击开关', hdrBusy: 'RTX HDR 正在占用增强位置', unsupported: '当前主机或捕获路径不支持实时切换', fallback: '增强未生效，正在使用原画；关闭后可重新尝试', wait: '等待主机处理下一帧；首次开启需要初始化', retry: '重试', disconnected: '无法读取主机状态，请确认 Sunshine 正在运行', ended: '该串流已结束', failed: '切换失败，请重试',
+  states: { disabled: 'NR 已关闭', active: 'NR 已开启', warming_up: 'NR 启动中', stopping: 'NR 关闭中', scaling: '切换处理比例', degraded: 'NR 已降级', idle: '等待串流', blocked: 'NR 不可用', unavailable: '主机未连接' },
+  scale: 'NR 处理比例', processing: '处理尺寸', targetSize: '预设尺寸', scaleHint: '降低比例可减少开销；原画尺寸保持不变', scaleFailed: '该比例未能生效，已请求恢复上一档', choose: '请选择会话', drag: '拖动浮层', session: '当前串流', close: '关闭浮层', enhancement: '画面增强', preserved: '保持输出', onlySession: '仅影响当前会话，不修改应用默认设置', opacity: '背景不透明度', shortcut: '切换画面增强', shortcutUnavailable: '快捷键不可用，可点击开关', hdrBusy: 'RTX HDR 正在占用增强位置', unsupported: '当前主机或捕获路径不支持实时切换', fallback: '增强未生效，正在使用原画；关闭后可重新尝试', wait: '等待主机处理下一帧；首次开启需要初始化', retry: '重试', disconnected: '无法读取主机状态，请确认 Sunshine 正在运行', ended: '该串流已结束', failed: '切换失败，请重试',
 } : {
-  states: { disabled: 'NR off', active: 'NR on', warming_up: 'NR starting', stopping: 'NR stopping', degraded: 'NR bypassed', idle: 'Waiting for stream', blocked: 'NR unavailable', unavailable: 'Host disconnected' },
-  choose: 'Select a stream', drag: 'Drag overlay', session: 'Current stream', close: 'Close overlay', enhancement: 'Enhancement', preserved: 'Output preserved', onlySession: 'This session only. App defaults stay unchanged.', opacity: 'Background opacity', shortcut: 'Toggle enhancement', shortcutUnavailable: 'Shortcut unavailable; use the switch', hdrBusy: 'RTX HDR is using the enhancement slot', unsupported: 'This host or capture path does not support live switching', fallback: 'Using the original image. Switch off and on to retry.', wait: 'Waiting for the next frame. First use needs initialization.', retry: 'Retry', disconnected: 'Cannot read host status. Check that Sunshine is running.', ended: 'This stream has ended', failed: 'Could not switch. Try again.',
+  states: { disabled: 'NR off', active: 'NR on', warming_up: 'NR starting', stopping: 'NR stopping', scaling: 'Changing NR scale', degraded: 'NR bypassed', idle: 'Waiting for stream', blocked: 'NR unavailable', unavailable: 'Host disconnected' },
+  scale: 'NR processing scale', processing: 'Processing size', targetSize: 'Planned size', scaleHint: 'Lower scales reduce cost. Original dimensions stay unchanged.', scaleFailed: 'Scale failed; restoration of the previous scale was requested.', choose: 'Select a stream', drag: 'Drag overlay', session: 'Current stream', close: 'Close overlay', enhancement: 'Enhancement', preserved: 'Output preserved', onlySession: 'This session only. App defaults stay unchanged.', opacity: 'Background opacity', shortcut: 'Toggle enhancement', shortcutUnavailable: 'Shortcut unavailable; use the switch', hdrBusy: 'RTX HDR is using the enhancement slot', unsupported: 'This host or capture path does not support live switching', fallback: 'Using the original image. Switch off and on to retry.', wait: 'Waiting for the next frame. First use needs initialization.', retry: 'Retry', disconnected: 'Cannot read host status. Check that Sunshine is running.', ended: 'This stream has ended', failed: 'Could not switch. Try again.',
 })
 const expanded = ref(false)
 const opacity = ref(72)
@@ -66,7 +77,15 @@ const error = ref('')
 const shortcut = ref(false)
 const pipeline = computed(() => pipelines.value.find(item => item.id === selectedId.value))
 const state = computed(() => nrOverlayState(pipeline.value, online.value))
-const canToggle = computed(() => online.value && pipeline.value?.nr_toggle_supported && !busy.value && !['warming_up', 'stopping'].includes(state.value))
+const effectActive = computed(() => online.value && pipeline.value?.nr_state === 'active')
+const canToggle = computed(() => online.value && pipeline.value?.nr_toggle_supported && !busy.value && !['warming_up', 'stopping', 'scaling'].includes(state.value))
+const selectedScale = computed(() => pipeline.value?.nr_requested_scale_percent ?? 100)
+const processingSize = computed(() => nrProcessingSize(pipeline.value,
+  pipeline.value?.nr_requested_enabled ? pipeline.value.nr_scale_percent : selectedScale.value))
+async function setScale(percent) {
+  if (!canToggle.value || percent === selectedScale.value) return
+  await sendRequest(pipeline.value.nr_requested_enabled, percent)
+}
 let disposed = false, refreshing = false, timer, observer, unlisten
 async function refresh() {
   if (refreshing || disposed) return
@@ -91,11 +110,14 @@ async function refresh() {
 async function poll() { await refresh(); if (!disposed) timer = setTimeout(poll, 500) }
 async function toggle() {
   if (!canToggle.value) return
-  const id = pipeline.value.id, enabled = !pipeline.value.nr_requested_enabled
+  await sendRequest(!pipeline.value.nr_requested_enabled)
+}
+async function sendRequest(enabled, scalePercent) {
+  const id = pipeline.value.id
   busy.value = true
   error.value = ''
   try {
-    await invoke('nr_live_set_enabled', { id, enabled })
+    await invoke('nr_live_set_enabled', { id, enabled, ...(scalePercent === undefined ? {} : { scalePercent }) })
     await refresh()
   } catch (reason) {
     if (!disposed) error.value = String(reason).includes('nr_session_ended') ? text.value.ended : text.value.failed
@@ -159,7 +181,15 @@ button:disabled { cursor: default; opacity: .5; }
 .dot { display: inline-block; flex: 0 0 9px; width: 9px; height: 9px; border-radius: 50%; background: #9ba49f; }
 .dot.active { background: #7de3b4; box-shadow: 0 0 8px #7de3b433; }
 .dot.degraded, .dot.blocked { background: #efce75; }
-.dot.warming_up, .dot.stopping { background: transparent; border: 2px solid #9ba49f; border-top-color: #e6f0eb; animation: spin 1s linear infinite; }
+.dot.warming_up, .dot.stopping, .dot.scaling { background: transparent; border: 2px solid #9ba49f; border-top-color: #e6f0eb; animation: spin 1s linear infinite; }
+.scale-control { border-top: 1px solid #ffffff18; padding-top: 13px; margin-bottom: 14px; }
+.scale-label { color: #c3cec7; font-size: 12px; margin-bottom: 9px; }
+.scale-options { display: grid; grid-template-columns: repeat(4, 1fr); padding: 3px; gap: 3px; border: 1px solid #ffffff18; border-radius: 9px; background: #0002; }
+.scale-options button { padding: 5px 0; border: 0; border-radius: 6px; background: transparent; color: #b5c3bb; font-size: 12px; }
+.scale-options button.selected { background: #7de3b425; color: #9debc5; box-shadow: inset 0 0 0 1px #7de3b44a; }
+.scale-options button:hover:not(:disabled) { background: #ffffff12; }
+.scale-size { margin-top: 9px; color: #d1dcd5; font-size: 11px; font-variant-numeric: tabular-nums; }
+.scale-control .hint { margin: 5px 0 0; }
 .signal-row { border-top: 1px solid #ffffff18; padding-top: 14px; display: flex; justify-content: space-between; align-items: center; }
 .badge { color: #ccd5cf; font-size: 11px; border: 1px solid #ffffff20; padding: 2px 6px; border-radius: 6px; }
 .hint { color: #b0bab4; font-size: 11px; margin: 9px 0 16px; }

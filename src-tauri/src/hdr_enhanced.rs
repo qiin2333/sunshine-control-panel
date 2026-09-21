@@ -208,8 +208,13 @@ pub async fn nr_live_status() -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn nr_live_set_enabled(id: u64, enabled: bool) -> Result<(), String> {
-    request("session-nr", Some(json!({"id": id, "enabled": enabled})), None, None).await?;
+pub async fn nr_live_set_enabled(id: u64, enabled: bool, scale_percent: Option<u32>) -> Result<(), String> {
+    let mut payload = json!({"id": id, "enabled": enabled});
+    if let Some(scale) = scale_percent {
+        if !matches!(scale, 100 | 75 | 67 | 50) { return Err("nr_request_invalid".into()); }
+        payload["scale_percent"] = json!(scale);
+    }
+    request("session-nr", Some(payload), None, None).await?;
     Ok(())
 }
 

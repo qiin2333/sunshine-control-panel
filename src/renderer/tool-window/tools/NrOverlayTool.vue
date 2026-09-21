@@ -230,4 +230,3 @@ select { width: 100%; margin-top: 10px; background: #151b10; color: #f4f5ef; bor
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .dot { animation: none !important; } .nr-overlay, .nr-head, .nr-reveal, .switch > span, .chevron { transition: none; } }
 </style>
-

@@ -208,12 +208,32 @@ pub async fn nr_live_status() -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn nr_live_set_enabled(id: u64, enabled: bool, scale_percent: Option<u32>) -> Result<(), String> {
+pub async fn nr_live_set_enabled(id: u64, enabled: bool, scale_percent: Option<u32>,
+    intensity: Option<f32>, ui_correction: Option<bool>, motion_quality: Option<u32>, style: Option<u32>,
+    skin_structure_strength: Option<f32>, auto_mask: Option<bool>) -> Result<(), String> {
     let mut payload = json!({"id": id, "enabled": enabled});
     if let Some(scale) = scale_percent {
-        if !matches!(scale, 100 | 75 | 67 | 50) { return Err("nr_request_invalid".into()); }
+        if !(20..=100).contains(&scale) || scale % 5 != 0 { return Err("nr_request_invalid".into()); }
         payload["scale_percent"] = json!(scale);
     }
+    if let Some(value) = intensity {
+        if !value.is_finite() || !(0.0..=1.0).contains(&value) { return Err("nr_request_invalid".into()); }
+        payload["intensity"] = json!(value);
+    }
+    if let Some(value) = ui_correction { payload["ui_correction"] = json!(value); }
+    if let Some(value) = motion_quality {
+        if value > 3 { return Err("nr_request_invalid".into()); }
+        payload["motion_quality"] = json!(value);
+    }
+    if let Some(value) = style {
+        if value > 4 { return Err("nr_request_invalid".into()); }
+        payload["style"] = json!(value);
+    }
+    if let Some(value) = skin_structure_strength {
+        if !value.is_finite() || !(0.0..=1.0).contains(&value) { return Err("nr_request_invalid".into()); }
+        payload["skin_structure_strength"] = json!(value);
+    }
+    if let Some(value) = auto_mask { payload["auto_mask"] = json!(value); }
     request("session-nr", Some(payload), None, None).await?;
     Ok(())
 }

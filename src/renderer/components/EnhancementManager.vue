@@ -366,6 +366,41 @@ const {
 }
 .component-details { border-top-style: dashed; }
 
+.enhancement-card {
+  border: 0;
+  border-radius: 18px 24px 20px 16px;
+  &::after {
+    top: 22px;
+    right: 25px;
+    width: 29px;
+    height: 9px;
+    border-top-width: 2px;
+    border-bottom-width: 1.5px;
+    border-color: var(--el-color-primary);
+    border-radius: 55% 35% 60% 40%;
+    opacity: .38;
+    transform: rotate(-17deg);
+  }
+}
+.enhancement-icon {
+  position: relative;
+  background: transparent;
+  border: 0;
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 1px -2px;
+    border: 1.5px solid var(--el-color-primary);
+    border-bottom-color: transparent;
+    border-radius: 43% 57% 49% 51%;
+    transform: rotate(14deg);
+    opacity: .45;
+    pointer-events: none;
+  }
+}
+.component-hud-row, .component-details, .component-health-row { border: 0; }
+.component-details { padding-top: 6px; }
+.component-headline { border-radius: 12px 17px 11px 15px; }
 @media (max-width: 600px) {
   .enhancement-card {
     padding: 18px;

@@ -842,6 +842,36 @@ select {
   span { border-bottom: 1px dashed var(--el-border-color-darker); padding-bottom: 3px; }
 }
 
+.quality-surface { border: 0; background: transparent; overflow: visible; }
+.quality-tabs { border-bottom: 0; padding: 0 4px; gap: 28px; }
+.quality-body { padding: 22px 0; }
+.quality-title-icon {
+  background: transparent;
+  &::after {
+    inset: -3px;
+    border-width: 1.5px;
+    border-color: var(--el-color-primary);
+    border-right-color: transparent;
+    border-radius: 46% 54% 43% 57%;
+    opacity: .65;
+    transform: rotate(-13deg);
+  }
+}
+.quality-header h1::after {
+  height: 7px;
+  border-top-width: 3px;
+  border-radius: 65% 30% 55% 40%;
+  transform: rotate(-1.5deg);
+}
+.quality-tabs button[aria-selected=true]::after {
+  height: 6px;
+  border-top-width: 3px;
+  border-radius: 60% 35% 50% 30%;
+}
+.settings-row, .shortcut-row, .session-grid > div { border-bottom: 0; }
+.settings-row, .shortcut-row { padding-bottom: 22px; }
+.record { border-color: transparent; border-radius: 10px 13px 9px 12px; }
+.recording { border-color: var(--el-color-primary); }
 @media (max-width: 760px) {
   .quality-manager {
     padding: 20px 14px;

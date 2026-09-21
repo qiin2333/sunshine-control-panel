@@ -1,7 +1,6 @@
 // Native drag regions handle mouse input; touch/pen need explicit window movement.
 export function overlayTouchDrag(readPosition, moveWindow, onError = console.warn) {
   let gesture = null
-  let previous = null
   let writes = Promise.resolve()
   let disposed = false
   const pump = async (drag) => {
@@ -20,14 +19,15 @@ export function overlayTouchDrag(readPosition, moveWindow, onError = console.war
         }).catch(onError)
         await writes
       }
-    } finally { drag.writing = false }
+    } finally {
+      drag.writing = false
+      if (drag.ended && gesture === drag) release(drag)
+    }
   }
   const start = async (event) => {
     if (disposed || gesture || !event.isPrimary || !['touch', 'pen'].includes(event.pointerType) || event.button !== 0) return
     event.preventDefault()
     const drag = { id: event.pointerId, target: event.currentTarget, x: event.screenX, y: event.screenY }
-    if (previous) previous.cancelled = true
-    previous = drag
     gesture = drag
     try {
       drag.target.setPointerCapture(drag.id)
@@ -40,7 +40,7 @@ export function overlayTouchDrag(readPosition, moveWindow, onError = console.war
     } catch (error) { if (gesture === drag) cancel(); onError(error) }
   }
   const move = (event) => {
-    if (event.pointerId !== gesture?.id) return
+    if (event.pointerId !== gesture?.id || gesture.ended) return
     event.preventDefault()
     gesture.latest = { x: event.screenX, y: event.screenY }
     void pump(gesture)
@@ -51,11 +51,16 @@ export function overlayTouchDrag(readPosition, moveWindow, onError = console.war
   }
   const end = (event) => {
     if (event.pointerId !== gesture?.id) return
-    move(event)
-    release(gesture)
+    event.preventDefault()
+    gesture.latest = { x: event.screenX, y: event.screenY }
+    gesture.ended = true
+    // Keep the gesture until the baseline and final position write have completed.
+    void pump(gesture)
   }
   function cancel(event) {
     if (!gesture || (event && event.pointerId !== gesture.id)) return
+    // Browsers automatically release capture after pointerup; this is not a cancellation.
+    if (event?.type === 'lostpointercapture' && gesture.ended) return
     gesture.cancelled = true
     release(gesture)
   }

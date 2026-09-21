@@ -226,6 +226,7 @@ async function fitWindow() {
     const x = position.x + old.width - Math.round(width * scale)
     const bounds = monitor ? { x: monitor.position.x, y: monitor.position.y, right: monitor.position.x + monitor.size.width, bottom: monitor.position.y + monitor.size.height } : null
     await win.setSize(new LogicalSize(width, height))
+    if (disposed || touchDrag.active) return
     await win.setPosition(new PhysicalPosition(Math.round(bounds ? Math.max(bounds.x, Math.min(x, bounds.right - width * scale)) : x), Math.round(bounds ? Math.max(bounds.y, Math.min(position.y, bounds.bottom - height * scale)) : position.y)))
   } catch (reason) { console.warn('NR overlay resize failed', reason) }
   finally { resizing = false; if (resizeAgain) { resizeAgain = false; void fitWindow() } }

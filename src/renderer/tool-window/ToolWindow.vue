@@ -13,6 +13,7 @@
 
 <script setup>
 import { computed, shallowRef, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useI18n } from '../desktop/i18n/index.js'
 
@@ -25,7 +26,8 @@ const isMonitorTool = computed(() => ['performance', 'nr'].includes(toolType.val
 const closeWindow = async () => {
   try {
     const window = getCurrentWindow()
-    await window.close()
+    if (toolType.value === 'nr') await invoke('nr_overlay_set_visible', { visible: false })
+    else await window.close()
   } catch (error) {
     console.error('关闭窗口失败:', error)
   }

@@ -64,7 +64,7 @@ const routeConfig = {
   [ROUTES.HDR_ENHANCED]: {
     name: ROUTES.HDR_ENHANCED,
     component: 'HdrEnhancedManager',
-    title: '画面增强',
+    title: '画质增强',
   },
 }
 

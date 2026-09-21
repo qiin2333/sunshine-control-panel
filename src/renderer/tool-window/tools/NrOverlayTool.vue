@@ -74,8 +74,8 @@
           <p v-if="online && pipeline?.dv_profile && pipeline.dv_state !== 'active'" class="notice">{{ pipeline.dv_state === 'waiting' ? text.dvWaiting : text.dvFallback }}</p>
           <p v-else-if="online && pipeline && pipeline.hdr_mode !== 'sdr' && !pipeline?.dv_profile" class="hint">{{ text.transfer }} · {{ pipeline?.hdr_mode.toUpperCase() }}</p>
           <p class="hint">{{ text.onlySession }}</p>
-          <label class="opacity-row"><span>{{ text.opacity }}</span><output>{{ opacity }}%</output><input v-model.number="opacity" type="range" min="35" max="95" :aria-label="text.opacity"></label>
-          <footer><kbd v-if="shortcut">Ctrl Alt N</kbd><span>{{ shortcut ? text.shortcut : text.shortcutUnavailable }}</span></footer>
+          <label class="opacity-row"><span>{{ text.opacity }}</span><output>{{ opacity }}%</output><input v-model.number="opacity" @change="saveOpacity" type="range" min="35" max="95" :aria-label="text.opacity"></label>
+          <footer><kbd v-if="shortcut">{{ shortcut }}</kbd><span>{{ shortcut ? text.shortcut : text.shortcutUnavailable }}</span></footer>
         </div>
       </div>
     </div>
@@ -89,6 +89,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { currentMonitor, getCurrentWindow, LogicalSize, PhysicalPosition } from '@tauri-apps/api/window'
 import { useI18n } from '../../desktop/i18n/index.js'
+import { displayShortcut, enhancementControlsText, enhancementError } from '../../composables/enhancementControls.js'
 import { nrOverlayText } from '../../composables/nrOverlayMessages.js'
 import { nrOverlayState, overlayOpacity, nrProcessingSize, nrPipelines, nrOutputLabel } from '../../composables/nrOverlayState.js'
 
@@ -97,8 +98,16 @@ const { locale } = useI18n()
 const text = computed(() => nrOverlayText(locale.value))
 const expanded = ref(false)
 const opacity = ref(62)
-try { opacity.value = overlayOpacity(localStorage.getItem('nr-overlay-opacity')) } catch {}
-watch(opacity, value => { try { localStorage.setItem('nr-overlay-opacity', String(overlayOpacity(value))) } catch {} })
+async function saveOpacity() {
+  try { applyPreferences(await invoke('nr_overlay_save_settings', { patch: { opacity: Number(opacity.value) } })) }
+  catch (error) { actionError.value = enhancementError(enhancementControlsText(locale.value), error) }
+}
+function applyPreferences(status) {
+  if (!status?.settings || disposed) return
+  opacity.value = overlayOpacity(status.settings.opacity)
+  shortcut.value = status.nrRegistered ? displayShortcut(status.settings.nrShortcut) : ''
+  if (status.target !== null && status.target !== undefined && status.target !== selectedId.value) { selectedId.value = status.target; selectionExpired.value = false }
+}
 const surface = ref(null)
 const pipelines = ref([])
 const selectedId = ref(null)
@@ -106,8 +115,10 @@ const selectionExpired = ref(false)
 const online = ref(false)
 const busy = ref(false)
 const errorCode = ref('')
-const error = computed(() => text.value[errorCode.value] ?? '')
-const shortcut = ref(false)
+const actionError = ref('')
+const error = computed(() => actionError.value || text.value[errorCode.value] || '')
+const shortcut = ref('')
+watch(selectedId, id => { if (id !== null && !disposed) void invoke('nr_overlay_select_session', { id }).catch(error => { actionError.value = enhancementError(enhancementControlsText(locale.value), error) }) })
 const pipeline = computed(() => pipelines.value.find(item => item.id === selectedId.value))
 const state = computed(() => nrOverlayState(pipeline.value, online.value))
 const compactLabel = computed(() => state.value === 'active' ? `NR · ${pipeline.value?.nr_scale_percent ?? 100}%` : text.value.states[state.value])
@@ -153,7 +164,7 @@ async function setOption(patch) {
   if (!canToggle.value || !supportsControls.value) return
   await sendRequest(pipeline.value.nr_requested_enabled, patch)
 }
-let disposed = false, refreshing = false, timer, observer, unlisten
+let disposed = false, refreshing = false, timer, observer, unlisten = []
 async function refresh() {
   if (refreshing || disposed) return
   refreshing = true
@@ -182,7 +193,7 @@ async function toggle() {
 async function sendRequest(enabled, patch = {}) {
   const id = pipeline.value.id
   busy.value = true
-  errorCode.value = ''
+  errorCode.value = ''; actionError.value = ''
   try {
     await invoke('nr_live_set_enabled', { id, enabled, ...patch })
     await refresh()
@@ -210,16 +221,19 @@ async function fitWindow() {
   finally { resizing = false; if (resizeAgain) { resizeAgain = false; void fitWindow() } }
 }
 onMounted(async () => {
-  void poll()
   observer = new ResizeObserver(() => void fitWindow())
   observer.observe(surface.value)
-  try {
-    const stop = await listen('nr-toggle', toggle)
-    if (disposed) stop(); else unlisten = stop
-    shortcut.value = await invoke('nr_overlay_shortcut_status')
-  } catch {}
+  for (const [name, handler] of [
+    ['nr-settings-changed', e => applyPreferences(e.payload)],
+    ['nr-action-error', e => { actionError.value = enhancementError(enhancementControlsText(locale.value), e.payload) }],
+  ]) {
+    try { const stop = await listen(name, handler); if (disposed) stop(); else unlisten.push(stop) } catch {}
+  }
+  try { applyPreferences(await invoke('nr_overlay_settings')) } catch {}
+  if (!disposed) void poll()
 })
-onUnmounted(() => { disposed = true; clearTimeout(timer); clearTimeout(settleTimer); observer?.disconnect(); unlisten?.() })
+onUnmounted(() => { disposed = true; clearTimeout(timer); clearTimeout(settleTimer); observer?.disconnect(); unlisten.forEach(stop => stop()) })
+
 </script>
 
 <style scoped>

@@ -8,61 +8,60 @@
         <ArrowDown class="chevron" :class="{ rotated: expanded }" aria-hidden="true" />
       </button>
     </header>
-    <div class="nr-reveal" :inert="!expanded" :aria-hidden="!expanded"><div class="nr-clip"><div class="nr-body">
-      <div class="session-row">
-        <span>{{ text.session }}</span>
-        <button class="close" :aria-label="text.close" @click="$emit('close')"><Close aria-hidden="true" /></button>
-      </div>
-      <select v-if="pipelines.length > 1 || (selectionExpired && pipelines.length)" v-model="selectedId" :aria-label="text.session" :disabled="busy">
-        <option :value="null" disabled>{{ text.choose }}</option>
-        <option v-for="item in pipelines" :key="item.id" :value="item.id">{{ text.session }} #{{ item.id }} · {{ item.hdr_mode.toUpperCase() }}</option>
-      </select>
-      <div class="switch-row">
-        <span>{{ text.enhancement }}</span>
-        <button class="switch" role="switch" :aria-checked="effectActive" :aria-label="text.enhancement" :class="{ on: effectActive }" :disabled="!canToggle" @click="toggle"><span /></button>
-      </div>
-      <div class="live-state" aria-live="polite"><span class="dot" :class="state" />{{ text.states[state] }}</div>
-      <p v-if="state === 'blocked'" class="notice">{{ pipeline?.backend !== 'none' ? text.hdrBusy : text.unsupported }}</p>
-      <p v-else-if="state === 'degraded'" class="notice">{{ text.fallback }}<br><small>{{ pipeline?.nr_reason }}</small></p>
-      <p v-else-if="['warming_up', 'stopping', 'scaling'].includes(state)" class="notice">{{ text.wait }}</p>
-      <p v-if="error" class="notice error">{{ error }} <button @click="refresh">{{ text.retry }}</button></p>
-      <div v-if="pipeline?.nr_requested_scale_percent !== undefined" class="scale-control">
-        <div class="scale-label">{{ text.scale }}</div>
-        <div class="scale-options" role="group" :aria-label="text.scale">
-          <button v-for="percent in [100, 75, 67, 50]" :key="percent" :disabled="!canToggle"
-            :aria-pressed="selectedScale === percent" :class="{ selected: selectedScale === percent }"
-            @click="setScale(percent)">{{ percent }}%</button>
+    <div class="nr-reveal" :inert="!expanded" :aria-hidden="!expanded">
+      <div class="nr-clip">
+        <div class="nr-body">
+          <div class="session-row">
+            <span>{{ text.session }}</span>
+            <button class="close" :aria-label="text.close" @click="$emit('close')"><Close aria-hidden="true" /></button>
+          </div>
+          <select v-if="pipelines.length > 1 || (selectionExpired && pipelines.length)" v-model="selectedId" :aria-label="text.session" :disabled="busy">
+            <option :value="null" disabled>{{ text.choose }}</option>
+            <option v-for="item in pipelines" :key="item.id" :value="item.id">{{ text.session }} #{{ item.id }} · {{ item.hdr_mode.toUpperCase() }}</option>
+          </select>
+          <div class="switch-row">
+            <span>{{ text.enhancement }}</span>
+            <button class="switch" role="switch" :aria-checked="effectActive" :aria-label="text.enhancement" :class="{ on: effectActive }" :disabled="!canToggle" @click="toggle"><span /></button>
+          </div>
+          <div class="live-state" aria-live="polite"><span class="dot" :class="state" />{{ text.states[state] }}</div>
+          <p v-if="state === 'blocked'" class="notice">{{ pipeline?.backend !== 'none' ? text.hdrBusy : text.unsupported }}</p>
+          <p v-else-if="state === 'degraded'" class="notice">{{ text.fallback }}<br><small>{{ pipeline?.nr_reason }}</small></p>
+          <p v-else-if="['warming_up', 'stopping', 'scaling'].includes(state)" class="notice">{{ text.wait }}</p>
+          <p v-if="error" class="notice error">{{ error }} <button @click="refresh">{{ text.retry }}</button></p>
+          <div v-if="pipeline?.nr_requested_scale_percent !== undefined" class="scale-control">
+            <div class="scale-label">{{ text.scale }}</div>
+            <div class="scale-options" role="group" :aria-label="text.scale">
+              <button v-for="percent in [100, 75, 67, 50]" :key="percent" :disabled="!canToggle"
+                :aria-pressed="selectedScale === percent" :class="{ selected: selectedScale === percent }"
+                @click="setScale(percent)">{{ percent }}%</button>
+            </div>
+            <div v-if="online && processingSize" class="scale-size">{{ pipeline.nr_requested_enabled ? text.processing : text.targetSize }} · {{ processingSize }}</div>
+            <p class="hint">{{ text.scaleHint }}</p>
+            <p v-if="pipeline.nr_scale_failure_reason" class="notice">{{ text.scaleFailed }}</p>
+          </div>
+          <div class="signal-row"><span>{{ online && pipeline ? (pipeline.hdr_mode === 'sdr' ? 'SDR' : 'HDR · ' + pipeline.hdr_mode.toUpperCase()) : '—' }}</span><span v-if="online && pipeline" class="badge">{{ text.preserved }}</span></div>
+          <p class="hint">{{ text.onlySession }}</p>
+          <label class="opacity-row"><span>{{ text.opacity }}</span><output>{{ opacity }}%</output><input v-model.number="opacity" type="range" min="35" max="95" :aria-label="text.opacity"></label>
+          <footer><kbd v-if="shortcut">Ctrl Alt N</kbd><span>{{ shortcut ? text.shortcut : text.shortcutUnavailable }}</span></footer>
         </div>
-        <div v-if="online && processingSize" class="scale-size">{{ pipeline.nr_requested_enabled ? text.processing : text.targetSize }} · {{ processingSize }}</div>
-        <p class="hint">{{ text.scaleHint }}</p>
-        <p v-if="pipeline.nr_scale_failure_reason" class="notice">{{ text.scaleFailed }}</p>
       </div>
-      <div class="signal-row"><span>{{ online && pipeline ? (pipeline.hdr_mode === 'sdr' ? 'SDR' : 'HDR · ' + pipeline.hdr_mode.toUpperCase()) : '—' }}</span><span v-if="online && pipeline" class="badge">{{ text.preserved }}</span></div>
-      <p class="hint">{{ text.onlySession }}</p>
-      <label class="opacity-row"><span>{{ text.opacity }}</span><output>{{ opacity }}%</output><input v-model.number="opacity" type="range" min="35" max="95" :aria-label="text.opacity"></label>
-      <footer><kbd v-if="shortcut">Ctrl Alt N</kbd><span>{{ shortcut ? text.shortcut : text.shortcutUnavailable }}</span></footer>
-    </div></div></div>
+    </div>
   </section>
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ArrowDown, Close } from '@element-plus/icons-vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { currentMonitor, getCurrentWindow, LogicalSize, PhysicalPosition } from '@tauri-apps/api/window'
 import { useI18n } from '../../desktop/i18n/index.js'
+import { nrOverlayText } from '../../composables/nrOverlayMessages.js'
 import { nrOverlayState, overlayOpacity, nrProcessingSize } from '../../composables/nrOverlayState.js'
 
 defineEmits(['close'])
 const { locale } = useI18n()
-const text = computed(() => locale.value.startsWith('zh') ? {
-  states: { disabled: 'NR 已关闭', active: 'NR 已开启', warming_up: 'NR 启动中', stopping: 'NR 关闭中', scaling: '切换处理比例', degraded: 'NR 已降级', idle: '等待串流', blocked: 'NR 不可用', unavailable: '主机未连接' },
-  scale: 'NR 处理比例', processing: '处理尺寸', targetSize: '预设尺寸', scaleHint: '降低比例可减少开销；原画尺寸保持不变', scaleFailed: '该比例未能生效，已请求恢复上一档', choose: '请选择会话', drag: '拖动浮层', session: '当前串流', close: '关闭浮层', enhancement: '画面增强', preserved: '保持输出', onlySession: '仅影响当前会话，不修改应用默认设置', opacity: '背景不透明度', shortcut: '切换画面增强', shortcutUnavailable: '快捷键不可用，可点击开关', hdrBusy: 'RTX HDR 正在占用增强位置', unsupported: '当前主机或捕获路径不支持实时切换', fallback: '增强未生效，正在使用原画；关闭后可重新尝试', wait: '等待主机处理下一帧；首次开启需要初始化', retry: '重试', disconnected: '无法读取主机状态，请确认 Sunshine 正在运行', ended: '该串流已结束', failed: '切换失败，请重试',
-} : {
-  states: { disabled: 'NR off', active: 'NR on', warming_up: 'NR starting', stopping: 'NR stopping', scaling: 'Changing NR scale', degraded: 'NR bypassed', idle: 'Waiting for stream', blocked: 'NR unavailable', unavailable: 'Host disconnected' },
-  scale: 'NR processing scale', processing: 'Processing size', targetSize: 'Planned size', scaleHint: 'Lower scales reduce cost. Original dimensions stay unchanged.', scaleFailed: 'Scale failed; restoration of the previous scale was requested.', choose: 'Select a stream', drag: 'Drag overlay', session: 'Current stream', close: 'Close overlay', enhancement: 'Enhancement', preserved: 'Output preserved', onlySession: 'This session only. App defaults stay unchanged.', opacity: 'Background opacity', shortcut: 'Toggle enhancement', shortcutUnavailable: 'Shortcut unavailable; use the switch', hdrBusy: 'RTX HDR is using the enhancement slot', unsupported: 'This host or capture path does not support live switching', fallback: 'Using the original image. Switch off and on to retry.', wait: 'Waiting for the next frame. First use needs initialization.', retry: 'Retry', disconnected: 'Cannot read host status. Check that Sunshine is running.', ended: 'This stream has ended', failed: 'Could not switch. Try again.',
-})
+const text = computed(() => nrOverlayText(locale.value))
 const expanded = ref(false)
 const opacity = ref(62)
 try { opacity.value = overlayOpacity(localStorage.getItem('nr-overlay-opacity')) } catch {}
@@ -73,7 +72,8 @@ const selectedId = ref(null)
 const selectionExpired = ref(false)
 const online = ref(false)
 const busy = ref(false)
-const error = ref('')
+const errorCode = ref('')
+const error = computed(() => text.value[errorCode.value] ?? '')
 const shortcut = ref(false)
 const pipeline = computed(() => pipelines.value.find(item => item.id === selectedId.value))
 const state = computed(() => nrOverlayState(pipeline.value, online.value))
@@ -110,9 +110,9 @@ async function refresh() {
     // Multiple streams require explicit selection; do not target another user silently.
     if (!selectionExpired.value && selectedId.value === null && next.length === 1) selectedId.value = next[0].id
     online.value = true
-    if (error.value === text.value.disconnected) error.value = ''
+    if (errorCode.value === 'disconnected') errorCode.value = ''
   } catch {
-    if (!disposed) { online.value = false; error.value = text.value.disconnected }
+    if (!disposed) { online.value = false; errorCode.value = 'disconnected' }
   } finally { refreshing = false }
 }
 async function poll() { await refresh(); if (!disposed) timer = setTimeout(poll, 500) }
@@ -123,12 +123,12 @@ async function toggle() {
 async function sendRequest(enabled, scalePercent) {
   const id = pipeline.value.id
   busy.value = true
-  error.value = ''
+  errorCode.value = ''
   try {
     await invoke('nr_live_set_enabled', { id, enabled, ...(scalePercent === undefined ? {} : { scalePercent }) })
     await refresh()
   } catch (reason) {
-    if (!disposed) error.value = String(reason).includes('nr_session_ended') ? text.value.ended : text.value.failed
+    if (!disposed) errorCode.value = String(reason).includes('nr_session_ended') ? 'ended' : 'failed'
   } finally { busy.value = false }
 }
 let resizing = false, resizeAgain = false
@@ -141,6 +141,7 @@ async function fitWindow() {
     const width = Math.ceil(surface.value.getBoundingClientRect().width) + 8
     const height = Math.ceil(surface.value.getBoundingClientRect().height) + 8
     const [position, old, scale, monitor] = await Promise.all([win.outerPosition(), win.outerSize(), win.scaleFactor(), currentMonitor()])
+    if (disposed) return
     const x = position.x + old.width - Math.round(width * scale)
     const bounds = monitor ? { x: monitor.position.x, y: monitor.position.y, right: monitor.position.x + monitor.size.width, bottom: monitor.position.y + monitor.size.height } : null
     await win.setSize(new LogicalSize(width, height))
@@ -148,7 +149,6 @@ async function fitWindow() {
   } catch (reason) { console.warn('NR overlay resize failed', reason) }
   finally { resizing = false; if (resizeAgain) { resizeAgain = false; void fitWindow() } }
 }
-watch(expanded, async () => { await nextTick(); void fitWindow() })
 onMounted(async () => {
   void poll()
   observer = new ResizeObserver(() => void fitWindow())

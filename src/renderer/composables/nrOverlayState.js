@@ -3,7 +3,11 @@ export function nrOverlayState(pipeline, online) {
   if (!pipeline) return 'idle'
   if (!pipeline.nr_toggle_supported) return 'blocked'
   if (pipeline.nr_requested_enabled) {
-    if (pipeline.nr_state === 'active') return pipeline.nr_requested_scale_percent !== undefined && pipeline.nr_requested_scale_percent !== pipeline.nr_scale_percent ? 'scaling' : 'active'
+    if (pipeline.nr_state === 'active') {
+      const changingScale = pipeline.nr_requested_scale_percent !== undefined &&
+        pipeline.nr_requested_scale_percent !== pipeline.nr_scale_percent
+      return changingScale ? 'scaling' : 'active'
+    }
     return pipeline.nr_state === 'degraded' ? 'degraded' : 'warming_up'
   }
   return ['active', 'warming_up'].includes(pipeline.nr_state) ? 'stopping' : 'disabled'

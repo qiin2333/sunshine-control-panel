@@ -125,6 +125,14 @@ fn normalized_key(value: &str) -> Result<String, String> {
     {
         return Err("nr_shortcut_invalid".into());
     }
+    if key.id()
+        == crate::app::TOOLBAR_SHORTCUT
+            .parse::<Shortcut>()
+            .unwrap()
+            .id()
+    {
+        return Err("nr_shortcut_conflict".into());
+    }
     Ok(key.to_string())
 }
 fn bindings(settings: &Settings) -> Result<Vec<Shortcut>, String> {
@@ -161,12 +169,7 @@ impl<R: Runtime> Registrar for GlobalRegistrar<'_, R> {
                 tauri::async_runtime::spawn(async move {
                     let action = {
                         let state = STATE.lock().unwrap();
-                        if state.capture.as_ref().is_some_and(|(label, until)| {
-                            *until > std::time::Instant::now()
-                                && app
-                                    .get_webview_window(label)
-                                    .is_some_and(|w| w.is_focused().unwrap_or(false))
-                        }) {
+                        if state.capture.is_some() {
                             return;
                         }
                         if state
@@ -244,7 +247,10 @@ fn apply_settings(
     registrar: &impl Registrar,
     persist: impl FnOnce(&Settings) -> Result<(), String>,
 ) -> Result<(), String> {
-    let desired = bindings(&next)?;
+    let mut desired = bindings(&next)?;
+    if state.capture.is_some() {
+        desired.clear();
+    }
     let previous: Vec<_> = state.owned.values().copied().collect();
     if let Err(error) =
         replace_bindings(registrar, &mut state.owned, &desired).and_then(|_| persist(&next))
@@ -286,21 +292,58 @@ pub fn initialize<R: Runtime>(app: &AppHandle<R>) {
         }
     }
 }
+// Restore from current settings, including edits made by another manager window.
+fn finish_capture(state: &mut OverlayState, registrar: &impl Registrar) -> Result<(), String> {
+    state.capture = None;
+    replace_bindings(registrar, &mut state.owned, &bindings(&state.settings)?)
+}
 #[tauri::command]
-pub async fn nr_overlay_capture_shortcut(window: tauri::WebviewWindow, active: bool) {
+pub async fn nr_overlay_capture_shortcut(
+    window: tauri::WebviewWindow,
+    active: bool,
+) -> Result<(), String> {
+    let app = window.app_handle().clone();
     let mut state = STATE.lock().unwrap();
     if active {
-        state.capture = Some((
-            window.label().into(),
+        let previous: Vec<_> = state.owned.values().copied().collect();
+        if let Err(error) = replace_bindings(&GlobalRegistrar(&app), &mut state.owned, &[]) {
+            replace_bindings(&GlobalRegistrar(&app), &mut state.owned, &previous)
+                .map_err(|_| "nr_shortcut_restore_failed")?;
+            return Err(error);
+        }
+        let lease = (
+            window.label().to_string(),
             std::time::Instant::now() + std::time::Duration::from_secs(30),
-        ));
+        );
+        state.capture = Some(lease.clone());
+        // Backend expiry also restores bindings when the recording window disappears.
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            let result = {
+                let mut state = STATE.lock().unwrap();
+                if state.capture.as_ref() != Some(&lease) {
+                    return;
+                }
+                let result = finish_capture(&mut state, &GlobalRegistrar(&app));
+                (result, snapshot(&state))
+            };
+            let _ = app.emit("nr-settings-changed", result.1);
+            if let Err(error) = result.0 {
+                let _ = app.emit("nr-action-error", error);
+            }
+        });
     } else if state
         .capture
         .as_ref()
         .is_some_and(|(label, _)| label == window.label())
     {
-        state.capture = None;
+        let result = finish_capture(&mut state, &GlobalRegistrar(&app));
+        let status = snapshot(&state);
+        drop(state);
+        let _ = app.emit("nr-settings-changed", status);
+        result?;
     }
+    Ok(())
 }
 #[tauri::command]
 pub async fn nr_overlay_settings() -> SettingsStatus {
@@ -500,14 +543,41 @@ mod tests {
     #[test]
     fn canonical_duplicates_and_unmodified_keys_are_rejected() {
         assert!(normalized_key("KeyN").is_err());
+        assert!(normalized_key("Ctrl+Alt+Shift+KeyT").is_err());
         let key = normalized_key("Ctrl+Alt+N").unwrap();
-        assert!(bindings(&Settings {
-            nr_shortcut: key.clone(),
-            overlay_shortcut: key,
-            opacity: 62
-        })
-        .is_err());
+        assert!(
+            bindings(&Settings {
+                nr_shortcut: key.clone(),
+                overlay_shortcut: key,
+                opacity: 62
+            })
+            .is_err()
+        );
         assert_eq!(normalized_key("").unwrap(), "");
+    }
+    #[test]
+    fn capture_restores_latest_bindings() {
+        let mut state = OverlayState::default();
+        let fake = Fake {
+            keys: RefCell::new(vec![]),
+            conflict: None,
+        };
+        let old = bindings(&state.settings).unwrap();
+        replace_bindings(&fake, &mut state.owned, &old).unwrap();
+        replace_bindings(&fake, &mut state.owned, &[]).unwrap();
+        state.capture = Some(("manager".into(), std::time::Instant::now()));
+        let next = Settings {
+            nr_shortcut: "Ctrl+Alt+KeyK".into(),
+            ..Settings::default()
+        };
+        apply_settings(&mut state, next, &fake, |_| Ok(())).unwrap();
+        assert!(fake.keys.borrow().is_empty());
+        finish_capture(&mut state, &fake).unwrap();
+        assert!(state.capture.is_none());
+        assert_eq!(
+            *fake.keys.borrow(),
+            vec![bindings(&state.settings).unwrap()[0].id()]
+        );
     }
     #[test]
     fn hidden_shortcut_never_redirects_an_expired_target() {

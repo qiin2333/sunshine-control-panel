@@ -7,7 +7,7 @@ use crate::windows;
 use log::{debug, error, info, warn};
 use tauri::{App, AppHandle, Manager};
 
-const TOOLBAR_SHORTCUT: &str = "CmdOrCtrl+Shift+Alt+T";
+pub(crate) const TOOLBAR_SHORTCUT: &str = "CmdOrCtrl+Shift+Alt+T";
 
 /// 应用程序状态
 pub struct AppState {

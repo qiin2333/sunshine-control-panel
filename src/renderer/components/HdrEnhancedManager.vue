@@ -125,7 +125,7 @@
                 :disabled="!pipeline || saving"
                 @click="setVisibility(true)"
               >
-                <Monitor />{{ text.open }}</button
+                <Monitor aria-hidden="true" />{{ text.open }}</button
               ><button class="quality-button" @click="switchTab('settings')">
                 {{ text.settings }}
               </button>
@@ -199,7 +199,7 @@
                         ? text.record
                         : displayShortcut(settings[item.key]) || text.unset
                     }}</span
-                    ><Keyboard /></button
+                    ><Keyboard aria-hidden="true" /></button
                   ><button
                     class="quality-link"
                     :disabled="saving || !loaded || !settings[item.key]"
@@ -211,6 +211,8 @@
                 <p
                   v-if="settings[item.key] && !registration[item.registered]"
                   class="quality-warning"
+                  role="status"
+                  aria-live="polite"
                 >
                   {{ text.statusUnavailable }}
                 </p>
@@ -231,7 +233,7 @@
                     background: `rgb(14 16 13 / ${draftOpacity / 100})`
                   }"
                 >
-                  <header><Rank /><i /> DLSS NR <ArrowUp /></header>
+                  <header><Rank aria-hidden="true" /><i aria-hidden="true" /> DLSS NR <ArrowUp aria-hidden="true" /></header>
                   <div class="mini-body">
                     <div>
                       {{ text.enhancement }}<span class="mini-toggle" />
@@ -291,6 +293,7 @@ import {
   nrOverlayState,
   nrPipelines
 } from '../composables/nrOverlayState.js'
+import { shortcutCapture } from '../composables/shortcutCapture.js'
 import { nrOverlayText } from '../composables/nrOverlayMessages.js'
 // Element Plus has no keyboard glyph; use its established input icon.
 import { EditPen as Keyboard } from '@element-plus/icons-vue'
@@ -324,7 +327,6 @@ const shortcutRows = computed(() => [
 let disposed = false,
   polling = false,
   timer,
-  captureTimer,
   unlisten = []
 function applyStatus(status) {
   if (disposed || !status?.settings) return
@@ -351,27 +353,16 @@ async function save(patch) {
     saving.value = false
   }
 }
+const capture = shortcutCapture(
+  active => invoke('nr_overlay_capture_shortcut', { active }),
+  key => { recording.value = key }
+)
 async function cancelRecording() {
-  clearTimeout(captureTimer)
-  recording.value = ''
-  try {
-    await invoke('nr_overlay_capture_shortcut', { active: false })
-  } catch {}
+  try { await capture.cancel() } catch (e) { if (!disposed) error.value = String(e) }
 }
 async function startRecording(key) {
-  await cancelRecording()
-  try {
-    await invoke('nr_overlay_capture_shortcut', { active: true })
-    if (disposed) {
-      await cancelRecording()
-      return
-    }
-    recording.value = key
-    error.value = ''
-    captureTimer = setTimeout(cancelRecording, 30000)
-  } catch (e) {
-    error.value = String(e)
-  }
+  error.value = ''
+  try { await capture.start(key) } catch (e) { if (!disposed) error.value = String(e) }
 }
 async function captureKey(event) {
   if (!recording.value) return

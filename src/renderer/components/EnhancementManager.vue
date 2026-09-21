@@ -3,7 +3,7 @@
     <EnhancementSketch :kind="kind" />
     <header class="component-page-header">
       <div class="component-title-row">
-        <span class="enhancement-icon"
+        <span class="enhancement-icon" aria-hidden="true"
           ><el-icon
             ><component :is="kind === 'nr' ? MagicStick : Sunny" /></el-icon
         ></span>
@@ -181,7 +181,7 @@
           :loading="refreshing"
           :disabled="controlsBusy"
           @click="refresh()"
-          ><el-icon><Refresh /></el-icon>{{ text.refresh }}</el-button
+          ><el-icon aria-hidden="true"><Refresh /></el-icon>{{ text.refresh }}</el-button
         >
       </div>
       <div class="maintenance-checks">

@@ -7,15 +7,16 @@ const DRAG_OPERATION_TIMEOUT_MS = 1000
 const RESTORE_RESIZE_TIMEOUT_MS = 500
 
 /**
- * Adds touch dragging to a custom Tauri title bar.
+ * Shared touch/pen dragging for custom click-and-drag surfaces and title-bar fallbacks.
  *
- * Mouse dragging remains handled by `data-tauri-drag-region`. WebView2 touch
+ * Prefer native `app-region: drag` on dedicated caption regions; those do not
+ * deliver DOM pointer events. Mouse dragging remains native. WebView2 touch
  * coordinates are viewport-relative while the window is moving, so touch
  * dragging uses the current window position and applies incremental updates.
  *
  * @param {{ value: boolean } | null} isMaximized reactive window state used by
  * the custom maximize button
- * @param {{ operationTimeoutMs?: number }} options internal timing overrides
+ * @param {{ operationTimeoutMs?: number, restoreMaximized?: boolean, onMove?: Function, onFinish?: Function }} options gesture timing and caller-specific behavior
  */
 export function useTouchWindowDrag(isMaximized = null, options = {}) {
   const operationTimeoutMs = (
@@ -28,6 +29,7 @@ export function useTouchWindowDrag(isMaximized = null, options = {}) {
   let scaleListenerPromise = null
   let disposed = false
   let dragGeneration = 0
+  let pointerType = null
   let pointerId = null
   let pointerTarget = null
   let hasMoved = false
@@ -189,7 +191,9 @@ export function useTouchWindowDrag(isMaximized = null, options = {}) {
     document.removeEventListener('pointercancel', onPointerEnd)
   }
 
-  const clearDragState = () => {
+  const clearDragState = (position = null) => {
+    const moved = hasMoved
+    const wasActive = pointerId !== null
     dragGeneration += 1
     if (cancelRestoreResizeWait) {
       const cancelWait = cancelRestoreResizeWait
@@ -204,6 +208,7 @@ export function useTouchWindowDrag(isMaximized = null, options = {}) {
     releasePointerCapture()
 
     pointerId = null
+    pointerType = null
     hasMoved = false
     dragEnding = false
     initialPosition = null
@@ -219,6 +224,7 @@ export function useTouchWindowDrag(isMaximized = null, options = {}) {
     basePhysicalY = Number.NaN
     pendingPhysicalX = Number.NaN
     pendingPhysicalY = Number.NaN
+    if (wasActive && !disposed) options.onFinish?.({ moved, position })
   }
 
   const rebaseForScaleChange = (scaleFactor) => {
@@ -447,7 +453,7 @@ export function useTouchWindowDrag(isMaximized = null, options = {}) {
       const initialScaleFactorVersion = scaleFactorVersion
       const [position, maximized, scaleFactor] = await Promise.all([
         appWindow.outerPosition(),
-        appWindow.isMaximized(),
+        options.restoreMaximized === false ? false : appWindow.isMaximized(),
         appWindow.scaleFactor(),
       ])
 
@@ -490,7 +496,7 @@ export function useTouchWindowDrag(isMaximized = null, options = {}) {
     if (
       pointerId === null ||
       event.pointerId !== pointerId ||
-      event.pointerType !== 'touch' ||
+      event.pointerType !== pointerType ||
       dragEnding
     ) {
       return
@@ -509,6 +515,7 @@ export function useTouchWindowDrag(isMaximized = null, options = {}) {
       return
     }
 
+    if (!hasMoved) options.onMove?.()
     hasMoved = true
     event.preventDefault()
 
@@ -524,6 +531,17 @@ export function useTouchWindowDrag(isMaximized = null, options = {}) {
   async function onPointerEnd(event) {
     if (pointerId === null || event.pointerId !== pointerId) return
 
+    if (event.type === 'pointercancel') { clearDragState(); return }
+    const canUseFinalPoint = !settingPosition && !scaleRebasing && Number.isFinite(event.clientX) && Number.isFinite(event.clientY)
+    if (canUseFinalPoint && Number.isFinite(event.clientX) && Number.isFinite(event.clientY)) {
+      latestClientX = event.clientX
+      latestClientY = event.clientY
+      if (!hasMoved && (Math.abs(latestClientX - startClientX) >= DRAG_THRESHOLD || Math.abs(latestClientY - startClientY) >= DRAG_THRESHOLD)) {
+        hasMoved = true
+        options.onMove?.()
+      }
+    }
+    if (canUseFinalPoint && hasMoved) updatePendingPosition()
     const generation = dragGeneration
     const activePointerId = pointerId
     dragEnding = true
@@ -585,13 +603,14 @@ export function useTouchWindowDrag(isMaximized = null, options = {}) {
     }
 
     if (isCurrentDrag(generation, activePointerId)) {
-      clearDragState()
+      clearDragState(hasMoved && initialized ? { x: Math.round(pendingPhysicalX), y: Math.round(pendingPhysicalY) } : null)
     }
   }
 
   const onTouchWindowDragStart = (event) => {
     if (
-      event.pointerType !== 'touch' ||
+      disposed ||
+      !['touch', 'pen'].includes(event.pointerType) ||
       !event.isPrimary ||
       event.button !== 0 ||
       pointerId !== null
@@ -599,6 +618,8 @@ export function useTouchWindowDrag(isMaximized = null, options = {}) {
       return
     }
 
+    // Do not turn controls inside a draggable header into drag handles.
+    if (event.target?.closest?.('button, input, select, textarea, a, summary, [role="button"], [role="switch"]')) return
     if (!getAppWindow()) return
 
     ensureScaleChangeListener()
@@ -606,6 +627,7 @@ export function useTouchWindowDrag(isMaximized = null, options = {}) {
     event.preventDefault()
     event.stopPropagation()
 
+    pointerType = event.pointerType
     pointerId = event.pointerId
     pointerTarget = event.currentTarget
     hasMoved = false
@@ -647,5 +669,7 @@ export function useTouchWindowDrag(isMaximized = null, options = {}) {
 
   return {
     onTouchWindowDragStart,
+    get active() { return pointerId !== null },
+    get generation() { return dragGeneration },
   }
 }

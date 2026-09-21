@@ -13,7 +13,7 @@
         <div class="nr-body">
           <div class="session-row">
             <span>{{ text.session }}</span>
-            <button class="close" :aria-label="text.close" @click="$emit('close')"><Close aria-hidden="true" /></button>
+            <button class="close" :aria-label="text.close" :title="text.close" @click="$emit('close')"><Close aria-hidden="true" /></button>
           </div>
           <select v-if="pipelines.length > 1 || (selectionExpired && pipelines.length)" v-model="selectedId" :aria-label="text.session" :disabled="busy">
             <option :value="null" disabled>{{ text.choose }}</option>
@@ -183,8 +183,8 @@ button:disabled { cursor: default; opacity: .5; }
 .nr-clip { min-height: 0; overflow: hidden; }
 .nr-body { padding: 0 16px 15px; }
 .session-row { display: flex; justify-content: space-between; align-items: center; color: #b9c1b0; padding: 10px 0; border-bottom: 1px solid #ffffff38; font-size: 11px; font-weight: 600; }
-.close { display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid #ffffff50; background: #0003; }
-.close svg { width: 14px; height: 14px; }
+.close { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; box-sizing: border-box; line-height: 1; border: 1px solid #ffffff50; background: #0003; }
+.close svg { display: block; width: 14px; height: 14px; }
 .close:hover { background: #f4f5ef; color: #111; }
 .switch-row { display: flex; align-items: center; justify-content: space-between; margin: 17px 0 12px; font-size: 18px; font-weight: 800; }
 .switch { width: 50px; height: 28px; padding: 3px; border-radius: 0; border: 2px solid #070906; background: #59604f; box-shadow: none; }
@@ -230,3 +230,4 @@ select { width: 100%; margin-top: 10px; background: #151b10; color: #f4f5ef; bor
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .dot { animation: none !important; } .nr-overlay, .nr-head, .nr-reveal, .switch > span, .chevron { transition: none; } }
 </style>
+

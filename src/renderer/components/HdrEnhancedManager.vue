@@ -2,10 +2,21 @@
   <section class="quality-manager">
     <header class="quality-header">
       <span class="quality-title-icon" aria-hidden="true">
-        <svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M17 5.5 5.8 5.2Q3.5 5.2 3.5 7.5L3.2 21Q3.2 23.2 5.5 23.2L21 22.9Q23 22.9 23 20.7V14.5" />
+        <svg
+          viewBox="0 0 28 28"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.6"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path
+            d="M17 5.5 5.8 5.2Q3.5 5.2 3.5 7.5L3.2 21Q3.2 23.2 5.5 23.2L21 22.9Q23 22.9 23 20.7V14.5"
+          />
           <path d="m5.8 19 5.1-6 4.1 4.5 2.5-2.6 3.2 3.6" />
-          <path d="m21.5 2 .9 3.7L26 6.8l-3.6 1.1-1 3.6-1.1-3.6-3.6-1.1 3.7-1.1Z" />
+          <path
+            d="m21.5 2 .9 3.7L26 6.8l-3.6 1.1-1 3.6-1.1-3.6-3.6-1.1 3.7-1.1Z"
+          />
           <path d="m7 8.8 1.4.1" opacity=".55" />
         </svg>
       </span>
@@ -56,7 +67,7 @@
             {{ text.noSession }}
           </p>
           <template v-else>
-            <label
+            <label v-if="pipelines.length > 1 || !pipeline"
               >{{ text.choose
               }}<select
                 :value="selectedId ?? ''"
@@ -65,10 +76,17 @@
               >
                 <option value="" disabled>{{ text.choose }}</option>
                 <option v-for="p in pipelines" :key="p.id" :value="p.id">
-                  #{{ p.id }} · {{ nrOutputLabel(p) }}
+                  {{ text.stream }} #{{ p.id }} · {{ nrOutputLabel(p) }}
                 </option>
               </select></label
             >
+            <div
+              v-if="pipeline && pipelines.length === 1"
+              class="session-identity"
+            >
+              <strong>{{ text.stream }} #{{ pipeline.id }}</strong
+              ><span>{{ text.connected }}</span>
+            </div>
             <p v-if="selectedId && !pipeline" class="quality-note">
               {{ text.expired }}
             </p>
@@ -78,10 +96,6 @@
                 ><strong>{{
                   overlayText.states[nrOverlayState(pipeline, online)]
                 }}</strong>
-              </div>
-              <div>
-                <span>{{ text.scale }}</span
-                ><strong>{{ pipeline.nr_scale_percent }}%</strong>
               </div>
               <div>
                 <span>{{ text.output }}</span
@@ -98,6 +112,13 @@
                   : overlayText.dvFallback
               }}
             </p>
+            <NrSessionControls
+              v-if="pipeline"
+              :pipeline="pipeline"
+              :online="online"
+              @changed="pollOnce"
+              @error="error = $event"
+            />
             <div class="quality-actions">
               <button
                 class="quality-button primary"
@@ -138,6 +159,9 @@
                   >{{ text.opacity }}<output>{{ draftOpacity }}%</output></label
                 ><input
                   id="quality-opacity"
+                  :style="{
+                    '--range-progress': ((draftOpacity - 35) / 60) * 100 + '%'
+                  }"
                   v-model.number="draftOpacity"
                   type="range"
                   min="35"
@@ -202,7 +226,6 @@
               </div>
               <div class="preview-stage">
                 <div
-                  v-if="visible"
                   class="mini-overlay"
                   :style="{
                     background: `rgb(14 16 13 / ${draftOpacity / 100})`
@@ -224,7 +247,6 @@
                     </footer>
                   </div>
                 </div>
-                <span v-else>{{ text.hidden }}</span>
               </div>
               <p class="quality-note">{{ text.previewHint }}</p>
             </aside>
@@ -254,6 +276,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { ArrowUp, Monitor, Rank } from '@element-plus/icons-vue'
+import NrSessionControls from './NrSessionControls.vue'
 import EnhancementManager from './EnhancementManager.vue'
 import { useI18n } from '../desktop/i18n/index.js'
 import {
@@ -468,428 +491,5 @@ onUnmounted(() => {
   window.removeEventListener('blur', cancelRecording)
 })
 </script>
-<style scoped lang="less">
-:global([data-bs-theme='dark'] .quality-manager) {
-  --quality-surface: #3d3235;
-  --el-text-color-primary: #f0dfc3;
-  --el-text-color-regular: #d6c3a7;
-  --el-text-color-secondary: #b9aca8;
-  --el-text-color-placeholder: #9d9494;
-  --el-color-primary: #d4a5a5;
-  --el-color-primary-light-7: rgba(212, 165, 165, .28);
-  --el-color-primary-light-8: rgba(212, 165, 165, .2);
-  --el-color-primary-light-9: rgba(212, 165, 165, .12);
-  --el-border-color: rgba(230, 213, 184, .22);
-  --el-border-color-light: rgba(230, 213, 184, .16);
-  --el-border-color-lighter: rgba(230, 213, 184, .11);
-  --el-border-color-darker: rgba(230, 213, 184, .3);
-  --el-fill-color-blank: #3d3235;
-  --el-fill-color-light: rgba(255,255,255,.055);
-  color-scheme: dark;
-}
-:global([data-bs-theme='light'] .quality-manager) {
-  color-scheme: light;
-}
 
-.quality-manager {
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: 32px;
-  color: var(--el-text-color-primary);
-  font-family: inherit;
-}
-.quality-title-icon {
-  display: inline-flex;
-  padding: 13px;
-  border-radius: 16px;
-  background: var(--el-color-primary-light-9);
-  color: var(--el-color-primary);
-  svg {
-    width: 27px;
-    height: 27px;
-  }
-}
-.category-description {
-  margin: 0 0 20px;
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-  line-height: 1.7;
-}
-.enhancement-stack {
-  display: grid;
-  gap: 20px;
-}
-.quality-header {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 22px;
-  h1 {
-    margin: 0;
-    font-size: 25px;
-  }
-  p {
-    margin-top: 6px;
-    color: var(--el-text-color-secondary);
-  }
-}
-.quality-surface {
-  background: var(--quality-surface, var(--el-bg-color));
-  border: 1px solid var(--el-border-color-light);
-  border-radius: 18px;
-  overflow: hidden;
-}
-.quality-tabs {
-  display: flex;
-  gap: 25px;
-  padding: 0 24px;
-  border-bottom: 1px solid var(--el-border-color-light);
-  flex-wrap: wrap;
-  button {
-    padding: 16px 0 13px;
-    color: var(--el-text-color-secondary);
-    border: 0;
-    border-bottom: 3px solid transparent;
-    background: none;
-    cursor: pointer;
-    font: inherit;
-  }
-  button[aria-selected='true'] {
-    color: var(--el-color-primary);
-    border-bottom-color: var(--el-color-primary);
-  }
-}
-.quality-body {
-  padding: 24px;
-}
-.quality-body h2 {
-  font-size: 17px;
-  margin: 0;
-}
-.quality-body h3 {
-  font-size: 14px;
-  margin: 0;
-}
-.quality-body p {
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-}
-.quality-body svg {
-  width: 17px;
-  height: 17px;
-  flex-shrink: 0;
-}
-.quality-button,
-.quality-link {
-  font: inherit;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-}
-.quality-button {
-  background: var(--quality-surface, var(--el-bg-color));
-  color: var(--el-text-color-primary);
-  border: 1px solid var(--el-border-color);
-  border-radius: 6px;
-  padding: 9px 13px;
-}
-.quality-button:hover {
-  border-color: var(--el-color-primary);
-}
-.quality-button.primary {
-  background: var(--el-color-primary);
-  color: #fff;
-  border-color: var(--el-color-primary);
-}
-.quality-link {
-  padding: 5px;
-  border: 0;
-  background: none;
-  color: var(--el-color-primary);
-}
-.quality-button:disabled,
-.quality-link:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-.quality-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 230px;
-  gap: 28px;
-}
-.settings-row {
-  padding: 16px 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border-bottom: 1px solid var(--el-border-color-light);
-  gap: 15px;
-  p {
-    margin: 4px 0 0;
-  }
-  &:first-child {
-    padding-top: 0;
-  }
-  &.block {
-    display: block;
-  }
-}
-.range-title {
-  display: flex;
-  justify-content: space-between;
-}
-input[type='range'] {
-  width: 100%;
-  margin: 12px 0 0;
-  accent-color: var(--el-color-primary);
-}
-.shortcuts-title {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 20px;
-}
-.shortcut-row {
-  padding: 13px 0;
-  border-bottom: 1px solid var(--el-border-color-light);
-}
-.shortcut-controls {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
-}
-.record {
-  flex: 1;
-  justify-content: space-between;
-  text-align: left;
-  min-width: 0;
-  background: var(--el-fill-color-light);
-  span {
-    overflow-wrap: anywhere;
-  }
-}
-.recording {
-  border-color: var(--el-color-primary);
-  background: var(--el-color-primary-light-9);
-}
-.record-hint {
-  padding: 10px;
-  background: var(--el-color-primary-light-9);
-  border-radius: 6px;
-}
-.quality-note {
-  font-size: 12px;
-  margin-top: 14px;
-}
-.quality-warning,
-.quality-feedback.failure {
-  color: var(--el-color-danger);
-}
-.quality-feedback {
-  min-height: 22px;
-  margin-top: 18px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-}
-.preview-title {
-  display: flex;
-  justify-content: space-between;
-  font-size: 12px;
-  margin-bottom: 10px;
-  color: var(--el-text-color-secondary);
-}
-.preview-stage {
-  background: linear-gradient(145deg, #384b3b, #132024);
-  border-radius: 8px;
-  padding: 24px 15px;
-  min-height: 210px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #d8e2d3;
-}
-.mini-overlay {
-  width: 100%;
-  border: 1px solid #8b997c88;
-  color: #e4ebde;
-  font-size: 12px;
-  header {
-    display: flex;
-    gap: 7px;
-    padding: 9px;
-    border-bottom: 1px solid #ffffff22;
-    i {
-      width: 6px;
-      height: 6px;
-      background: #76b900;
-      align-self: center;
-    }
-    svg:last-child {
-      margin-left: auto;
-    }
-  }
-}
-.mini-body {
-  padding: 12px;
-  > div {
-    display: flex;
-    justify-content: space-between;
-  }
-  p {
-    color: #c1cdb6;
-    font-size: 11px;
-  }
-  footer {
-    border-top: 1px solid #ffffff25;
-    padding-top: 10px;
-    margin-top: 14px;
-    display: flex;
-    gap: 7px;
-    flex-wrap: wrap;
-    font-size: 10px;
-  }
-  kbd {
-    font:
-      11px Consolas,
-      monospace;
-    overflow-wrap: anywhere;
-  }
-}
-.mini-toggle {
-  width: 29px;
-  height: 17px;
-  border: 3px solid #76b900;
-  background: linear-gradient(90deg, #76b900 50%, #14200b 50%);
-}
-.session-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0 24px;
-  > div {
-    padding: 18px 0;
-    border-bottom: 1px solid var(--el-border-color-light);
-    display: flex;
-    gap: 15px;
-    justify-content: space-between;
-  }
-}
-select {
-  display: block;
-  margin-top: 8px;
-  width: 100%;
-  background: var(--quality-surface, var(--el-bg-color));
-  color: var(--el-text-color-primary);
-  border: 1px solid var(--el-border-color);
-  border-radius: 6px;
-  padding: 9px;
-  font: inherit;
-}
-.quality-actions {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 20px;
-}
-// A light ink accent around familiar GUI surfaces; controls keep their geometry.
-.quality-title-icon {
-  position: relative;
-  border-radius: 15px 19px 14px 18px;
-  &::after {
-    content: '';
-    position: absolute;
-    inset: -4px 2px 3px -4px;
-    border: 1px solid var(--el-color-primary-light-7);
-    border-radius: 19px 14px 21px 15px;
-    transform: rotate(-7deg);
-    pointer-events: none;
-  }
-}
-.quality-header h1 {
-  position: relative;
-  display: inline-block;
-  &::after {
-    content: '';
-    position: absolute;
-    left: 1px;
-    right: -4px;
-    bottom: -5px;
-    height: 5px;
-    border-top: 2px solid var(--el-color-primary-light-7);
-    border-radius: 50%;
-    transform: rotate(-1deg);
-    pointer-events: none;
-  }
-}
-.quality-tabs button { position: relative; }
-.quality-tabs button[aria-selected=true] {
-  border-bottom-color: transparent;
-  &::after {
-    content: '';
-    position: absolute;
-    left: 0;
-    right: -2px;
-    bottom: 1px;
-    height: 4px;
-    border-top: 2px solid var(--el-color-primary);
-    border-radius: 45% 55% 30% 60%;
-    transform: rotate(-1.5deg);
-    pointer-events: none;
-  }
-}
-.preview-title {
-  span { border-bottom: 1px dashed var(--el-border-color-darker); padding-bottom: 3px; }
-}
-
-.quality-surface { border: 0; background: transparent; overflow: visible; }
-.quality-tabs { border-bottom: 0; padding: 0 4px; gap: 28px; }
-.quality-body { padding: 22px 0; }
-.quality-title-icon {
-  background: transparent;
-  &::after {
-    inset: -3px;
-    border-width: 1.5px;
-    border-color: var(--el-color-primary);
-    border-right-color: transparent;
-    border-radius: 46% 54% 43% 57%;
-    opacity: .65;
-    transform: rotate(-13deg);
-  }
-}
-.quality-header h1::after {
-  height: 7px;
-  border-top-width: 3px;
-  border-radius: 65% 30% 55% 40%;
-  transform: rotate(-1.5deg);
-}
-.quality-tabs button[aria-selected=true]::after {
-  height: 6px;
-  border-top-width: 3px;
-  border-radius: 60% 35% 50% 30%;
-}
-.settings-row, .shortcut-row, .session-grid > div { border-bottom: 0; }
-.settings-row, .shortcut-row { padding-bottom: 22px; }
-.record { border-color: transparent; border-radius: 10px 13px 9px 12px; }
-.recording { border-color: var(--el-color-primary); }
-@media (max-width: 760px) {
-  .quality-manager {
-    padding: 20px 14px;
-  }
-  .quality-layout,
-  .session-grid {
-    grid-template-columns: 1fr;
-  }
-  .quality-body {
-    padding: 18px;
-  }
-  .quality-tabs {
-    padding: 0 18px;
-    gap: 15px;
-  }
-  .quality-layout aside {
-    max-width: 320px;
-    width: 100%;
-  }
-}
-</style>
+<style src="../styles/EnhancementManager.css"></style>

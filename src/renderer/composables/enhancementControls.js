@@ -41,6 +41,29 @@ export function shortcutFromEvent(event) {
 
 const messages = {
   zh: {
+    stream: '串流',
+    connected: '当前连接',
+    maintenance: '安装与维护',
+    replaceFile: '更换组件文件',
+    installSetup: '安装并配置',
+    allowUse: '允许串流使用 ',
+    nrPermissionHint:
+      '这是功能许可开关，不代表当前画面已增强。默认行为在应用设置中选择，正在串流时可到“当前串流”即时开关。',
+    hdrPermissionHint:
+      '允许应用使用 SDR 转 HDR 功能；是否启用由应用配置决定，下次连接时生效。',
+    appDefaults: '应用默认设置',
+    setupHint: '先安装增强组件，再选择在哪些串流中使用。',
+    setupHelp: '安装需要什么？',
+    usageNotes: '功能说明与注意事项',
+    permissionSaved: '功能设置已保存。应用默认配置与当前串流效果分别管理。',
+    needsInstall: '待安装',
+    needsSetup: '需要配置',
+    ready: '已就绪',
+    installedDisabled: '已安装 · 未启用',
+    liveTitle: 'DLSS NR 画面增强',
+    liveHint: '立即应用，仅影响这次串流',
+    scaleHint: '降低比例可减少 GPU 开销，细节效果可能减弱。',
+
     title: '画质增强管理',
     intro: '管理增强功能，查看串流效果，设置浮层与快捷键',
     components: '增强功能',
@@ -97,6 +120,31 @@ const messages = {
     failed: '操作失败，请重试'
   },
   en: {
+    stream: 'Stream',
+    connected: 'Connected',
+    maintenance: 'Installation & maintenance',
+    replaceFile: 'Replace component file',
+    installSetup: 'Install & set up',
+    allowUse: 'Allow streams to use ',
+    nrPermissionHint:
+      'Makes the feature available; it does not indicate an active effect. Set app defaults in application settings, or toggle the current stream live.',
+    hdrPermissionHint:
+      'Allows apps to use SDR-to-HDR conversion. Per-app settings take effect on the next connection.',
+    appDefaults: 'Application defaults',
+    setupHint:
+      'Install the enhancement component, then choose which streams use it.',
+    setupHelp: 'Installation requirements',
+    usageNotes: 'Usage notes',
+    permissionSaved:
+      'Feature setting saved. App defaults and live-stream effects are managed separately.',
+    needsInstall: 'Not installed',
+    needsSetup: 'Setup required',
+    ready: 'Ready',
+    installedDisabled: 'Installed · disabled',
+    liveTitle: 'DLSS NR enhancement',
+    liveHint: 'Apply now to this stream only',
+    scaleHint: 'A lower scale reduces GPU cost, but may reduce detail.',
+
     title: 'Image enhancement',
     intro: 'Components, live effects and overlay controls',
     components: 'Enhancements',

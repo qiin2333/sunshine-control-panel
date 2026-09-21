@@ -14,7 +14,7 @@
         <div class="nr-body">
           <select v-if="pipelines.length > 1 || (selectionExpired && pipelines.length)" v-model="selectedId" :aria-label="text.session" :disabled="busy">
             <option :value="null" disabled>{{ text.choose }}</option>
-            <option v-for="item in pipelines" :key="item.id" :value="item.id">{{ text.session }} #{{ item.id }} · {{ item.hdr_mode.toUpperCase() }}</option>
+            <option v-for="item in pipelines" :key="item.id" :value="item.id">{{ text.session }} #{{ item.id }} · {{ nrOutputLabel(item) }}</option>
           </select>
           <div class="switch-row">
             <span>{{ text.enhancement }}</span>
@@ -25,18 +25,54 @@
           <p v-else-if="state === 'degraded'" class="notice">{{ text.fallback }}<br><small>{{ pipeline?.nr_reason }}</small></p>
           <p v-else-if="['warming_up', 'stopping', 'scaling'].includes(state)" class="notice">{{ text.wait }}</p>
           <p v-if="error" class="notice error">{{ error }} <button @click="refresh">{{ text.retry }}</button></p>
-          <div v-if="pipeline?.nr_requested_scale_percent !== undefined" class="scale-control">
-            <div class="scale-label">{{ text.scale }}</div>
-            <div class="scale-options" role="group" :aria-label="text.scale">
-              <button v-for="percent in [100, 75, 67, 50]" :key="percent" :disabled="!canToggle"
-                :aria-pressed="selectedScale === percent" :class="{ selected: selectedScale === percent }"
-                @click="setScale(percent)">{{ percent }}%</button>
-            </div>
-            <div v-if="online && processingSize" class="scale-size">{{ pipeline.nr_requested_enabled ? text.processing : text.targetSize }} · {{ processingSize }}</div>
+          <div v-if="supportsControls" class="scale-control">
+            <label class="parameter-row"><span>{{ text.scale }}</span><output>{{ draftScale }}%</output>
+              <input type="range" min="20" max="100" step="5" :value="draftScale" :disabled="!canToggle"
+                :aria-label="text.scale" @input="editSlider('scale', $event)" @change="commitSlider('scale')" @pointercancel="cancelEdit">
+            </label>
+            <div class="scale-size">{{ editing === 'scale' || !pipeline.nr_requested_enabled ? text.previewSize : text.processing }} · {{ processingSize }}</div>
             <p class="hint">{{ text.scaleHint }}</p>
-            <p v-if="pipeline.nr_scale_failure_reason" class="notice">{{ text.scaleFailed }}</p>
+            <label class="parameter-row"><span>{{ text.intensity }}</span><output>{{ draftIntensity }}%</output>
+              <input type="range" min="0" max="100" step="5" :value="draftIntensity" :disabled="!canToggle"
+                :aria-label="text.intensity" @input="editSlider('intensity', $event)" @change="commitSlider('intensity')" @pointercancel="cancelEdit">
+            </label>
+            <p class="hint">{{ text.applyHint }}</p>
+            <details class="advanced">
+              <summary>{{ text.advanced }}</summary>
+              <template v-if="pipeline.nr_live_controls_version >= 3">
+                <div class="motion-label">{{ text.style }}</div>
+                <div class="motion-options style-options" role="group" :aria-label="text.style">
+                  <button v-for="style in [0, 1, 2, 3, 4]" :key="style" :disabled="!canToggle"
+                    :aria-pressed="pipeline.nr_requested_style === style" :class="{ selected: pipeline.nr_requested_style === style }"
+                    @click="setOption({ style })">{{ style }}</button>
+                </div>
+                <label class="parameter-row skin-control"><span>{{ text.skinStructure }}</span><output>{{ draftSkin }}%</output>
+                  <input type="range" min="0" max="100" step="5" :value="draftSkin" :disabled="!canToggle"
+                    :aria-label="text.skinStructure" @input="editSlider('skin', $event)" @change="commitSlider('skin')" @pointercancel="cancelEdit">
+                </label>
+                <label class="advanced-row"><span>{{ text.autoMask }}</span>
+                  <input type="checkbox" :checked="pipeline.nr_requested_auto_mask" :disabled="!canToggle"
+                    @change="setOption({ autoMask: $event.target.checked })">
+                </label>
+              </template>
+              <label class="advanced-row"><span>{{ text.uiCorrection }}</span>
+                <input type="checkbox" :checked="pipeline.nr_requested_ui_correction" :disabled="!canToggle"
+                  @change="setOption({ uiCorrection: $event.target.checked })">
+              </label>
+              <div class="motion-label">{{ text.motionQuality }}</div>
+              <div class="motion-options" role="group" :aria-label="text.motionQuality">
+                <button v-for="(label, quality) in text.motionOptions" :key="quality" :disabled="!canToggle"
+                  :aria-pressed="pipeline.nr_requested_motion_quality === quality"
+                  :class="{ selected: pipeline.nr_requested_motion_quality === quality }"
+                  @click="setOption({ motionQuality: quality })">{{ label }}</button>
+              </div>
+            </details>
+            <p v-if="pipeline.nr_settings_failure_reason" class="notice">{{ text.settingsFailed }}</p>
           </div>
-          <div class="signal-row"><span>{{ online && pipeline ? (pipeline.hdr_mode === 'sdr' ? 'SDR' : 'HDR · ' + pipeline.hdr_mode.toUpperCase()) : '—' }}</span><span v-if="online && pipeline" class="badge">{{ text.preserved }}</span></div>
+          <p v-else-if="pipeline" class="hint">{{ text.updateHost }}</p>
+          <div class="signal-row"><span>{{ online && pipeline ? nrOutputLabel(pipeline) : '—' }}</span><span v-if="online && pipeline" class="badge">{{ text.preserved }}</span></div>
+          <p v-if="online && pipeline?.dv_profile && pipeline.dv_state !== 'active'" class="notice">{{ pipeline.dv_state === 'waiting' ? text.dvWaiting : text.dvFallback }}</p>
+          <p v-else-if="online && pipeline && pipeline.hdr_mode !== 'sdr' && !pipeline?.dv_profile" class="hint">{{ text.transfer }} · {{ pipeline?.hdr_mode.toUpperCase() }}</p>
           <p class="hint">{{ text.onlySession }}</p>
           <label class="opacity-row"><span>{{ text.opacity }}</span><output>{{ opacity }}%</output><input v-model.number="opacity" type="range" min="35" max="95" :aria-label="text.opacity"></label>
           <footer><kbd v-if="shortcut">Ctrl Alt N</kbd><span>{{ shortcut ? text.shortcut : text.shortcutUnavailable }}</span></footer>
@@ -54,7 +90,7 @@ import { listen } from '@tauri-apps/api/event'
 import { currentMonitor, getCurrentWindow, LogicalSize, PhysicalPosition } from '@tauri-apps/api/window'
 import { useI18n } from '../../desktop/i18n/index.js'
 import { nrOverlayText } from '../../composables/nrOverlayMessages.js'
-import { nrOverlayState, overlayOpacity, nrProcessingSize, nrPipelines } from '../../composables/nrOverlayState.js'
+import { nrOverlayState, overlayOpacity, nrProcessingSize, nrPipelines, nrOutputLabel } from '../../composables/nrOverlayState.js'
 
 defineEmits(['close'])
 const { locale } = useI18n()
@@ -84,12 +120,38 @@ watch(state, (next, previous) => {
 })
 const effectActive = computed(() => online.value && pipeline.value?.nr_state === 'active')
 const canToggle = computed(() => online.value && pipeline.value?.nr_toggle_supported && !busy.value && !['warming_up', 'stopping', 'scaling'].includes(state.value))
-const selectedScale = computed(() => pipeline.value?.nr_requested_scale_percent ?? 100)
+const supportsControls = computed(() => pipeline.value?.nr_live_controls_version >= 2)
+const draftScale = ref(100), draftIntensity = ref(100), draftSkin = ref(0)
+const editing = ref('')
+let editingSession = null
+function syncDrafts() {
+  if (editing.value !== 'scale') draftScale.value = pipeline.value?.nr_requested_scale_percent ?? 100
+  if (editing.value !== 'skin') draftSkin.value = Math.round((pipeline.value?.nr_requested_skin_structure_strength ?? 0) * 100)
+  if (editing.value !== 'intensity') draftIntensity.value = Math.round((pipeline.value?.nr_requested_intensity ?? 1) * 100)
+}
+watch(() => [selectedId.value, pipeline.value?.nr_requested_scale_percent, pipeline.value?.nr_requested_intensity, pipeline.value?.nr_requested_skin_structure_strength], syncDrafts)
+watch(selectedId, () => { editing.value = ''; editingSession = null; syncDrafts() }, { flush: 'sync' })
+watch(online, value => { if (!value) cancelEdit() })
 const processingSize = computed(() => nrProcessingSize(pipeline.value,
-  pipeline.value?.nr_requested_enabled ? pipeline.value.nr_scale_percent : selectedScale.value))
-async function setScale(percent) {
-  if (!canToggle.value || percent === selectedScale.value) return
-  await sendRequest(pipeline.value.nr_requested_enabled, percent)
+  editing.value === 'scale' || !pipeline.value?.nr_requested_enabled ? draftScale.value : pipeline.value.nr_scale_percent))
+function editSlider(kind, event) {
+  if (!canToggle.value) return
+  editing.value = kind
+  editingSession = selectedId.value
+  if (kind === 'scale') draftScale.value = Number(event.target.value)
+  else if (kind === 'skin') draftSkin.value = Number(event.target.value)
+  else draftIntensity.value = Number(event.target.value)
+}
+function cancelEdit() { editing.value = ''; editingSession = null; syncDrafts() }
+async function commitSlider(kind) {
+  if (!canToggle.value || editingSession !== selectedId.value || editing.value !== kind) { cancelEdit(); return }
+  const patch = kind === 'scale' ? { scalePercent: draftScale.value } : kind === 'skin' ? { skinStructureStrength: draftSkin.value / 100 } : { intensity: draftIntensity.value / 100 }
+  await setOption(patch)
+  cancelEdit()
+}
+async function setOption(patch) {
+  if (!canToggle.value || !supportsControls.value) return
+  await sendRequest(pipeline.value.nr_requested_enabled, patch)
 }
 let disposed = false, refreshing = false, timer, observer, unlisten
 async function refresh() {
@@ -117,12 +179,12 @@ async function toggle() {
   if (!canToggle.value) return
   await sendRequest(!pipeline.value.nr_requested_enabled)
 }
-async function sendRequest(enabled, scalePercent) {
+async function sendRequest(enabled, patch = {}) {
   const id = pipeline.value.id
   busy.value = true
   errorCode.value = ''
   try {
-    await invoke('nr_live_set_enabled', { id, enabled, ...(scalePercent === undefined ? {} : { scalePercent }) })
+    await invoke('nr_live_set_enabled', { id, enabled, ...patch })
     await refresh()
   } catch (reason) {
     if (!disposed) errorCode.value = String(reason).includes('nr_session_ended') ? 'ended' : 'failed'
@@ -135,10 +197,11 @@ async function fitWindow() {
   resizing = true
   try {
     const win = getCurrentWindow()
-    const width = Math.ceil(surface.value.getBoundingClientRect().width) + 8
-    const height = Math.ceil(surface.value.getBoundingClientRect().height) + 8
     const [position, old, scale, monitor] = await Promise.all([win.outerPosition(), win.outerSize(), win.scaleFactor(), currentMonitor()])
     if (disposed) return
+    if (monitor) surface.value.style.setProperty('--panel-max-height', `${Math.max(120, Math.min(640, monitor.size.height / scale - 48))}px`)
+    const width = Math.ceil(surface.value.getBoundingClientRect().width) + 8
+    const height = Math.ceil(surface.value.getBoundingClientRect().height) + 8
     const x = position.x + old.width - Math.round(width * scale)
     const bounds = monitor ? { x: monitor.position.x, y: monitor.position.y, right: monitor.position.x + monitor.size.width, bottom: monitor.position.y + monitor.size.height } : null
     await win.setSize(new LogicalSize(width, height))
@@ -178,6 +241,7 @@ button:disabled { cursor: default; opacity: .5; }
 .nr-reveal { display: grid; grid-template-rows: 0fr; opacity: 0; transform: translateY(-4px); transition: grid-template-rows .22s cubic-bezier(.2,.8,.2,1), opacity .16s ease, transform .22s ease; }
 .expanded .nr-reveal { grid-template-rows: 1fr; opacity: 1; transform: translateY(0); }
 .nr-clip { min-height: 0; overflow: hidden; }
+.expanded .nr-clip { max-height: var(--panel-max-height, 640px); overflow-y: auto; scrollbar-width: thin; scrollbar-color: #83916f transparent; }
 .nr-body { padding: 0 16px 15px; }
 .close { flex: 0 0 24px; margin-left: 5px; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; box-sizing: border-box; line-height: 1; border: 1px solid transparent; background: transparent; }
 .close svg { display: block; width: 14px; height: 14px; }
@@ -194,19 +258,30 @@ button:disabled { cursor: default; opacity: .5; }
 .dot.degraded, .dot.blocked { background: #f3c74c; }
 .dot.warming_up, .dot.stopping, .dot.scaling { background: transparent; border: 2px solid #768366; border-top-color: currentColor; animation: spin 1s linear infinite; }
 .scale-control { border-top: 1px solid #ffffff38; padding-top: 13px; margin-bottom: 14px; }
-.scale-label { color: #e3e8dc; font-size: 12px; font-weight: 700; margin-bottom: 9px; }
-.scale-options { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
-.scale-options button { padding: 7px 0; border: 1px solid #8a927b; border-radius: 0; background: #0004; color: #d1d8c7; font: 700 12px/1.5 Consolas, monospace; }
-.scale-options button.selected { background: var(--green); color: #101508; border-color: #a8e03e; box-shadow: none; }
-.scale-options button:hover:not(:disabled) { border-color: #fff; }
+.parameter-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; color: #e3e8dc; font-size: 12px; font-weight: 700; }
+.parameter-row output { font: 700 12px Consolas, monospace; color: #d1d8c7; }
+.parameter-row input { width: 100%; margin: 5px 0; accent-color: var(--green); cursor: pointer; }
+.parameter-row input:disabled { cursor: default; opacity: .5; }
+.advanced { border-top: 1px solid #ffffff20; padding-top: 10px; color: #b9c1b0; font-size: 12px; }
+.advanced summary { cursor: pointer; }
+.advanced-row { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; }
+.advanced-row input { appearance: none; width: 14px; height: 14px; border: 1px solid #83916f; background: #0004; cursor: pointer; }
+.advanced-row input:checked { background: var(--green); box-shadow: inset 0 0 0 2px #101508; }
+.motion-label { margin: 12px 0 8px; }
+.motion-options { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.style-options { grid-template-columns: repeat(5, 1fr); }
+.skin-control { margin-top: 14px; }
+.motion-options button { padding: 6px 0; border: 1px solid #8a927b; border-radius: 0; background: #0004; color: #d1d8c7; font-size: 11px; font-weight: 700; }
+.motion-options button.selected { background: var(--green); color: #101508; border-color: #a8e03e; }
+.motion-options button:hover:not(:disabled) { border-color: #fff; }
 .scale-size { margin-top: 11px; color: #e0e7d7; font: 12px/1.5 Consolas, 'Microsoft YaHei', monospace; }
-.scale-control .hint { margin: 5px 0 0; }
+.scale-control .hint { margin: 7px 0 14px; }
 .signal-row { border-top: 1px solid #ffffff38; padding-top: 13px; display: flex; justify-content: space-between; align-items: center; font-weight: 700; }
 .badge { color: #a5dc43; font-size: 10px; border: 1px solid var(--green); padding: 2px 6px; border-radius: 0; }
 .hint { color: #b7c0ab; font-size: 11px; margin: 9px 0 16px; }
 .opacity-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; color: #d0d8c5; font-size: 12px; font-weight: 600; }
-.opacity-row input { appearance: none; width: 100%; margin: 3px 0; background: #4e5845; border: 1px solid #83916f; height: 6px; border-radius: 0; }
-.opacity-row input::-webkit-slider-thumb { appearance: none; width: 12px; height: 18px; background: var(--green); border: 2px solid #0a1003; cursor: ew-resize; }
+.parameter-row input[type="range"], .opacity-row input { appearance: none; width: 100%; margin: 3px 0; background: #4e5845; border: 1px solid #83916f; height: 6px; border-radius: 0; }
+.parameter-row input[type="range"]::-webkit-slider-thumb, .opacity-row input::-webkit-slider-thumb { appearance: none; width: 12px; height: 18px; background: var(--green); border: 2px solid #0a1003; cursor: ew-resize; }
 footer { display: flex; gap: 9px; align-items: center; border-top: 1px solid #ffffff38; margin-top: 17px; padding-top: 12px; color: #b7c0ab; font-size: 11px; }
 kbd { border: 1px solid #d2dbc6; background: #d2dbc6; color: #101508; padding: 2px 5px; border-radius: 0; font: 700 11px/1.5 Consolas, monospace; }
 .notice { font-size: 12px; color: #f3c74c; margin: 8px 0 12px; overflow-wrap: anywhere; }

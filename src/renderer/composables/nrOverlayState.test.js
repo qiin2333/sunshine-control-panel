@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { nrOverlayState, overlayOpacity, nrPipelines } from './nrOverlayState.js'
+import { nrOverlayState, overlayOpacity, nrPipelines, nrOutputLabel } from './nrOverlayState.js'
 
 test('NR indicator reports actual processing, not just requested state', () => {
   const p = { nr_toggle_supported: true, nr_requested_enabled: true, nr_state: 'disabled' }
@@ -47,4 +47,33 @@ test('Malformed host sessions cannot enter the overlay or become request targets
     { id: 2, hdr_mode: null }, { id: '3', hdr_mode: 'sdr' },
     { id: -1, hdr_mode: 'pq' }, { id: 1.5, hdr_mode: 'pq' },
     { id: Number.MAX_SAFE_INTEGER + 1, hdr_mode: 'pq' }, valid]), [valid])
+})
+
+test('Each live parameter stays pending until the host reports it applied', () => {
+  const p = { nr_toggle_supported: true, nr_requested_enabled: true, nr_state: 'active',
+    nr_live_controls_version: 2, nr_requested_scale_percent: 20, nr_scale_percent: 20,
+    nr_requested_intensity: 0.5, nr_intensity: 0.5,
+    nr_requested_ui_correction: true, nr_ui_correction: true,
+    nr_requested_motion_quality: 3, nr_motion_quality: 3 }
+  assert.equal(nrOverlayState(p, true), 'active')
+  for (const key of ['intensity', 'ui_correction', 'motion_quality']) {
+    assert.equal(nrOverlayState({ ...p, ['nr_' + key]: 0 }, true), 'scaling')
+  }
+  assert.equal(nrOverlayState({ ...p, nr_requested_enabled: false }, true), 'stopping')
+})
+
+test('advanced controls wait for the applied values', () => {
+  for (const key of ['style', 'skin_structure_strength', 'auto_mask']) {
+    const p = { nr_toggle_supported: true, nr_requested_enabled: true, nr_state: 'active', nr_live_controls_version: 3, nr_requested_scale_percent: 100, nr_scale_percent: 100, ['nr_requested_' + key]: 1, ['nr_' + key]: 0 }
+    assert.equal(nrOverlayState(p, true), 'scaling')
+    p['nr_' + key] = 1
+    assert.equal(nrOverlayState(p, true), 'active')
+  }
+})
+test('Dolby Vision requires confirmed output, independently of transfer', () => {
+  assert.equal(nrOutputLabel({ hdr_mode: 'pq' }), 'HDR · PQ')
+  for (const state of ['waiting', 'fallback']) assert.equal(nrOutputLabel({ hdr_mode: 'pq', dv_profile: '8.1', dv_state: state }), 'HDR · PQ')
+  assert.equal(nrOutputLabel({ hdr_mode: 'pq', dv_profile: '8.1', dv_state: 'active' }), 'Dolby Vision 8.1 · PQ')
+  assert.equal(nrOutputLabel({ hdr_mode: 'hlg', dv_profile: '8.4', dv_state: 'active' }), 'Dolby Vision 8.4 · HLG')
+  assert.equal(nrOutputLabel({ hdr_mode: 'sdr', dv_profile: '8.1', dv_state: 'active' }), 'SDR')
 })

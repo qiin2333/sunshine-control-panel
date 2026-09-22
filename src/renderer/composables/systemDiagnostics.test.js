@@ -14,18 +14,16 @@ test('GPU enumeration and valid local response do not certify encoding or remote
   assert.equal(rows.firewall.statusText, text.unverified)
 })
 
-test('HTTP success without a valid Sunshine response is not a successful connection check', async () => {
-  for (const data of [{}, { status: false }, { status: 'false' }]) {
-    const rows = await probeSystemDiagnostics(invoke, async () => ({ ok: true, json: async () => data }), text)
+test('invalid responses and HTTP failure do not diagnose a blocked firewall', async () => {
+  for (const response of [
+    ...[{}, { status: false }, { status: 'false' }].map(data => ({ ok: true, json: async () => data })),
+    { ok: false },
+  ]) {
+    const rows = await probeSystemDiagnostics(invoke, async () => response, text)
+    assert.equal(rows.network.value, text.localUnconfirmed)
     assert.equal(rows.network.status, 'warning')
     assert.equal(rows.firewall.value, text.remoteNotTested)
   }
-})
-
-test('local HTTP failure does not diagnose a blocked firewall', async () => {
-  const rows = await probeSystemDiagnostics(invoke, async () => ({ ok: false }), text)
-  assert.equal(rows.network.value, text.localUnconfirmed)
-  assert.equal(rows.firewall.value, text.remoteNotTested)
 })
 
 test('failed GPU enumeration does not infer software fallback and does not prevent local check', async () => {

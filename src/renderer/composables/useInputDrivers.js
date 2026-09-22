@@ -3,16 +3,9 @@ import { ElMessage } from 'element-plus'
 import { useVmouse } from './useVmouse.js'
 import { vigem, vmouse } from '../tauri-adapter.js'
 
-/**
- * 设备中心输入驱动管理页的真实状态与操作。
- * 单个工具失败不清空整面板（每个状态独立 try/catch），
- * 但探测失败会置 probeFailed 标志：UI 显示「状态不可用」，
- * 与「未安装」区分开，避免误导用户重装。确认弹窗留在组件层。
- */
 export function useInputDrivers(t) {
   const vigemStatus = reactive({
-    installed: false, running: false, version: '', version_ok: false,
-    status_text: '', driver_path: '',
+    installed: false, version: '', status_text: '',
   })
   const mouse = useVmouse(t)
   const probeFailed = reactive({ vigem: false, vmouse: false })
@@ -26,25 +19,15 @@ export function useInputDrivers(t) {
   async function refreshAll() {
     if (refreshing.value) return
     refreshing.value = true
-    const jobs = [
-      async () => {
-        const result = await vigem.getStatus()
-        probeFailed.vigem = !result?.success
-        if (result?.success) Object.assign(vigemStatus, result.data)
-      },
-      async () => {
-        await mouse.loadVmouseStatus()
-        probeFailed.vmouse = !mouse.vmouseStatusKnown.value
-      },
-    ]
     try {
-      await Promise.allSettled(jobs.map(async (job) => {
-        try {
-          await job()
-        } catch (error) {
-          console.warn('输入驱动状态刷新失败:', error)
-        }
-      }))
+      await Promise.all([
+        vigem.getStatus().then(result => {
+          probeFailed.vigem = !result?.success
+          if (result?.success) Object.assign(vigemStatus, result.data)
+        }).catch(() => { probeFailed.vigem = true }),
+        mouse.loadVmouseStatus(),
+      ])
+      probeFailed.vmouse = !mouse.vmouseStatusKnown.value
     } finally {
       initialized.value = true
       refreshing.value = false
@@ -63,10 +46,8 @@ export function useInputDrivers(t) {
         } else {
           ElMessage.error(result?.message || String(result))
         }
-        return result?.success === true
       } catch (error) {
         ElMessage.error(String(error))
-        return false
       } finally {
         ops[flag] = false
       }

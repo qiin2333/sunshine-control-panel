@@ -1,9 +1,9 @@
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { vmouse } from '../tauri-adapter.js'
 
 export function useVmouse(t) {
   const vmouseStatus = ref({ installed: false, running: false })
-  const vmouseEnabled = ref(false)
+  const vmouseEnabled = computed(() => vmouseStatus.value.config_enabled === true)
   const vmouseStatusKnown = ref(false)
   const vmouseNotice = ref('')
   const vmouseConfigSaving = ref(false)
@@ -29,7 +29,7 @@ export function useVmouse(t) {
       const enabled = !vmouseEnabled.value
       const result = await vmouse.setConfig(enabled)
       if (!result?.success) throw new Error('Save failed')
-      vmouseEnabled.value = enabled
+      vmouseStatus.value.config_enabled = enabled
       vmouseNotice.value = t.value.stream.vmouseSaved
     } catch {
       vmouseNotice.value = t.value.stream.vmouseSaveFailed

@@ -19,9 +19,9 @@
             <strong>{{ t.controllersHub.peripherals.meta.title }}</strong>
             <el-tag
               size="small"
-              :type="!probeFailed.meta && metaStatus.installed ? 'success' : 'info'"
+              :type="!probeFailed && metaStatus.installed ? 'success' : 'info'"
               effect="plain"
-            >{{ probeFailed.meta ? t.deviceHub.probeUnavailable : (metaStatus.installed
+            >{{ probeFailed ? t.deviceHub.probeUnavailable : (metaStatus.installed
               ? (metaStatus.version ? `v${metaStatus.version}` : t.controllersHub.peripherals.installed)
               : t.controllersHub.peripherals.notInstalled) }}</el-tag>
           </div>
@@ -30,7 +30,7 @@
             <el-button
               size="small"
               type="primary"
-              :disabled="refreshing || probeFailed.meta"
+              :disabled="refreshing || probeFailed"
               @click="emit('open-controller-meta')"
             >{{ t.controllersHub.peripherals.meta.launch }}</el-button>
           </div>
@@ -64,7 +64,7 @@ import { useI18n } from '../../desktop/i18n/index.js'
 const emit = defineEmits(['open-controller-meta', 'open-stylus-input-probe'])
 const { t } = useI18n()
 const metaStatus = reactive({ installed: false, version: '' })
-const probeFailed = reactive({ meta: false })
+const probeFailed = ref(false)
 const initialized = ref(false)
 const refreshing = ref(false)
 
@@ -73,10 +73,10 @@ async function refreshAll() {
   refreshing.value = true
   try {
     const result = await controllerMeta.probeStatus()
-    probeFailed.meta = !result?.success
+    probeFailed.value = !result?.success
     if (result?.success) Object.assign(metaStatus, result.data)
   } catch {
-    probeFailed.meta = true
+    probeFailed.value = true
   } finally {
     initialized.value = true
     refreshing.value = false

@@ -7,12 +7,8 @@
 
 @import './pixel-language.less';
 
-// 主题令牌两块都走 :global()：`:global(x) y` 的写法会丢弃括号外的选择器，
-// 深色块因此只会编译成 `[data-bs-theme='dark']` 挂到 <html> 上，只能靠继承
-// 传给 .ds5-page，于是被直接命中元素的浅色块整体压过 —— 页面就成了
-// 「莫兰迪文字 + Gura 蓝描边 + 近白窗底」的深浅混搭。
-// 这样写让两块权重明确：:global(.ds5-page) 低于 :global([...dark] .ds5-page)。
-:global(.ds5-page) {
+// Shared by the controller view and component manager; selectors use the ds5 namespace.
+.ds5-page {
   // —— 像素菜单令牌：浅色 = Gura 蓝 ——
   --ds5-primary: #4a9eff;
   --ds5-primary-deep: #3b7fcc;
@@ -41,7 +37,7 @@
   line-height: 1.6;
 }
 
-:global([data-bs-theme='dark'] .ds5-page) {
+[data-bs-theme='dark'] .ds5-page {
   // —— 像素菜单令牌：暗色 = 莫兰迪 ——
   --ds5-primary: #d4a5a5;
   --ds5-primary-deep: #a98383;
@@ -132,7 +128,7 @@
 .ds5-hud-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 
 // 方括号文本操作（低权重动作）
-.ds5-page :deep(.el-button.ds5-action) {
+.ds5-page .el-button.ds5-action {
   .pixel-bracket-button(var(--ds5-primary));
 }
 
@@ -284,16 +280,16 @@
   line-height: 1.25;
 }
 .ds5-eq-fader > span { display: flex; align-items: center; max-width: 128px; }
-.ds5-tuning-field :deep(.el-slider.is-vertical) { margin: 0; }
-.ds5-tuning-field :deep(.el-slider.is-vertical .el-slider__runway) {
+.ds5-tuning-field .el-slider.is-vertical { margin: 0; }
+.ds5-tuning-field .el-slider.is-vertical .el-slider__runway {
   width: 8px;
   border-radius: 0;
   background:
     repeating-linear-gradient(to bottom, transparent 0 15px, color-mix(in srgb, var(--el-border-color) 65%, transparent) 15px 16px),
     var(--el-fill-color-dark);
 }
-.ds5-tuning-field :deep(.el-slider.is-vertical .el-slider__bar) { width: 8px; border-radius: 0; }
-.ds5-tuning-field :deep(.el-slider__button) {
+.ds5-tuning-field .el-slider.is-vertical .el-slider__bar { width: 8px; border-radius: 0; }
+.ds5-tuning-field .el-slider__button {
   width: 24px;
   height: 14px;
   border: 2px solid var(--ds5-primary-deep);
@@ -311,8 +307,8 @@
   font-size: 10px;
   letter-spacing: .08em;
 }
-.ds5-exact-value :deep(.el-input-number) { width: 72px; }
-.ds5-exact-value :deep(.el-input__wrapper) { min-height: 26px; }
+.ds5-exact-value .el-input-number { width: 72px; }
+.ds5-exact-value .el-input__wrapper { min-height: 26px; }
 .ds5-save-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 20px; }
 .ds5-save-button { min-width: 140px; min-height: 36px; font-weight: 600; }
 .ds5-unsaved-tag { font-weight: 600; }
@@ -320,7 +316,7 @@
 // 块状按钮 / 方角控件 / reduced-motion 由 ControllersHub.less 的设计语言层
 // 统一套用：ds5-page 仅嵌于 .chub-page 内渲染，随级联获得同样规则。
 .ds5-test-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 14px; }
-.ds5-test-actions :deep(.ds5-test-button) { min-width: 180px; min-height: 38px; margin: 0; }
+.ds5-test-actions .ds5-test-button { min-width: 180px; min-height: 38px; margin: 0; }
 
 // ============ 兼容性 ============
 .ds5-compat-row { display: flex; justify-content: space-between; align-items: center; gap: 24px; flex-wrap: wrap; }
@@ -341,7 +337,7 @@
 .ds5-details-collapse {
   margin-top: 0;
   border: 0;
-  :deep(.el-collapse-item__header) {
+  .el-collapse-item__header {
     border: 0;
     color: var(--el-text-color-secondary);
     background: transparent;
@@ -351,8 +347,8 @@
     // 折叠头自身充当分区标题：后接同款像素横线
     &::after { content: ''; flex: 1; height: 2px; margin-left: 12px; background: var(--ds5-window-line); opacity: .55; }
   }
-  :deep(.el-collapse-item__wrap) { border: 0; background: transparent; }
-  :deep(.el-collapse-item__content) { padding-bottom: 0; color: inherit; }
+  .el-collapse-item__wrap { border: 0; background: transparent; }
+  .el-collapse-item__content { padding-bottom: 0; color: inherit; }
 }
 .ds5-health-row {
   display: grid;

@@ -18,6 +18,7 @@
           v-if="ds5Selected"
           embedded
           @open-controller-meta="emit('open-controller-meta')"
+          @manage-components="activeTab = 'components'"
         />
         <div class="chub-advanced-block">
           <el-collapse v-model="controllerAdvancedOpen" class="chub-advanced">
@@ -27,7 +28,7 @@
           </el-collapse>
         </div>
       </template>
-      <MicrophonePanel v-else-if="activeTab === 'microphone'" />
+      <MicrophonePanel v-else-if="activeTab === 'microphone'" @manage-components="activeTab = 'components'" />
       <UsbPassthroughPanel v-else-if="activeTab === 'usb'" />
       <template v-else-if="activeTab === 'components'">
         <RuntimeComponentsPanel />

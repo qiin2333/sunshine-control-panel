@@ -1,41 +1,7 @@
 <template>
   <section class="chub-panel">
     <UsbForwardingSettings :transport-ready="status.ready && !statusProbeFailed" />
-    <div class="chub-window" :class="statusClass">
-      <span class="chub-window-tab">USB/IP TRANSPORT</span>
-      <div class="chub-hud-row">
-        <div class="chub-hud-state">
-          <span class="chub-status-dot"></span>
-          <strong>{{ statusTitle }}</strong>
-        </div>
-        <div class="chub-hud-actions">
-          <span v-if="status.version" class="chub-hud-version">v{{ status.version }}</span>
-          <el-button size="small" :loading="statusLoading" :disabled="transportBusy" @click="refreshStatus()">{{ t.deviceHub.refresh }}</el-button>
-        </div>
-      </div>
-
-      <p v-if="statusProbeFailed || (status.detail && status.installed)" class="chub-status-error">{{ friendlyError(status.detail) }}</p>
-      <div v-if="statusLoaded && !statusProbeFailed && status.supported && !status.ready && !needsCleanup" class="chub-usb-setup">
-        <p>{{ t.deviceHub.usb.setupHint }}</p>
-        <el-button type="primary" :loading="installing" :disabled="transportBusy" @click="installTransport">
-          {{ t.deviceHub.usb.installTransport }}
-        </el-button>
-      </div>
-      <div v-if="statusLoaded && !statusProbeFailed && status.supported && needsCleanup" class="chub-usb-setup chub-usb-residual">
-        <p>{{ t.deviceHub.usb.residualHint }}</p>
-        <el-button type="danger" :loading="cleaning" :disabled="transportBusy" @click="cleanupResidual">
-          {{ t.deviceHub.usb.cleanupResidual }}
-        </el-button>
-      </div>
-      <el-alert
-        v-if="status.reboot_recommended"
-        class="chub-notice"
-        type="warning"
-        :closable="false"
-        :title="t.deviceHub.usb.rebootRequired"
-      />
-    </div>
-
+    <UsbTransportPanel :transport="transport" />
     <details class="chub-section chub-disclosure chub-disclosure--section">
       <summary>
         <span class="chub-section-label">◈ {{ t.deviceHub.usb.manualTitle }}</span>
@@ -123,29 +89,17 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { usbip } from '../../tauri-adapter.js'
 import { useI18n } from '../../desktop/i18n/index.js'
+import { useUsbTransport } from '../../composables/useUsbTransport.js'
 import UsbForwardingSettings from './UsbForwardingSettings.vue'
+import UsbTransportPanel from './UsbTransportPanel.vue'
 
 const { t } = useI18n()
-const status = reactive({
-  supported: true,
-  installed: false,
-  ready: false,
-  version: '',
-  version_valid: false,
-  reboot_recommended: false,
-  vhci_residual: false,
-  attached_devices: [],
-  detail: '',
-})
-const statusLoading = ref(false)
-const statusLoaded = ref(false)
-const statusProbeFailed = ref(false)
-const installing = ref(false)
-const cleaning = ref(false)
+const transport = useUsbTransport()
+const { status, statusLoaded, statusProbeFailed, attachedDevices, refreshStatus, friendlyError, transportBusy } = transport
 const discovering = ref(false)
 const discoveryDone = ref(false)
 const attachingBusId = ref('')
@@ -153,134 +107,11 @@ const detachingPort = ref(0)
 const remote = ref('')
 const tcpPort = ref(3240)
 const remoteDevices = ref([])
-let statusRefreshPromise = null
-
-const attachedDevices = computed(() => status.attached_devices || [])
-const needsCleanup = computed(() => Boolean(
-  status.vhci_residual || (status.installed && !status.version_valid),
-))
-const operationBusy = computed(() => Boolean(attachingBusId.value || detachingPort.value))
-const transportBusy = computed(() => Boolean(installing.value || cleaning.value))
+const operationBusy = computed(() => transportBusy.value || Boolean(attachingBusId.value || detachingPort.value))
 const validTcpPort = computed(() => Number.isInteger(tcpPort.value) && tcpPort.value >= 1024 && tcpPort.value <= 65535)
 const canDiscover = computed(() => Boolean(
-  status.ready
-  && remote.value.trim()
-  && validTcpPort.value
-  && !discovering.value
-  && !operationBusy.value,
+  status.ready && remote.value.trim() && validTcpPort.value && !discovering.value && !operationBusy.value,
 ))
-const statusClass = computed(() => {
-  if (status.ready) return 'state-ready'
-  if (!statusLoaded.value) return ''
-  if (statusProbeFailed.value) return 'state-error'
-  if (!status.supported) return ''
-  return status.installed ? 'state-error' : 'state-update_available'
-})
-const statusTitle = computed(() => {
-  if (!statusLoaded.value) return t.value.deviceHub.usb.checkingTransport
-  if (statusProbeFailed.value) return t.value.deviceHub.usb.statusUnavailable
-  if (!status.supported) return t.value.deviceHub.usb.transportUnsupported
-  if (status.ready) return t.value.deviceHub.usb.transportReady
-  if (!status.installed) return t.value.deviceHub.usb.transportMissing
-  return t.value.deviceHub.usb.transportNeedsRepair
-})
-
-function applyStatus(next) {
-  if (next) Object.assign(status, next)
-}
-
-function friendlyError(error) {
-  const message = String(error || '')
-  const code = message.match(/^(USBIP-[A-Z]+-\d{3})/)?.[1]
-  const translated = code && t.value.deviceHub.usb.errors?.[code]
-  return translated || t.value.deviceHub.usb.unknownError
-}
-
-function applyProbeFailure(detail) {
-  statusProbeFailed.value = true
-  status.ready = false
-  status.attached_devices = []
-  status.vhci_residual = false
-  status.detail = detail
-}
-
-async function performStatusRefresh() {
-  statusLoading.value = true
-  try {
-    const result = await usbip.getStatus()
-    if (result?.success) {
-      statusProbeFailed.value = false
-      applyStatus(result.data)
-    } else {
-      applyProbeFailure(result?.message || '')
-    }
-  } catch (error) {
-    applyProbeFailure(String(error || ''))
-  } finally {
-    statusLoaded.value = true
-    statusLoading.value = false
-  }
-}
-
-async function refreshStatus(options = {}) {
-  const afterCurrent = options?.afterCurrent === true
-  const activeRefresh = statusRefreshPromise
-  if (activeRefresh) {
-    await activeRefresh
-    if (!afterCurrent) return
-  }
-
-  const nextRefresh = performStatusRefresh()
-  statusRefreshPromise = nextRefresh
-  try {
-    await nextRefresh
-  } finally {
-    if (statusRefreshPromise === nextRefresh) statusRefreshPromise = null
-  }
-}
-
-async function installTransport() {
-  try {
-    await ElMessageBox.confirm(
-      t.value.deviceHub.usb.installConfirm,
-      t.value.deviceHub.usb.installTransport,
-      { confirmButtonText: t.value.deviceHub.usb.continue, cancelButtonText: t.value.deviceHub.usb.cancel, type: 'warning' },
-    )
-  } catch { return }
-  // Do not let an in-flight status refresh apply stale data over the result
-  // of the operation that is about to run.
-  if (statusRefreshPromise) await statusRefreshPromise
-  installing.value = true
-  const result = await usbip.installTransport()
-  installing.value = false
-  if (!result?.success) return ElMessage.error(friendlyError(result?.message))
-  applyStatus(result.data)
-  if (result.data?.ready) ElMessage.success(t.value.deviceHub.usb.installSuccess)
-  else ElMessage.warning(t.value.deviceHub.usb.rebootRequired)
-}
-
-async function cleanupResidual() {
-  try {
-    await ElMessageBox.confirm(
-      t.value.deviceHub.usb.cleanupConfirm,
-      t.value.deviceHub.usb.cleanupResidual,
-      { confirmButtonText: t.value.deviceHub.usb.continue, cancelButtonText: t.value.deviceHub.usb.cancel, type: 'warning' },
-    )
-  } catch { return }
-  if (statusRefreshPromise) await statusRefreshPromise
-  cleaning.value = true
-  const result = await usbip.cleanupTransport()
-  cleaning.value = false
-  if (!result?.success) {
-    // The failed cleanup may still have removed some devnodes; refresh so the
-    // residual flag reflects the actual state instead of the stale snapshot.
-    await refreshStatus()
-    return ElMessage.error(friendlyError(result?.message))
-  }
-  applyStatus(result.data)
-  if (result.data?.vhci_residual) ElMessage.error(friendlyError('USBIP-CLEAN-002'))
-  else ElMessage.success(t.value.deviceHub.usb.cleanupSuccess)
-}
 
 async function discover() {
   if (!canDiscover.value) return
@@ -336,7 +167,4 @@ watch([remote, tcpPort], () => {
   discoveryDone.value = false
   remoteDevices.value = []
 })
-
-onMounted(() => refreshStatus())
 </script>
-

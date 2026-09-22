@@ -9,88 +9,12 @@
       <p class="ds5-intro">{{ t.controllers.intro }}</p>
     </header>
 
-    <article class="ds5-window" :class="`state-${status.state}`">
-      <span class="ds5-window-tab">◈ {{ t.dualSense.title }}</span>
+    <DualSenseComponentPanel :component="component" :title="t.dualSense.title" />
+    <el-alert v-if="status.state === 'not_installed'" class="ds5-notice" type="warning" :title="nextAction" :closable="false" show-icon />
 
-      <div class="ds5-hud-row" aria-live="polite">
-        <div class="ds5-hud-state">
-          <span class="ds5-status-dot" aria-hidden="true"></span>
-          <strong class="ds5-hud-label">{{ stateLabel }}</strong>
-          <span v-if="overallVersion" class="ds5-hud-version">{{ overallVersion }}</span>
-        </div>
-        <div class="ds5-hud-actions">
-          <el-button
-            v-if="statusKnown && componentAction === 'install'"
-            text
-            type="primary"
-            class="ds5-action"
-            :loading="operation === 'install'"
-            :disabled="status.in_use || controlsBusy"
-            @click="install()"
-          >{{ t.dualSense.install }}</el-button>
-          <el-button
-            v-else-if="statusKnown && componentAction === 'repair'"
-            text
-            type="warning"
-            class="ds5-action"
-            :loading="operation === 'install'"
-            :disabled="status.in_use || controlsBusy"
-            @click="install()"
-          >{{ t.dualSense.repair }}</el-button>
-          <el-button
-            v-else-if="statusKnown && componentAction === 'update'"
-            text
-            type="warning"
-            class="ds5-action"
-            :loading="operation === 'install'"
-            :disabled="status.in_use || controlsBusy"
-            @click="install()"
-          >{{ t.dualSense.update }}</el-button>
-          <el-button
-            text
-            class="ds5-action"
-            :loading="refreshing"
-            :disabled="refreshing || controlsBusy"
-            @click="refresh()"
-          >
-            <el-icon><Refresh /></el-icon>{{ t.dualSense.refresh }}
-          </el-button>
-          <el-button
-            v-if="statusKnown && (!status.installed || !status.verified || status.update_available)"
-            text
-            class="ds5-action"
-            :disabled="status.in_use || controlsBusy"
-            @click="installFromPackage"
-          >{{ t.dualSense.installLocalPackage }}</el-button>
-        </div>
-      </div>
-
-      <article v-if="operation === 'install'" class="ds5-operation-card" aria-live="polite">
-        <div><strong>{{ operationStage }}</strong><span>{{ operationProgress }}%</span></div>
-        <el-progress :percentage="operationProgress" :show-text="false" />
-      </article>
-
-    </article>
-
-    <el-alert
-      v-if="showNotice"
-      class="ds5-notice"
-      :type="status.state === 'in_use' ? 'error' : 'warning'"
-      :title="nextAction"
-      :closable="false"
-      show-icon
-    />
-
-    <el-alert
-      v-if="operationError"
-      class="ds5-notice"
-      type="error"
-      :title="t.dualSense.technicalDetails"
-      :description="operationError"
-      show-icon
-      @close="operationError = ''"
-    />
-
+    <div v-if="statusKnown && !status.usbip_available" class="ds5-test-actions">
+      <el-button size="small" @click="emit('manage-components')">{{ t.deviceHub.components.manageTransport }}</el-button>
+    </div>
     <section v-if="componentOperational" class="ds5-section" :aria-label="t.dualSense.profileTitle">
       <div class="ds5-section-head">
         <span class="ds5-section-label">◈ {{ t.dualSense.profileTitle }}</span>
@@ -279,63 +203,28 @@
       </div>
     </section>
 
-    <section class="ds5-section">
-      <el-collapse v-model="expandedSections" class="ds5-details-collapse">
-        <el-collapse-item name="health" :title="`◈ ${t.dualSense.componentHealth}`">
-          <div v-for="item in healthRows" :key="item.label" class="ds5-health-row">
-            <span class="ds5-health-key">{{ item.label }}</span>
-            <span class="ds5-health-state"><i :class="item.tone" aria-hidden="true"></i>{{ item.state }}</span>
-            <span class="ds5-health-detail">{{ item.detail }}</span>
-          </div>
-          <footer class="ds5-panel-footer">
-            <details v-if="safeStatusDetail">
-              <summary>{{ status.error_code || t.dualSense.technicalDetails }}</summary>
-              <pre>{{ safeStatusDetail }}</pre>
-            </details>
-            <el-button
-              v-if="status.installed"
-              link
-              type="danger"
-              :loading="operation === 'uninstall'"
-              :disabled="status.in_use || controlsBusy"
-              @click="uninstall"
-            >{{ t.dualSense.uninstall }}</el-button>
-          </footer>
-        </el-collapse-item>
-      </el-collapse>
-    </section>
   </section>
 </template>
 
 <script setup>
-import { Refresh } from '@element-plus/icons-vue'
 import { useI18n } from '../desktop/i18n/index.js'
 import { useDualSenseSettings } from '../composables/useDualSenseSettings.js'
+import DualSenseComponentPanel from './controllersHub/DualSenseComponentPanel.vue'
 
 const { t } = useI18n()
-const emit = defineEmits(['open-controller-meta'])
-defineProps({
-  // 控制器中心内嵌时隐藏独立页头（标题由外壳提供）
-  embedded: { type: Boolean, default: false },
-})
-
+const emit = defineEmits(['open-controller-meta', 'manage-components'])
+defineProps({ embedded: { type: Boolean, default: false } })
 const {
-  status, statusKnown, refreshing,
-  operation, operationProgress, operationStage, operationError,
+  component,
   audioHaptics, genshinCompatibility,
   legacyStrength, legacyCurve, legacyNoiseGate,
   tuningStrengthFeel, tuningCurveFeel, tuningGateFeel,
-  tuningSaving, tuningDirty, testCompleted, expandedSections,
-  controlsBusy, componentControlsBusy, componentAction, componentOperational,
-  stateLabel, nextAction, overallVersion, canTestAudioHaptics,
-  showNotice, healthRows, safeStatusDetail,
-  install, installFromPackage, refresh,
+  tuningSaving, tuningDirty, testCompleted,
   setAudioHaptics, setGenshinCompatibility,
-  applyDefaultPreset, applyErmPreset, saveTuning,
-  test, uninstall,
+  applyDefaultPreset, applyErmPreset, saveTuning, test,
 } = useDualSenseSettings()
+const {
+  status, statusKnown, operation, controlsBusy, componentControlsBusy,
+  componentOperational, nextAction, canTestAudioHaptics,
+} = component
 </script>
-
-<style scoped lang="less">
-@import '../styles/DualSenseSettings.less';
-</style>

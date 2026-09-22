@@ -32,6 +32,10 @@
 //! changes keep the legacy token=0 single frame. Burst text is always inline
 //! (a REF text frame would race the image frame onto the wire and flip
 //! legacy peers' final state to text); the image frame may still use REF.
+//! Outbound compound text is deliberately limited to nonempty inline text:
+//! empty text is equivalent to no caption, and an oversized caption is omitted.
+//! This is a supported-content snapshot, not a lossless OS MIME-format mirror.
+//! A standalone inbound empty text frame remains valid as a remote clear.
 //!
 //! Echo suppression compares the complete current clipboard, including absent
 //! flavors. Reads and inbound writes share the state lock so a watcher cannot
@@ -203,6 +207,8 @@ struct ClipboardIdentity {
 impl ClipboardIdentity {
     fn new(text: Option<&[u8]>, png: Option<&[u8]>, pixel_hash: Option<u64>) -> Self {
         Self {
+            // Match the outbound/compound contract: empty text is no caption.
+            // This also suppresses watcher echoes after a standalone clear.
             text: text.filter(|bytes| !bytes.is_empty()).map(hash_payload),
             image: png.map(|bytes| match pixel_hash {
                 Some(hash) => ImageIdentity::Pixels(hash),
@@ -1543,6 +1549,39 @@ mod status_tests {
 #[cfg(test)]
 mod echo_tests {
     use super::*;
+
+    #[test]
+    fn empty_caption_is_equivalent_to_absent_caption() {
+        let image_only = ClipboardIdentity::new(None, Some(b"png"), Some(10));
+        let mut state = EchoState {
+            current: Some(image_only),
+        };
+        assert!(state.observe(ClipboardIdentity::new(Some(b""), Some(b"png"), Some(10))));
+        assert!(!state.observe(ClipboardIdentity::new(
+            Some(b"caption"),
+            Some(b"png"),
+            Some(10)
+        )));
+        assert!(!state.observe(image_only));
+    }
+
+    #[test]
+    fn standalone_empty_text_is_still_a_valid_clear_frame() {
+        let frame = decode_frame(&encode_frame(&Frame {
+            kind: Kind::Text,
+            token: 0,
+            payload: Vec::new(),
+        }))
+        .unwrap();
+        assert_eq!(frame.kind, Kind::Text);
+        assert_eq!(frame.token, 0);
+        assert!(frame.payload.is_empty());
+        let mut state = EchoState {
+            current: Some(ClipboardIdentity::new(Some(b"before"), None, None)),
+        };
+        assert!(!state.observe(ClipboardIdentity::new(Some(&frame.payload), None, None)));
+        assert!(state.observe(ClipboardIdentity::new(None, None, None)));
+    }
 
     #[test]
     fn a_b_a_is_not_suppressed_by_history() {

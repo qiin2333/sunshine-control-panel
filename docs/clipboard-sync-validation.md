@@ -13,7 +13,17 @@ cargo build --locked --manifest-path src-tauri/Cargo.toml
 
 Results: renderer and Windows MSVC debug build passed; clipboard tests 5 passed; complete Rust tests 223 passed, 3 ignored, 0 failed. New regressions cover A → B → A, changing either half of a compound clipboard, adding/removing a flavor, and echo suppression across PNG re-encoding.
 
+Review follow-up added the empty-caption normalization and standalone-clear frame regressions. The complete Rust suite was rerun: **225 passed, 3 ignored, 0 failed** (7 clipboard tests). This follow-up documents/tests the existing compatibility boundaries and does not change the agent's runtime behavior.
+
 ## Real Sunshine / Moonlight round trip
+
+### Supported compound content
+
+The current-state identity describes supported sync content, not every OS MIME flavor. As in the existing sender and Windows compound writer, an empty text flavor beside a PNG is normalized to an absent caption; PNG-only and PNG + empty text are intentionally equivalent. A standalone inbound empty text frame is still accepted to clear text, and its resulting empty clipboard is suppressed as an echo. Regression tests explicitly cover both cases.
+
+Compound captions must be nonempty and at most `BURST_TEXT_MAX_INLINE` (65,490 UTF-8 bytes). Larger captions retain the existing image-only fallback. Standalone large text is supported through REF. Sending a text REF before a PNG does not guarantee apply order: each peer fetches the blob asynchronously, and an old peer can finish the text fetch after applying the image, leaving text-only. A shared token cannot fix a receiver that does not implement reordering/aggregation. Removing this fallback requires a separate negotiated receiver capability, rather than changing the v1 compatibility contract in this fix.
+
+### Procedure and results
 
 Pair the VM with Core and open an actual Desktop stream. Run the new panel agent in the Windows interactive session, ensuring the installed panel is not also watching the clipboard. Check the executable path: the service can respawn the installed panel after an abnormal exit, invalidating an apparent test of the new build.
 

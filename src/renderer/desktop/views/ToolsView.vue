@@ -324,15 +324,11 @@ onMounted(async () => {
 .diagnostics-card {
   .diagnostics-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 24px;
     margin-bottom: 24px;
 
-    @media (max-width: 1200px) {
-      grid-template-columns: repeat(2, 1fr);
-    }
-
-    @media (max-width: 600px) {
+    @media (max-width: 800px) {
       grid-template-columns: 1fr;
     }
   }
@@ -393,9 +389,8 @@ onMounted(async () => {
       font-size: 14px;
       font-weight: 500;
       color: var(--fd-text-primary, #fff);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      overflow-wrap: anywhere;
+      line-height: 1.5;
     }
   }
 

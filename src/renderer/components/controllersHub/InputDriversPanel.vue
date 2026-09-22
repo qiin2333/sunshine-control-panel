@@ -55,7 +55,14 @@
               : t.controllersHub.peripherals.notInstalled) }}</el-tag>
           </div>
           <p class="chub-hint">{{ t.controllersHub.peripherals.vmouse.hint }}</p>
-          <p class="chub-hint">{{ t.deviceHub.components.mouseSettingsHint }}</p>
+          <p role="status" class="chub-hint">{{ vmouseNotice || t.stream.vmouseToggleDesc }}</p>
+          <div class="chub-card-actions">
+            <span>{{ t.stream.vmouseToggle }}</span>
+            <el-button size="small" :type="vmouseEnabled ? 'primary' : 'default'"
+              :loading="vmouseConfigSaving" :disabled="refreshing || !vmouseStatusKnown"
+              @click="toggleVmouse"
+            >{{ !vmouseStatusKnown ? t.stream.vmouseUnknown : vmouseEnabled ? t.stream.vmouseOn : t.stream.vmouseOff }}</el-button>
+          </div>
           <p v-if="vmouseStatus.installed && vmouseStatus.status_text">
             {{ vmouseStatus.status_text }}
           </p>
@@ -89,11 +96,12 @@ const {
   vigemStatus, vmouseStatus, probeFailed, ops, initialized, refreshing,
   refreshAll, installVigem, uninstallVigem,
   installVmouse, uninstallVmouse,
-} = useInputDrivers()
+  vmouseEnabled, vmouseStatusKnown, vmouseNotice, vmouseConfigSaving, toggleVmouse,
+} = useInputDrivers(t)
 
 async function confirmToggle(tool) {
   const strings = t.value.controllersHub.peripherals[tool]
-  const installed = tool === 'vigem' ? vigemStatus.installed : vmouseStatus.installed
+  const installed = tool === 'vigem' ? vigemStatus.installed : vmouseStatus.value.installed
   const action = installed ? 'uninstall' : 'install'
   try {
     await ElMessageBox.confirm(strings[action === 'install' ? 'confirmInstall' : 'confirmUninstall'], t.value.controllersHub.peripherals.confirmTitle, {

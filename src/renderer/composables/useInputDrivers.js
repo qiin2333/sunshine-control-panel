@@ -1,5 +1,6 @@
 import { reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { useVmouse } from './useVmouse.js'
 import { vigem, vmouse } from '../tauri-adapter.js'
 
 /**
@@ -8,15 +9,12 @@ import { vigem, vmouse } from '../tauri-adapter.js'
  * 但探测失败会置 probeFailed 标志：UI 显示「状态不可用」，
  * 与「未安装」区分开，避免误导用户重装。确认弹窗留在组件层。
  */
-export function useInputDrivers() {
+export function useInputDrivers(t) {
   const vigemStatus = reactive({
     installed: false, running: false, version: '', version_ok: false,
     status_text: '', driver_path: '',
   })
-  const vmouseStatus = reactive({
-    installed: false, running: false, status_text: '', driver_path: '',
-    config_enabled: false,
-  })
+  const mouse = useVmouse(t)
   const probeFailed = reactive({ vigem: false, vmouse: false })
 
   const ops = reactive({
@@ -35,9 +33,8 @@ export function useInputDrivers() {
         if (result?.success) Object.assign(vigemStatus, result.data)
       },
       async () => {
-        const result = await vmouse.getStatus()
-        probeFailed.vmouse = !result?.success
-        if (result?.success) Object.assign(vmouseStatus, result.data)
+        await mouse.loadVmouseStatus()
+        probeFailed.vmouse = !mouse.vmouseStatusKnown.value
       },
     ]
     try {
@@ -82,7 +79,7 @@ export function useInputDrivers() {
   const uninstallVmouse = withOp('vmouse', () => vmouse.uninstall())
 
   return {
-    vigemStatus, vmouseStatus, probeFailed, ops, initialized, refreshing,
+    vigemStatus, ...mouse, probeFailed, ops, initialized, refreshing,
     refreshAll, installVigem, uninstallVigem,
     installVmouse, uninstallVmouse,
   }

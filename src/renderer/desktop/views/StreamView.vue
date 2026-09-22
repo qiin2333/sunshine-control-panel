@@ -276,8 +276,7 @@
           <div class="setting-row">
             <div class="setting-info">
               <div class="setting-label">{{ t.stream.vmouseToggle }}</div>
-              <div class="setting-desc">{{ t.stream.vmouseToggleDesc }}</div>
-              <p v-if="vmouseNotice" role="status" class="setting-desc">{{ vmouseNotice }}</p>
+              <div role="status" class="setting-desc">{{ vmouseNotice || t.stream.vmouseToggleDesc }}</div>
             </div>
             <button 
               class="toggle-btn" 
@@ -330,6 +329,7 @@ import { ref, computed, onMounted } from 'vue'
 import { DataAnalysis, Film, Monitor, Mouse, Promotion, Sunny } from '@element-plus/icons-vue'
 import PillGroup from '../components/PillGroup.vue'
 import FdDropdown from '../components/FdDropdown.vue'
+import { useVmouse } from '../../composables/useVmouse.js'
 import { vdd as vddApi, vmouse as vmouseApi } from '../../tauri-adapter.js'
 import { installVddWithRecovery } from '../../composables/vddInstallRecovery.js'
 import { useVddStatusLabel } from '../../composables/useVddStatusLabel.js'
@@ -674,11 +674,8 @@ async function toggleVddOption(option) {
 }
 
 // ========== 虚拟鼠标驱动管理 ==========
-const vmouseStatus = ref({ installed: false, running: false, status_text: t.value.stream.vmouseDetecting, driver_path: '', config_enabled: true })
-const vmouseEnabled = ref(false)
-const vmouseStatusKnown = ref(false)
-const vmouseNotice = ref('')
-const vmouseConfigSaving = ref(false)
+const { vmouseStatus, vmouseEnabled, vmouseStatusKnown, vmouseNotice,
+  vmouseConfigSaving, loadVmouseStatus, toggleVmouse } = useVmouse(t)
 const vmouseInstalling = ref(false)
 const vmouseUninstalling = ref(false)
 
@@ -695,39 +692,6 @@ const vmouseStatusLabel = computed(() => {
   if (vmouseStatus.value.installed) return t.value.stream.vmouseStatusInstalled
   return t.value.stream.vmouseStatusNotInstalled
 })
-
-async function loadVmouseStatus() {
-  try {
-    const result = await vmouseApi.getStatus()
-    if (!result?.success || typeof result.data?.config_enabled !== 'boolean') throw new Error('Invalid status')
-    vmouseStatus.value = result.data
-    vmouseEnabled.value = result.data.config_enabled
-    vmouseStatusKnown.value = true
-  } catch {
-    vmouseStatusKnown.value = false
-    vmouseNotice.value = t.value.stream.vmouseReadFailed
-  }
-}
-
-async function toggleVmouse() {
-  if (vmouseConfigSaving.value || !vmouseStatusKnown.value) return
-  vmouseNotice.value = ''
-  const newVal = !vmouseEnabled.value
-  vmouseConfigSaving.value = true
-  try {
-    const result = await vmouseApi.setConfig(newVal)
-    if (result?.success) {
-      vmouseEnabled.value = newVal
-      vmouseNotice.value = t.value.stream.vmouseSaved
-    } else {
-      vmouseNotice.value = t.value.stream.vmouseSaveFailed
-    }
-  } catch (e) {
-    vmouseNotice.value = t.value.stream.vmouseSaveFailed
-  } finally {
-    vmouseConfigSaving.value = false
-  }
-}
 
 async function installVmouse() {
   if (!confirm(t.value.stream.msg.vmouseInstallConfirm)) return

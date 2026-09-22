@@ -30,8 +30,8 @@
       </template>
       <MicrophonePanel v-else-if="activeTab === 'microphone'" @manage-components="activeTab = 'components'" />
       <UsbPassthroughPanel v-else-if="activeTab === 'usb'" />
-      <template v-else-if="activeTab === 'components'">
-        <RuntimeComponentsPanel />
+      <RuntimeComponentsPanel v-else-if="activeTab === 'components'" />
+      <template v-else-if="activeTab === 'tools'">
         <PeripheralToolsPanel
           @open-controller-meta="emit('open-controller-meta')"
           @open-stylus-input-probe="emit('open-stylus-input-probe')"
@@ -67,6 +67,7 @@ const tabs = computed(() => [
   { value: 'microphone', label: t.value.deviceHub.tabs.microphone },
   { value: 'usb', label: t.value.deviceHub.tabs.usb },
   { value: 'components', label: t.value.deviceHub.tabs.components },
+  { value: 'tools', label: t.value.deviceHub.tabs.tools },
 ])
 </script>
 

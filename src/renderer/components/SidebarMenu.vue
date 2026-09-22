@@ -157,7 +157,6 @@
           @close="goHome"
           @open-controller-meta="openGamepadTest"
           @open-stylus-input-probe="openStylusInputProbe"
-          @open-hdr-enhanced="openRtxHdr"
         />
 
         <!-- 默认内容 (slot) -->

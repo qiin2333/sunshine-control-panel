@@ -1021,7 +1021,7 @@ export const zh = {
       microphone: '麦克风',
       usb: 'USB 透传',
       components: '组件管理',
-      tools: '周边工具',
+      tools: '检测工具',
     },
     overview: {
       controllers: '虚拟控制器',
@@ -1166,6 +1166,7 @@ export const zh = {
       },
     },
     components: {
+      inputDrivers: '其他输入驱动',
       hostTitle: '虚拟设备组件',
       transportTitle: '共享 USB 驱动',
       hostHint: 'Sunshine Sidecar 与 HIDMaestro 用于 DualSense 模拟及麦克风的 USB/IP 实验后端。VB-Cable 路径无需此组件。',

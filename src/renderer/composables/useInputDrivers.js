@@ -1,14 +1,14 @@
 import { reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { controllerMeta, vigem, vmouse } from '../tauri-adapter.js'
+import { vigem, vmouse } from '../tauri-adapter.js'
 
 /**
- * 控制器中心「周边工具」页的真实状态与操作。
+ * 设备中心输入驱动管理页的真实状态与操作。
  * 单个工具失败不清空整面板（每个状态独立 try/catch），
  * 但探测失败会置 probeFailed 标志：UI 显示「状态不可用」，
  * 与「未安装」区分开，避免误导用户重装。确认弹窗留在组件层。
  */
-export function usePeripheralTools() {
+export function useInputDrivers() {
   const vigemStatus = reactive({
     installed: false, running: false, version: '', version_ok: false,
     status_text: '', driver_path: '',
@@ -17,11 +17,7 @@ export function usePeripheralTools() {
     installed: false, running: false, status_text: '', driver_path: '',
     config_enabled: false,
   })
-  const metaStatus = reactive({
-    installed: false, running: false, version: '',
-    install_path: '', binary_path: '',
-  })
-  const probeFailed = reactive({ vigem: false, vmouse: false, meta: false })
+  const probeFailed = reactive({ vigem: false, vmouse: false })
 
   const ops = reactive({
     vigem: false, vmouse: false, vmouseConfig: false,
@@ -43,18 +39,13 @@ export function usePeripheralTools() {
         probeFailed.vmouse = !result?.success
         if (result?.success) Object.assign(vmouseStatus, result.data)
       },
-      async () => {
-        const result = await controllerMeta.probeStatus()
-        probeFailed.meta = !result?.success
-        if (result?.success) Object.assign(metaStatus, result.data)
-      },
     ]
     try {
       await Promise.allSettled(jobs.map(async (job) => {
         try {
           await job()
         } catch (error) {
-          console.warn('周边工具状态刷新失败:', error)
+          console.warn('输入驱动状态刷新失败:', error)
         }
       }))
     } finally {
@@ -110,7 +101,7 @@ export function usePeripheralTools() {
   }
 
   return {
-    vigemStatus, vmouseStatus, metaStatus, probeFailed, ops, initialized, refreshing,
+    vigemStatus, vmouseStatus, probeFailed, ops, initialized, refreshing,
     refreshAll, installVigem, uninstallVigem,
     installVmouse, uninstallVmouse, setVmouseEnabled,
   }

@@ -32,10 +32,9 @@
       <UsbPassthroughPanel v-else-if="activeTab === 'usb'" />
       <RuntimeComponentsPanel v-else-if="activeTab === 'components'" />
       <template v-else-if="activeTab === 'tools'">
-        <PeripheralToolsPanel
+        <DeviceDiagnosticsPanel
           @open-controller-meta="emit('open-controller-meta')"
           @open-stylus-input-probe="emit('open-stylus-input-probe')"
-          @open-hdr-enhanced="emit('open-hdr-enhanced')"
         />
       </template>
     </div>
@@ -51,12 +50,12 @@ import ChubTabs from './ChubTabs.vue'
 import DeviceOverviewPanel from './DeviceOverviewPanel.vue'
 import GamepadTypePicker from './GamepadTypePicker.vue'
 import MicrophonePanel from './MicrophonePanel.vue'
-import PeripheralToolsPanel from './PeripheralToolsPanel.vue'
+import DeviceDiagnosticsPanel from './DeviceDiagnosticsPanel.vue'
 import RuntimeComponentsPanel from './RuntimeComponentsPanel.vue'
 import UsbPassthroughPanel from './UsbPassthroughPanel.vue'
 import { useI18n } from '../../desktop/i18n/index.js'
 
-const emit = defineEmits(['open-controller-meta', 'open-stylus-input-probe', 'open-hdr-enhanced'])
+const emit = defineEmits(['open-controller-meta', 'open-stylus-input-probe'])
 const { t } = useI18n()
 const activeTab = ref('overview')
 const ds5Selected = ref(false)

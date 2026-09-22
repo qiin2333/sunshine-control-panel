@@ -1,4 +1,3 @@
-import { isCapturingShortcut } from '../../composables/shortcutCapture.js'
 import { ref, onMounted, onUnmounted } from 'vue'
 
 // 手柄按键映射 (Xbox 标准布局)
@@ -333,7 +332,7 @@ export function useGamepad(options = {}) {
     if (!active) return
 
     const gated = gate.update(pads, active.pad.index, active.edges, {
-      capturing: isCapturingShortcut() || shortcutState.captureActive,
+      capturing: shortcutState.captureActive,
       bindings: [shortcutState.settings?.nrGamepad, shortcutState.settings?.overlayGamepad]
     })
     if (gated.blocked) {

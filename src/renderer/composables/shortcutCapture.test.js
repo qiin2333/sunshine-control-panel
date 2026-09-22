@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { shortcutCapture, isCapturingShortcut } from './shortcutCapture.js'
+import { shortcutCapture } from './shortcutCapture.js'
 const flush = () => new Promise(resolve => setImmediate(resolve))
 test('cancellation waits for a pending start and never restores recording UI', async () => {
   const calls = [], changes = []
@@ -40,14 +40,11 @@ test('cancellation before backend activation prevents the activation entirely', 
   assert.ok(calls.every(active => !active))
 })
 
-test('recording exposes the native lease and suspends navigation only while active', async () => {
+test('recording exposes the native lease and clears it on cancellation', async () => {
   let lease
   const capture = shortcutCapture(active => active ? 42 : 0, (_, value) => { lease = value })
-  assert.equal(isCapturingShortcut(), false)
   await capture.start('nrGamepad')
   assert.equal(lease, 42)
-  assert.equal(isCapturingShortcut(), true)
   await capture.cancel()
   assert.equal(lease, undefined)
-  assert.equal(isCapturingShortcut(), false)
 })

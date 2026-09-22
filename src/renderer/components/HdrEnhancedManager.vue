@@ -225,7 +225,7 @@
               </div>
               <p class="quality-note">{{ text.keyHint }}</p>
               <p class="quality-note">{{ text.gamepadHint }}</p>
-              <p class="quality-note" role="status">{{ registration.gamepadSupported ? (registration.gamepadConnected ? text.gamepadConnected.replace('{count}', registration.gamepadConnected) : text.gamepadDisconnected) : text.gamepadUnsupported }}</p>
+              <p class="quality-note" role="status">{{ registration.gamepadSupported ? (gamepadConnected == null ? text.gamepadChecking : gamepadConnected ? text.gamepadConnected.replace('{count}', gamepadConnected) : text.gamepadDisconnected) : text.gamepadUnsupported }}</p>
               <p v-if="recording" class="record-hint" role="status">
                 {{ recording.endsWith('Gamepad') ? text.gamepadRecordHint : text.recordHint }}
                 <button class="quality-link" @click="cancelRecording">{{ text.cancel }}</button>
@@ -313,6 +313,7 @@ const text = computed(() => enhancementControlsText(locale.value)),
 const tab = ref('components')
 const settings = ref({ nrShortcut: '', overlayShortcut: '', nrGamepad: '', overlayGamepad: '', opacity: 62 }),
   registration = ref({})
+const gamepadConnected = ref(null)
 const draftOpacity = ref(62),
   loaded = ref(false),
   saving = ref(false),
@@ -449,10 +450,6 @@ async function pollOnce() {
     const value = await invoke('nr_overlay_is_visible')
     if (!disposed) visible.value = value
   } catch {}
-  try {
-    const status = await invoke('nr_overlay_settings')
-    if (!disposed) registration.value.gamepadConnected = status.gamepadConnected
-  } catch {}
   polling = false
 }
 async function poll() {
@@ -463,6 +460,7 @@ onMounted(async () => {
   window.addEventListener('blur', cancelRecording)
   for (const [name, handler] of [
     ['nr-settings-changed', (e) => applyStatus(e.payload)],
+    ['nr-gamepad-connected', (e) => { gamepadConnected.value = e.payload }],
     ['nr-gamepad-captured', async (e) => {
       if (disposed || !recording.value.endsWith('Gamepad') || e.payload.generation !== captureLease) return
       const key = recording.value
@@ -489,7 +487,10 @@ onMounted(async () => {
     } catch {}
   }
   try {
-    applyStatus(await invoke('nr_overlay_settings'))
+    const status = await invoke('nr_overlay_settings')
+    // A connection event is newer than this initial settings response.
+    if (gamepadConnected.value == null) gamepadConnected.value = status.gamepadConnected
+    applyStatus(status)
   } catch (e) {
     error.value = String(e)
   }

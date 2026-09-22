@@ -125,10 +125,6 @@ pub(crate) fn read(_: u32) -> Option<u32> {
     None
 }
 
-pub(crate) fn connected_count() -> usize {
-    (0..4).filter(|index| read(*index).is_some()).count()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

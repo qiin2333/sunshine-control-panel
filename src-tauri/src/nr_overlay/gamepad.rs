@@ -1,5 +1,15 @@
 use crate::controller_input::{label, parse, read, Chord};
-use std::time::{Duration, Instant};
+use std::{
+    sync::atomic::{AtomicUsize, Ordering},
+    time::{Duration, Instant},
+};
+
+// Only the input loop reads devices; settings snapshots use its last sample.
+static CONNECTED: AtomicUsize = AtomicUsize::new(usize::MAX);
+pub(super) fn connected_count() -> Option<usize> {
+    let count = CONNECTED.load(Ordering::Relaxed);
+    (count != usize::MAX).then_some(count)
+}
 fn binding_error(error: String) -> String {
     if error == "controller_shortcut_duplicate" {
         "nr_shortcut_duplicate".into()
@@ -44,17 +54,20 @@ pub(super) fn start<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
                 }
                 let (nr, overlay, capture, generation) = &context;
                 let active = capture.is_some() || !nr.is_empty() || !overlay.is_empty();
-                let mut connected = false;
+                let mut connected = 0;
                 let mut fired = None;
-                if active {
-                    for (index, pad) in pads.iter_mut().enumerate() {
-                        let sample = read(index as u32);
-                        connected |= sample.is_some();
+                for (index, pad) in pads.iter_mut().enumerate() {
+                    let sample = read(index as u32);
+                    connected += usize::from(sample.is_some());
+                    if active {
                         let chord = pad.update(sample, Instant::now());
                         if fired.is_none() {
                             fired = chord;
                         }
                     }
+                }
+                if CONNECTED.swap(connected, Ordering::Relaxed) != connected {
+                    let _ = app.emit("nr-gamepad-connected", connected);
                 }
                 if let Some(mask) = fired {
                     if let Some((owner, _)) = capture {
@@ -91,7 +104,7 @@ pub(super) fn start<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
                 }
                 tokio::select! {
                     _ = CHANGED.notified() => {},
-                    _ = tokio::time::sleep(Duration::from_millis(if active && connected { 20 } else { 500 })) => {},
+                    _ = tokio::time::sleep(Duration::from_millis(if active && connected > 0 { 20 } else { 500 })) => {},
                 }
             }
         });

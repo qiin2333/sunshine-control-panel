@@ -61,6 +61,8 @@ pub struct SettingsStatus {
     nr_registered: bool,
     overlay_registered: bool,
     gamepad_supported: bool,
+    gamepad_connected: usize,
+    capture_active: bool,
     target: Option<u64>,
 }
 fn snapshot(state: &OverlayState) -> SettingsStatus {
@@ -74,6 +76,8 @@ fn snapshot(state: &OverlayState) -> SettingsStatus {
         nr_registered: registered(&state.settings.nr_shortcut),
         overlay_registered: registered(&state.settings.overlay_shortcut),
         gamepad_supported: cfg!(target_os = "windows"),
+        gamepad_connected: crate::controller_input::connected_count(),
+        capture_active: state.capture.is_some(),
         target: state.target,
     }
 }
@@ -339,6 +343,7 @@ pub async fn nr_overlay_capture_shortcut(
         state.capture_generation += 1;
         state.capture = Some(lease.clone());
         gamepad::wake();
+        let _ = app.emit("nr-settings-changed", snapshot(&state));
         // Backend expiry also restores bindings when the recording window disappears.
         tauri::async_runtime::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(30)).await;

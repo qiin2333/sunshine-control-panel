@@ -2,24 +2,11 @@ import { isCapturingShortcut } from '../../composables/shortcutCapture.js'
 import { ref, onMounted, onUnmounted } from 'vue'
 
 // 手柄按键映射 (Xbox 标准布局)
-export const BUTTON = {
-  A: 0,
-  B: 1,
-  X: 2,
-  Y: 3,
-  LB: 4,
-  RB: 5,
-  LT: 6,
-  RT: 7,
-  BACK: 8,
-  START: 9,
-  L3: 10,
-  R3: 11,
-  DPAD_UP: 12,
-  DPAD_DOWN: 13,
-  DPAD_LEFT: 14,
-  DPAD_RIGHT: 15,
-}
+export { BUTTON } from '../../composables/controllerButtons.js'
+import { BUTTON } from '../../composables/controllerButtons.js'
+import { createGamepadInputGate } from '../../composables/gamepadInputGate.js'
+import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 
 const AXIS = {
   LEFT_X: 0,
@@ -125,7 +112,9 @@ export function useGamepad(options = {}) {
   /** 每个手柄独立记录上一帧状态，这样切换手柄时边沿检测依然正确。 */
   const padStates = new Map()
   let activeIndex = null
-  let captureReleasePending = false
+  const gate = createGamepadInputGate()
+  let shortcutState = { captureActive: false, settings: {} }
+  let stopShortcutListener, disposed = false
   const repeatTimers = {}
   let backHoldTimer = null
   let backHoldRaf = null
@@ -319,6 +308,7 @@ export function useGamepad(options = {}) {
 
     if (pads.length === 0) {
       activeIndex = null
+      gate.reset()
       padStates.clear()
       stopAllRepeats()
       clearBackHold()
@@ -342,13 +332,13 @@ export function useGamepad(options = {}) {
     const active = diffs.find((entry) => entry.pad.index === activeIndex)
     if (!active) return
 
-    if (isCapturingShortcut()) captureReleasePending = true
-    if (captureReleasePending) {
+    const gated = gate.update(pads, active.pad.index, active.edges, {
+      capturing: isCapturingShortcut() || shortcutState.captureActive,
+      bindings: [shortcutState.settings?.nrGamepad, shortcutState.settings?.overlayGamepad]
+    })
+    if (gated.blocked) {
       stopAllRepeats()
       clearBackHold()
-      if (!isCapturingShortcut() && pads.every(pad => pad.buttons.every(button => !button.pressed))) {
-        captureReleasePending = false
-      }
       return
     }
 
@@ -359,7 +349,7 @@ export function useGamepad(options = {}) {
       return
     }
 
-    for (const edge of active.edges) {
+    for (const edge of gated.edges) {
       if (edge.pressed) handleButtonDown(edge.index)
       else handleButtonUp(edge.index)
     }
@@ -454,7 +444,18 @@ export function useGamepad(options = {}) {
     }
   }
 
-  onMounted(() => {
+  onMounted(async () => {
+    let revision = 0
+    try {
+      const stop = await listen('nr-settings-changed', event => { revision++; shortcutState = event.payload })
+      if (disposed) { stop(); return }
+      stopShortcutListener = stop
+      const current = revision
+      const status = await invoke('nr_overlay_settings')
+      if (!disposed && current === revision) shortcutState = status
+    } catch { /* Navigation still works when the native bridge is unavailable. */ }
+    if (disposed) return
+
     window.addEventListener('gamepadconnected', onGamepadConnected)
     window.addEventListener('gamepaddisconnected', onGamepadDisconnected)
     window.addEventListener('mousemove', onMouseMove)
@@ -463,6 +464,8 @@ export function useGamepad(options = {}) {
   })
 
   onUnmounted(() => {
+    disposed = true
+    stopShortcutListener?.()
     window.removeEventListener('gamepadconnected', onGamepadConnected)
     window.removeEventListener('gamepaddisconnected', onGamepadDisconnected)
     window.removeEventListener('mousemove', onMouseMove)

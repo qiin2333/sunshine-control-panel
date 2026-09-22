@@ -201,7 +201,7 @@
                         <span>{{
                           recording === item.key
                             ? text.record
-                            : displayShortcut(settings[item.key]) || text.unset
+                            : (item.gamepad ? displayGamepadShortcut(settings[item.key]) : displayShortcut(settings[item.key])) || text.unset
                         }}</span
                         ><component :is="item.gamepad ? IconGamepad : Keyboard" aria-hidden="true" /></button
                       ><button
@@ -225,6 +225,7 @@
               </div>
               <p class="quality-note">{{ text.keyHint }}</p>
               <p class="quality-note">{{ text.gamepadHint }}</p>
+              <p class="quality-note" role="status">{{ registration.gamepadSupported ? (registration.gamepadConnected ? text.gamepadConnected.replace('{count}', registration.gamepadConnected) : text.gamepadDisconnected) : text.gamepadUnsupported }}</p>
               <p v-if="recording" class="record-hint" role="status">
                 {{ recording.endsWith('Gamepad') ? text.gamepadRecordHint : text.recordHint }}
                 <button class="quality-link" @click="cancelRecording">{{ text.cancel }}</button>
@@ -284,6 +285,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { ArrowUp, Monitor, Rank } from '@element-plus/icons-vue'
+import { displayGamepadShortcut } from '../composables/controllerButtons.js'
 import IconGamepad from '../desktop/icons/IconGamepad.vue'
 import NrSessionControls from './NrSessionControls.vue'
 import EnhancementManager from './EnhancementManager.vue'
@@ -446,6 +448,10 @@ async function pollOnce() {
   try {
     const value = await invoke('nr_overlay_is_visible')
     if (!disposed) visible.value = value
+  } catch {}
+  try {
+    const status = await invoke('nr_overlay_settings')
+    if (!disposed) registration.value.gamepadConnected = status.gamepadConnected
   } catch {}
   polling = false
 }

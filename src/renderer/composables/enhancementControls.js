@@ -1,3 +1,4 @@
+import { displayGamepadShortcut } from './controllerButtons.js'
 export const DEFAULT_NR_SHORTCUT = 'Ctrl+Alt+KeyN'
 
 export function displayShortcut(value) {
@@ -16,7 +17,7 @@ export function displayShortcut(value) {
 
 export function nrShortcutLabel(status) {
   if (status?.nrRegistered) return displayShortcut(status.settings?.nrShortcut)
-  return status?.gamepadSupported ? displayShortcut(status.settings?.nrGamepad) : ''
+  return status?.gamepadSupported ? displayGamepadShortcut(status.settings?.nrGamepad) : ''
 }
 
 // Physical key codes match the native global-shortcut parser on non-US layouts.
@@ -83,8 +84,11 @@ const messages = {
     keys: '全局快捷键',
     keyboard: '键盘',
     gamepad: '手柄',
+    gamepadConnected: '后台已识别 {count} 个 XInput 手柄',
+    gamepadDisconnected: '未检测到 XInput 手柄；大屏可操作不代表后台快捷键可用。',
+    gamepadUnsupported: '当前系统不支持后台手柄快捷键',
     cancel: '取消录制',
-    gamepadHint: '支持 Windows Xbox / XInput 手柄（含串流虚拟手柄）。组合键按住半秒触发，全部松开后可再次使用；按键仍会传给游戏。',
+    gamepadHint: '支持 Windows Xbox / XInput 手柄（含串流虚拟手柄）。组合键按住半秒触发，全部松开后可再次使用；按键仍会传给游戏。大屏中参与组合的单键在松开时执行导航。',
     gamepadRecordHint: '先松开所有按键，再同时按住至少两个键半秒，需包含 Back、Start、肩键或扳机。Esc 取消，30 秒后自动退出。',
     reset: '恢复默认',
     visibilityKey: '显示 / 隐藏浮层',
@@ -172,8 +176,11 @@ const messages = {
     keys: 'Global shortcuts',
     keyboard: 'Keyboard',
     gamepad: 'Gamepad',
+    gamepadConnected: '{count} XInput controller(s) detected for background shortcuts',
+    gamepadDisconnected: 'No XInput controller detected. Desktop navigation support does not imply background shortcut support.',
+    gamepadUnsupported: 'Background gamepad shortcuts are unavailable on this platform',
     cancel: 'Cancel recording',
-    gamepadHint: 'Windows Xbox / XInput controllers, including virtual streaming controllers. Hold for half a second; release all buttons before using again. Games still receive these buttons.',
+    gamepadHint: 'Windows Xbox / XInput controllers, including virtual streaming controllers. Hold for half a second; release all buttons before using again. Games still receive these buttons. In desktop mode, individual shortcut buttons navigate on release.',
     gamepadRecordHint: 'Release all buttons, then hold at least two for half a second, including Back, Start, a shoulder button or trigger. Esc cancels; capture expires after 30 seconds.',
     reset: 'Restore defaults',
     visibilityKey: 'Show / hide overlay',

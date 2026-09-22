@@ -1,4 +1,5 @@
 import { computed } from 'vue'
+import { controllerButtonChip } from '../../composables/controllerButtons.js'
 import { gamepadName } from './useGamepad.js'
 
 /**
@@ -9,7 +10,7 @@ import { gamepadName } from './useGamepad.js'
  *   Sony 054c（DualSense/DualShock，蓝牙下显示为 "Wireless Controller"）
  *   Microsoft 045e / XInput 系
  * 串流时主机上看到的是 Sunshine 的虚拟手柄（通常是 XInput 设备），那种
- * 情况下输入本来就直达游戏、不经过面板；面板里出现的都是本机手柄。
+ * 情况下提示按主机可见的虚拟设备布局显示，不能推断客户端实体手柄型号。
  *
  * Switch Pro 故意不单独识别：Nintendo 的 A/B 与 Xbox 物理位置互换，
  * 正确支持需要连确认/返回语义一起换，超出「两套提示」的范围——先落到
@@ -51,27 +52,9 @@ export const gamepadLayout = computed(() => detectLayout(gamepadName.value))
  * PS 语义按主机惯例：✕ 确认、○ 返回、△ 搜索/查看、□ 选项，
  * 色调沿用 PS 手柄的按钮颜色（✕蓝 ○红 △绿 □粉）。
  */
-const ACTION_CHIPS = {
-  xbox: {
-    confirm: ['A', 'a'],
-    back: ['B', 'b'],
-    search: ['Y', 'y'],
-    favorite: ['X', 'x'],
-    menu: ['☰', 'neutral'],
-    pages: ['LB/RB', 'neutral'],
-    scroll: ['LT/RT', 'neutral'],
-    cursor: ['L3', 'neutral'],
-  },
-  ps: {
-    confirm: ['✕', 'x'],
-    back: ['○', 'b'],
-    search: ['△', 'a'],
-    favorite: ['□', 'y'],
-    menu: ['☰', 'neutral'],
-    pages: ['L1/R1', 'neutral'],
-    scroll: ['L2/R2', 'neutral'],
-    cursor: ['L3', 'neutral'],
-  },
+const ACTION_BUTTONS = {
+  confirm: ['A'], back: ['B'], search: ['Y'], favorite: ['X'],
+  pages: ['LB', 'RB'], scroll: ['LT', 'RT'], cursor: ['L3']
 }
 
 /**
@@ -79,6 +62,7 @@ const ACTION_CHIPS = {
  * @returns {{ glyph: string, tone: string }}
  */
 export function chipFor(actionId, layout = gamepadLayout.value) {
-  const [glyph, tone] = ACTION_CHIPS[layout]?.[actionId] || ACTION_CHIPS.xbox[actionId] || ['', 'neutral']
-  return { glyph, tone }
+  if (actionId === 'menu') return { glyph: '☰', tone: 'neutral' }
+  const chips = (ACTION_BUTTONS[actionId] || []).map(button => controllerButtonChip(button, layout))
+  return { glyph: chips.map(chip => chip.glyph).join('/'), tone: chips[0]?.tone || 'neutral' }
 }

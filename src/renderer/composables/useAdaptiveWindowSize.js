@@ -8,6 +8,8 @@ const readValue = (value, fallback) => {
 }
 
 export function useAdaptiveWindowSize(targetRef, options = {}) {
+  let disposed = false
+  let generation = 0
   let sizeObserver = null
   let animationFrame = 0
   let animatedWidth = 0
@@ -15,19 +17,28 @@ export function useAdaptiveWindowSize(targetRef, options = {}) {
   let lastAppliedWidth = 0
   let lastAppliedHeight = 0
 
-  const invokeResize = async (width, height) => {
+  const invokeResize = async (width, height, requestGeneration) => {
     const nextWidth = Math.ceil(width)
     const nextHeight = Math.ceil(height)
     if (nextWidth === lastAppliedWidth && nextHeight === lastAppliedHeight) {
       return
     }
 
-    lastAppliedWidth = nextWidth
-    lastAppliedHeight = nextHeight
-    await invoke('resize_tool_window', { width: nextWidth, height: nextHeight })
+    while (!disposed && generation === requestGeneration) {
+      const applied = options.isDragging?.() ? false
+        : await invoke('resize_tool_window', { width: nextWidth, height: nextHeight })
+      if (disposed || generation !== requestGeneration) return
+      if (applied !== false) {
+        lastAppliedWidth = nextWidth
+        lastAppliedHeight = nextHeight
+        return
+      }
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
   }
 
   const stopAnimation = () => {
+    ++generation
     if (animationFrame) {
       cancelAnimationFrame(animationFrame)
       animationFrame = 0
@@ -53,7 +64,7 @@ export function useAdaptiveWindowSize(targetRef, options = {}) {
         stopAnimation()
         animatedWidth = width
         animatedHeight = height
-        await invokeResize(width, height)
+        await invokeResize(width, height, generation)
         return
       }
 
@@ -63,23 +74,28 @@ export function useAdaptiveWindowSize(targetRef, options = {}) {
       const duration = readValue(options.animationDuration, 160)
       stopAnimation()
 
+      const requestGeneration = generation
       const animate = async (now) => {
-        const progress = Math.min(1, (now - start) / duration)
-        const eased = 1 - Math.pow(1 - progress, 3)
-        const nextWidth = fromWidth + (width - fromWidth) * eased
-        const nextHeight = fromHeight + (height - fromHeight) * eased
+        if (disposed || generation !== requestGeneration) return
+        try {
+          const progress = Math.min(1, (now - start) / duration)
+          const eased = 1 - Math.pow(1 - progress, 3)
+          const nextWidth = fromWidth + (width - fromWidth) * eased
+          const nextHeight = fromHeight + (height - fromHeight) * eased
 
-        animatedWidth = nextWidth
-        animatedHeight = nextHeight
-        await invokeResize(nextWidth, nextHeight)
+          animatedWidth = nextWidth
+          animatedHeight = nextHeight
+          await invokeResize(nextWidth, nextHeight, requestGeneration)
+          if (disposed || generation !== requestGeneration) return
 
-        if (progress < 1) {
-          animationFrame = requestAnimationFrame(animate)
-        } else {
-          animationFrame = 0
-          animatedWidth = width
-          animatedHeight = height
-        }
+          if (progress < 1) {
+            animationFrame = requestAnimationFrame(animate)
+          } else {
+            animationFrame = 0
+            animatedWidth = width
+            animatedHeight = height
+          }
+        } catch (_) { animationFrame = 0 }
       }
 
       animationFrame = requestAnimationFrame(animate)
@@ -108,6 +124,7 @@ export function useAdaptiveWindowSize(targetRef, options = {}) {
   })
 
   onUnmounted(() => {
+    disposed = true
     stopAnimation()
     sizeObserver?.stop()
     sizeObserver = null

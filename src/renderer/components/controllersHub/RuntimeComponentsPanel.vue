@@ -3,10 +3,12 @@
     <p class="chub-hint">{{ t.deviceHub.components.managementHint }}</p>
     <DualSenseComponentPanel :component="component" :description="t.deviceHub.components.hostHint" />
     <UsbTransportPanel :transport="transport" maintenance />
+    <InputDriversPanel />
   </section>
 </template>
 
 <script setup>
+import InputDriversPanel from './InputDriversPanel.vue'
 import DualSenseComponentPanel from './DualSenseComponentPanel.vue'
 import { useDualSenseComponent } from '../../composables/useDualSenseComponent.js'
 import UsbTransportPanel from './UsbTransportPanel.vue'

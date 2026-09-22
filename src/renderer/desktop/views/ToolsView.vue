@@ -140,7 +140,7 @@
           <Refresh />
           {{ t.tools.restartGraphicsDriver }}
         </button>
-        <button class="desktop-btn" @click="runDiagnostics">
+        <button class="desktop-btn" :disabled="diagnosing" @click="runDiagnostics">
           <Refresh />
           {{ t.tools.rediagnose }}
         </button>
@@ -151,6 +151,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { probeSystemDiagnostics } from '../../composables/systemDiagnostics.js'
 import { DataAnalysis, Key, Monitor, Refresh, Search } from '@element-plus/icons-vue'
 import { useI18n } from '../i18n/index.js'
 
@@ -168,6 +169,7 @@ const { t } = useI18n()
 
 // Tauri 命令
 const invoke = ref(null)
+const diagnosing = ref(false)
 
 const diagnostics = ref({
   gpu: { value: t.value.tools.status.detectingEllipsis, status: 'connecting', statusText: t.value.tools.status.detecting },
@@ -189,51 +191,19 @@ async function restartGraphicsDriver() {
 }
 
 async function runDiagnostics() {
-  // 重置为检测中
+  if (diagnosing.value) return
+  diagnosing.value = true
   for (const key of Object.keys(diagnostics.value)) {
     diagnostics.value[key] = { value: t.value.tools.status.detectingEllipsis, status: 'connecting', statusText: t.value.tools.status.detecting }
   }
-
-  if (!invoke.value) {
-    for (const key of Object.keys(diagnostics.value)) {
-      diagnostics.value[key] = { value: t.value.tools.status.unknown, status: 'warning', statusText: t.value.tools.status.cannotDetect }
-    }
-    return
-  }
-
-  // GPU
   try {
-    const gpus = await invoke.value('get_gpus')
-    if (gpus && gpus.length > 0) {
-      diagnostics.value.gpu = { value: gpus[0], status: 'good', statusText: t.value.tools.status.good }
-      const gpuLower = gpus[0].toLowerCase()
-      const encoderName = gpuLower.includes('nvidia') || gpuLower.includes('geforce') ? 'NVENC' :
-                          gpuLower.includes('amd') || gpuLower.includes('radeon') ? 'AMF' :
-                          gpuLower.includes('intel') ? 'QuickSync' : t.value.tools.status.softwareEncode
-      diagnostics.value.encoder = { value: encoderName, status: encoderName !== t.value.tools.status.softwareEncode ? 'good' : 'warning', statusText: t.value.tools.status.available }
-    } else {
-      diagnostics.value.gpu = { value: t.value.tools.status.noGPU, status: 'error', statusText: t.value.tools.status.abnormal }
-      diagnostics.value.encoder = { value: t.value.tools.status.softwareEncode, status: 'warning', statusText: t.value.tools.status.downgrade }
-    }
-  } catch (e) {
-    diagnostics.value.gpu = { value: t.value.tools.status.detectFailed, status: 'error', statusText: t.value.tools.status.error }
-    diagnostics.value.encoder = { value: t.value.tools.status.unknown, status: 'warning', statusText: t.value.tools.status.unknown }
-  }
-
-  // 网络：测试代理服务器连通性
-  try {
-    const url = await invoke.value('get_proxy_url_command')
-    const resp = await fetch(`${url}/api/config`, { signal: AbortSignal.timeout(3000) })
-    if (resp.ok) {
-      diagnostics.value.network = { value: t.value.tools.status.commNormal, status: 'good', statusText: t.value.tools.status.great }
-      diagnostics.value.firewall = { value: t.value.tools.status.portReachable, status: 'good', statusText: t.value.tools.status.configured }
-    } else {
-      diagnostics.value.network = { value: t.value.tools.status.connAbnormal, status: 'warning', statusText: t.value.tools.status.abnormal }
-      diagnostics.value.firewall = { value: t.value.tools.status.portMayBlocked, status: 'warning', statusText: t.value.tools.status.pleaseCheck }
-    }
-  } catch (_) {
-    diagnostics.value.network = { value: t.value.tools.status.noConnection, status: 'error', statusText: t.value.tools.status.unreachable }
-    diagnostics.value.firewall = { value: t.value.tools.status.portUncertain, status: 'warning', statusText: t.value.tools.status.pleaseCheck }
+    diagnostics.value = await probeSystemDiagnostics(
+      invoke.value || (() => { throw new Error('Bridge unavailable') }),
+      fetch,
+      t.value.tools.status,
+    )
+  } finally {
+    diagnosing.value = false
   }
 }
 
@@ -354,15 +324,11 @@ onMounted(async () => {
 .diagnostics-card {
   .diagnostics-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 24px;
     margin-bottom: 24px;
 
-    @media (max-width: 1200px) {
-      grid-template-columns: repeat(2, 1fr);
-    }
-
-    @media (max-width: 600px) {
+    @media (max-width: 800px) {
       grid-template-columns: 1fr;
     }
   }
@@ -423,9 +389,8 @@ onMounted(async () => {
       font-size: 14px;
       font-weight: 500;
       color: var(--fd-text-primary, #fff);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      overflow-wrap: anywhere;
+      line-height: 1.5;
     }
   }
 

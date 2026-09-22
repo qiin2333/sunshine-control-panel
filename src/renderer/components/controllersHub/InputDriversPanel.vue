@@ -2,13 +2,13 @@
   <section class="chub-panel">
     <div class="chub-section">
       <div class="chub-section-head">
-        <span class="chub-section-label">◈ {{ t.controllersHub.peripherals.title }}</span>
+        <span class="chub-section-label">◈ {{ t.deviceHub.components.inputDrivers }}</span>
         <span class="chub-section-rule"></span>
         <el-button size="small" :loading="refreshing" @click="refreshAll">{{ t.deviceHub.refresh }}</el-button>
       </div>
 
       <div v-if="!initialized" class="chub-cards" aria-live="polite">
-        <article v-for="index in 4" :key="index" class="chub-card chub-card-placeholder">
+        <article v-for="index in 2" :key="index" class="chub-card chub-card-placeholder">
           <el-skeleton :rows="3" animated />
         </article>
       </div>
@@ -43,7 +43,7 @@
         </article>
 
         <!-- 虚拟鼠标 -->
-        <article class="chub-card" v-loading="ops.vmouse || ops.vmouseConfig">
+        <article class="chub-card" v-loading="ops.vmouse">
           <div class="chub-card-head">
             <strong>{{ t.controllersHub.peripherals.vmouse.title }}</strong>
             <el-tag
@@ -55,15 +55,18 @@
               : t.controllersHub.peripherals.notInstalled) }}</el-tag>
           </div>
           <p class="chub-hint">{{ t.controllersHub.peripherals.vmouse.hint }}</p>
+          <p role="status" class="chub-hint">{{ vmouseNotice || t.stream.vmouseToggleDesc }}</p>
+          <div class="chub-card-actions">
+            <span>{{ t.stream.vmouseToggle }}</span>
+            <el-button size="small" :type="vmouseEnabled ? 'primary' : 'default'"
+              :loading="vmouseConfigSaving" :disabled="refreshing || !vmouseStatusKnown"
+              @click="toggleVmouse"
+            >{{ !vmouseStatusKnown ? t.stream.vmouseUnknown : vmouseEnabled ? t.stream.vmouseOn : t.stream.vmouseOff }}</el-button>
+          </div>
           <p v-if="vmouseStatus.installed && vmouseStatus.status_text">
             {{ vmouseStatus.status_text }}
           </p>
           <div class="chub-card-actions">
-            <el-checkbox
-              :model-value="vmouseStatus.config_enabled"
-              :disabled="refreshing || !vmouseStatus.installed || ops.vmouseConfig || probeFailed.vmouse"
-              @change="handleVmouseToggle"
-            >{{ t.controllersHub.peripherals.vmouse.enableShort }}</el-checkbox>
             <el-button
               size="small"
               :type="vmouseStatus.installed ? 'default' : 'primary'"
@@ -76,51 +79,6 @@
           </div>
         </article>
 
-        <!-- ControllerMeta -->
-        <article class="chub-card">
-          <div class="chub-card-head">
-            <strong>{{ t.controllersHub.peripherals.meta.title }}</strong>
-            <el-tag
-              size="small"
-              :type="!probeFailed.meta && metaStatus.installed ? 'success' : 'info'"
-              effect="plain"
-            >{{ probeFailed.meta ? t.deviceHub.probeUnavailable : (metaStatus.installed
-              ? (metaStatus.version ? `v${metaStatus.version}` : t.controllersHub.peripherals.installed)
-              : t.controllersHub.peripherals.notInstalled) }}</el-tag>
-          </div>
-          <p class="chub-hint">{{ t.controllersHub.peripherals.meta.hint }}</p>
-          <div class="chub-card-actions">
-            <el-button
-              size="small"
-              type="primary"
-              :disabled="refreshing || probeFailed.meta"
-              @click="emit('open-controller-meta')"
-            >{{ t.controllersHub.peripherals.meta.launch }}</el-button>
-          </div>
-        </article>
-
-        <article class="chub-card">
-          <div class="chub-card-head"><strong>{{ t.sidebar.hdrEnhanced }}</strong></div>
-          <div class="chub-card-actions">
-            <el-button size="small" type="primary" @click="emit('open-hdr-enhanced')">{{ t.hdrEnhanced.open }}</el-button>
-          </div>
-        </article>
-
-        <!-- 手写笔输入检测 -->
-        <article class="chub-card">
-          <div class="chub-card-head">
-            <strong>{{ t.controllersHub.peripherals.stylus.title }}</strong>
-          </div>
-          <p class="chub-hint">{{ t.controllersHub.peripherals.stylus.hint }}</p>
-          <div class="chub-card-actions">
-            <el-button
-              size="small"
-              type="primary"
-              :disabled="refreshing"
-              @click="emit('open-stylus-input-probe')"
-            >{{ t.controllersHub.peripherals.stylus.launch }}</el-button>
-          </div>
-        </article>
       </div>
     </div>
   </section>
@@ -129,21 +87,21 @@
 <script setup>
 import { onMounted } from 'vue'
 import { ElMessageBox } from 'element-plus'
-import { usePeripheralTools } from '../../composables/usePeripheralTools.js'
+import { useInputDrivers } from '../../composables/useInputDrivers.js'
 import { useI18n } from '../../desktop/i18n/index.js'
 
-const emit = defineEmits(['open-controller-meta', 'open-stylus-input-probe', 'open-hdr-enhanced'])
 const { t } = useI18n()
 
 const {
-  vigemStatus, vmouseStatus, metaStatus, probeFailed, ops, initialized, refreshing,
+  vigemStatus, vmouseStatus, probeFailed, ops, initialized, refreshing,
   refreshAll, installVigem, uninstallVigem,
-  installVmouse, uninstallVmouse, setVmouseEnabled,
-} = usePeripheralTools()
+  installVmouse, uninstallVmouse,
+  vmouseEnabled, vmouseStatusKnown, vmouseNotice, vmouseConfigSaving, toggleVmouse,
+} = useInputDrivers(t)
 
 async function confirmToggle(tool) {
   const strings = t.value.controllersHub.peripherals[tool]
-  const installed = tool === 'vigem' ? vigemStatus.installed : vmouseStatus.installed
+  const installed = tool === 'vigem' ? vigemStatus.installed : vmouseStatus.value.installed
   const action = installed ? 'uninstall' : 'install'
   try {
     await ElMessageBox.confirm(strings[action === 'install' ? 'confirmInstall' : 'confirmUninstall'], t.value.controllersHub.peripherals.confirmTitle, {
@@ -157,11 +115,6 @@ async function confirmToggle(tool) {
   } else {
     await (installed ? uninstallVmouse() : installVmouse())
   }
-}
-
-async function handleVmouseToggle(enabled) {
-  const settled = await setVmouseEnabled(enabled)
-  vmouseStatus.config_enabled = settled
 }
 
 onMounted(refreshAll)

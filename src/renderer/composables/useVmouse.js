@@ -13,7 +13,6 @@ export function useVmouse(t) {
       const result = await vmouse.getStatus()
       if (!result?.success || typeof result.data?.config_enabled !== 'boolean') throw new Error('Invalid status')
       vmouseStatus.value = result.data
-      vmouseEnabled.value = result.data.config_enabled
       vmouseStatusKnown.value = true
       vmouseNotice.value = ''
     } catch {

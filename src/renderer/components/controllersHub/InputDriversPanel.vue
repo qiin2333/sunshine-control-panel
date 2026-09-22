@@ -43,7 +43,7 @@
         </article>
 
         <!-- 虚拟鼠标 -->
-        <article class="chub-card" v-loading="ops.vmouse || ops.vmouseConfig">
+        <article class="chub-card" v-loading="ops.vmouse">
           <div class="chub-card-head">
             <strong>{{ t.controllersHub.peripherals.vmouse.title }}</strong>
             <el-tag
@@ -55,15 +55,11 @@
               : t.controllersHub.peripherals.notInstalled) }}</el-tag>
           </div>
           <p class="chub-hint">{{ t.controllersHub.peripherals.vmouse.hint }}</p>
+          <p class="chub-hint">{{ t.deviceHub.components.mouseSettingsHint }}</p>
           <p v-if="vmouseStatus.installed && vmouseStatus.status_text">
             {{ vmouseStatus.status_text }}
           </p>
           <div class="chub-card-actions">
-            <el-checkbox
-              :model-value="vmouseStatus.config_enabled"
-              :disabled="refreshing || !vmouseStatus.installed || ops.vmouseConfig || probeFailed.vmouse"
-              @change="handleVmouseToggle"
-            >{{ t.controllersHub.peripherals.vmouse.enableShort }}</el-checkbox>
             <el-button
               size="small"
               :type="vmouseStatus.installed ? 'default' : 'primary'"
@@ -92,7 +88,7 @@ const { t } = useI18n()
 const {
   vigemStatus, vmouseStatus, probeFailed, ops, initialized, refreshing,
   refreshAll, installVigem, uninstallVigem,
-  installVmouse, uninstallVmouse, setVmouseEnabled,
+  installVmouse, uninstallVmouse,
 } = useInputDrivers()
 
 async function confirmToggle(tool) {
@@ -111,11 +107,6 @@ async function confirmToggle(tool) {
   } else {
     await (installed ? uninstallVmouse() : installVmouse())
   }
-}
-
-async function handleVmouseToggle(enabled) {
-  const settled = await setVmouseEnabled(enabled)
-  vmouseStatus.config_enabled = settled
 }
 
 onMounted(refreshAll)

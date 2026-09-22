@@ -277,14 +277,15 @@
             <div class="setting-info">
               <div class="setting-label">{{ t.stream.vmouseToggle }}</div>
               <div class="setting-desc">{{ t.stream.vmouseToggleDesc }}</div>
+              <p v-if="vmouseNotice" role="status" class="setting-desc">{{ vmouseNotice }}</p>
             </div>
             <button 
               class="toggle-btn" 
               :class="{ on: vmouseEnabled }"
               @click="toggleVmouse"
-              :disabled="vmouseConfigSaving"
+              :disabled="vmouseConfigSaving || !vmouseStatusKnown"
             >
-              {{ vmouseEnabled ? t.stream.vmouseOn : t.stream.vmouseOff }}
+              {{ !vmouseStatusKnown ? t.stream.vmouseUnknown : vmouseEnabled ? t.stream.vmouseOn : t.stream.vmouseOff }}
             </button>
           </div>
           <div class="setting-row">
@@ -674,18 +675,22 @@ async function toggleVddOption(option) {
 
 // ========== 虚拟鼠标驱动管理 ==========
 const vmouseStatus = ref({ installed: false, running: false, status_text: t.value.stream.vmouseDetecting, driver_path: '', config_enabled: true })
-const vmouseEnabled = ref(true)
+const vmouseEnabled = ref(false)
+const vmouseStatusKnown = ref(false)
+const vmouseNotice = ref('')
 const vmouseConfigSaving = ref(false)
 const vmouseInstalling = ref(false)
 const vmouseUninstalling = ref(false)
 
 const vmouseStatusClass = computed(() => {
+  if (!vmouseStatusKnown.value) return 'warn'
   if (vmouseStatus.value.running) return 'good'
   if (vmouseStatus.value.installed) return 'warn'
   return 'off'
 })
 
 const vmouseStatusLabel = computed(() => {
+  if (!vmouseStatusKnown.value) return t.value.stream.vmouseUnknown
   if (vmouseStatus.value.running) return t.value.stream.vmouseStatusRunning
   if (vmouseStatus.value.installed) return t.value.stream.vmouseStatusInstalled
   return t.value.stream.vmouseStatusNotInstalled
@@ -694,27 +699,31 @@ const vmouseStatusLabel = computed(() => {
 async function loadVmouseStatus() {
   try {
     const result = await vmouseApi.getStatus()
-    if (result?.success) {
-      vmouseStatus.value = result.data
-      vmouseEnabled.value = result.data.config_enabled
-    }
-  } catch (e) {
-    console.error('获取 vmouse 状态失败:', e)
+    if (!result?.success || typeof result.data?.config_enabled !== 'boolean') throw new Error('Invalid status')
+    vmouseStatus.value = result.data
+    vmouseEnabled.value = result.data.config_enabled
+    vmouseStatusKnown.value = true
+  } catch {
+    vmouseStatusKnown.value = false
+    vmouseNotice.value = t.value.stream.vmouseReadFailed
   }
 }
 
 async function toggleVmouse() {
+  if (vmouseConfigSaving.value || !vmouseStatusKnown.value) return
+  vmouseNotice.value = ''
   const newVal = !vmouseEnabled.value
   vmouseConfigSaving.value = true
   try {
     const result = await vmouseApi.setConfig(newVal)
     if (result?.success) {
       vmouseEnabled.value = newVal
+      vmouseNotice.value = t.value.stream.vmouseSaved
     } else {
-      console.error('设置 vmouse 失败:', result?.message)
+      vmouseNotice.value = t.value.stream.vmouseSaveFailed
     }
   } catch (e) {
-    console.error('设置 vmouse 失败:', e)
+    vmouseNotice.value = t.value.stream.vmouseSaveFailed
   } finally {
     vmouseConfigSaving.value = false
   }

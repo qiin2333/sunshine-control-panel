@@ -20,7 +20,7 @@ export function useInputDrivers() {
   const probeFailed = reactive({ vigem: false, vmouse: false })
 
   const ops = reactive({
-    vigem: false, vmouse: false, vmouseConfig: false,
+    vigem: false, vmouse: false,
   })
   const initialized = ref(false)
   const refreshing = ref(false)
@@ -81,28 +81,9 @@ export function useInputDrivers() {
   const installVmouse = withOp('vmouse', () => vmouse.install())
   const uninstallVmouse = withOp('vmouse', () => vmouse.uninstall())
 
-  async function setVmouseEnabled(enabled) {
-    if (ops.vmouseConfig) return vmouseStatus.config_enabled
-    ops.vmouseConfig = true
-    try {
-      const result = await vmouse.setConfig(enabled)
-      if (result?.success) {
-        ElMessage.success(result.data)
-        return enabled
-      }
-      ElMessage.error(result?.message || String(result))
-      return !enabled
-    } catch (error) {
-      ElMessage.error(String(error))
-      return !enabled
-    } finally {
-      ops.vmouseConfig = false
-    }
-  }
-
   return {
     vigemStatus, vmouseStatus, probeFailed, ops, initialized, refreshing,
     refreshAll, installVigem, uninstallVigem,
-    installVmouse, uninstallVmouse, setVmouseEnabled,
+    installVmouse, uninstallVmouse,
   }
 }

@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   shortcutFromEvent,
   displayShortcut,
+  nrShortcutLabel,
   DEFAULT_NR_SHORTCUT
 } from './enhancementControls.js'
 const event = (patch = {}) => ({
@@ -42,4 +43,11 @@ test('native canonical shortcut strings render without code prefixes', () => {
   assert.equal(displayShortcut('control+alt+KeyN'), 'Ctrl + Alt + N')
   assert.equal(displayShortcut('shift+control+Digit3'), 'Shift + Ctrl + 3')
   assert.equal(displayShortcut(''), '')
+})
+
+test('overlay hints use the gamepad binding when the keyboard binding is unavailable', () => {
+  const status = { settings: { nrShortcut: 'Ctrl+Alt+KeyN', nrGamepad: 'Back+Y' }, nrRegistered: false, gamepadSupported: true }
+  assert.equal(nrShortcutLabel(status), 'Back + Y')
+  assert.equal(nrShortcutLabel({ ...status, nrRegistered: true }), 'Ctrl + Alt + N')
+  assert.equal(nrShortcutLabel({ ...status, gamepadSupported: false }), '')
 })

@@ -1,3 +1,5 @@
+mod gamepad;
+
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -17,6 +19,8 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Modifiers, Shortcut, Short
 pub struct Settings {
     nr_shortcut: String,
     overlay_shortcut: String,
+    nr_gamepad: String,
+    overlay_gamepad: String,
     opacity: u32,
 }
 impl Default for Settings {
@@ -24,6 +28,8 @@ impl Default for Settings {
         Self {
             nr_shortcut: "Ctrl+Alt+KeyN".into(),
             overlay_shortcut: String::new(),
+            nr_gamepad: String::new(),
+            overlay_gamepad: String::new(),
             opacity: 62,
         }
     }
@@ -33,6 +39,8 @@ impl Default for Settings {
 pub struct SettingsPatch {
     nr_shortcut: Option<String>,
     overlay_shortcut: Option<String>,
+    nr_gamepad: Option<String>,
+    overlay_gamepad: Option<String>,
     opacity: Option<u32>,
 }
 #[derive(Default)]
@@ -40,6 +48,7 @@ struct OverlayState {
     settings: Settings,
     owned: HashMap<u32, Shortcut>,
     target: Option<u64>,
+    capture_generation: u64,
     capture: Option<(String, std::time::Instant)>,
 }
 static STATE: LazyLock<Mutex<OverlayState>> = LazyLock::new(|| Mutex::new(OverlayState::default()));
@@ -51,6 +60,7 @@ pub struct SettingsStatus {
     settings: Settings,
     nr_registered: bool,
     overlay_registered: bool,
+    gamepad_supported: bool,
     target: Option<u64>,
 }
 fn snapshot(state: &OverlayState) -> SettingsStatus {
@@ -63,6 +73,7 @@ fn snapshot(state: &OverlayState) -> SettingsStatus {
         settings: state.settings.clone(),
         nr_registered: registered(&state.settings.nr_shortcut),
         overlay_registered: registered(&state.settings.overlay_shortcut),
+        gamepad_supported: cfg!(target_os = "windows"),
         target: state.target,
     }
 }
@@ -136,6 +147,7 @@ fn normalized_key(value: &str) -> Result<String, String> {
     Ok(key.to_string())
 }
 fn bindings(settings: &Settings) -> Result<Vec<Shortcut>, String> {
+    gamepad::validate(&settings.nr_gamepad, &settings.overlay_gamepad)?;
     let keys: Vec<Shortcut> = [&settings.nr_shortcut, &settings.overlay_shortcut]
         .into_iter()
         .filter(|s| !s.is_empty())
@@ -192,21 +204,7 @@ impl<R: Runtime> Registrar for GlobalRegistrar<'_, R> {
                             0
                         }
                     };
-                    let result = match action {
-                        1 => toggle_nr().await,
-                        2 => {
-                            let visible = app
-                                .get_webview_window("nr_overlay")
-                                .and_then(|w| w.is_visible().ok())
-                                .unwrap_or(false);
-                            set_visible(&app, !visible)
-                        }
-                        _ => Ok(()),
-                    };
-                    if let Err(error) = result {
-                        log::warn!("NR shortcut: {error}");
-                        let _ = app.emit("nr-action-error", error);
-                    }
+                    run_action(&app, action).await;
                 });
             })
             .map_err(|_| "nr_shortcut_conflict".into())
@@ -216,6 +214,23 @@ impl<R: Runtime> Registrar for GlobalRegistrar<'_, R> {
             .global_shortcut()
             .unregister(key)
             .map_err(|_| "nr_shortcut_unregister".into())
+    }
+}
+async fn run_action<R: Runtime>(app: &AppHandle<R>, action: u8) {
+    let result = match action {
+        1 => toggle_nr().await,
+        2 => {
+            let visible = app
+                .get_webview_window("nr_overlay")
+                .and_then(|w| w.is_visible().ok())
+                .unwrap_or(false);
+            set_visible(app, !visible)
+        }
+        _ => Ok(()),
+    };
+    if let Err(error) = result {
+        log::warn!("NR shortcut: {error}");
+        let _ = app.emit("nr-action-error", error);
     }
 }
 // Track each successful OS operation so even a failed rollback is reported honestly.
@@ -261,6 +276,7 @@ fn apply_settings(
         return Err(error);
     }
     state.settings = next;
+    gamepad::wake();
     Ok(())
 }
 pub fn initialize<R: Runtime>(app: &AppHandle<R>) {
@@ -276,6 +292,8 @@ pub fn initialize<R: Runtime>(app: &AppHandle<R>) {
             let settings = Settings {
                 nr_shortcut: nr,
                 overlay_shortcut: overlay,
+                nr_gamepad: gamepad::normalize(&settings.nr_gamepad).unwrap_or_default(),
+                overlay_gamepad: gamepad::normalize(&settings.overlay_gamepad).unwrap_or_default(),
                 opacity: settings.opacity.clamp(35, 95),
             };
             if bindings(&settings).is_ok() {
@@ -291,17 +309,20 @@ pub fn initialize<R: Runtime>(app: &AppHandle<R>) {
             Err(error) => log::warn!("NR shortcut unavailable at startup: {error}"),
         }
     }
+    drop(state);
+    gamepad::start(app);
 }
 // Restore from current settings, including edits made by another manager window.
 fn finish_capture(state: &mut OverlayState, registrar: &impl Registrar) -> Result<(), String> {
     state.capture = None;
+    gamepad::wake();
     replace_bindings(registrar, &mut state.owned, &bindings(&state.settings)?)
 }
 #[tauri::command]
 pub async fn nr_overlay_capture_shortcut(
     window: tauri::WebviewWindow,
     active: bool,
-) -> Result<(), String> {
+) -> Result<u64, String> {
     let app = window.app_handle().clone();
     let mut state = STATE.lock().unwrap();
     if active {
@@ -315,7 +336,9 @@ pub async fn nr_overlay_capture_shortcut(
             window.label().to_string(),
             std::time::Instant::now() + std::time::Duration::from_secs(30),
         );
+        state.capture_generation += 1;
         state.capture = Some(lease.clone());
+        gamepad::wake();
         // Backend expiry also restores bindings when the recording window disappears.
         tauri::async_runtime::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(30)).await;
@@ -339,11 +362,13 @@ pub async fn nr_overlay_capture_shortcut(
     {
         let result = finish_capture(&mut state, &GlobalRegistrar(&app));
         let status = snapshot(&state);
+        let generation = state.capture_generation;
         drop(state);
         let _ = app.emit("nr-settings-changed", status);
         result?;
+        return Ok(generation);
     }
-    Ok(())
+    Ok(state.capture_generation)
 }
 #[tauri::command]
 pub async fn nr_overlay_settings() -> SettingsStatus {
@@ -357,12 +382,21 @@ pub async fn nr_overlay_save_settings(
     let result = {
         let mut state = STATE.lock().unwrap();
         let mut next = state.settings.clone();
-        let update_shortcuts = patch.nr_shortcut.is_some() || patch.overlay_shortcut.is_some();
+        let update_shortcuts = patch.nr_shortcut.is_some()
+            || patch.overlay_shortcut.is_some()
+            || patch.nr_gamepad.is_some()
+            || patch.overlay_gamepad.is_some();
         if let Some(key) = patch.nr_shortcut {
             next.nr_shortcut = normalized_key(&key)?;
         }
         if let Some(key) = patch.overlay_shortcut {
             next.overlay_shortcut = normalized_key(&key)?;
+        }
+        if let Some(key) = patch.nr_gamepad {
+            next.nr_gamepad = gamepad::normalize(&key)?;
+        }
+        if let Some(key) = patch.overlay_gamepad {
+            next.overlay_gamepad = gamepad::normalize(&key)?;
         }
         if let Some(opacity) = patch.opacity {
             if !(35..=95).contains(&opacity) {
@@ -545,14 +579,12 @@ mod tests {
         assert!(normalized_key("KeyN").is_err());
         assert!(normalized_key("Ctrl+Alt+Shift+KeyT").is_err());
         let key = normalized_key("Ctrl+Alt+N").unwrap();
-        assert!(
-            bindings(&Settings {
-                nr_shortcut: key.clone(),
-                overlay_shortcut: key,
-                opacity: 62
-            })
-            .is_err()
-        );
+        assert!(bindings(&Settings {
+            nr_shortcut: key.clone(),
+            overlay_shortcut: key,
+            ..Settings::default()
+        })
+        .is_err());
         assert_eq!(normalized_key("").unwrap(), "");
     }
     #[test]
@@ -578,6 +610,35 @@ mod tests {
             *fake.keys.borrow(),
             vec![bindings(&state.settings).unwrap()[0].id()]
         );
+    }
+    #[test]
+    fn gamepad_settings_preserve_keyboard_and_old_settings_load() {
+        let old: Settings =
+            serde_json::from_str(r#"{"nrShortcut":"Ctrl+Alt+KeyN","opacity":62}"#).unwrap();
+        assert_eq!(old, Settings::default());
+        let mut state = OverlayState::default();
+        let fake = Fake {
+            keys: RefCell::new(vec![]),
+            conflict: None,
+        };
+        let keyboard = bindings(&state.settings).unwrap();
+        replace_bindings(&fake, &mut state.owned, &keyboard).unwrap();
+        let next = Settings {
+            nr_gamepad: "LB+A".into(),
+            overlay_gamepad: "Back+Y".into(),
+            ..old
+        };
+        assert!(apply_settings(&mut state, next.clone(), &fake, |_| Err("disk".into())).is_err());
+        assert!(state.settings.nr_gamepad.is_empty());
+        apply_settings(&mut state, next.clone(), &fake, |_| Ok(())).unwrap();
+        assert_eq!(state.settings, next);
+        assert_eq!(*fake.keys.borrow(), vec![keyboard[0].id()]);
+        let duplicate = Settings {
+            overlay_gamepad: "A+LB".into(),
+            ..next
+        };
+        assert!(apply_settings(&mut state, duplicate, &fake, |_| Ok(())).is_err());
+        assert_eq!(state.settings.overlay_gamepad, "Back+Y");
     }
     #[test]
     fn hidden_shortcut_never_redirects_an_expired_target() {

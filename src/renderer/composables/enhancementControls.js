@@ -14,6 +14,11 @@ export function displayShortcut(value) {
     .join(' + ')
 }
 
+export function nrShortcutLabel(status) {
+  if (status?.nrRegistered) return displayShortcut(status.settings?.nrShortcut)
+  return status?.gamepadSupported ? displayShortcut(status.settings?.nrGamepad) : ''
+}
+
 // Physical key codes match the native global-shortcut parser on non-US layouts.
 export function shortcutFromEvent(event) {
   if (event.key === 'Escape' || event.key === 'Tab') return { cancel: true }
@@ -76,6 +81,11 @@ const messages = {
     showHint: '串流时快速调节 DLSS NR',
     opacity: '默认背景不透明度',
     keys: '全局快捷键',
+    keyboard: '键盘',
+    gamepad: '手柄',
+    cancel: '取消录制',
+    gamepadHint: '支持 Windows Xbox / XInput 手柄（含串流虚拟手柄）。组合键按住半秒触发，全部松开后可再次使用；按键仍会传给游戏。',
+    gamepadRecordHint: '先松开所有按键，再同时按住至少两个键半秒，需包含 Back、Start、肩键或扳机。Esc 取消，30 秒后自动退出。',
     reset: '恢复默认',
     visibilityKey: '显示 / 隐藏浮层',
     nrKey: '切换 DLSS NR',
@@ -106,6 +116,7 @@ const messages = {
     action: '切换增强',
     errors: {
       nr_request_invalid: '处理比例必须为 20%–100%，且为 5 的倍数',
+      nr_gamepad_invalid: '请使用至少两个手柄按键，包含 Back、Start、肩键或扳机',
       nr_shortcut_invalid: '请使用有效的 Ctrl、Alt 或 Shift 组合键',
       nr_shortcut_duplicate: '两个操作不能使用相同快捷键',
       nr_shortcut_conflict: '快捷键已被占用，原设置保持不变',
@@ -159,6 +170,11 @@ const messages = {
     showHint: 'Adjust DLSS NR during a stream',
     opacity: 'Default background opacity',
     keys: 'Global shortcuts',
+    keyboard: 'Keyboard',
+    gamepad: 'Gamepad',
+    cancel: 'Cancel recording',
+    gamepadHint: 'Windows Xbox / XInput controllers, including virtual streaming controllers. Hold for half a second; release all buttons before using again. Games still receive these buttons.',
+    gamepadRecordHint: 'Release all buttons, then hold at least two for half a second, including Back, Start, a shoulder button or trigger. Esc cancels; capture expires after 30 seconds.',
     reset: 'Restore defaults',
     visibilityKey: 'Show / hide overlay',
     nrKey: 'Toggle DLSS NR',
@@ -192,6 +208,7 @@ const messages = {
     errors: {
       nr_request_invalid:
         'Processing scale must be 20%–100% and a multiple of 5.',
+      nr_gamepad_invalid: 'Use at least two gamepad buttons including Back, Start, a shoulder button or trigger',
       nr_shortcut_invalid: 'Use a valid Ctrl, Alt or Shift shortcut',
       nr_shortcut_duplicate: 'The two actions need different shortcuts',
       nr_shortcut_conflict:

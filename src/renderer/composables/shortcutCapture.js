@@ -1,3 +1,6 @@
+let capturing = false
+export const isCapturingShortcut = () => capturing
+
 // Serialize backend capture leases so a late start cannot undo cancellation.
 export function shortcutCapture(invoke, onChange) {
   let generation = 0
@@ -11,6 +14,7 @@ export function shortcutCapture(invoke, onChange) {
   const cancel = () => {
     ++generation
     clearTimeout(timer)
+    capturing = false
     onChange('')
     return setActive(false)
   }
@@ -19,9 +23,10 @@ export function shortcutCapture(invoke, onChange) {
     const token = generation
     await cancelled
     if (token !== generation) return
-    await setActive(true)
+    const lease = await setActive(true)
     if (token !== generation) return
-    onChange(key)
+    capturing = true
+    onChange(key, lease)
     timer = setTimeout(() => { void cancel().catch(() => {}) }, 30000)
   }
   return { start, cancel }

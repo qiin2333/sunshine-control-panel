@@ -1,3 +1,4 @@
+import { isCapturingShortcut } from '../../composables/shortcutCapture.js'
 import { ref, onMounted, onUnmounted } from 'vue'
 
 // 手柄按键映射 (Xbox 标准布局)
@@ -124,6 +125,7 @@ export function useGamepad(options = {}) {
   /** 每个手柄独立记录上一帧状态，这样切换手柄时边沿检测依然正确。 */
   const padStates = new Map()
   let activeIndex = null
+  let captureReleasePending = false
   const repeatTimers = {}
   let backHoldTimer = null
   let backHoldRaf = null
@@ -339,6 +341,16 @@ export function useGamepad(options = {}) {
 
     const active = diffs.find((entry) => entry.pad.index === activeIndex)
     if (!active) return
+
+    if (isCapturingShortcut()) captureReleasePending = true
+    if (captureReleasePending) {
+      stopAllRepeats()
+      clearBackHold()
+      if (!isCapturingShortcut() && pads.every(pad => pad.buttons.every(button => !button.pressed))) {
+        captureReleasePending = false
+      }
+      return
+    }
 
     if (!enabled()) {
       // 游戏运行中 / 窗口不可见：保持状态同步但不派发，避免恢复时补发一串输入

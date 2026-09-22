@@ -89,7 +89,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window'
 import { useI18n } from '../../desktop/i18n/index.js'
-import { displayShortcut, enhancementControlsText, enhancementError } from '../../composables/enhancementControls.js'
+import { nrShortcutLabel, enhancementControlsText, enhancementError } from '../../composables/enhancementControls.js'
 import { nrOverlayText } from '../../composables/nrOverlayMessages.js'
 import { nrOverlayState, overlayOpacity, nrProcessingSize, nrPipelines, nrOutputLabel } from '../../composables/nrOverlayState.js'
 
@@ -108,7 +108,7 @@ async function saveOpacity() {
 function applyPreferences(status) {
   if (!status?.settings || disposed) return
   opacity.value = overlayOpacity(status.settings.opacity)
-  shortcut.value = status.nrRegistered ? displayShortcut(status.settings.nrShortcut) : ''
+  shortcut.value = nrShortcutLabel(status)
   if (status.target !== null && status.target !== undefined && status.target !== selectedId.value) { selectedId.value = status.target; selectionExpired.value = false }
 }
 const surface = ref(null)

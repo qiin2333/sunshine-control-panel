@@ -43,43 +43,38 @@ pub(super) fn start<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
                 let (nr, overlay, capturing) = &context;
                 let active = !nr.is_empty() || !overlay.is_empty();
                 let mut connected = 0;
-                let mut fired = None;
+                let mut fired = [false; 2];
                 for (index, pad) in pads.iter_mut().enumerate() {
                     let sample = read(index as u32);
                     connected += usize::from(sample.is_some());
                     if active {
-                        let chord = pad.update(sample, Instant::now());
-                        if fired.is_none() {
-                            fired = chord;
+                        if let Some(mask) = pad.update(sample, Instant::now()) {
+                            fired[0] |= parse(nr).ok() == Some(mask);
+                            fired[1] |= parse(overlay).ok() == Some(mask);
                         }
                     }
                 }
-                if let Some(mask) = fired {
-                    if !*capturing {
-                        let action = if parse(nr).ok() == Some(mask) {
-                            1
-                        } else if parse(overlay).ok() == Some(mask) {
-                            2
-                        } else {
-                            0
-                        };
-                        if action != 0 {
-                            // Do not delay polling during a network request. Recheck
-                            // settings in the task before dispatching the action.
-                            let app = app.clone();
-                            tauri::async_runtime::spawn(async move {
-                                {
-                                    let state = super::STATE.lock().unwrap();
-                                    if state.capture.is_some()
-                                        || state.settings.nr_gamepad != context.0
-                                        || state.settings.overlay_gamepad != context.1
-                                    {
-                                        return;
-                                    }
-                                }
-                                super::run_action(&app, action).await;
-                            });
+                if !*capturing {
+                    for (index, triggered) in fired.into_iter().enumerate() {
+                        if !triggered {
+                            continue;
                         }
+                        // Do not delay polling during a network request. Recheck
+                        // settings in each task before dispatching the action.
+                        let app = app.clone();
+                        let expected = context.clone();
+                        tauri::async_runtime::spawn(async move {
+                            {
+                                let state = super::STATE.lock().unwrap();
+                                if state.capture.is_some()
+                                    || state.settings.nr_gamepad != expected.0
+                                    || state.settings.overlay_gamepad != expected.1
+                                {
+                                    return;
+                                }
+                            }
+                            super::run_action(&app, index as u8 + 1).await;
+                        });
                     }
                 }
                 tokio::select! {

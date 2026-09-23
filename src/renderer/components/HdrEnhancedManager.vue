@@ -469,9 +469,10 @@ async function poll() {
   if (!disposed) timer = setTimeout(poll, 1200)
 }
 onMounted(async () => {
+  let settingsRevision = 0
   window.addEventListener('blur', cancelRecording)
   for (const [name, handler] of [
-    ['nr-settings-changed', (e) => applyStatus(e.payload)],
+    ['nr-settings-changed', (e) => { settingsRevision++; applyStatus(e.payload) }],
     [
       'nr-overlay-visibility',
       (e) => {
@@ -492,7 +493,9 @@ onMounted(async () => {
     } catch {}
   }
   try {
-    applyStatus(await invoke('nr_overlay_settings'))
+    const revision = settingsRevision
+    const status = await invoke('nr_overlay_settings')
+    if (revision === settingsRevision) applyStatus(status)
   } catch (e) {
     error.value = String(e)
   }

@@ -345,7 +345,7 @@ export function useGamepad(options = {}) {
     if (captureReleasePending) {
       shortcutTracker.discard()
       releaseArmed.clear()
-      if (!shortcutState.captureActive && pads.every(p => p.buttons.every(b => !b.pressed))) captureReleasePending = false
+      if (!shortcutState.captureActive && active.pad.buttons.every(b => !b.pressed)) captureReleasePending = false
       stopAllRepeats()
       clearBackHold()
       return
@@ -471,6 +471,8 @@ export function useGamepad(options = {}) {
       const stop = await listen('nr-settings-changed', event => { revision++; shortcutState = event.payload })
       if (disposed) { stop(); return }
       stopShortcutListener = stop
+    } catch { /* Continue with the initial settings request. */ }
+    try {
       const current = revision
       const status = await invoke('nr_overlay_settings')
       if (!disposed && current === revision) shortcutState = status

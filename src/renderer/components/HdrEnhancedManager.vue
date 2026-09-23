@@ -2,23 +2,7 @@
   <section class="quality-manager">
     <header class="quality-header">
       <span class="quality-title-icon" aria-hidden="true">
-        <svg
-          viewBox="0 0 28 28"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.6"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path
-            d="M17 5.5 5.8 5.2Q3.5 5.2 3.5 7.5L3.2 21Q3.2 23.2 5.5 23.2L21 22.9Q23 22.9 23 20.7V14.5"
-          />
-          <path d="m5.8 19 5.1-6 4.1 4.5 2.5-2.6 3.2 3.6" />
-          <path
-            d="m21.5 2 .9 3.7L26 6.8l-3.6 1.1-1 3.6-1.1-3.6-3.6-1.1 3.7-1.1Z"
-          />
-          <path d="m7 8.8 1.4.1" opacity=".55" />
-        </svg>
+        <el-icon><Picture /></el-icon>
       </span>
       <div>
         <h1>{{ text.title }}</h1>
@@ -299,7 +283,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { ArrowUp, Monitor, Rank } from '@element-plus/icons-vue'
+import { ArrowUp, Monitor, Picture, Rank } from '@element-plus/icons-vue'
 import { displayGamepadShortcut, FIXED_GAMEPAD_SHORTCUTS } from '../composables/controllerButtons.js'
 import NrSessionControls from './NrSessionControls.vue'
 import EnhancementManager from './EnhancementManager.vue'

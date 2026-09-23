@@ -1,46 +1,34 @@
 <template>
   <section class="enhancement-card">
-    <EnhancementSketch :kind="kind" />
-    <header class="component-page-header">
-      <div class="component-title-row">
-        <span class="enhancement-icon" aria-hidden="true"
-          ><el-icon
-            ><component :is="kind === 'nr' ? MagicStick : Sunny" /></el-icon
-        ></span>
-        <h2>{{ kind === 'nr' ? 'DLSS NR' : 'RTX HDR' }}</h2>
-        <span class="component-hud-state" aria-live="polite"
-          ><i
-            class="component-status-dot"
-            :class="`state-${status.state}`"
-            aria-hidden="true"
-          /><span>{{ componentState }}</span></span
-        >
-      </div>
-      <p class="component-intro">
-        {{ kind === 'nr' ? controlsText.nrIntro : controlsText.hdrIntro }}
-      </p>
-    </header>
-    <div v-if="statusKnown && !status.installed" class="first-setup">
-      <p>{{ controlsText.setupHint }}</p>
-      <el-button
-        type="primary"
-        :loading="operation === 'install'"
-        :disabled="
-          controlsBusy ||
-          !status.host_supported ||
-          !status.adapter_present ||
-          status.in_use ||
-          status.maintenance
-        "
-        @click="install"
-        >{{ controlsText.installSetup }}</el-button
-      ><el-button text @click="showAcquisition">{{
-        controlsText.setupHelp
-      }}</el-button>
+    <div class="enhancement-summary">
+      <header class="component-page-header">
+        <div class="component-title-row">
+          <span class="enhancement-icon" aria-hidden="true"
+            ><el-icon
+              ><component :is="kind === 'nr' ? MagicStick : Sunny" /></el-icon
+          ></span>
+          <h2>{{ kind === 'nr' ? 'DLSS NR' : 'RTX HDR' }}</h2>
+          <span class="component-hud-state" aria-live="polite"
+            ><i
+              class="component-status-dot"
+              :class="`state-${status.state}`"
+              aria-hidden="true"
+            /><span>{{ componentState }}</span></span
+          >
+        </div>
+        <p class="component-intro">
+          {{ kind === 'nr' ? controlsText.nrIntro : controlsText.hdrIntro }}
+        </p>
+      </header>
+      <EnhancementSketch :kind="kind" />
     </div>
 
-    <article class="component-window" :class="`state-${status.state}`">
-      <div v-if="status.installed" class="component-headline">
+    <article
+      v-if="status.installed"
+      class="component-window"
+      :class="`state-${status.state}`"
+    >
+      <div class="component-headline">
         <el-switch
           :model-value="status.enabled"
           :aria-label="
@@ -149,6 +137,24 @@
       show-icon
       @close="operationError = ''"
     />
+
+    <div v-if="statusKnown && !status.installed" class="first-setup">
+      <el-button
+        type="primary"
+        :loading="operation === 'install'"
+        :disabled="
+          controlsBusy ||
+          !status.host_supported ||
+          !status.adapter_present ||
+          status.in_use ||
+          status.maintenance
+        "
+        @click="install"
+        >{{ controlsText.installSetup }}</el-button
+      ><el-button text @click="showAcquisition">{{
+        controlsText.setupHelp
+      }}</el-button>
+    </div>
 
     <details class="component-details">
       <summary>{{ controlsText.maintenance }}</summary>

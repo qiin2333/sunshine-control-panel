@@ -5,6 +5,8 @@
 // 本文件经非 scoped <style> 引入，前缀 chub- 全局唯一。
 // ========================================
 
+@import './pixel-language.less';
+
 @font-face {
   // Fusion Pixel 12px proportional（OFL）补齐 PixelMplus12 缺失的简中字库
   font-family: FusionPixel;
@@ -15,31 +17,26 @@
 
 .chub-page {
   --pix-font: fusionpixel, pixelmplus12, youyuan, 'Courier New', monospace;
-  --chub-primary: #4a9eff;
-  --chub-primary-deep: #3b7fcc;
-  --chub-window-line: #4a9eff;
-  --chub-window-fill: rgba(255, 255, 255, 0.93);
-  --chub-window-shadow: rgba(74, 158, 255, 0.22);
+  --chub-primary: @pixel-primary-light;
+  --chub-primary-deep: @pixel-primary-deep-light;
+  --chub-window-line: @pixel-primary-light;
+  --chub-window-fill: @pixel-window-fill-light;
+  --chub-window-shadow: @pixel-window-shadow-light;
 
-  max-width: 860px;
-  margin: 0 auto;
-  padding: 34px 30px 60px;
-  color: var(--el-text-color-primary);
-  font-family: 'Microsoft YaHei UI', 'Noto Sans SC', sans-serif;
-  font-size: 14px;
-  line-height: 1.6;
+  max-width: 960px;
+  .pixel-page-base();
+  .pixel-divider-color(var(--chub-window-line));
 }
 
 [data-bs-theme='dark'] .chub-page {
-  --chub-primary: #d4a5a5;
-  --chub-primary-deep: #a98383;
-  --chub-window-line: #8b6f5e;
-  --chub-window-fill: rgba(45, 38, 40, 0.96);
-  --chub-window-shadow: rgba(0, 0, 0, 0.45);
+  --chub-primary: @pixel-primary-dark;
+  --chub-primary-deep: @pixel-primary-deep-dark;
+  --chub-window-line: @pixel-window-line-dark;
+  --chub-window-fill: @pixel-window-fill-dark;
+  --chub-window-shadow: @pixel-window-shadow-dark;
 }
 
-// 大屏：860px 单列是按 1280 默认窗口设计的，≥1600 视口放开上限，
-// 卡片网格 auto-fit / auto-fill 自动增列。内嵌 ds5-page 一并放宽。
+// 大屏放开页面上限，卡片网格随可用宽度增列。
 @media (min-width: 1600px) {
   .chub-page,
   .chub-page .ds5-page {
@@ -56,8 +53,6 @@
 // 本层同时覆盖内嵌 ds5-page：ds5 仅在 .chub-page 内渲染，
 // 自身不再重复按钮与方角规则（text 模式的 .ds5-action 除外）。
 // ============================================
-
-@import './pixel-language.less';
 
 .chub-page .el-button:not(.el-button--small):not(.is-text):not(.is-link) {
   .pixel-block-button(var(--chub-primary-deep));
@@ -193,23 +188,28 @@
 // 未选中页签底边与搁板同色融合，选中页签底边为窗底填充遮断搁板并向上投像素阴影。
 .chub-tabs {
   margin-top: 26px;
+  min-width: 0;
 }
 .chub-tabbar {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
   align-items: flex-end;
+  overflow-x: auto;
+  overflow-y: hidden;
   border-bottom: 2px solid var(--chub-window-line);
 }
 .chub-tab {
+  flex: 0 0 auto;
+  min-height: 34px;
   margin-bottom: -2px;
-  padding: 4px 12px;
+  padding: 6px 12px;
   border: 2px solid var(--el-border-color);
   border-bottom-color: var(--chub-window-line);
   background: transparent;
   color: var(--el-text-color-secondary);
   font-family: var(--pix-font);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.2;
   letter-spacing: 0.1em;
   white-space: nowrap;
@@ -233,6 +233,10 @@
       content: '◈ ';
     }
   }
+  &:focus-visible {
+    outline: 2px solid var(--chub-primary);
+    outline-offset: -4px;
+  }
 }
 
 // ============ 面板容器 ============
@@ -243,47 +247,31 @@
   margin-top: 28px;
 }
 
-// 内嵌 DualSense 页时去掉其自带页边距：embedded 模式不渲染页头，
-// 列宽与留白全部交给 .chub-page，否则与外层内容出现 30px 错位
+// 内嵌 DualSense 页时由 .chub-page 统一控制列宽和留白。
 .chub-pane .ds5-page {
+  max-width: none;
+  margin-inline: 0;
   padding: 0;
 }
-.chub-panel > .chub-section + .chub-section,
-.chub-panel > .chub-section + .chub-window,
-.chub-panel > .chub-window + .chub-section,
-.chub-panel > .chub-window + .chub-notice {
-  margin-top: 26px;
+// 面板按根节点排版，包含 Vue 子组件的根节点。
+.chub-panel > :is(.chub-section, .chub-window, .chub-panel, .ds5-page) + :is(.chub-section, .chub-window, .chub-panel, .ds5-page) {
+  margin-top: @pixel-section-gap;
 }
-.chub-runtime-components + .chub-panel {
-  margin-top: 28px;
+.chub-panel > :is(.chub-section, .ds5-page) + .chub-panel {
+  margin-top: @pixel-floating-window-gap;
+}
+.chub-panel > .chub-window + .chub-notice {
+  margin-top: @pixel-section-gap;
 }
 
 // ============ 像素窗（HUD） ============
 .chub-window {
-  position: relative;
-  padding: 24px 22px 20px;
-  border: 2px solid var(--chub-window-line);
-  background: var(--chub-window-fill);
-  box-shadow: 0 6px 0 var(--chub-window-shadow);
+  .pixel-window(var(--chub-window-line), var(--chub-window-fill), var(--chub-window-shadow));
 
   &.is-muted { opacity: 1; }
 }
 .chub-window-tab {
-  position: absolute;
-  top: -13px;
-  left: 14px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 2px 12px;
-  border: 2px solid var(--chub-window-line);
-  border-bottom-color: var(--chub-window-fill);
-  background: var(--chub-window-fill);
-  color: var(--chub-primary);
-  font-family: var(--pix-font);
-  font-size: 13px;
-  letter-spacing: 0.12em;
-  box-shadow: 0 -3px 0 var(--chub-window-shadow);
+  .pixel-window-tab(var(--chub-window-line), var(--chub-window-fill), var(--chub-primary), var(--chub-window-shadow));
 }
 .chub-hud-row {
   display: flex;
@@ -291,6 +279,11 @@
   justify-content: space-between;
   gap: 14px;
   flex-wrap: wrap;
+}
+.chub-hud-row--divided {
+  margin-bottom: @pixel-detail-gap;
+  padding-bottom: @pixel-detail-gap;
+  border-bottom: @pixel-detail-divider;
 }
 .chub-hud-state {
   display: inline-flex;
@@ -374,7 +367,7 @@
   gap: 18px;
   margin-top: 16px;
   padding: 12px 14px;
-  border: 1px dashed var(--el-border-color);
+  border: 1px solid var(--pixel-divider-color);
 
   p {
     margin: 0;
@@ -392,6 +385,10 @@
   .el-input-number {
     width: 100%;
   }
+}
+.chub-usb-discovery + .chub-hint,
+.chub-usb-list + .chub-hint {
+  margin-top: 14px;
 }
 .chub-usb-list {
   display: grid;
@@ -436,23 +433,12 @@
   font-family: var(--pix-font);
   font-size: 13px;
 }
-.chub-usb-attached-section {
-  margin-top: 28px;
-}
-
 // ============ 分区 ============
 .chub-section-head {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-bottom: 14px;
+  .pixel-section-head(14px);
 }
 .chub-section-label {
-  color: var(--chub-primary);
-  font-family: var(--pix-font);
-  font-size: 13px;
-  letter-spacing: 0.12em;
-  white-space: nowrap;
+  .pixel-section-label(var(--chub-primary), 14px);
 }
 .chub-section-rule {
   flex: 1;
@@ -463,7 +449,8 @@
 .chub-hint {
   margin: 0 0 14px;
   color: var(--el-text-color-secondary);
-  font-size: 13px;
+  font-size: 14px;
+  line-height: 1.6;
 }
 
 // ============ 可折叠分区 ============
@@ -489,11 +476,14 @@
   display: flex;
   align-items: center;
   gap: 14px;
-  margin-bottom: 14px;
+  margin-bottom: 0;
 
   &:hover .chub-section-label {
     color: var(--chub-primary-deep);
   }
+}
+.chub-disclosure--section[open] > summary {
+  margin-bottom: 14px;
 }
 .chub-disclosure--inline > summary {
   display: inline-flex;
@@ -640,25 +630,35 @@
 
 .chub-panel-footer {
   display: flex;
-  justify-content: flex-end;
-  margin-top: 12px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: @pixel-detail-gap;
+  padding-top: @pixel-detail-gap;
+  border-top: @pixel-detail-divider;
+}
+.chub-panel-footer .chub-hint {
+  flex: 1 1 320px;
+  margin: 0;
 }
 
 // ============ 周边工具卡片 ============
 .chub-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
   gap: 14px;
 }
 .chub-overview-cards {
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  margin-top: 26px;
+  margin-top: 18px;
 }
 .chub-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 16px;
+  gap: 10px;
+  min-width: 0;
+  min-height: 160px;
+  padding: 18px;
   border: 2px solid var(--el-border-color);
   background: var(--chub-window-fill);
   box-shadow: 0 4px 0 var(--chub-window-shadow);
@@ -670,10 +670,11 @@
 }
 .chub-card-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
-  strong { font-size: 14px; }
+  flex-wrap: wrap;
+  strong { min-width: 0; font-size: 15px; line-height: 1.4; }
 }
 .chub-card .chub-hint {
   margin: 0;
@@ -699,20 +700,31 @@
 }
 .chub-diagnostics-details {
   margin-top: 14px;
-  border-top: 1px dashed var(--el-border-color);
+  border-top: @pixel-detail-divider;
   color: var(--el-text-color-secondary);
   font-size: 12px;
 
   summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
     width: fit-content;
-    padding-top: 10px;
+    padding: 10px 0;
     color: var(--chub-primary-deep);
+    font-family: var(--pix-font);
+    font-size: 13px;
+    list-style: none;
     cursor: pointer;
     user-select: none;
+
+    &::-webkit-details-marker { display: none; }
+    &::before {
+      content: '▸';
+      color: var(--chub-primary);
+      transition: transform 0.2s ease;
+    }
   }
-}
-.chub-diagnostics-grid {
-  margin-top: 10px;
+  &[open] > summary::before { transform: rotate(90deg); }
 }
 .chub-value-danger {
   color: var(--el-color-danger);
@@ -740,7 +752,6 @@
     gap: 4px;
   }
   .chub-tab {
-    flex: 1 1 auto;
     min-height: 40px;
     padding: 7px 9px;
     letter-spacing: 0.04em;
@@ -750,7 +761,6 @@
   }
   .chub-runtime-grid,
   .chub-mic-grid,
-  .chub-overview-cards,
   .chub-cards {
     grid-template-columns: 1fr;
   }
@@ -769,15 +779,4 @@
   .chub-usb-port {
     align-self: flex-start;
   }
-}
-
-// ============ 页脚 ============
-.chub-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  margin-top: 34px;
-  padding-top: 14px;
-  border-top: 1px solid var(--el-border-color-lighter);
 }

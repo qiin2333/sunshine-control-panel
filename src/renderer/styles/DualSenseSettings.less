@@ -10,12 +10,13 @@
 // Shared by the controller view and component manager; selectors use the ds5 namespace.
 .ds5-page {
   // —— 像素菜单令牌：浅色 = Gura 蓝 ——
-  --ds5-primary: #4a9eff;
-  --ds5-primary-deep: #3b7fcc;
-  --ds5-window-line: #4a9eff;
-  --ds5-window-fill: rgba(255, 255, 255, .93);
-  --ds5-window-shadow: rgba(74, 158, 255, .22);
+  --ds5-primary: @pixel-primary-light;
+  --ds5-primary-deep: @pixel-primary-deep-light;
+  --ds5-window-line: @pixel-primary-light;
+  --ds5-window-fill: @pixel-window-fill-light;
+  --ds5-window-shadow: @pixel-window-shadow-light;
   --ds5-hover-fill: rgba(74, 158, 255, .1);
+  .pixel-divider-color(var(--ds5-window-line));
 
   // —— Element Plus 主色梯度对齐像素令牌 ——
   --el-color-primary: var(--ds5-primary);
@@ -29,21 +30,16 @@
 
 .ds5-page {
   max-width: 860px;
-  margin: 0 auto;
-  padding: 34px 30px 60px;
-  color: var(--el-text-color-primary);
-  font-family: 'Microsoft YaHei UI', 'Noto Sans SC', sans-serif;
-  font-size: 14px;
-  line-height: 1.6;
+  .pixel-page-base();
 }
 
 [data-bs-theme='dark'] .ds5-page {
   // —— 像素菜单令牌：暗色 = 莫兰迪 ——
-  --ds5-primary: #d4a5a5;
-  --ds5-primary-deep: #a98383;
-  --ds5-window-line: #8b6f5e;
-  --ds5-window-fill: rgba(45, 38, 40, .96);
-  --ds5-window-shadow: rgba(0, 0, 0, .45);
+  --ds5-primary: @pixel-primary-dark;
+  --ds5-primary-deep: @pixel-primary-deep-dark;
+  --ds5-window-line: @pixel-window-line-dark;
+  --ds5-window-fill: @pixel-window-fill-dark;
+  --ds5-window-shadow: @pixel-window-shadow-dark;
   --ds5-hover-fill: rgba(212, 165, 165, .12);
 
   // 只保留本页特有的主色梯度，其余深色 token 由 styles/element-theme.less 统一提供
@@ -79,29 +75,11 @@
 
 // ============ HUD 像素窗（页面唯一锚点） ============
 .ds5-window {
-  position: relative;
   margin-top: 30px;
-  padding: 24px 22px 20px;
-  border: 2px solid var(--ds5-window-line);
-  background: var(--ds5-window-fill);
-  box-shadow: 0 6px 0 var(--ds5-window-shadow);
+  .pixel-window(var(--ds5-window-line), var(--ds5-window-fill), var(--ds5-window-shadow));
 }
 .ds5-window-tab {
-  position: absolute;
-  top: -13px;
-  left: 14px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 2px 12px;
-  border: 2px solid var(--ds5-window-line);
-  border-bottom-color: var(--ds5-window-fill);
-  background: var(--ds5-window-fill);
-  color: var(--ds5-primary);
-  font-family: var(--pix-font);
-  font-size: 13px;
-  letter-spacing: .12em;
-  box-shadow: 0 -3px 0 var(--ds5-window-shadow);
+  .pixel-window-tab(var(--ds5-window-line), var(--ds5-window-fill), var(--ds5-primary), var(--ds5-window-shadow));
 }
 .ds5-hud-row {
   display: flex;
@@ -110,7 +88,7 @@
   gap: 18px;
   flex-wrap: wrap;
   padding-bottom: 14px;
-  border-bottom: 2px dashed color-mix(in srgb, var(--ds5-window-line) 45%, transparent);
+  border-bottom: @pixel-detail-divider;
 }
 .ds5-hud-state { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .ds5-status-dot {
@@ -144,13 +122,9 @@
 }
 // ============ 分区条目（像素标题 + 横线） ============
 .ds5-section { margin-top: 36px; }
-.ds5-section-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.ds5-section-head { .pixel-section-head(12px); }
 .ds5-section-label {
-  color: var(--ds5-primary);
-  font-family: var(--pix-font);
-  font-size: 13px;
-  letter-spacing: .12em;
-  white-space: nowrap;
+  .pixel-section-label(var(--ds5-primary), 13px);
 }
 .ds5-section-rule { flex: 1; height: 2px; background: var(--ds5-window-line); opacity: .55; }
 
@@ -165,7 +139,7 @@
   min-height: 58px;
   padding: 13px 10px;
   border: 0;
-  border-bottom: 2px dashed color-mix(in srgb, var(--ds5-window-line) 50%, transparent);
+  border-bottom: @pixel-detail-divider;
   color: var(--el-text-color-secondary);
   background: transparent;
   font: inherit;
@@ -181,7 +155,7 @@
   strong { font-size: 14px; font-weight: 600; }
   small { display: block; margin-top: 2px; color: var(--el-text-color-secondary); font-size: 12.5px; line-height: 1.5; }
 }
-.ds5-mode-option:first-child { border-top: 2px dashed color-mix(in srgb, var(--ds5-window-line) 50%, transparent); }
+.ds5-mode-option:first-child { border-top: @pixel-detail-divider; }
 .ds5-mode-cursor { color: var(--ds5-primary); font-family: var(--pix-font); visibility: hidden; }
 .ds5-mode-option.is-selected .ds5-mode-cursor { visibility: visible; animation: ds5-cursor-blink 1.2s steps(1) infinite; }
 @keyframes ds5-cursor-blink { 50% { opacity: .25; } }
@@ -221,7 +195,7 @@
   strong { flex: 0 0 auto; font-size: 12.5px; font-weight: 600; }
   small { color: var(--el-text-color-secondary); font-size: 11.5px; line-height: 1.4; }
   &:hover, &:focus-visible { border-color: var(--ds5-primary); transform: translateY(-2px); box-shadow: 0 5px 0 var(--ds5-window-shadow); }
-  &:focus-visible { outline: 1px dashed var(--ds5-primary); outline-offset: 2px; }
+  &:focus-visible { outline: 2px solid var(--ds5-primary); outline-offset: 2px; }
   &:disabled { opacity: .55; cursor: not-allowed; transform: none; box-shadow: 0 3px 0 var(--ds5-window-shadow); }
 }
 .ds5-tuning-fields {
@@ -241,7 +215,7 @@
   gap: 4px;
   min-width: 0;
   padding: 12px 14px 10px;
-  border-right: 2px dashed color-mix(in srgb, var(--ds5-window-line) 45%, transparent);
+  border-right: 1px solid var(--pixel-divider-color);
   color: var(--el-text-color-regular);
 }
 .ds5-tuning-field:last-child { border-right: 0; }
@@ -357,7 +331,7 @@
   align-items: center;
   min-height: 44px;
   padding: 9px 6px;
-  border-top: 2px dashed color-mix(in srgb, var(--ds5-window-line) 40%, transparent);
+  border-top: @pixel-detail-divider;
   font-size: 13px;
 }
 .ds5-health-row:first-child { border-top: 0; }
@@ -393,7 +367,7 @@
   .ds5-tuning-field:nth-child(2) { border-right: 0; }
   .ds5-tuning-field:last-child {
     grid-column: 1 / -1;
-    border-top: 2px dashed color-mix(in srgb, var(--ds5-window-line) 45%, transparent);
+    border-top: 1px solid var(--pixel-divider-color);
   }
   .ds5-health-row { grid-template-columns: minmax(0, 1fr) minmax(0, auto); gap: 8px; }
   .ds5-health-detail { grid-column: 1 / -1; text-align: left; }
@@ -405,7 +379,7 @@
   .ds5-tuning-fields { grid-template-columns: minmax(0, 1fr); }
   .ds5-tuning-field { padding-inline: 8px; border-right: 0; }
   .ds5-tuning-field:nth-child(n + 2) {
-    border-top: 2px dashed color-mix(in srgb, var(--ds5-window-line) 45%, transparent);
+    border-top: 1px solid var(--pixel-divider-color);
   }
   .ds5-tuning-field:last-child { grid-column: auto; }
   .ds5-tuning-field-head { align-items: flex-start; flex-direction: column; gap: 3px; }

@@ -51,7 +51,7 @@
       <p class="chub-hint">{{ t.deviceHub.usb.securityHint }}</p>
     </details>
 
-    <div class="chub-section chub-usb-attached-section">
+    <div class="chub-section">
       <div class="chub-section-head">
         <span class="chub-section-label">◈ {{ t.deviceHub.usb.attachedTitle }}</span>
         <span class="chub-section-rule"></span>

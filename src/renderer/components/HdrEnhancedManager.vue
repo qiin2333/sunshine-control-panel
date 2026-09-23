@@ -240,7 +240,7 @@
               </div>
               <p class="quality-note">{{ text.keyHint }}</p>
               <p class="quality-note">{{ text.gamepadHint }}</p>
-              <p class="quality-note" role="status">{{ registration.gamepadSupported ? (gamepadConnected == null ? text.gamepadChecking : gamepadConnected ? text.gamepadConnected.replace('{count}', gamepadConnected) : text.gamepadDisconnected) : text.gamepadUnsupported }}</p>
+              <p v-if="loaded && !registration.gamepadSupported" class="quality-note" role="status">{{ text.gamepadUnsupported }}</p>
               <p v-if="recording" class="record-hint" role="status">
                 {{ text.recordHint }}
                 <button class="quality-link" @click="cancelRecording">{{ text.cancel }}</button>
@@ -327,7 +327,6 @@ const text = computed(() => enhancementControlsText(locale.value)),
 const tab = ref('components')
 const settings = ref({ nrShortcut: '', overlayShortcut: '', nrGamepad: '', overlayGamepad: '', opacity: 62 }),
   registration = ref({})
-const gamepadConnected = ref(null)
 const draftOpacity = ref(62),
   loaded = ref(false),
   saving = ref(false),
@@ -473,7 +472,6 @@ onMounted(async () => {
   window.addEventListener('blur', cancelRecording)
   for (const [name, handler] of [
     ['nr-settings-changed', (e) => applyStatus(e.payload)],
-    ['nr-gamepad-connected', (e) => { gamepadConnected.value = e.payload }],
     [
       'nr-overlay-visibility',
       (e) => {
@@ -494,10 +492,7 @@ onMounted(async () => {
     } catch {}
   }
   try {
-    const status = await invoke('nr_overlay_settings')
-    // A connection event is newer than this initial settings response.
-    if (gamepadConnected.value == null) gamepadConnected.value = status.gamepadConnected
-    applyStatus(status)
+    applyStatus(await invoke('nr_overlay_settings'))
   } catch (e) {
     error.value = String(e)
   }

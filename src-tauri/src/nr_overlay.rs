@@ -60,7 +60,6 @@ pub struct SettingsStatus {
     nr_registered: bool,
     overlay_registered: bool,
     gamepad_supported: bool,
-    gamepad_connected: Option<usize>,
     capture_active: bool,
     target: Option<u64>,
 }
@@ -75,7 +74,6 @@ fn snapshot(state: &OverlayState) -> SettingsStatus {
         nr_registered: registered(&state.settings.nr_shortcut),
         overlay_registered: registered(&state.settings.overlay_shortcut),
         gamepad_supported: cfg!(target_os = "windows"),
-        gamepad_connected: gamepad::connected_count(),
         capture_active: state.capture.is_some(),
         target: state.target,
     }

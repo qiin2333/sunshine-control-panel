@@ -1,15 +1,5 @@
 use crate::controller_input::{parse, read, Chord};
-use std::{
-    sync::atomic::{AtomicUsize, Ordering},
-    time::{Duration, Instant},
-};
-
-// Only the input loop reads devices; settings snapshots use its last sample.
-static CONNECTED: AtomicUsize = AtomicUsize::new(usize::MAX);
-pub(super) fn connected_count() -> Option<usize> {
-    let count = CONNECTED.load(Ordering::Relaxed);
-    (count != usize::MAX).then_some(count)
-}
+use std::time::{Duration, Instant};
 fn binding_error(error: String) -> String {
     if error == "controller_shortcut_duplicate" {
         "nr_shortcut_duplicate".into()
@@ -33,7 +23,6 @@ pub(super) fn start<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     let _ = app;
     #[cfg(target_os = "windows")]
     {
-        use tauri::Emitter;
         let app = app.clone();
         tauri::async_runtime::spawn(async move {
             let mut pads: [Chord; 4] = std::array::from_fn(|_| Chord::default());
@@ -64,9 +53,6 @@ pub(super) fn start<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
                             fired = chord;
                         }
                     }
-                }
-                if CONNECTED.swap(connected, Ordering::Relaxed) != connected {
-                    let _ = app.emit("nr-gamepad-connected", connected);
                 }
                 if let Some(mask) = fired {
                     if !*capturing {

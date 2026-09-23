@@ -32,23 +32,26 @@
 //! changes keep the legacy token=0 single frame. Burst text is always inline
 //! (a REF text frame would race the image frame onto the wire and flip
 //! legacy peers' final state to text); the image frame may still use REF.
+//! Outbound compound text is deliberately limited to nonempty inline text:
+//! empty text is equivalent to no caption, and an oversized caption is omitted.
+//! This is a supported-content snapshot, not a lossless OS MIME-format mirror.
+//! A standalone inbound empty text frame remains valid as a remote clear.
 //!
-//! Echo suppression: every locally-applied inbound payload's hash is recorded
-//! before we touch the clipboard; the watcher's resulting on_clipboard_change
-//! sees the matching hash and drops the candidate, breaking the otherwise
-//! infinite write→watch→post→write loop.
+//! Echo suppression compares the complete current clipboard, including absent
+//! flavors. Reads and inbound writes share the state lock so a watcher cannot
+//! record an intermediate snapshot as a new local change.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::{
-    atomic::{AtomicBool, AtomicI64, AtomicU8, Ordering},
     Arc, Mutex,
+    atomic::{AtomicBool, AtomicI64, AtomicU8, Ordering},
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use clipboard_rs::{
-    common::RustImage as _, Clipboard, ClipboardContext, ClipboardHandler, ClipboardWatcher,
-    ClipboardWatcherContext, RustImageData, WatcherShutdown,
+    Clipboard, ClipboardContext, ClipboardHandler, ClipboardWatcher, ClipboardWatcherContext,
+    RustImageData, WatcherShutdown, common::RustImage as _,
 };
 use log::{debug, info, warn};
 use serde::Serialize;
@@ -82,12 +85,12 @@ const BURST_TEXT_MAX_INLINE: usize = 65_490;
 const BURST_RETENTION: Duration = Duration::from_secs(5);
 const MAX_PENDING_BURSTS: usize = 32;
 
-const MIME_TEXT: &str = "text/plain; charset=utf-8";
+// The blob endpoint accepts MIME types without parameters. Wire text is UTF-8.
+const MIME_TEXT: &str = "text/plain";
 const MIME_PNG: &str = "image/png";
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 const SSE_RECONNECT_BACKOFF: Duration = Duration::from_secs(3);
-const ECHO_TTL: Duration = Duration::from_secs(5);
 
 // Supervisor cadence and stuck thresholds. The supervisor treats each child
 // (sse task / heartbeat task / watcher thread) as independently restartable:
@@ -189,58 +192,42 @@ fn decode_frame(bytes: &[u8]) -> Option<Frame> {
     })
 }
 
-#[derive(Clone, Copy)]
-struct EchoEntry {
-    kind: Kind,
-    hash: u64,
-    expires: Instant,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ImageIdentity {
+    Pixels(u64),
+    Encoded(u64),
 }
 
-#[derive(Clone, Copy)]
-struct ImageEchoEntry {
-    hash: u64,
-    expires: Instant,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ClipboardIdentity {
+    text: Option<u64>,
+    image: Option<ImageIdentity>,
+}
+
+impl ClipboardIdentity {
+    fn new(text: Option<&[u8]>, png: Option<&[u8]>, pixel_hash: Option<u64>) -> Self {
+        Self {
+            // Match the outbound/compound contract: empty text is no caption.
+            // This also suppresses watcher echoes after a standalone clear.
+            text: text.filter(|bytes| !bytes.is_empty()).map(hash_payload),
+            image: png.map(|bytes| match pixel_hash {
+                Some(hash) => ImageIdentity::Pixels(hash),
+                None => ImageIdentity::Encoded(hash_payload(bytes)),
+            }),
+        }
+    }
 }
 
 #[derive(Default)]
 struct EchoState {
-    recent: VecDeque<EchoEntry>,
-    recent_images: VecDeque<ImageEchoEntry>,
+    current: Option<ClipboardIdentity>,
 }
 
 impl EchoState {
-    fn record(&mut self, kind: Kind, payload: &[u8]) {
-        if self.recent.len() >= 16 {
-            self.recent.pop_front();
-        }
-        self.recent.push_back(EchoEntry {
-            kind,
-            hash: hash_payload(payload),
-            expires: Instant::now() + ECHO_TTL,
-        });
-    }
-
-    fn is_echo(&mut self, kind: Kind, payload: &[u8]) -> bool {
-        let now = Instant::now();
-        self.recent.retain(|e| e.expires > now);
-        let h = hash_payload(payload);
-        self.recent.iter().any(|e| e.kind == kind && e.hash == h)
-    }
-
-    fn record_image(&mut self, hash: u64) {
-        if self.recent_images.len() >= 16 {
-            self.recent_images.pop_front();
-        }
-        self.recent_images.push_back(ImageEchoEntry {
-            hash,
-            expires: Instant::now() + ECHO_TTL,
-        });
-    }
-
-    fn is_image_echo(&mut self, hash: u64) -> bool {
-        let now = Instant::now();
-        self.recent_images.retain(|e| e.expires > now);
-        self.recent_images.iter().any(|e| e.hash == hash)
+    fn observe(&mut self, identity: ClipboardIdentity) -> bool {
+        let unchanged = self.current == Some(identity);
+        self.current = Some(identity);
+        unchanged
     }
 }
 
@@ -367,6 +354,9 @@ impl ClipboardHandler for WatcherCallbacks {
 }
 
 fn snapshot_and_post(echo: &Arc<Mutex<EchoState>>) {
+    // Serialize the complete read with inbound writes. A historical per-flavor
+    // cache loses A -> B -> A changes and splits compound clipboards.
+    let mut st = echo.lock().unwrap_or_else(|e| e.into_inner());
     let ctx = match ClipboardContext::new() {
         Ok(c) => c,
         Err(e) => {
@@ -415,11 +405,7 @@ fn snapshot_and_post(echo: &Arc<Mutex<EchoState>>) {
     let png_bytes = img.as_ref().and_then(|i| match i.to_png() {
         Ok(p) => {
             let bytes = p.get_bytes().to_vec();
-            if bytes.is_empty() {
-                None
-            } else {
-                Some(bytes)
-            }
+            if bytes.is_empty() { None } else { Some(bytes) }
         }
         Err(e) => {
             debug!("clipboard image to_png failed: {e}");
@@ -462,9 +448,18 @@ fn snapshot_and_post(echo: &Arc<Mutex<EchoState>>) {
     // guard so remote content never clobbers a pending local file paste.
     if let Ok(files) = ctx.get_files() {
         if !files.is_empty() && text_bytes.is_none() && png_bytes.is_none() {
+            st.current = None;
             debug!("local file clipboard without transferable payload; sync skipped");
             return;
         }
+    }
+
+    if st.observe(ClipboardIdentity::new(
+        text_bytes.as_deref(),
+        png_bytes.as_deref(),
+        pixel_hash,
+    )) {
+        return;
     }
 
     // A mixed clipboard (image + fallback text label from browsers/IM, or a
@@ -482,70 +477,22 @@ fn snapshot_and_post(echo: &Arc<Mutex<EchoState>>) {
                     "clipboard burst text {}B exceeds inline cap; sending image only",
                     tb.len()
                 );
-                if !png_payload_is_echo(echo, &pb, pixel_hash) {
-                    post_outbound(Kind::Png, pb, MIME_PNG);
-                }
+                post_outbound(Kind::Png, pb, MIME_PNG);
                 return;
             }
 
-            let (text_echo, png_echo) = {
-                let mut st = echo.lock().unwrap_or_else(|e| e.into_inner());
-                let te = st.is_echo(Kind::Text, &tb);
-                let pe =
-                    st.is_echo(Kind::Png, &pb) || pixel_hash.map_or(false, |h| st.is_image_echo(h));
-                if !te {
-                    st.record(Kind::Text, &tb);
-                }
-                if !pe {
-                    if let Some(h) = pixel_hash {
-                        st.record_image(h);
-                    }
-                }
-                (te, pe)
-            };
-
-            match (text_echo, png_echo) {
-                (true, true) => {}
-                (true, false) => post_outbound(Kind::Png, pb, MIME_PNG),
-                (false, true) => post_outbound(Kind::Text, tb, MIME_TEXT),
-                (false, false) => post_burst(tb, pb),
-            }
+            post_burst(tb, pb);
         }
         (None, Some(pb)) => {
-            if !png_payload_is_echo(echo, &pb, pixel_hash) {
-                post_outbound(Kind::Png, pb, MIME_PNG);
-            }
+            post_outbound(Kind::Png, pb, MIME_PNG);
         }
         (Some(tb), None) => {
-            if !echo
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .is_echo(Kind::Text, &tb)
-            {
-                post_outbound(Kind::Text, tb, MIME_TEXT);
-            }
+            post_outbound(Kind::Text, tb, MIME_TEXT);
         }
         (None, None) => {
             debug!("clipboard snapshot produced no text or image payload; nothing to sync");
         }
     }
-}
-
-/// Echo check for an outbound image payload (byte hash + pixel hash). The
-/// pixel hash is recorded when the payload passes so a delayed platform
-/// re-encode of the same image is still recognized as an echo.
-fn png_payload_is_echo(echo: &Arc<Mutex<EchoState>>, png: &[u8], pixel_hash: Option<u64>) -> bool {
-    let mut st = echo.lock().unwrap_or_else(|e| e.into_inner());
-    if st.is_echo(Kind::Png, png) {
-        return true;
-    }
-    if let Some(h) = pixel_hash {
-        if st.is_image_echo(h) {
-            return true;
-        }
-        st.record_image(h);
-    }
-    false
 }
 
 /// Emit a compound burst: one spawned task posting the text frame and then
@@ -879,9 +826,8 @@ async fn apply_inbound_ref(frame: Frame, echo: Arc<Mutex<EchoState>>) {
     let _ = tauri::async_runtime::spawn_blocking(move || apply_inbound_inline(frame, &echo)).await;
 }
 
-/// Write text + image flavors in one clipboard transaction. Records every
-/// echo identity first so the watcher's snapshot of the compound write is
-/// suppressed (byte hashes + pixel hash).
+/// Write text + image flavors in one clipboard transaction. Only remember a
+/// successful write, while excluding the watcher from intermediate states.
 fn apply_compound(text: &[u8], png: &[u8], echo: &Arc<Mutex<EchoState>>) {
     // Preserve a pending local file paste (mirrors the inline-path guard).
     if let Ok(ctx) = ClipboardContext::new() {
@@ -931,20 +877,14 @@ fn apply_compound(text: &[u8], png: &[u8], echo: &Arc<Mutex<EchoState>>) {
     };
     let pixel_hash = hash_image_pixels(&img);
 
-    {
-        let mut st = echo.lock().unwrap_or_else(|e| e.into_inner());
-        st.record(Kind::Text, text);
-        st.record(Kind::Png, png);
-        if let Some(h) = pixel_hash {
-            st.record_image(h);
-        }
-    }
+    let mut st = echo.lock().unwrap_or_else(|e| e.into_inner());
 
     #[cfg(windows)]
     {
         match img.to_rgba8() {
             Ok(rgba) => match crate::win_clipboard::write_compound(text_str, &rgba, png) {
                 Ok(()) => {
+                    st.current = Some(ClipboardIdentity::new(Some(text), Some(png), pixel_hash));
                     debug!(
                         "applied compound clipboard (text {}B + PNG {}B)",
                         text.len(),
@@ -961,7 +901,9 @@ fn apply_compound(text: &[u8], png: &[u8], echo: &Arc<Mutex<EchoState>>) {
             }
         }
         if let Ok(ctx) = ClipboardContext::new() {
-            let _ = ctx.set_image(img);
+            if ctx.set_image(img).is_ok() {
+                st.current = Some(ClipboardIdentity::new(None, Some(png), pixel_hash));
+            }
         }
         return;
     }
@@ -971,8 +913,12 @@ fn apply_compound(text: &[u8], png: &[u8], echo: &Arc<Mutex<EchoState>>) {
         // clipboard-rs has no compound write off-Windows; degrade to
         // sequential writes, image last (v1 outcome).
         if let Ok(ctx) = ClipboardContext::new() {
-            let _ = ctx.set_text(text_str.to_string());
-            let _ = ctx.set_image(img);
+            if ctx.set_text(text_str.to_string()).is_ok() {
+                st.current = Some(ClipboardIdentity::new(Some(text), None, None));
+            }
+            if ctx.set_image(img).is_ok() {
+                st.current = Some(ClipboardIdentity::new(None, Some(png), pixel_hash));
+            }
         }
         debug!(
             "applied compound clipboard via sequential fallback (text {}B + PNG {}B)",
@@ -995,10 +941,7 @@ fn apply_inbound_inline(frame: Frame, echo: &Arc<Mutex<EchoState>>) {
         }
     }
 
-    // Record BEFORE writing so the watcher sees the hash and suppresses.
-    echo.lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .record(frame.kind, &frame.payload);
+    let mut st = echo.lock().unwrap_or_else(|e| e.into_inner());
 
     let ctx = match ClipboardContext::new() {
         Ok(c) => c,
@@ -1010,6 +953,7 @@ fn apply_inbound_inline(frame: Frame, echo: &Arc<Mutex<EchoState>>) {
 
     match frame.kind {
         Kind::Text => {
+            let identity = ClipboardIdentity::new(Some(&frame.payload), None, None);
             let text = match String::from_utf8(frame.payload) {
                 Ok(s) => s,
                 Err(_) => {
@@ -1019,6 +963,8 @@ fn apply_inbound_inline(frame: Frame, echo: &Arc<Mutex<EchoState>>) {
             };
             if let Err(e) = ctx.set_text(text) {
                 warn!("inbound set_text failed: {e}");
+            } else {
+                st.current = Some(identity);
             }
         }
         Kind::Png => {
@@ -1042,16 +988,12 @@ fn apply_inbound_inline(frame: Frame, echo: &Arc<Mutex<EchoState>>) {
                     return;
                 }
             };
-            // Record the pixel identity alongside the payload hash recorded
-            // above: after set_image the platform re-encodes the bitmap and
-            // the watcher's payload bytes no longer match, but pixels do.
-            if let Some(h) = hash_image_pixels(&img) {
-                echo.lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .record_image(h);
-            }
+            let identity =
+                ClipboardIdentity::new(None, Some(&frame.payload), hash_image_pixels(&img));
             if let Err(e) = ctx.set_image(img) {
                 warn!("inbound set_image failed: {e}");
+            } else {
+                st.current = Some(identity);
             }
         }
         Kind::Ref => {
@@ -1601,5 +1543,97 @@ mod status_tests {
         assert_eq!(transport_state_name(TRANSPORT_CONNECTING), "connecting");
         assert_eq!(transport_state_name(TRANSPORT_CONNECTED), "connected");
         assert_eq!(transport_state_name(TRANSPORT_DISCONNECTED), "disconnected");
+    }
+}
+
+#[cfg(test)]
+mod echo_tests {
+    use super::*;
+
+    #[test]
+    fn empty_caption_is_equivalent_to_absent_caption() {
+        let image_only = ClipboardIdentity::new(None, Some(b"png"), Some(10));
+        let mut state = EchoState {
+            current: Some(image_only),
+        };
+        assert!(state.observe(ClipboardIdentity::new(Some(b""), Some(b"png"), Some(10))));
+        assert!(!state.observe(ClipboardIdentity::new(
+            Some(b"caption"),
+            Some(b"png"),
+            Some(10)
+        )));
+        assert!(!state.observe(image_only));
+    }
+
+    #[test]
+    fn standalone_empty_text_is_still_a_valid_clear_frame() {
+        let frame = decode_frame(&encode_frame(&Frame {
+            kind: Kind::Text,
+            token: 0,
+            payload: Vec::new(),
+        }))
+        .unwrap();
+        assert_eq!(frame.kind, Kind::Text);
+        assert_eq!(frame.token, 0);
+        assert!(frame.payload.is_empty());
+        let mut state = EchoState {
+            current: Some(ClipboardIdentity::new(Some(b"before"), None, None)),
+        };
+        assert!(!state.observe(ClipboardIdentity::new(Some(&frame.payload), None, None)));
+        assert!(state.observe(ClipboardIdentity::new(None, None, None)));
+    }
+
+    #[test]
+    fn a_b_a_is_not_suppressed_by_history() {
+        let mut state = EchoState::default();
+        let a = ClipboardIdentity::new(Some(b"A"), None, None);
+        let b = ClipboardIdentity::new(Some(b"B"), None, None);
+        assert!(!state.observe(a));
+        assert!(state.observe(a));
+        assert!(!state.observe(b));
+        assert!(!state.observe(a));
+    }
+
+    #[test]
+    fn compound_changes_keep_both_flavors() {
+        let mut state = EchoState::default();
+        let image = ClipboardIdentity::new(None, Some(b"png"), Some(10));
+        let caption_a = ClipboardIdentity::new(Some(b"A"), Some(b"png"), Some(10));
+        let caption_b = ClipboardIdentity::new(Some(b"B"), Some(b"png"), Some(10));
+        assert!(!state.observe(image));
+        assert!(!state.observe(caption_a)); // same image, newly added caption
+        assert!(!state.observe(caption_b)); // same image, changed caption
+        assert!(!state.observe(ClipboardIdentity::new(
+            Some(b"B"),
+            Some(b"new png"),
+            Some(20)
+        )));
+        assert!(!state.observe(caption_b)); // back to the earlier image
+        assert!(state.observe(caption_b));
+    }
+
+    #[test]
+    fn removing_a_flavor_is_a_new_clipboard() {
+        let compound = ClipboardIdentity::new(Some(b"caption"), Some(b"png"), Some(10));
+        let mut state = EchoState {
+            current: Some(compound),
+        };
+        assert!(!state.observe(ClipboardIdentity::new(Some(b"caption"), None, None)));
+        assert!(!state.observe(compound));
+        assert!(!state.observe(ClipboardIdentity::new(None, Some(b"png"), Some(10))));
+    }
+
+    #[test]
+    fn applied_compound_does_not_echo_after_image_reencoding() {
+        let applied = ClipboardIdentity::new(Some(b"caption"), Some(b"wire png"), Some(10));
+        let mut state = EchoState {
+            current: Some(applied),
+        };
+        let snapshot = ClipboardIdentity::new(Some(b"caption"), Some(b"reencoded png"), Some(10));
+        assert!(state.observe(snapshot));
+        // Byte hashing remains available when pixel conversion is unavailable.
+        let encoded = ClipboardIdentity::new(None, Some(b"png"), None);
+        assert!(!state.observe(encoded));
+        assert!(state.observe(encoded));
     }
 }

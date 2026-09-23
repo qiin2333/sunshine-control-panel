@@ -253,7 +253,15 @@ fn build_status(
         })
         .and_then(serde_json::Value::as_bool)
         == Some(true);
-    let state = if degraded {
+    let pending_removal = runtime_status
+        .get("pending_removal")
+        .and_then(serde_json::Value::as_str)
+        .filter(|id| !id.is_empty());
+    let state = if pending_removal == Some(COMPONENT_ID) {
+        "pending_removal"
+    } else if pending_removal.is_some() {
+        "maintenance_other"
+    } else if degraded {
         "degraded"
     } else if ready {
         "active"
@@ -479,10 +487,21 @@ fn remove_managed_runtime() -> Result<(), String> {
         return Ok(());
     }
     let root = validate_component_root()?;
+    remove_runtime_files(&root)
+}
+
+fn remove_runtime_files(root: &Path) -> Result<(), String> {
     for path in [root.join(RUNTIME_FILE), root.join("component.json")] {
         if path.exists() {
-            fs::remove_file(&path)
-                .map_err(|error| permission_error("remove NVIDIA runtime", error))?;
+            fs::remove_file(&path).map_err(|error| {
+                // A mapped runtime or an open manifest can block deletion.
+                if matches!(error.raw_os_error(), Some(5 | 32 | 33)) {
+                    "HDR-PKG-010: unable to remove component files; restart Sunshine and retry, then check file permissions if it still fails"
+                        .to_string()
+                } else {
+                    permission_error("remove NVIDIA runtime", error)
+                }
+            })?;
         }
     }
     Ok(())
@@ -536,7 +555,17 @@ pub(crate) fn try_handle_elevated_command() -> Option<i32> {
             }
         })
     };
-    Some(if run().is_ok() { 0 } else { 1 })
+    Some(match run() {
+        Ok(()) => 0,
+        Err(error) => {
+            log::warn!("NVIDIA component helper failed: {error}");
+            if error.starts_with("HDR-PKG-010:") {
+                2
+            } else {
+                1
+            }
+        }
+    })
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -569,7 +598,7 @@ async fn install_runtime_with_elevation(
             .map_err(|_| "HDR-PKG-004: installation task failed".to_string())?;
         }
         let runtime = runtime.to_string_lossy().into_owned();
-        let id = operation.id;
+        let id = operation.id.clone();
         let process = tokio::task::spawn_blocking(move || {
             crate::utils::launch_current_executable_elevated(
                 &[ELEVATED_INSTALL_ARG, &runtime, &id],
@@ -616,7 +645,7 @@ async fn remove_component_with_elevation(
             .await
             .map_err(|_| "HDR-PKG-004: removal task failed".to_string())?;
         }
-        let id = operation.id;
+        let id = operation.id.clone();
         let process = tokio::task::spawn_blocking(move || {
             crate::utils::launch_current_executable_elevated(
                 &[ELEVATED_REMOVE_ARG, &id],
@@ -627,6 +656,12 @@ async fn remove_component_with_elevation(
         .map_err(|_| "HDR-OP-002: unable to start removal".to_string())??;
         let code = wait_for_component_helper(process).await?;
         if code != 0 {
+            if code == 2 {
+                return Err(
+                    "HDR-PKG-010: unable to remove component files; restart Sunshine and retry, then check file permissions if it still fails"
+                        .to_string(),
+                );
+            }
             return Err("HDR-PKG-004: component helper rejected removal".to_string());
         }
         Ok(())
@@ -679,9 +714,19 @@ pub async fn component_install(runtime_path: String) -> Result<EnhancementCompon
 }
 
 pub async fn component_recover() -> Result<EnhancementComponentStatus, String> {
+    let _operation = COMPONENT_OPERATION
+        .try_lock()
+        .map_err(|_| "HDR-OP-001: another component operation is running".to_string())?;
     #[cfg(target_os = "windows")]
     {
         ensure_helper_finished().await?;
+        let runtime_status = crate::hdr_enhanced::get_status().await?;
+        if runtime_status["pending_removal"].as_str() == Some(COMPONENT_ID) {
+            let operation = crate::hdr_enhanced::inspect_maintenance(COMPONENT_ID).await?;
+            remove_component_with_elevation(&operation).await?;
+            crate::hdr_enhanced::recover_maintenance(COMPONENT_ID).await?;
+            return component_get_status().await;
+        }
         // 只有待恢复文件确实存在时才再次请求管理员权限。
         if runtime_transaction::pending(&component_root()) {
             let operation = crate::hdr_enhanced::inspect_maintenance(COMPONENT_ID).await?;
@@ -695,15 +740,17 @@ pub async fn component_recover() -> Result<EnhancementComponentStatus, String> {
                 .await
                 .map_err(|_| "HDR-PKG-004: component recovery failed".to_string())??;
             } else {
+                let id = operation.id.clone();
                 let process = tokio::task::spawn_blocking(move || {
                     crate::utils::launch_current_executable_elevated(
-                        &[ELEVATED_RECOVER_ARG, &operation.id],
+                        &[ELEVATED_RECOVER_ARG, &id],
                         windows::Win32::UI::WindowsAndMessaging::SW_HIDE.0,
                     )
                 })
                 .await
                 .map_err(|_| "HDR-OP-002: unable to start recovery".to_string())??;
-                if wait_for_component_helper(process).await? != 0 {
+                let code = wait_for_component_helper(process).await?;
+                if code != 0 {
                     return Err("HDR-PKG-004: component recovery failed".to_string());
                 }
             }
@@ -770,6 +817,21 @@ pub async fn component_uninstall() -> Result<EnhancementComponentStatus, String>
     }
     let removed = remove_component_with_elevation(&operation_id).await;
     if let Err(error) = removed {
+        if error.starts_with("HDR-PKG-010:") {
+            if let Err(defer_error) =
+                crate::hdr_enhanced::defer_removal(COMPONENT_ID, &operation_id.id).await
+            {
+                match crate::hdr_enhanced::get_status().await {
+                    Ok(status) if status["pending_removal"].as_str() == Some(COMPONENT_ID) => {}
+                    Ok(_) => {
+                        finish_operation(&operation_id.id).await?;
+                        return Err(defer_error);
+                    }
+                    Err(_) => return Err(defer_error),
+                }
+            }
+            return component_get_status().await;
+        }
         let _ = finish_operation(&operation_id.id).await;
         return Err(error);
     }
@@ -785,6 +847,52 @@ pub async fn component_uninstall() -> Result<EnhancementComponentStatus, String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn locked_component_files_are_reported_for_deferred_removal() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let root = std::env::temp_dir().join(format!("hdr-removal-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let runtime = root.join(RUNTIME_FILE);
+        fs::write(&runtime, b"runtime").unwrap();
+        fs::write(root.join("component.json"), b"manifest").unwrap();
+        let owner = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0x00000001)
+            .open(&runtime)
+            .unwrap();
+        assert!(
+            remove_runtime_files(&root)
+                .unwrap_err()
+                .starts_with("HDR-PKG-010:")
+        );
+        assert!(runtime.exists());
+        drop(owner);
+        remove_runtime_files(&root).unwrap();
+        assert!(!runtime.exists());
+        assert!(!root.join("component.json").exists());
+
+        fs::write(&runtime, b"runtime").unwrap();
+        let manifest = root.join("component.json");
+        fs::write(&manifest, b"manifest").unwrap();
+        let owner = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0x00000001)
+            .open(&manifest)
+            .unwrap();
+        assert!(
+            remove_runtime_files(&root)
+                .unwrap_err()
+                .starts_with("HDR-PKG-010:")
+        );
+        assert!(!runtime.exists());
+        assert!(manifest.exists());
+        drop(owner);
+        remove_runtime_files(&root).unwrap();
+        assert!(!manifest.exists());
+        fs::remove_dir(root).unwrap();
+    }
 
     fn uninstall_config(revision: usize) -> crate::hdr_enhanced::ConfigState {
         let other = if IS_NR {
@@ -922,6 +1030,35 @@ mod tests {
         assert!(!status.download_available);
         assert_eq!(status.component_id, COMPONENT_ID);
         assert_eq!(status.state, "not_installed");
+    }
+
+    #[test]
+    fn pending_removal_is_visible_only_on_its_own_component() {
+        let config = crate::hdr_enhanced::ConfigState {
+            settings: crate::hdr_enhanced::Settings {
+                schema_version: 2,
+                selected_backend: None,
+                selected_nr_backend: None,
+                backends: Default::default(),
+            },
+            etag: reqwest::header::HeaderValue::from_static("\"hdr-v2-test\""),
+        };
+        let own = build_status(
+            &config,
+            &serde_json::json!({"pending_removal": COMPONENT_ID, "maintenance": true}),
+        );
+        assert_eq!(own.state, "pending_removal");
+        assert!(own.maintenance);
+        let other = if IS_NR {
+            "alkaidlab.nvidia_rtx_video"
+        } else {
+            "alkaidlab.nvidia_dlssnr"
+        };
+        let blocked = build_status(
+            &config,
+            &serde_json::json!({"pending_removal": other, "maintenance": true}),
+        );
+        assert_eq!(blocked.state, "maintenance_other");
     }
 
     #[test]

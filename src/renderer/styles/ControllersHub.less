@@ -267,8 +267,6 @@
 // ============ 像素窗（HUD） ============
 .chub-window {
   .pixel-window(var(--chub-window-line), var(--chub-window-fill), var(--chub-window-shadow));
-
-  &.is-muted { opacity: 1; }
 }
 .chub-window-tab {
   .pixel-window-tab(var(--chub-window-line), var(--chub-window-fill), var(--chub-primary), var(--chub-window-shadow));
@@ -450,7 +448,6 @@
   margin: 0 0 14px;
   color: var(--el-text-color-secondary);
   font-size: 14px;
-  line-height: 1.6;
 }
 
 // ============ 可折叠分区 ============
@@ -689,15 +686,6 @@
 .chub-mic-grid {
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
-.chub-mic-actions {
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-
-  .chub-hint {
-    margin: 0;
-  }
-}
 .chub-diagnostics-details {
   margin-top: 14px;
   border-top: @pixel-detail-divider;
@@ -760,7 +748,6 @@
     padding: 24px 15px 18px;
   }
   .chub-runtime-grid,
-  .chub-mic-grid,
   .chub-cards {
     grid-template-columns: 1fr;
   }

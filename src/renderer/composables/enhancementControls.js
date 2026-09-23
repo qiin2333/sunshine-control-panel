@@ -58,7 +58,6 @@ const messages = {
     hdrPermissionHint:
       '允许应用使用 SDR 转 HDR 功能；是否启用由应用配置决定，下次连接时生效。',
     appDefaults: '应用默认设置',
-    setupHint: '先安装增强组件，再选择在哪些串流中使用。',
     setupHelp: '安装需要什么？',
     usageNotes: '功能说明与注意事项',
     permissionSaved: '功能设置已保存。应用默认配置与当前串流效果分别管理。',
@@ -144,8 +143,6 @@ const messages = {
     hdrPermissionHint:
       'Allows apps to use SDR-to-HDR conversion. Per-app settings take effect on the next connection.',
     appDefaults: 'Application defaults',
-    setupHint:
-      'Install the enhancement component, then choose which streams use it.',
     setupHelp: 'Installation requirements',
     usageNotes: 'Usage notes',
     permissionSaved:

@@ -5,10 +5,6 @@
   width: 27px;
   height: 27px;
 }
-.quality-manager .quality-tabs button[aria-selected='true'] {
-  color: var(--el-color-primary);
-  border-bottom-color: var(--el-color-primary);
-}
 .quality-manager .quality-body h2 {
   font-size: 17px;
   margin: 0;
@@ -201,37 +197,11 @@
   flex-wrap: wrap;
   margin-top: 20px;
 }
-@media (max-width: 760px) {
-  .quality-manager {
-    padding: 20px 14px;
-  }
-  .quality-manager .quality-layout,
-  .quality-manager .session-grid {
-    grid-template-columns: 1fr;
-  }
-  .quality-manager .quality-body {
-    padding: 18px;
-  }
-  .quality-manager .quality-tabs {
-    padding: 0 18px;
-    gap: 15px;
-  }
-  .quality-manager .quality-layout aside {
-    max-width: 320px;
-    width: 100%;
-  }
-}
 .quality-manager .component-status-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: var(--el-text-color-placeholder);
-}
-.quality-manager .state-active .component-status-dot {
-  background: var(--el-color-success);
-}
-.quality-manager .state-degraded .component-status-dot {
-  background: var(--el-color-warning);
 }
 .quality-manager .component-hud-actions {
   display: flex;
@@ -246,7 +216,6 @@
   justify-content: space-between;
   gap: 20px;
   padding: 12px 0;
-  border-bottom: 1px solid var(--el-border-color-lighter);
   font-size: 12px;
 }
 .quality-manager .component-health-key {
@@ -274,9 +243,6 @@
   background: var(--el-color-warning);
 }
 @media (max-width: 600px) {
-  .quality-manager .enhancement-card {
-    padding: 18px;
-  }
   .quality-manager .component-hud-actions {
     width: 100%;
   }
@@ -314,7 +280,6 @@
 }
 .quality-manager .quality-tabs {
   flex-wrap: wrap;
-  border-bottom: 1px solid var(--el-border-color-light);
   display: inline-flex;
   gap: 5px;
   padding: 5px;
@@ -327,7 +292,6 @@
   font: inherit;
   cursor: pointer;
   background: none;
-  border-bottom: 3px solid transparent;
   color: var(--el-text-color-secondary);
   padding: 10px 20px;
   border: 0;
@@ -342,21 +306,10 @@
   color: var(--el-text-color-secondary);
   margin: 0 0 20px;
   font-size: 12px;
-  margin-bottom: 20px;
 }
 .quality-manager .enhancement-stack {
   display: grid;
   gap: 18px;
-}
-.quality-manager .component-title-row h2 {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-}
-.quality-manager .component-hud-row,
-.quality-manager .component-details,
-.quality-manager .component-health-row {
-  border: 0;
 }
 .quality-manager .settings-row,
 .quality-manager .shortcut-row,
@@ -378,17 +331,8 @@
   outline: 1px solid var(--el-color-primary);
 }
 @media (max-width: 760px) {
-  .quality-manager {
-    padding: 24px 18px;
-  }
   .quality-manager .quality-tabs button {
     padding: 10px 13px;
-  }
-  .quality-manager .enhancement-card {
-    padding: 20px;
-  }
-  .quality-manager .quality-layout {
-    padding: 18px;
   }
 }
 .quality-manager #quality-session > label {
@@ -467,6 +411,9 @@
   }
 }
 [data-bs-theme='dark'] .quality-manager {
+  --enh-illustration: #b18a88;
+  --enh-link: #d4a5a5;
+  --enh-button-ink: #34272c;
   --el-text-color-placeholder: #9d9494;
   --el-color-primary-light-7: rgba(212, 165, 165, 0.28);
   --el-border-color: rgba(230, 213, 184, 0.22);
@@ -485,48 +432,18 @@
   --el-text-color-secondary: #b9aca8;
 }
 .quality-manager .quality-tabs button[aria-selected='true'] {
-  color: var(--el-text-color-primary);
-  position: relative;
-  background: transparent;
-  isolation: isolate;
-}
-.quality-manager .quality-tabs button[aria-selected='true']::before {
-  content: '';
-  position: absolute;
-  z-index: -1;
-  inset: 9px 10px 7px;
-  background: var(--el-color-primary-light-8);
-  clip-path: polygon(2% 10%, 96% 0, 100% 84%, 4% 100%, 0 50%);
-  transform: rotate(-2deg);
-  pointer-events: none;
-}
-
-@media (max-width: 650px) {
-  .quality-manager .component-page-header {
-    padding-right: 0;
-  }
-}
-.quality-manager .study-sketch svg {
-  overflow: visible;
-  width: 100%;
-  display: block;
-  height: 96px;
-}
-@media (max-width: 650px) {
-  .quality-manager .enhancement-card > .study-sketch {
-    width: 155px;
-    right: 6px;
-    bottom: auto;
-    top: 5px;
-    opacity: 0.4;
-  }
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
 }
 
 .quality-manager {
   --el-color-primary-light-7: #c6e2ff;
   --el-color-primary-light-8: #d9ecff;
   --el-color-primary-light-9: #ecf5ff;
-  --el-color-primary: #409eff;
+  --el-color-primary: #4a9eff;
+  --enh-illustration: #6fa6db;
+  --enh-link: #2f6db5;
+  --enh-button-ink: #153553;
   font-family: inherit;
   color: var(--el-text-color-primary);
   margin: 0 auto;
@@ -534,87 +451,109 @@
   max-width: 1000px;
 }
 .quality-manager .enhancement-card {
-  overflow: hidden;
-  isolation: isolate;
-  position: relative;
   color: var(--el-text-color-primary);
   background: var(--quality-surface, var(--el-bg-color));
-  border: 0;
+  border: 1px solid var(--el-border-color-light);
   border-radius: 14px;
-  box-shadow: 0 4px 20px #00000006;
-  padding: 20px 24px;
+  padding: 20px 22px 16px;
+}
+.quality-manager .enhancement-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 210px;
+  gap: 18px;
+  align-items: center;
+}
+.quality-manager .enhancement-summary .study-sketch {
+  width: 210px;
+  color: var(--enh-illustration);
+  opacity: 0.8;
+  pointer-events: none;
+}
+.quality-manager .enhancement-summary .study-sketch svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
 }
 .quality-manager .component-page-header {
-  min-height: 0;
-  position: relative;
-  padding-right: 190px;
+  min-width: 0;
 }
 .quality-manager .component-title-row {
-  align-items: center;
   display: flex;
+  align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
+}
+.quality-manager .component-title-row h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
 }
 .quality-manager .enhancement-icon {
-  border-radius: 50%;
-  background: var(--el-fill-color-light);
-  color: var(--el-text-color-primary);
   display: inline-flex;
-  padding: 9px;
-  font-size: 19px;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+  font-size: 18px;
+}
+.quality-manager .component-hud-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--el-color-primary-light-9);
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
 }
 .quality-manager .component-intro {
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-  margin: 9px 0 14px;
-  line-height: 1.6;
-}
-.quality-manager .component-hud-row {
-  border-top: 1px solid var(--el-border-color-lighter);
-  flex-wrap: wrap;
-  gap: 12px;
-  align-items: center;
-  justify-content: space-between;
-  display: flex;
-  padding: 0;
-  min-height: 0;
+  margin: 12px 0 0;
+  color: var(--el-text-color-primary);
+  font-size: 14px;
+  line-height: 1.5;
 }
 
+.quality-manager .component-window {
+  margin-top: 16px;
+}
 .quality-manager .component-headline {
   background: var(--el-fill-color-light);
-  border-radius: 10px;
+  border-radius: 8px;
   padding: 12px 16px;
 }
 .quality-manager .component-headline .el-button {
   border: 0;
-  border-radius: 20px;
+  border-radius: 8px;
   background: var(--el-color-primary-light-9);
-  color: var(--el-color-primary);
+  color: var(--enh-link);
   margin-top: 4px;
   padding: 8px 14px;
 }
 .quality-manager .component-details {
-  padding-top: 2px;
   margin-top: 14px;
+  border-top: 1px solid var(--el-border-color-light);
 }
-.quality-manager .component-details summary {
-  font-weight: 500;
+.quality-manager .component-details > summary {
+  padding-top: 11px;
   cursor: pointer;
-  font-size: 13px;
+  list-style: none;
+  font-size: 12px;
   color: var(--el-text-color-secondary);
 }
-.quality-manager .component-hud-label {
-  font-weight: 400;
+.quality-manager .component-details > summary::-webkit-details-marker {
+  display: none;
 }
-.quality-manager .enhancement-card > .study-sketch {
-  pointer-events: none;
-  z-index: -1;
-  opacity: 0.55;
-  margin: 0;
-  bottom: auto;
-  position: absolute;
-  width: 170px;
-  top: 1px;
-  right: 14px;
+.quality-manager .component-details > summary::before {
+  margin-right: 7px;
+  color: var(--el-color-primary);
+  content: '▸';
+}
+.quality-manager .component-details[open] > summary::before {
+  content: '▾';
 }
 .quality-manager .category-description,
 .quality-manager .quality-note,
@@ -697,17 +636,6 @@
   .quality-manager .quality-layout aside {
     max-width: 280px;
   }
-  .quality-manager .component-page-header {
-    padding-right: 0;
-  }
-  .quality-manager .enhancement-card > .study-sketch {
-    width: 135px;
-    opacity: 0.4;
-  }
-
-  .quality-manager .component-intro {
-    max-width: 75%;
-  }
 }
 
 .quality-manager .session-identity {
@@ -726,11 +654,42 @@
   font-size: 14px;
 }
 .quality-manager .first-setup {
-  padding: 12px 0 18px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 16px;
 }
-.quality-manager .first-setup p {
+.quality-manager .first-setup .el-button {
+  min-height: 37px;
+  margin: 0;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.quality-manager .first-setup .el-button--primary {
+  color: var(--enh-button-ink);
+}
+.quality-manager .first-setup .el-button.is-text {
+  color: var(--enh-link);
+}
+.quality-manager .component-notice.el-alert,
+.quality-manager .component-notice > .el-alert {
+  padding: 8px 0 8px 12px;
+  border-left: 3px solid var(--el-color-primary);
+  border-radius: 0;
+  background: transparent;
+}
+.quality-manager .component-notice.el-alert--warning,
+.quality-manager .component-notice > .el-alert--warning {
+  border-left-color: var(--el-color-warning);
+}
+.quality-manager .component-notice.el-alert--error {
+  border-left-color: var(--el-color-danger);
+}
+.quality-manager .component-notice .el-alert__title {
   font-size: 13px;
   color: var(--el-text-color-secondary);
+  line-height: 1.5;
 }
 .quality-manager .component-headline p {
   font-size: 13px;
@@ -755,11 +714,10 @@
 .quality-manager .session-grid {
   border-radius: 0;
   background: transparent;
-  padding: 0 0 26px;
+  padding: 0 0 22px;
   margin-top: 28px;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  padding-bottom: 22px;
   gap: 24px;
 }
 .quality-manager .live-controls {
@@ -814,10 +772,6 @@
   }
 }
 
-.quality-manager .component-details > summary {
-  color: var(--el-text-color-primary);
-  font-weight: 500;
-}
 .quality-manager .component-details > .component-hud-actions {
   display: flex;
   align-items: center;
@@ -825,7 +779,7 @@
   margin: 16px 0 14px;
 }
 .quality-manager .component-hud-actions .el-button {
-  border-radius: 20px;
+  border-radius: 8px;
   margin: 0;
   padding: 9px 13px;
   height: auto;
@@ -912,51 +866,30 @@
   }
 }
 
-.quality-manager .component-title-row {
-  flex-wrap: wrap;
-}
-.quality-manager .component-hud-state {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  margin-left: 16px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-}
 .quality-manager .component-status-dot.state-active,
 .quality-manager .component-status-dot.state-selected {
   background: var(--el-color-success);
 }
-.quality-manager .enhancement-card > .study-sketch {
-  position: absolute;
-  color: var(--el-color-primary);
-  margin: 0;
-  right: 14px;
-  top: 1px;
-  width: 170px;
-  opacity: 0.55;
-  z-index: -1;
-  pointer-events: none;
-}
 @media (max-width: 760px) {
-  .quality-manager .enhancement-card > .study-sketch {
-    width: 135px;
-    opacity: 0.4;
+  .quality-manager .enhancement-summary {
+    grid-template-columns: minmax(0, 1fr) 145px;
   }
-  .quality-manager .component-title-row {
-    padding-right: 100px;
-  }
-  .quality-manager .component-hud-state {
-    margin-left: 0;
+  .quality-manager .enhancement-summary .study-sketch {
+    width: 145px;
   }
 }
-
-.quality-manager {
-  background-image: radial-gradient(
-    var(--el-border-color-lighter) 0.6px,
-    transparent 0.6px
-  );
-  background-size: 20px 20px;
+@media (max-width: 480px) {
+  .quality-manager .enhancement-card {
+    padding: 16px;
+  }
+  .quality-manager .enhancement-summary {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  .quality-manager .enhancement-summary .study-sketch {
+    width: 165px;
+    justify-self: end;
+  }
 }
 .quality-manager .live-controls {
   width: 100%;

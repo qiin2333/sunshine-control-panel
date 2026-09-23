@@ -7,6 +7,7 @@ mod client_fingerprint_rules;
 mod clipboard;
 mod commands;
 mod controller_hub;
+mod controller_input;
 mod device_config;
 mod controllermeta;
 mod desktop_settings;

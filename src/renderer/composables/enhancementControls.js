@@ -1,3 +1,4 @@
+import { displayGamepadShortcut } from './controllerButtons.js'
 export const DEFAULT_NR_SHORTCUT = 'Ctrl+Alt+KeyN'
 
 export function displayShortcut(value) {
@@ -12,6 +13,11 @@ export function displayShortcut(value) {
         .replace(/^shift$/i, 'Shift')
     )
     .join(' + ')
+}
+
+export function nrShortcutLabel(status) {
+  if (status?.nrRegistered) return displayShortcut(status.settings?.nrShortcut)
+  return status?.gamepadSupported ? displayGamepadShortcut(status.settings?.nrGamepad) : ''
 }
 
 // Physical key codes match the native global-shortcut parser on non-US layouts.
@@ -76,6 +82,11 @@ const messages = {
     showHint: '串流时快速调节 DLSS NR',
     opacity: '默认背景不透明度',
     keys: '全局快捷键',
+    keyboard: '键盘',
+    gamepad: '手柄',
+    gamepadUnsupported: '当前系统不支持后台手柄快捷键',
+    cancel: '取消录制',
+    gamepadHint: '支持 Windows Xbox / XInput 手柄（含串流虚拟手柄）。同时按住 LB、RB 和所选 X/Y 半秒触发，全部松开后可再次使用；按键仍会传给游戏。配置后，大屏中参与组合的单键会在松开时执行原导航。',
     reset: '恢复默认',
     visibilityKey: '显示 / 隐藏浮层',
     nrKey: '切换 DLSS NR',
@@ -106,6 +117,7 @@ const messages = {
     action: '切换增强',
     errors: {
       nr_request_invalid: '处理比例必须为 20%–100%，且为 5 的倍数',
+      nr_gamepad_invalid: '手柄快捷键仅支持 LB+RB+X 或 LB+RB+Y',
       nr_shortcut_invalid: '请使用有效的 Ctrl、Alt 或 Shift 组合键',
       nr_shortcut_duplicate: '两个操作不能使用相同快捷键',
       nr_shortcut_conflict: '快捷键已被占用，原设置保持不变',
@@ -159,6 +171,11 @@ const messages = {
     showHint: 'Adjust DLSS NR during a stream',
     opacity: 'Default background opacity',
     keys: 'Global shortcuts',
+    keyboard: 'Keyboard',
+    gamepad: 'Gamepad',
+    gamepadUnsupported: 'Background gamepad shortcuts are unavailable on this platform',
+    cancel: 'Cancel recording',
+    gamepadHint: 'Windows Xbox / XInput controllers, including virtual streaming controllers. Hold LB, RB and the selected X/Y for half a second; release all buttons before using again. Games still receive these buttons. Once configured, a shortcut button used alone navigates on release in desktop mode.',
     reset: 'Restore defaults',
     visibilityKey: 'Show / hide overlay',
     nrKey: 'Toggle DLSS NR',
@@ -192,6 +209,7 @@ const messages = {
     errors: {
       nr_request_invalid:
         'Processing scale must be 20%–100% and a multiple of 5.',
+      nr_gamepad_invalid: 'Only LB+RB+X or LB+RB+Y is supported for gamepad shortcuts',
       nr_shortcut_invalid: 'Use a valid Ctrl, Alt or Shift shortcut',
       nr_shortcut_duplicate: 'The two actions need different shortcuts',
       nr_shortcut_conflict:

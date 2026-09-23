@@ -180,46 +180,70 @@
                   {{ text.reset }}
                 </button>
               </div>
-              <div
-                v-for="item in shortcutRows"
-                :key="item.key"
-                class="shortcut-row"
-              >
-                <label :for="`record-${item.key}`">{{ item.label }}</label>
-                <div class="shortcut-controls">
-                  <button
-                    :id="`record-${item.key}`"
-                    class="quality-button record"
-                    :class="{ recording: recording === item.key }"
-                    :disabled="saving || !loaded"
-                    @click="startRecording(item.key)"
+              <div v-for="group in shortcutGroups" :key="group.label" class="shortcut-group">
+                <h4>{{ group.label }}</h4>
+                <div class="shortcut-inputs">
+                  <div
+                    v-for="item in group.inputs"
+                    :key="item.key"
+                    class="shortcut-row"
                   >
-                    <span>{{
-                      recording === item.key
-                        ? text.record
-                        : displayShortcut(settings[item.key]) || text.unset
-                    }}</span
-                    ><Keyboard aria-hidden="true" /></button
-                  ><button
-                    class="quality-link"
-                    :disabled="saving || !loaded || !settings[item.key]"
-                    @click="clearShortcut(item.key)"
-                  >
-                    {{ text.clear }}
-                  </button>
+                    <label :for="`record-${item.key}`">{{ item.gamepad ? text.gamepad : text.keyboard }}</label>
+                    <div class="shortcut-controls">
+                      <select
+                        v-if="item.gamepad"
+                        :id="`record-${item.key}`"
+                        :aria-label="`${group.label} · ${text.gamepad}`"
+                        :value="settings[item.key]"
+                        :disabled="saving || !loaded || !registration.gamepadSupported"
+                        @change="save({ [item.key]: $event.target.value })"
+                      >
+                        <option value="">{{ text.unset }}</option>
+                        <option v-for="option in FIXED_GAMEPAD_SHORTCUTS" :key="option" :value="option">
+                          {{ displayGamepadShortcut(option) }}
+                        </option>
+                      </select>
+                      <button
+                        v-else
+                        :id="`record-${item.key}`"
+                        :aria-label="`${group.label} · ${text.keyboard}`"
+                        class="quality-button record"
+                        :class="{ recording: recording === item.key }"
+                        :disabled="saving || !loaded"
+                        @click="startRecording(item.key)"
+                      >
+                        <span>{{
+                          recording === item.key
+                            ? text.record
+                            : displayShortcut(settings[item.key]) || text.unset
+                        }}</span
+                        ><Keyboard aria-hidden="true" /></button
+                      ><button
+                        v-if="!item.gamepad"
+                        class="quality-link"
+                        :disabled="saving || !loaded || !settings[item.key]"
+                        @click="clearShortcut(item.key)"
+                      >
+                        {{ text.clear }}
+                      </button>
+                    </div>
+                    <p
+                      v-if="!item.gamepad && settings[item.key] && !registration[item.registered]"
+                      class="quality-warning"
+                      role="status"
+                      aria-live="polite"
+                    >
+                      {{ text.statusUnavailable }}
+                    </p>
+                  </div>
                 </div>
-                <p
-                  v-if="settings[item.key] && !registration[item.registered]"
-                  class="quality-warning"
-                  role="status"
-                  aria-live="polite"
-                >
-                  {{ text.statusUnavailable }}
-                </p>
               </div>
               <p class="quality-note">{{ text.keyHint }}</p>
+              <p class="quality-note">{{ text.gamepadHint }}</p>
+              <p v-if="loaded && !registration.gamepadSupported" class="quality-note" role="status">{{ text.gamepadUnsupported }}</p>
               <p v-if="recording" class="record-hint" role="status">
                 {{ text.recordHint }}
+                <button class="quality-link" @click="cancelRecording">{{ text.cancel }}</button>
               </p>
             </div>
             <aside>
@@ -241,9 +265,7 @@
                     <p>{{ text.previewState }}</p>
                     <footer>
                       <kbd>{{
-                        registration.nrRegistered
-                          ? displayShortcut(settings.nrShortcut)
-                          : text.disabledKey
+                        nrShortcutLabel(registration) || text.disabledKey
                       }}</kbd
                       ><span>{{ text.action }}</span>
                     </footer>
@@ -278,12 +300,14 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { ArrowUp, Monitor, Rank } from '@element-plus/icons-vue'
+import { displayGamepadShortcut, FIXED_GAMEPAD_SHORTCUTS } from '../composables/controllerButtons.js'
 import NrSessionControls from './NrSessionControls.vue'
 import EnhancementManager from './EnhancementManager.vue'
 import { useI18n } from '../desktop/i18n/index.js'
 import {
   DEFAULT_NR_SHORTCUT,
   displayShortcut,
+  nrShortcutLabel,
   shortcutFromEvent,
   enhancementControlsText,
   enhancementError
@@ -301,7 +325,7 @@ const { locale } = useI18n()
 const text = computed(() => enhancementControlsText(locale.value)),
   overlayText = computed(() => nrOverlayText(locale.value))
 const tab = ref('components')
-const settings = ref({ nrShortcut: '', overlayShortcut: '', opacity: 62 }),
+const settings = ref({ nrShortcut: '', overlayShortcut: '', nrGamepad: '', overlayGamepad: '', opacity: 62 }),
   registration = ref({})
 const draftOpacity = ref(62),
   loaded = ref(false),
@@ -316,13 +340,15 @@ const pipelines = ref([]),
 const pipeline = computed(() =>
   pipelines.value.find((p) => p.id === selectedId.value)
 )
-const shortcutRows = computed(() => [
-  {
-    key: 'overlayShortcut',
-    label: text.value.visibilityKey,
-    registered: 'overlayRegistered'
-  },
-  { key: 'nrShortcut', label: text.value.nrKey, registered: 'nrRegistered' }
+const shortcutGroups = computed(() => [
+  { label: text.value.visibilityKey, inputs: [
+    { key: 'overlayShortcut', registered: 'overlayRegistered' },
+    { key: 'overlayGamepad', gamepad: true }
+  ] },
+  { label: text.value.nrKey, inputs: [
+    { key: 'nrShortcut', registered: 'nrRegistered' },
+    { key: 'nrGamepad', gamepad: true }
+  ] }
 ])
 let disposed = false,
   polling = false,
@@ -387,7 +413,7 @@ async function clearShortcut(key) {
 }
 async function resetShortcuts() {
   await cancelRecording()
-  await save({ nrShortcut: DEFAULT_NR_SHORTCUT, overlayShortcut: '' })
+  await save({ nrShortcut: DEFAULT_NR_SHORTCUT, overlayShortcut: '', nrGamepad: '', overlayGamepad: '' })
 }
 function switchTab(key) {
   void cancelRecording()
@@ -443,9 +469,10 @@ async function poll() {
   if (!disposed) timer = setTimeout(poll, 1200)
 }
 onMounted(async () => {
+  let settingsRevision = 0
   window.addEventListener('blur', cancelRecording)
   for (const [name, handler] of [
-    ['nr-settings-changed', (e) => applyStatus(e.payload)],
+    ['nr-settings-changed', (e) => { settingsRevision++; applyStatus(e.payload) }],
     [
       'nr-overlay-visibility',
       (e) => {
@@ -466,7 +493,9 @@ onMounted(async () => {
     } catch {}
   }
   try {
-    applyStatus(await invoke('nr_overlay_settings'))
+    const revision = settingsRevision
+    const status = await invoke('nr_overlay_settings')
+    if (revision === settingsRevision) applyStatus(status)
   } catch (e) {
     error.value = String(e)
   }

@@ -199,7 +199,7 @@
                         @change="save({ [item.key]: $event.target.value })"
                       >
                         <option value="">{{ text.unset }}</option>
-                        <option v-for="option in gamepadOptions" :key="option" :value="option">
+                        <option v-for="option in FIXED_GAMEPAD_SHORTCUTS" :key="option" :value="option">
                           {{ displayGamepadShortcut(option) }}
                         </option>
                       </select>
@@ -300,7 +300,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { ArrowUp, Monitor, Rank } from '@element-plus/icons-vue'
-import { displayGamepadShortcut } from '../composables/controllerButtons.js'
+import { displayGamepadShortcut, FIXED_GAMEPAD_SHORTCUTS } from '../composables/controllerButtons.js'
 import NrSessionControls from './NrSessionControls.vue'
 import EnhancementManager from './EnhancementManager.vue'
 import { useI18n } from '../desktop/i18n/index.js'
@@ -351,7 +351,6 @@ const shortcutGroups = computed(() => [
     { key: 'nrGamepad', gamepad: true }
   ] }
 ])
-const gamepadOptions = ['LB+RB+X', 'LB+RB+Y']
 let disposed = false,
   polling = false,
   timer,

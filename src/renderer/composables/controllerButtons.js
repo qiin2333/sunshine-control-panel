@@ -17,12 +17,44 @@ export const BUTTON = {
   DPAD_RIGHT: 15,
 }
 
-// Persisted shortcut names map to the browser's standard button positions.
-export const SHORTCUT_BUTTONS = Object.fromEntries(Object.entries(BUTTON).map(([name, index]) => [
-  ({ BACK: 'Back', START: 'Start', DPAD_UP: 'Up', DPAD_DOWN: 'Down', DPAD_LEFT: 'Left', DPAD_RIGHT: 'Right' })[name] || name, index
-]))
-export function shortcutButtons(value) {
-  return (value || '').split('+').filter(Boolean).map(name => SHORTCUT_BUTTONS[name]).filter(Number.isInteger)
+export const FIXED_GAMEPAD_SHORTCUTS = ['LB+RB+X', 'LB+RB+Y']
+export const SHORTCUT_PARTS = new Set([BUTTON.LB, BUTTON.RB, BUTTON.X, BUTTON.Y])
+
+export function createFixedShortcutTracker() {
+  let candidate = '', since = 0, consumed = false, config = ''
+  const reset = () => { candidate = ''; since = 0; consumed = false }
+  return {
+    reset,
+    discard() {
+      if (FIXED_GAMEPAD_SHORTCUTS.some(shortcut => config.includes(shortcut))) {
+        candidate = ''; consumed = true
+      }
+    },
+    update(pad, bindings, now = performance.now()) {
+      const pressed = index => !!pad?.buttons[index]?.pressed
+      const partsDown = [...SHORTCUT_PARTS].some(pressed)
+      const nextConfig = JSON.stringify(bindings)
+      if (config !== nextConfig) {
+        const relevant = FIXED_GAMEPAD_SHORTCUTS.some(shortcut =>
+          config.includes(shortcut) || bindings.includes(shortcut))
+        config = nextConfig
+        if (relevant && partsDown) { candidate = ''; consumed = true }
+      }
+      if (!partsDown) {
+        const wasConsumed = consumed
+        reset()
+        return wasConsumed
+      }
+      if (consumed) return true
+      const exact = face => pad?.mapping === 'standard' && pad.buttons.every((button, index) =>
+        !!button.pressed === (index === BUTTON.LB || index === BUTTON.RB || index === face))
+      const full = bindings.includes(FIXED_GAMEPAD_SHORTCUTS[0]) && exact(BUTTON.X) ? 'X'
+        : bindings.includes(FIXED_GAMEPAD_SHORTCUTS[1]) && exact(BUTTON.Y) ? 'Y' : ''
+      if (full !== candidate) { candidate = full; since = now }
+      else if (full && now - since >= 500) consumed = true
+      return consumed
+    }
+  }
 }
 
 const FACE_CHIPS = {

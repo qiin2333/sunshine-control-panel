@@ -2,8 +2,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 
 // 手柄按键映射 (Xbox 标准布局)
 export { BUTTON } from '../../composables/controllerButtons.js'
-import { BUTTON } from '../../composables/controllerButtons.js'
-import { createGamepadInputGate } from '../../composables/gamepadInputGate.js'
+import { BUTTON, SHORTCUT_PARTS, createFixedShortcutTracker } from '../../composables/controllerButtons.js'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 
@@ -111,7 +110,9 @@ export function useGamepad(options = {}) {
   /** 每个手柄独立记录上一帧状态，这样切换手柄时边沿检测依然正确。 */
   const padStates = new Map()
   let activeIndex = null
-  const gate = createGamepadInputGate()
+  const shortcutTracker = createFixedShortcutTracker()
+  let captureReleasePending = false
+  const releaseArmed = new Set()
   let shortcutState = { captureActive: false, settings: {} }
   let stopShortcutListener, disposed = false
   const repeatTimers = {}
@@ -199,6 +200,10 @@ export function useGamepad(options = {}) {
       return
     }
 
+    if (SHORTCUT_PARTS.has(index) && (shortcutState.settings?.nrGamepad || shortcutState.settings?.overlayGamepad)) {
+      releaseArmed.add(index)
+      return
+    }
     const action = BUTTON_ACTIONS[index]
     if (action) dispatchAction(action)
   }
@@ -215,6 +220,7 @@ export function useGamepad(options = {}) {
       if (!backHoldConsumed) dispatchAction('back')
       backHoldConsumed = false
     }
+    if (SHORTCUT_PARTS.has(index) && releaseArmed.delete(index)) dispatchAction(BUTTON_ACTIONS[index])
   }
 
   function handleNavAxis(axisIndex, value) {
@@ -291,6 +297,8 @@ export function useGamepad(options = {}) {
 
   function switchActivePad(index) {
     if (activeIndex === index) return
+    if (activeIndex !== null) shortcutTracker.discard()
+    releaseArmed.clear()
     activeIndex = index
     // 活跃手柄变了，id（布局识别的数据源）跟着换
     gamepadName.value = connectedPads().find((pad) => pad.index === index)?.id || gamepadName.value
@@ -307,7 +315,9 @@ export function useGamepad(options = {}) {
 
     if (pads.length === 0) {
       activeIndex = null
-      gate.reset()
+      shortcutTracker.reset()
+      captureReleasePending = false
+      releaseArmed.clear()
       padStates.clear()
       stopAllRepeats()
       clearBackHold()
@@ -331,24 +341,30 @@ export function useGamepad(options = {}) {
     const active = diffs.find((entry) => entry.pad.index === activeIndex)
     if (!active) return
 
-    const gated = gate.update(pads, active.pad.index, active.edges, {
-      capturing: shortcutState.captureActive,
-      bindings: [shortcutState.settings?.nrGamepad, shortcutState.settings?.overlayGamepad]
-    })
-    if (gated.blocked) {
+    if (shortcutState.captureActive) captureReleasePending = true
+    if (captureReleasePending) {
+      shortcutTracker.discard()
+      releaseArmed.clear()
+      if (!shortcutState.captureActive && pads.every(p => p.buttons.every(b => !b.pressed))) captureReleasePending = false
       stopAllRepeats()
       clearBackHold()
       return
     }
+    const consumed = shortcutTracker.update(active.pad, [
+      shortcutState.settings?.nrGamepad, shortcutState.settings?.overlayGamepad
+    ])
 
     if (!enabled()) {
       // 游戏运行中 / 窗口不可见：保持状态同步但不派发，避免恢复时补发一串输入
+      releaseArmed.clear()
       stopAllRepeats()
       clearBackHold()
       return
     }
 
-    for (const edge of gated.edges) {
+    if (consumed) releaseArmed.clear()
+    for (const edge of active.edges) {
+      if (consumed && SHORTCUT_PARTS.has(edge.index)) continue
       if (edge.pressed) handleButtonDown(edge.index)
       else handleButtonUp(edge.index)
     }
@@ -419,7 +435,11 @@ export function useGamepad(options = {}) {
 
   function onGamepadDisconnected(event) {
     padStates.delete(event?.gamepad?.index)
-    if (activeIndex === event?.gamepad?.index) activeIndex = null
+    if (activeIndex === event?.gamepad?.index) {
+      activeIndex = null
+      shortcutTracker.discard()
+      releaseArmed.clear()
+    }
     if (connectedPads().length === 0) {
       gamepadConnected.value = false
       gamepadActive.value = false
@@ -436,6 +456,8 @@ export function useGamepad(options = {}) {
   function onVisibilityChange() {
     if (document.hidden) {
       stopPolling()
+      shortcutTracker.discard()
+      releaseArmed.clear()
       stopAllRepeats()
       clearBackHold()
     } else {

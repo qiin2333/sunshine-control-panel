@@ -1,64 +1,24 @@
 use std::time::{Duration, Instant};
 
-// XInput button bits plus two synthetic bits for the independent triggers.
-const BUTTONS: &[(&str, u32)] = &[
-    ("Back", 0x20),
-    ("Start", 0x10),
-    ("LB", 0x100),
-    ("RB", 0x200),
-    ("LT", 0x10000),
-    ("RT", 0x20000),
-    ("A", 0x1000),
-    ("B", 0x2000),
-    ("X", 0x4000),
-    ("Y", 0x8000),
-    ("L3", 0x40),
-    ("R3", 0x80),
-    ("Up", 1),
-    ("Down", 2),
-    ("Left", 4),
-    ("Right", 8),
-];
-const MODIFIERS: u32 = 0x30330;
+// Only these two presets are exposed by the settings UI.
+const SHOULDERS: u32 = 0x300;
+const X: u32 = 0x4000;
+const Y: u32 = 0x8000;
 const HOLD: Duration = Duration::from_millis(500);
 
 pub(crate) fn parse(value: &str) -> Result<u32, String> {
-    if value.is_empty() {
-        return Ok(0);
+    match value {
+        "" => Ok(0),
+        "LB+RB+X" => Ok(SHOULDERS | X),
+        "LB+RB+Y" => Ok(SHOULDERS | Y),
+        _ => Err("controller_shortcut_invalid".into()),
     }
-    if value.len() > 100 {
-        return Err("controller_shortcut_invalid".into());
-    }
-    let mut mask = 0;
-    for part in value.split('+') {
-        let bit = BUTTONS
-            .iter()
-            .find(|(name, _)| *name == part)
-            .map(|(_, bit)| *bit)
-            .ok_or("controller_shortcut_invalid")?;
-        if mask & bit != 0 {
-            return Err("controller_shortcut_invalid".into());
-        }
-        mask |= bit;
-    }
-    if !valid(mask) {
-        return Err("controller_shortcut_invalid".into());
-    }
-    Ok(mask)
 }
 fn valid(mask: u32) -> bool {
-    mask.count_ones() >= 2 && mask & MODIFIERS != 0 && mask & 3 != 3 && mask & 12 != 12
-}
-pub(crate) fn label(mask: u32) -> String {
-    BUTTONS
-        .iter()
-        .filter(|(_, bit)| mask & bit != 0)
-        .map(|(name, _)| *name)
-        .collect::<Vec<_>>()
-        .join("+")
+    mask == SHOULDERS | X || mask == SHOULDERS | Y
 }
 pub(crate) fn normalize(value: &str) -> Result<String, String> {
-    parse(value).map(label)
+    parse(value).map(|_| value.to_owned())
 }
 pub(crate) fn validate(nr: &str, overlay: &str) -> Result<(), String> {
     let nr = parse(nr)?;
@@ -129,27 +89,30 @@ pub(crate) fn read(_: u32) -> Option<u32> {
 mod tests {
     use super::*;
     #[test]
-    fn validates_and_canonicalizes_combinations() {
-        assert_eq!(normalize("A+LB").unwrap(), "LB+A");
+    fn validates_only_fixed_combinations() {
+        assert_eq!(normalize("LB+RB+Y").unwrap(), "LB+RB+Y");
         for invalid in [
             "A",
             "A+B",
             "LB+LB",
             "Guide+A",
-            "LB+Up+Down",
-            "LB+Left+Right",
+            "LB+RB",
+            "LB+X",
+            "LB+RB+A",
+            "LB+RB+X+Y",
+            "X+LB+RB",
         ] {
             assert!(parse(invalid).is_err(), "{invalid}");
         }
-        assert!(validate("A+LB", "LB+A").is_err());
+        assert!(validate("LB+RB+X", "LB+RB+X").is_err());
         assert!(validate("", "").is_ok());
-        assert!(parse("LT+RT").is_ok());
+        assert!(parse("LB+RB+Y").is_ok());
     }
     #[test]
     fn hold_release_and_reconnect_boundaries() {
         let mut chord = Chord::default();
         let now = Instant::now();
-        let mask = parse("LB+A").unwrap();
+        let mask = parse("LB+RB+X").unwrap();
         assert_eq!(chord.update(Some(mask), now), None);
         assert_eq!(chord.update(Some(mask), now + HOLD), None);
         chord.update(Some(0), now);
@@ -176,10 +139,14 @@ mod tests {
         first.update(Some(0), now);
         second.update(Some(0), now);
         first.update(Some(0x100), now);
-        second.update(Some(0x1000), now);
+        second.update(Some(X), now);
         assert_eq!(first.update(Some(0x100), now + HOLD), None);
-        assert_eq!(second.update(Some(0x1000), now + HOLD), None);
-        assert_eq!(first.update(Some(0x1100), now + HOLD), None);
-        assert_eq!(first.update(Some(0x1100), now + HOLD * 2), Some(0x1100));
+        assert_eq!(second.update(Some(X), now + HOLD), None);
+        first.update(Some(SHOULDERS), now + HOLD);
+        assert_eq!(first.update(Some(SHOULDERS | X), now + HOLD), None);
+        assert_eq!(
+            first.update(Some(SHOULDERS | X), now + HOLD * 2),
+            Some(SHOULDERS | X)
+        );
     }
 }

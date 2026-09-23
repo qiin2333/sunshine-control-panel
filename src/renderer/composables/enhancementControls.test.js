@@ -46,8 +46,8 @@ test('native canonical shortcut strings render without code prefixes', () => {
 })
 
 test('overlay hints use the gamepad binding when the keyboard binding is unavailable', () => {
-  const status = { settings: { nrShortcut: 'Ctrl+Alt+KeyN', nrGamepad: 'Back+Y' }, nrRegistered: false, gamepadSupported: true }
-  assert.equal(nrShortcutLabel(status), 'Back + Y')
+  const status = { settings: { nrShortcut: 'Ctrl+Alt+KeyN', nrGamepad: 'LB+RB+Y' }, nrRegistered: false, gamepadSupported: true }
+  assert.equal(nrShortcutLabel(status), 'LB + RB + Y')
   assert.equal(nrShortcutLabel({ ...status, nrRegistered: true }), 'Ctrl + Alt + N')
   assert.equal(nrShortcutLabel({ ...status, gamepadSupported: false }), '')
 })

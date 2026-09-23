@@ -1,4 +1,4 @@
-use crate::controller_input::{label, parse, read, Chord};
+use crate::controller_input::{parse, read, Chord};
 use std::{
     sync::atomic::{AtomicUsize, Ordering},
     time::{Duration, Instant},
@@ -33,7 +33,7 @@ pub(super) fn start<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     let _ = app;
     #[cfg(target_os = "windows")]
     {
-        use tauri::{Emitter, Manager};
+        use tauri::Emitter;
         let app = app.clone();
         tauri::async_runtime::spawn(async move {
             let mut pads: [Chord; 4] = std::array::from_fn(|_| Chord::default());
@@ -44,16 +44,15 @@ pub(super) fn start<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
                     (
                         state.settings.nr_gamepad.clone(),
                         state.settings.overlay_gamepad.clone(),
-                        state.capture.clone(),
-                        state.capture_generation,
+                        state.capture.is_some(),
                     )
                 };
                 if previous.as_ref() != Some(&context) {
                     pads = std::array::from_fn(|_| Chord::default());
                     previous = Some(context.clone());
                 }
-                let (nr, overlay, capture, generation) = &context;
-                let active = capture.is_some() || !nr.is_empty() || !overlay.is_empty();
+                let (nr, overlay, capturing) = &context;
+                let active = !nr.is_empty() || !overlay.is_empty();
                 let mut connected = 0;
                 let mut fired = None;
                 for (index, pad) in pads.iter_mut().enumerate() {
@@ -70,14 +69,7 @@ pub(super) fn start<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
                     let _ = app.emit("nr-gamepad-connected", connected);
                 }
                 if let Some(mask) = fired {
-                    if let Some((owner, _)) = capture {
-                        // Never send recordings to another manager window.
-                        if let Some(window) = app.get_webview_window(owner) {
-                            if window.is_focused().unwrap_or(false) {
-                                let _ = window.emit("nr-gamepad-captured", serde_json::json!({"shortcut": label(mask), "generation": generation}));
-                            }
-                        }
-                    } else {
+                    if !*capturing {
                         let action = if parse(nr).ok() == Some(mask) {
                             1
                         } else if parse(overlay).ok() == Some(mask) {
@@ -85,21 +77,23 @@ pub(super) fn start<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
                         } else {
                             0
                         };
-                        // Do not delay polling during a network request. Recheck the
-                        // lease/settings in the task before dispatching the action.
-                        let app = app.clone();
-                        tauri::async_runtime::spawn(async move {
-                            {
-                                let state = super::STATE.lock().unwrap();
-                                if state.capture.is_some()
-                                    || state.settings.nr_gamepad != context.0
-                                    || state.settings.overlay_gamepad != context.1
+                        if action != 0 {
+                            // Do not delay polling during a network request. Recheck
+                            // settings in the task before dispatching the action.
+                            let app = app.clone();
+                            tauri::async_runtime::spawn(async move {
                                 {
-                                    return;
+                                    let state = super::STATE.lock().unwrap();
+                                    if state.capture.is_some()
+                                        || state.settings.nr_gamepad != context.0
+                                        || state.settings.overlay_gamepad != context.1
+                                    {
+                                        return;
+                                    }
                                 }
-                            }
-                            super::run_action(&app, action).await;
-                        });
+                                super::run_action(&app, action).await;
+                            });
+                        }
                     }
                 }
                 tokio::select! {

@@ -39,12 +39,3 @@ test('cancellation before backend activation prevents the activation entirely', 
   await start
   assert.ok(calls.every(active => !active))
 })
-
-test('recording exposes the native lease and clears it on cancellation', async () => {
-  let lease
-  const capture = shortcutCapture(active => active ? 42 : 0, (_, value) => { lease = value })
-  await capture.start('nrGamepad')
-  assert.equal(lease, 42)
-  await capture.cancel()
-  assert.equal(lease, undefined)
-})

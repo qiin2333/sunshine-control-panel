@@ -48,7 +48,6 @@ struct OverlayState {
     settings: Settings,
     owned: HashMap<u32, Shortcut>,
     target: Option<u64>,
-    capture_generation: u64,
     capture: Option<(String, std::time::Instant)>,
 }
 static STATE: LazyLock<Mutex<OverlayState>> = LazyLock::new(|| Mutex::new(OverlayState::default()));
@@ -326,7 +325,7 @@ fn finish_capture(state: &mut OverlayState, registrar: &impl Registrar) -> Resul
 pub async fn nr_overlay_capture_shortcut(
     window: tauri::WebviewWindow,
     active: bool,
-) -> Result<u64, String> {
+) -> Result<(), String> {
     let app = window.app_handle().clone();
     let mut state = STATE.lock().unwrap();
     if active {
@@ -340,7 +339,6 @@ pub async fn nr_overlay_capture_shortcut(
             window.label().to_string(),
             std::time::Instant::now() + std::time::Duration::from_secs(30),
         );
-        state.capture_generation += 1;
         state.capture = Some(lease.clone());
         gamepad::wake();
         let _ = app.emit("nr-settings-changed", snapshot(&state));
@@ -367,13 +365,12 @@ pub async fn nr_overlay_capture_shortcut(
     {
         let result = finish_capture(&mut state, &GlobalRegistrar(&app));
         let status = snapshot(&state);
-        let generation = state.capture_generation;
         drop(state);
         let _ = app.emit("nr-settings-changed", status);
         result?;
-        return Ok(generation);
+        return Ok(());
     }
-    Ok(state.capture_generation)
+    Ok(())
 }
 #[tauri::command]
 pub async fn nr_overlay_settings() -> SettingsStatus {
@@ -629,8 +626,8 @@ mod tests {
         let keyboard = bindings(&state.settings).unwrap();
         replace_bindings(&fake, &mut state.owned, &keyboard).unwrap();
         let next = Settings {
-            nr_gamepad: "LB+A".into(),
-            overlay_gamepad: "Back+Y".into(),
+            nr_gamepad: "LB+RB+X".into(),
+            overlay_gamepad: "LB+RB+Y".into(),
             ..old
         };
         assert!(apply_settings(&mut state, next.clone(), &fake, |_| Err("disk".into())).is_err());
@@ -639,11 +636,11 @@ mod tests {
         assert_eq!(state.settings, next);
         assert_eq!(*fake.keys.borrow(), vec![keyboard[0].id()]);
         let duplicate = Settings {
-            overlay_gamepad: "A+LB".into(),
+            overlay_gamepad: "LB+RB+X".into(),
             ..next
         };
         assert!(apply_settings(&mut state, duplicate, &fake, |_| Ok(())).is_err());
-        assert_eq!(state.settings.overlay_gamepad, "Back+Y");
+        assert_eq!(state.settings.overlay_gamepad, "LB+RB+Y");
     }
     #[test]
     fn hidden_shortcut_never_redirects_an_expired_target() {

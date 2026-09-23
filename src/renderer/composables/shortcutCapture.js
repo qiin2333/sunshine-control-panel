@@ -19,9 +19,9 @@ export function shortcutCapture(invoke, onChange) {
     const token = generation
     await cancelled
     if (token !== generation) return
-    const lease = await setActive(true)
+    await setActive(true)
     if (token !== generation) return
-    onChange(key, lease)
+    onChange(key)
     timer = setTimeout(() => { void cancel().catch(() => {}) }, 30000)
   }
   return { start, cancel }

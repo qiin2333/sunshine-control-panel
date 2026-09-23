@@ -89,8 +89,7 @@ const messages = {
     gamepadDisconnected: '未检测到 XInput 手柄；大屏可操作不代表后台快捷键可用。',
     gamepadUnsupported: '当前系统不支持后台手柄快捷键',
     cancel: '取消录制',
-    gamepadHint: '支持 Windows Xbox / XInput 手柄（含串流虚拟手柄）。组合键按住半秒触发，全部松开后可再次使用；按键仍会传给游戏。大屏中参与组合的单键在松开时执行导航。',
-    gamepadRecordHint: '先松开所有按键，再同时按住至少两个键半秒，需包含 Back、Start、肩键或扳机。Esc 取消，30 秒后自动退出。',
+    gamepadHint: '支持 Windows Xbox / XInput 手柄（含串流虚拟手柄）。同时按住 LB、RB 和所选 X/Y 半秒触发，全部松开后可再次使用；按键仍会传给游戏。大屏中的肩键单独使用时会在松开后切页。',
     reset: '恢复默认',
     visibilityKey: '显示 / 隐藏浮层',
     nrKey: '切换 DLSS NR',
@@ -121,7 +120,7 @@ const messages = {
     action: '切换增强',
     errors: {
       nr_request_invalid: '处理比例必须为 20%–100%，且为 5 的倍数',
-      nr_gamepad_invalid: '请使用至少两个手柄按键，包含 Back、Start、肩键或扳机',
+      nr_gamepad_invalid: '手柄快捷键仅支持 LB+RB+X 或 LB+RB+Y',
       nr_shortcut_invalid: '请使用有效的 Ctrl、Alt 或 Shift 组合键',
       nr_shortcut_duplicate: '两个操作不能使用相同快捷键',
       nr_shortcut_conflict: '快捷键已被占用，原设置保持不变',
@@ -182,8 +181,7 @@ const messages = {
     gamepadDisconnected: 'No XInput controller detected. Desktop navigation support does not imply background shortcut support.',
     gamepadUnsupported: 'Background gamepad shortcuts are unavailable on this platform',
     cancel: 'Cancel recording',
-    gamepadHint: 'Windows Xbox / XInput controllers, including virtual streaming controllers. Hold for half a second; release all buttons before using again. Games still receive these buttons. In desktop mode, individual shortcut buttons navigate on release.',
-    gamepadRecordHint: 'Release all buttons, then hold at least two for half a second, including Back, Start, a shoulder button or trigger. Esc cancels; capture expires after 30 seconds.',
+    gamepadHint: 'Windows Xbox / XInput controllers, including virtual streaming controllers. Hold LB, RB and the selected X/Y for half a second; release all buttons before using again. Games still receive these buttons. In desktop mode, a shoulder button used alone changes tabs on release.',
     reset: 'Restore defaults',
     visibilityKey: 'Show / hide overlay',
     nrKey: 'Toggle DLSS NR',
@@ -217,7 +215,7 @@ const messages = {
     errors: {
       nr_request_invalid:
         'Processing scale must be 20%–100% and a multiple of 5.',
-      nr_gamepad_invalid: 'Use at least two gamepad buttons including Back, Start, a shoulder button or trigger',
+      nr_gamepad_invalid: 'Only LB+RB+X or LB+RB+Y is supported for gamepad shortcuts',
       nr_shortcut_invalid: 'Use a valid Ctrl, Alt or Shift shortcut',
       nr_shortcut_duplicate: 'The two actions need different shortcuts',
       nr_shortcut_conflict:

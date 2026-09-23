@@ -37,7 +37,7 @@ test('RTX HDR component copy covers every manager state', () => {
   for (const locale of ['en', 'zh']) {
     assert.deepEqual(
       Object.keys(rtxHdrMessages[locale].states).sort(),
-      ['active', 'configured', 'degraded', 'in_use', 'loading', 'not_installed', 'repair_required', 'selected', 'unavailable'],
+      ['active', 'configured', 'degraded', 'in_use', 'loading', 'maintenance_other', 'not_installed', 'pending_removal', 'repair_required', 'selected', 'unavailable'],
     )
   }
 })

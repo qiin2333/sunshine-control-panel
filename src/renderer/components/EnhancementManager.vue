@@ -121,14 +121,15 @@
       v-if="status.maintenance"
       class="component-notice"
       type="warning"
-      :title="text.maintenanceNotice"
+      :title="maintenanceMessage"
       :closable="false"
     >
       <el-button
+        v-if="status.state !== 'maintenance_other'"
         :disabled="controlsBusy"
         :loading="operation === 'recovering'"
         @click="recover"
-        >{{ text.recover }}</el-button
+        >{{ status.state === 'pending_removal' ? text.retryRemoval : text.recover }}</el-button
       >
     </el-alert>
     <el-alert
@@ -256,6 +257,11 @@ const {
   api: props.kind === 'nr' ? dlssNr : rtxHdr,
   messages: text,
   runtimeName: props.kind === 'nr' ? 'nvngx_dlssnr.dll' : 'nvngx_truehdr.dll'
+})
+const maintenanceMessage = computed(() => {
+  if (status.value.state === 'pending_removal') return text.value.pendingRemovalNotice
+  if (status.value.state === 'maintenance_other') return text.value.otherRemovalNotice
+  return text.value.maintenanceNotice
 })
 const componentState = computed(() => {
   if (

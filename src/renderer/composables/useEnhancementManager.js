@@ -129,11 +129,15 @@ export function useEnhancementManager({ api, messages: text, runtimeName }) {
       const result = await api.uninstall()
       if (!result.success) throw new Error(result.message)
       applyStatus(result.data)
-      ElMessage.success(text.value.uninstallSuccess)
+      ElMessage.success(result.data?.state === 'pending_removal'
+        ? text.value.pendingRemovalSaved
+        : text.value.uninstallSuccess)
     } catch (error) {
       operationError.value = String(error?.message || error)
       await refresh(true)
-      ElMessage.error(text.value.uninstallFailed)
+      ElMessage.error(operationError.value.startsWith('HDR-PKG-010:')
+        ? text.value.restartRequired
+        : text.value.uninstallFailed)
     } finally {
       operation.value = ''
     }

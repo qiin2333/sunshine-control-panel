@@ -147,6 +147,9 @@ async fn request(
             (_, Some("hdr_helper_running")) => {
                 "HDR-OP-003: the component installer is still running"
             }
+            (_, Some("hdr_removal_pending")) => {
+                "HDR-PKG-010: component removal is still pending; check file access and retry"
+            }
             (412, _) => "HDR-CFG-006: settings changed in another window; refresh before saving",
             (428, _) => "HDR-CFG-007: conditional update is required",
             (409, _) => "HDR-OP-001: component is in use or awaiting maintenance completion",
@@ -258,6 +261,11 @@ pub async fn inspect_maintenance(backend: &str) -> Result<Maintenance, String> {
 
 pub async fn verify_maintenance(backend: &str, operation_id: &str) -> Result<Maintenance, String> {
     maintenance_identity(backend, "verify", Some(operation_id)).await
+}
+
+pub async fn defer_removal(backend: &str, operation_id: &str) -> Result<(), String> {
+    maintenance_identity(backend, "defer_remove", Some(operation_id)).await?;
+    Ok(())
 }
 
 async fn maintenance_identity(

@@ -491,17 +491,12 @@ fn remove_managed_runtime() -> Result<(), String> {
 }
 
 fn remove_runtime_files(root: &Path) -> Result<(), String> {
-    for (index, path) in [root.join(RUNTIME_FILE), root.join("component.json")]
-        .into_iter()
-        .enumerate()
-    {
+    for path in [root.join(RUNTIME_FILE), root.join("component.json")] {
         if path.exists() {
             fs::remove_file(&path).map_err(|error| {
-                // NGX keeps a loaded DLSS NR runtime mapped until Sunshine exits.
-                // Windows may report access denied or a sharing/lock violation
-                // even after the stream ends.
-                if index == 0 && matches!(error.raw_os_error(), Some(5 | 32 | 33)) {
-                    "HDR-PKG-010: unable to remove the runtime; restart Sunshine and retry, then check file permissions if it still fails"
+                // A mapped runtime or an open manifest can block deletion.
+                if matches!(error.raw_os_error(), Some(5 | 32 | 33)) {
+                    "HDR-PKG-010: unable to remove component files; restart Sunshine and retry, then check file permissions if it still fails"
                         .to_string()
                 } else {
                     permission_error("remove NVIDIA runtime", error)
@@ -663,7 +658,7 @@ async fn remove_component_with_elevation(
         if code != 0 {
             if code == 2 {
                 return Err(
-                    "HDR-PKG-010: unable to remove the runtime; restart Sunshine and retry, then check file permissions if it still fails"
+                    "HDR-PKG-010: unable to remove component files; restart Sunshine and retry, then check file permissions if it still fails"
                         .to_string(),
                 );
             }
@@ -826,12 +821,13 @@ pub async fn component_uninstall() -> Result<EnhancementComponentStatus, String>
             if let Err(defer_error) =
                 crate::hdr_enhanced::defer_removal(COMPONENT_ID, &operation_id.id).await
             {
-                let pending = crate::hdr_enhanced::get_status()
-                    .await
-                    .ok()
-                    .is_some_and(|status| status["pending_removal"].as_str() == Some(COMPONENT_ID));
-                if !pending {
-                    return Err(defer_error);
+                match crate::hdr_enhanced::get_status().await {
+                    Ok(status) if status["pending_removal"].as_str() == Some(COMPONENT_ID) => {}
+                    Ok(_) => {
+                        finish_operation(&operation_id.id).await?;
+                        return Err(defer_error);
+                    }
+                    Err(_) => return Err(defer_error),
                 }
             }
             return component_get_status().await;
@@ -854,7 +850,7 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn locked_runtime_remains_queued_until_its_owner_exits() {
+    fn locked_component_files_are_reported_for_deferred_removal() {
         use std::os::windows::fs::OpenOptionsExt;
         let root = std::env::temp_dir().join(format!("hdr-removal-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&root).unwrap();
@@ -876,6 +872,25 @@ mod tests {
         remove_runtime_files(&root).unwrap();
         assert!(!runtime.exists());
         assert!(!root.join("component.json").exists());
+
+        fs::write(&runtime, b"runtime").unwrap();
+        let manifest = root.join("component.json");
+        fs::write(&manifest, b"manifest").unwrap();
+        let owner = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0x00000001)
+            .open(&manifest)
+            .unwrap();
+        assert!(
+            remove_runtime_files(&root)
+                .unwrap_err()
+                .starts_with("HDR-PKG-010:")
+        );
+        assert!(!runtime.exists());
+        assert!(manifest.exists());
+        drop(owner);
+        remove_runtime_files(&root).unwrap();
+        assert!(!manifest.exists());
         fs::remove_dir(root).unwrap();
     }
 

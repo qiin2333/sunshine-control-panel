@@ -466,6 +466,12 @@ export function useGamepad(options = {}) {
   }
 
   onMounted(async () => {
+    window.addEventListener('gamepadconnected', onGamepadConnected)
+    window.addEventListener('gamepaddisconnected', onGamepadDisconnected)
+    window.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    startPolling()
+
     let revision = 0
     try {
       const stop = await listen('nr-settings-changed', event => { revision++; shortcutState = event.payload })
@@ -477,13 +483,6 @@ export function useGamepad(options = {}) {
       const status = await invoke('nr_overlay_settings')
       if (!disposed && current === revision) shortcutState = status
     } catch { /* Navigation still works when the native bridge is unavailable. */ }
-    if (disposed) return
-
-    window.addEventListener('gamepadconnected', onGamepadConnected)
-    window.addEventListener('gamepaddisconnected', onGamepadDisconnected)
-    window.addEventListener('mousemove', onMouseMove)
-    document.addEventListener('visibilitychange', onVisibilityChange)
-    startPolling()
   })
 
   onUnmounted(() => {

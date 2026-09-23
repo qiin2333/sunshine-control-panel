@@ -2,7 +2,7 @@
   <section class="chub-panel">
     <div class="chub-window" :class="statusTone">
       <span class="chub-window-tab">{{ text.title }}</span>
-      <div class="chub-hud-row">
+      <div class="chub-hud-row chub-hud-row--divided">
         <div class="chub-hud-state"><span class="chub-status-dot"></span><strong>{{ text.statusLabels[state] }}</strong></div>
         <div class="chub-hud-actions">
           <el-button size="small" :loading="loading" :disabled="testing" @click="refresh">{{ t.deviceHub.refresh }}</el-button>
@@ -26,7 +26,11 @@
       </div>
     </div>
     <details class="chub-section chub-disclosure chub-disclosure--section">
-      <summary>{{ text.advanced }}</summary>
+      <summary>
+        <span class="chub-section-label">◈ {{ text.advanced }}</span>
+        <span class="chub-section-rule"></span>
+        <span class="chub-disclosure-mark" aria-hidden="true">▸</span>
+      </summary>
       <p class="chub-hint">{{ text.backendHint }}</p>
       <div class="chub-context-note"><strong>{{ text.experimentalTitle }}</strong><span>{{ text.experimentalHint }}</span></div>
       <template v-if="!loadError && experimentalSelected">

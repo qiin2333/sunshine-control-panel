@@ -24,6 +24,18 @@ function Find-MakeNsis {
     return $candidates | Select-Object -First 1
 }
 
+function Get-Sha256([string]$Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return [System.BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '')
+    }
+    finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
+
 function Resolve-GuiExe {
     $paths = @(
         (Join-Path $TauriRoot 'target\release\sunshine-gui.exe'),
@@ -115,7 +127,7 @@ try {
     Write-Host 'GUI component installer generated:' -ForegroundColor Green
     Get-ChildItem $DistDir -Filter 'Sunshine-GUI-Setup-*.exe' | Sort-Object LastWriteTime -Descending | Select-Object -First 1 | ForEach-Object {
         Write-Host ('   ' + $_.FullName) -ForegroundColor Green
-        Write-Host ('   SHA256: ' + (Get-FileHash $_.FullName -Algorithm SHA256).Hash) -ForegroundColor Green
+        Write-Host ('   SHA256: ' + (Get-Sha256 $_.FullName)) -ForegroundColor Green
     }
 
     # Staging is only an NSIS input cache. Keep failed-build staging for

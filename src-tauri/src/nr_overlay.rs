@@ -528,7 +528,8 @@ async fn toggle_nr() -> Result<(), String> {
         return Err("nr_select_session".into());
     }
     crate::hdr_enhanced::nr_live_set_enabled(id, enabled, None, None, None, None, None, None, None)
-        .await
+        .await?;
+    crate::hdr_enhanced::nr_live_remember(id).await
 }
 
 #[cfg(test)]

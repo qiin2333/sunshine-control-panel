@@ -152,14 +152,18 @@ async fn request(
             }
             (412, _) => "HDR-CFG-006: settings changed in another window; refresh before saving",
             (428, _) => "HDR-CFG-007: conditional update is required",
+            (409, Some("nr_settings_pending")) => "nr_settings_pending",
+            (404, Some("nr_session_ended")) => "nr_session_ended",
             (409, _) => "HDR-OP-001: component is in use or awaiting maintenance completion",
             _ => "HDR-CFG-002: Sunshine rejected the component operation",
         };
-        log::warn!(
-            "HDR operation rejected: HTTP {} / {:?}",
-            status.as_u16(),
-            body.get("error_code")
-        );
+        if code != "nr_settings_pending" {
+            log::warn!(
+                "HDR operation rejected: HTTP {} / {:?}",
+                status.as_u16(),
+                body.get("error_code")
+            );
+        }
         return Err(code.to_string());
     }
     Ok((body, etag))
@@ -239,6 +243,20 @@ pub async fn nr_live_set_enabled(id: u64, enabled: bool, scale_percent: Option<u
     if let Some(value) = auto_mask { payload["auto_mask"] = json!(value); }
     request("session-nr", Some(payload), None, None).await?;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn nr_live_remember(id: u64) -> Result<(), String> {
+    for _ in 0..40 {
+        match request("session-nr/remember", Some(json!({ "id": id })), None, None).await {
+            Ok(_) => return Ok(()),
+            Err(error) if error == "nr_settings_pending" => {
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err("nr_settings_pending".into())
 }
 
 fn maintenance_route(backend: &str) -> Result<String, String> {

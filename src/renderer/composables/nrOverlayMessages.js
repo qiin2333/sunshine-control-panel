@@ -89,7 +89,7 @@ const messages = {
     "close": "Hide overlay",
     "enhancement": "Enhancement",
     "preserved": "Output preserved",
-    "remembered": "Changes are remembered for future streams. App settings take priority.",
+    "remembered": "Changes are remembered after they apply. App settings take priority.",
     "saved": "Saved for future streams. App settings take priority.",
     "resetDefaults": "Reset NR defaults",
     "saveFailed": "This stream changed, but the defaults could not be saved for future streams.",

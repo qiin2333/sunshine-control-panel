@@ -219,7 +219,7 @@ impl<R: Runtime> Registrar for GlobalRegistrar<'_, R> {
 }
 async fn run_action<R: Runtime>(app: &AppHandle<R>, action: u8) {
     let result = match action {
-        1 => toggle_nr().await,
+        1 => toggle_nr(app).await,
         2 => {
             let visible = app
                 .get_webview_window("nr_overlay")
@@ -509,7 +509,7 @@ fn toggle_request(body: &serde_json::Value, target: Option<u64>) -> Result<(u64,
         !enabled,
     ))
 }
-async fn toggle_nr() -> Result<(), String> {
+async fn toggle_nr<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     if TOGGLING.swap(true, Ordering::AcqRel) {
         return Ok(());
     }
@@ -529,7 +529,11 @@ async fn toggle_nr() -> Result<(), String> {
     }
     crate::hdr_enhanced::nr_live_set_enabled(id, enabled, None, None, None, None, None, None, None)
         .await?;
-    crate::hdr_enhanced::nr_live_remember(id).await
+    if let Err(error) = crate::hdr_enhanced::nr_live_remember(id).await {
+        log::warn!("NR shortcut applied but defaults were not saved: {error}");
+        let _ = app.emit("nr-save-error", id);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

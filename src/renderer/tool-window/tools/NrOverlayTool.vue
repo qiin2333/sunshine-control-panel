@@ -207,10 +207,10 @@ async function sendRequest(enabled, patch = {}) {
   try {
     await invoke('nr_live_set_enabled', { id, enabled, ...patch })
     await refresh()
-    try { await invoke('nr_live_remember', { id }); if (!disposed) saveState.value = 'saved' }
-    catch { if (!disposed) actionError.value = text.value.saveFailed }
+    try { await invoke('nr_live_remember', { id }); if (!disposed && selectedId.value === id) saveState.value = 'saved' }
+    catch { if (!disposed && selectedId.value === id) actionError.value = text.value.saveFailed }
   } catch (reason) {
-    if (!disposed) errorCode.value = String(reason).includes('nr_session_ended') ? 'ended' : 'failed'
+    if (!disposed && selectedId.value === id) errorCode.value = String(reason).includes('nr_session_ended') ? 'ended' : 'failed'
   } finally { busy.value = false }
 }
 let resizing = false, resizeAgain = false, resizeRetry
@@ -239,6 +239,7 @@ onMounted(async () => {
   for (const [name, handler] of [
     ['nr-settings-changed', e => applyPreferences(e.payload)],
     ['nr-action-error', e => { actionError.value = enhancementError(enhancementControlsText(locale.value), e.payload) }],
+    ['nr-save-error', e => { if (e.payload === selectedId.value) { saveState.value = ''; actionError.value = text.value.saveFailed } }],
   ]) {
     try { const stop = await listen(name, handler); if (disposed) stop(); else unlisten.push(stop) } catch {}
   }

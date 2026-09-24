@@ -247,16 +247,19 @@ pub async fn nr_live_set_enabled(id: u64, enabled: bool, scale_percent: Option<u
 
 #[tauri::command]
 pub async fn nr_live_remember(id: u64) -> Result<(), String> {
-    for _ in 0..40 {
-        match request("session-nr/remember", Some(json!({ "id": id })), None, None).await {
-            Ok(_) => return Ok(()),
-            Err(error) if error == "nr_settings_pending" => {
-                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            match request("session-nr/remember", Some(json!({ "id": id })), None, None).await {
+                Ok(_) => return Ok(()),
+                Err(error) if error == "nr_settings_pending" => {
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                }
+                Err(error) => return Err(error),
             }
-            Err(error) => return Err(error),
         }
-    }
-    Err("nr_settings_pending".into())
+    })
+    .await
+    .unwrap_or_else(|_| Err("nr_settings_pending".into()))
 }
 
 fn maintenance_route(backend: &str) -> Result<String, String> {

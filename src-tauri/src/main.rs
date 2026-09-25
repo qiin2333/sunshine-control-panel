@@ -340,6 +340,7 @@ fn main() {
             windows::resize_tool_window,
             hdr_enhanced::nr_live_status,
             hdr_enhanced::nr_live_set_enabled,
+            hdr_enhanced::nr_live_remember,
             nr_overlay::nr_overlay_capture_shortcut,
             nr_overlay::nr_overlay_settings,
             nr_overlay::nr_overlay_save_settings,

@@ -73,7 +73,8 @@
           <div class="signal-row"><span>{{ online && pipeline ? nrOutputLabel(pipeline) : '—' }}</span><span v-if="online && pipeline" class="badge">{{ text.preserved }}</span></div>
           <p v-if="online && pipeline?.dv_profile && pipeline.dv_state !== 'active'" class="notice">{{ pipeline.dv_state === 'waiting' ? text.dvWaiting : text.dvFallback }}</p>
           <p v-else-if="online && pipeline && pipeline.hdr_mode !== 'sdr' && !pipeline?.dv_profile" class="hint">{{ text.transfer }} · {{ pipeline?.hdr_mode.toUpperCase() }}</p>
-          <p class="hint">{{ text.onlySession }}</p>
+          <p class="hint" aria-live="polite">{{ saveState === 'saved' ? text.saved : text.remembered }}</p>
+          <button v-if="supportsControls" class="reset-defaults" :disabled="!canToggle" @click="resetDefaults">{{ text.resetDefaults }}</button>
           <label class="opacity-row"><span>{{ text.opacity }}</span><output>{{ opacity }}%</output><input v-model.number="opacity" @change="saveOpacity" type="range" min="35" max="95" :aria-label="text.opacity"></label>
           <footer><kbd v-if="shortcut">{{ shortcut }}</kbd><span>{{ shortcut ? text.shortcut : text.shortcutUnavailable }}</span></footer>
         </div>
@@ -120,6 +121,7 @@ const busy = ref(false)
 const errorCode = ref('')
 const actionError = ref('')
 const error = computed(() => actionError.value || text.value[errorCode.value] || '')
+const saveState = ref('')
 const shortcut = ref('')
 watch(selectedId, id => { if (id !== null && !disposed) void invoke('nr_overlay_select_session', { id }).catch(error => { actionError.value = enhancementError(enhancementControlsText(locale.value), error) }) })
 const pipeline = computed(() => pipelines.value.find(item => item.id === selectedId.value))
@@ -144,7 +146,7 @@ function syncDrafts() {
   if (editing.value !== 'intensity') draftIntensity.value = Math.round((pipeline.value?.nr_requested_intensity ?? 1) * 100)
 }
 watch(() => [selectedId.value, pipeline.value?.nr_requested_scale_percent, pipeline.value?.nr_requested_intensity, pipeline.value?.nr_requested_skin_structure_strength], syncDrafts)
-watch(selectedId, () => { editing.value = ''; editingSession = null; syncDrafts() }, { flush: 'sync' })
+watch(selectedId, () => { editing.value = ''; editingSession = null; saveState.value = ''; syncDrafts() }, { flush: 'sync' })
 watch(online, value => { if (!value) cancelEdit() })
 const processingSize = computed(() => nrProcessingSize(pipeline.value,
   editing.value === 'scale' || !pipeline.value?.nr_requested_enabled ? draftScale.value : pipeline.value.nr_scale_percent))
@@ -166,6 +168,10 @@ async function commitSlider(kind) {
 async function setOption(patch) {
   if (!canToggle.value || !supportsControls.value) return
   await sendRequest(pipeline.value.nr_requested_enabled, patch)
+}
+async function resetDefaults() {
+  if (!canToggle.value) return
+  await sendRequest(false, { scalePercent: 100, intensity: 1, style: 0, skinStructureStrength: 0, autoMask: false, uiCorrection: false, motionQuality: 0 })
 }
 let disposed = false, refreshing = false, timer, observer, unlisten = []
 async function refresh() {
@@ -196,12 +202,15 @@ async function toggle() {
 async function sendRequest(enabled, patch = {}) {
   const id = pipeline.value.id
   busy.value = true
+  saveState.value = ''
   errorCode.value = ''; actionError.value = ''
   try {
     await invoke('nr_live_set_enabled', { id, enabled, ...patch })
     await refresh()
+    try { await invoke('nr_live_remember', { id }); if (!disposed && selectedId.value === id) saveState.value = 'saved' }
+    catch { if (!disposed && selectedId.value === id) actionError.value = text.value.saveFailed }
   } catch (reason) {
-    if (!disposed) errorCode.value = String(reason).includes('nr_session_ended') ? 'ended' : 'failed'
+    if (!disposed && selectedId.value === id) errorCode.value = String(reason).includes('nr_session_ended') ? 'ended' : 'failed'
   } finally { busy.value = false }
 }
 let resizing = false, resizeAgain = false, resizeRetry
@@ -230,6 +239,7 @@ onMounted(async () => {
   for (const [name, handler] of [
     ['nr-settings-changed', e => applyPreferences(e.payload)],
     ['nr-action-error', e => { actionError.value = enhancementError(enhancementControlsText(locale.value), e.payload) }],
+    ['nr-save-error', e => { if (e.payload === selectedId.value) { saveState.value = ''; actionError.value = text.value.saveFailed } }],
   ]) {
     try { const stop = await listen(name, handler); if (disposed) stop(); else unlisten.push(stop) } catch {}
   }
@@ -297,6 +307,9 @@ button:disabled { cursor: default; opacity: .5; }
 .signal-row { border-top: 1px solid #ffffff38; padding-top: 13px; display: flex; justify-content: space-between; align-items: center; font-weight: 700; }
 .badge { color: #a5dc43; font-size: 10px; border: 1px solid var(--green); padding: 2px 6px; border-radius: 0; }
 .hint { color: #b7c0ab; font-size: 11px; margin: 9px 0 16px; }
+.reset-defaults { margin: -4px 0 14px; padding: 5px 8px; border: 1px solid #83916f; border-radius: 0; background: #0004; color: #d1d8c7; font-size: 11px; cursor: pointer; }
+.reset-defaults:hover:not(:disabled) { border-color: #fff; }
+.reset-defaults:disabled { opacity: .5; cursor: default; }
 .opacity-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; color: #d0d8c5; font-size: 12px; font-weight: 600; }
 .parameter-row input[type="range"], .opacity-row input { appearance: none; width: 100%; margin: 3px 0; background: #4e5845; border: 1px solid #83916f; height: 6px; border-radius: 0; }
 .parameter-row input[type="range"]::-webkit-slider-thumb, .opacity-row input::-webkit-slider-thumb { appearance: none; width: 12px; height: 18px; background: var(--green); border: 2px solid #0a1003; cursor: ew-resize; }

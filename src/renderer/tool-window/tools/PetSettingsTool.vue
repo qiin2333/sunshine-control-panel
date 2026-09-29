@@ -295,7 +295,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from '../../desktop/i18n/index.js'
 import { STORAGE_KEY, DEFAULT_CONFIG } from '../../composables/aiProviders.js'
-import { isApiKeyRequired } from '../../composables/aiClient.js'
+import { hasAiCredentials } from '../../composables/aiClient.js'
 import PetVisionConsentDialog from '../../components/PetVisionConsentDialog.vue'
 import {
   PET_MASTER_KEY,
@@ -404,10 +404,6 @@ async function onToolbarShortcutToggle(event) {
   }
 }
 
-function hasUsableApiKey(key) {
-  return typeof key === 'string' && Boolean(key.trim()) && !key.includes('****')
-}
-
 // AI 配置状态（决定桌面观察是否可用）
 const aiConfigReady = computed(() => {
   const configVersion = aiConfigVersion.value
@@ -416,7 +412,7 @@ const aiConfigReady = computed(() => {
     const saved = localStorage.getItem(STORAGE_KEY)
     const localConfig = saved ? { ...DEFAULT_CONFIG, ...JSON.parse(saved) } : { ...DEFAULT_CONFIG }
     const cfg = serverAiConfig.value || localConfig
-    return !!(cfg.enabled && (hasUsableApiKey(cfg.apiKey) || cfg.apiKeyConfigured || !isApiKeyRequired(cfg)))
+    return !!(cfg.enabled && hasAiCredentials(cfg))
   } catch {
     return false
   }

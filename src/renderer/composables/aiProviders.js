@@ -4,8 +4,12 @@
 
 export const STORAGE_KEY = 'sunshine-ai-config'
 
+export const CHATGPT_MODELS = ['gpt-6-luna', 'gpt-6-sol', 'gpt-6-astra']
+
 export const DEFAULT_CONFIG = {
   provider: 'openai',
+  authMode: 'apiKey',
+  codexConnected: false,
   apiKey: '',
   apiKeyConfigured: false,
   apiBase: 'https://api.openai.com/v1',

@@ -46,7 +46,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { cursorPosition } from '@tauri-apps/api/window'
 import { useTouchWindowDrag } from '../composables/useTouchWindowDrag.js'
 import { useI18n } from '../desktop/i18n/index.js'
-import { callVisionLLM, isApiKeyRequired } from '../composables/aiClient.js'
+import { callVisionLLM, hasAiCredentials } from '../composables/aiClient.js'
 import { STORAGE_KEY, DEFAULT_CONFIG } from '../composables/aiProviders.js'
 import {
   loadMasterEnabled,
@@ -500,7 +500,7 @@ const tryVisionSpeech = async (isManual = false) => {
 
   try {
     const config = await getAiConfig(controller.signal)
-    if (!config.enabled || (!(config.apiKey || config.apiKeyConfigured) && isApiKeyRequired(config)) || !isPetVisionEnabled()) {
+    if (!config.enabled || !hasAiCredentials(config) || !isPetVisionEnabled()) {
       if (isManual) showSpeechRaw(r.visionNotConfigured || '')
       return false
     }

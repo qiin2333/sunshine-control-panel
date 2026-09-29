@@ -27,6 +27,23 @@ async function fetchJson(url, options = {}) {
   return data
 }
 
+export async function requestCodexAuth(path = '') {
+  const proxyUrl = await getProxyUrl()
+  const options = path ? {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  } : {}
+  return fetchJson(`${proxyUrl}/api/ai/codex/auth${path ? `/${path}` : ''}`, options)
+}
+
+export function codexAuthPhase(result) {
+  if (result.pending) return 'pending'
+  if (result.error) return 'error'
+  if (result.connected) return 'connected'
+  return 'disconnected'
+}
+
 function isSunshineUnavailableError(error) {
   return String(error?.message || error || '').includes('Sunshine service is unavailable')
 }
@@ -88,11 +105,21 @@ export function getCompatibility(providerValue) {
 }
 
 export function isApiKeyRequired(config) {
+  if (config?.provider === 'openai' && config.authMode === 'chatgpt') return false
   const apiBase = config?.apiBase || ''
   return config?.provider !== 'ollama' &&
     !apiBase.includes('localhost') &&
     !apiBase.includes('127.0.0.1') &&
     !apiBase.includes('[::1]')
+}
+
+export function hasAiCredentials(config) {
+  if (config?.provider === 'openai' && config.authMode === 'chatgpt') {
+    return Boolean(config.codexConnected)
+  }
+  const key = config?.apiKey
+  return !isApiKeyRequired(config) || Boolean(config?.apiKeyConfigured) ||
+    (typeof key === 'string' && Boolean(key.trim()) && !key.includes('****'))
 }
 
 export async function callOpenAI(apiBase, apiKey, model, messages, maxTokens = 2048) {
@@ -136,8 +163,10 @@ export async function callLLM(config, messages, maxTokens = 2048, requestOptions
     body: JSON.stringify({
       model: config.model,
       messages,
-      temperature: Number(config.temperature) || 0.3,
-      max_tokens: Number(maxTokens || config.max_tokens) || 2048,
+      ...(config.provider === 'openai' && config.authMode === 'chatgpt' ? {} : {
+        temperature: Number(config.temperature) || 0.3,
+        max_tokens: Number(maxTokens || config.max_tokens) || 2048,
+      }),
     }),
   }
 
@@ -199,13 +228,13 @@ export async function callVisionLLM(
   ], maxTokens, requestOptions)
 }
 
-export async function fetchModels(apiBase, apiKey, providerValue, syncConfig) {
+export async function fetchModels(apiBase, apiKey, providerValue, syncConfig, authMode = 'apiKey') {
   const apiType = getApiType(providerValue)
   if (apiType === 'anthropic') return []
-  if (!apiBase) return []
+  if (!apiBase && !(providerValue === 'openai' && authMode === 'chatgpt')) return []
 
   let data
-  if (apiKey) {
+  if (apiKey && !(providerValue === 'openai' && authMode === 'chatgpt')) {
     const base = apiBase.replace(/\/+$/, '')
     data = await proxyFetch(`${base}/models`, 'GET', { Authorization: `Bearer ${apiKey}` }, null)
   } else {

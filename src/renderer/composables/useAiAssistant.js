@@ -1,9 +1,10 @@
-import { ref, reactive, computed, watch } from 'vue'
+import { ref, reactive, computed, watch, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { callLLM, fetchModels } from './aiClient.js'
+import { callLLM, codexAuthPhase, fetchModels, hasAiCredentials, requestCodexAuth } from './aiClient.js'
 import { getAppsContext, getLogsContext, parseAction, executeAction } from './aiActions.js'
-import { AI_PROVIDERS, DEFAULT_CONFIG, STORAGE_KEY } from './aiProviders.js'
+import { AI_PROVIDERS, CHATGPT_MODELS, DEFAULT_CONFIG, STORAGE_KEY } from './aiProviders.js'
 import { useI18n } from '../desktop/i18n/index.js'
+import { openExternalUrl } from '../tauri-adapter.js'
 
 // 重新导出供外部使用
 export { AI_PROVIDERS }
@@ -18,6 +19,9 @@ function normalizeConfig(input = {}) {
   if (!cfg.compatibility) {
     cfg.compatibility = provider?.compatibility || DEFAULT_CONFIG.compatibility
   }
+  if (cfg.provider !== 'openai') cfg.authMode = 'apiKey'
+  if (cfg.authMode !== 'chatgpt') cfg.authMode = 'apiKey'
+  if (cfg.authMode === 'chatgpt' && cfg.model === 'gpt-5.3-codex') cfg.model = CHATGPT_MODELS[0]
   return cfg
 }
 
@@ -25,20 +29,8 @@ function isMaskedKey(key) {
   return typeof key === 'string' && key.includes('****')
 }
 
-function isApiKeyRequired(cfg) {
-  const apiBase = cfg.apiBase || ''
-  return cfg.provider !== 'ollama' &&
-    !apiBase.includes('localhost') &&
-    !apiBase.includes('127.0.0.1') &&
-    !apiBase.includes('[::1]')
-}
-
-function hasApiKey(cfg) {
-  return Boolean(cfg.apiKey || cfg.apiKeyConfigured)
-}
-
 function persistableConfig(cfg) {
-  const { apiKey, ...safe } = { ...cfg }
+  const { apiKey, codexConnected, ...safe } = { ...cfg }
   return safe
 }
 
@@ -214,8 +206,13 @@ export function useAiAssistant() {
   const isConnected = ref(false)
   const isLoading = ref(false)
   const isClearingApiKey = ref(false)
+  const isAuthBusy = ref(false)
+  const authPending = ref(false)
+  const authUserCode = ref('')
+  const authVerificationUri = ref('')
+  const authInterval = ref(5)
   const needsConfiguration = computed(
-    () => !config.enabled || !config.model || (isApiKeyRequired(config) && !hasApiKey(config)),
+    () => !config.enabled || !config.model || !hasAiCredentials(config),
   )
 
   // 聊天记录（从 sessionStorage 恢复，切换页面不丢失）
@@ -267,7 +264,7 @@ export function useAiAssistant() {
       const localKey = config.apiKey || ''
       Object.assign(config, normalizeConfig(remote))
       config.apiKey = ''
-      if (!remote.apiKeyConfigured && localKey && !isMaskedKey(localKey)) {
+      if (remote.authMode !== 'chatgpt' && !remote.apiKeyConfigured && localKey && !isMaskedKey(localKey)) {
         config.apiKey = localKey
         await syncToServer()
       }
@@ -287,10 +284,11 @@ export function useAiAssistant() {
 
   /** 将当前 config 推送到服务端保存。所有写入共用一个队列。 */
   async function syncToServer() {
-    const replacementKey = !isMaskedKey(config.apiKey) ? config.apiKey : ''
+    const replacementKey = config.authMode !== 'chatgpt' && !isMaskedKey(config.apiKey) ? config.apiKey : ''
     const payload = {
       enabled: config.enabled,
       provider: config.provider,
+      authMode: config.authMode,
       apiBase: config.apiBase,
       model: config.model,
       compatibility: config.compatibility,
@@ -312,10 +310,115 @@ export function useAiAssistant() {
         throw new Error(result.error || `Failed to save AI configuration (${resp.status})`)
       }
       config.apiKeyConfigured = Boolean(result.apiKeyConfigured)
+      config.codexConnected = Boolean(result.codexConnected)
       if (replacementKey && config.apiKey === replacementKey) config.apiKey = ''
       localStorage.setItem(STORAGE_KEY, JSON.stringify(persistableConfig(config)))
       return result
     })
+  }
+
+  let authPollTimer = null
+  let authGeneration = 0
+
+  function stopAuthPolling() {
+    authGeneration++
+    clearTimeout(authPollTimer)
+    authPollTimer = null
+  }
+
+  function updateAuthState(result) {
+    config.codexConnected = Boolean(result.connected)
+    if (!config.codexConnected) isConnected.value = false
+    authPending.value = Boolean(result.pending)
+    authUserCode.value = authPending.value ? (result.userCode || authUserCode.value) : ''
+    authVerificationUri.value = authPending.value ? (result.verificationUri || authVerificationUri.value) : ''
+    authInterval.value = Math.max(1, Number(result.interval) || authInterval.value)
+  }
+
+  function scheduleAuthPoll(generation = authGeneration) {
+    if (!authPending.value || config.provider !== 'openai' || config.authMode !== 'chatgpt') return
+    clearTimeout(authPollTimer)
+    authPollTimer = setTimeout(() => pollCodexAuth(generation), authInterval.value * 1000)
+  }
+
+  async function pollCodexAuth(generation) {
+    try {
+      const result = await requestCodexAuth('poll')
+      if (generation !== authGeneration) return
+      updateAuthState(result)
+      const phase = codexAuthPhase(result)
+      if (phase === 'pending') {
+        scheduleAuthPoll(generation)
+      } else if (phase === 'connected') {
+        ElMessage.success(ui().chatgptConnected)
+        await fetchRemoteModels(false)
+      } else if (phase === 'error') {
+        ElMessage.error(ui().chatgptLoginFailed.replace('{error}', result.error))
+      }
+    } catch (error) {
+      if (generation !== authGeneration) return
+      authPending.value = false
+      ElMessage.error(ui().chatgptLoginFailed.replace('{error}', error.message))
+    }
+  }
+
+  async function refreshCodexAuth() {
+    if (config.provider !== 'openai' || config.authMode !== 'chatgpt') return
+    stopAuthPolling()
+    const generation = authGeneration
+    try {
+      const result = await requestCodexAuth()
+      if (generation !== authGeneration) return
+      updateAuthState(result)
+      scheduleAuthPoll(generation)
+      if (codexAuthPhase(result) === 'connected') await fetchRemoteModels(false)
+    } catch (error) {
+      ElMessage.error(ui().chatgptLoginFailed.replace('{error}', error.message))
+    }
+  }
+
+  async function openCodexVerification() {
+    if (!authVerificationUri.value) return
+    if (!(await openExternalUrl(authVerificationUri.value))) {
+      ElMessage.warning(ui().chatgptOpenBrowserFailed)
+    }
+  }
+
+  async function startCodexAuth() {
+    if (isAuthBusy.value) return
+    isAuthBusy.value = true
+    stopAuthPolling()
+    authPending.value = false
+    authUserCode.value = ''
+    authVerificationUri.value = ''
+    const generation = authGeneration
+    try {
+      await syncToServer()
+      const result = await requestCodexAuth('start')
+      if (generation !== authGeneration) return
+      updateAuthState(result)
+      await openCodexVerification()
+      scheduleAuthPoll(generation)
+    } catch (error) {
+      ElMessage.error(ui().chatgptLoginFailed.replace('{error}', error.message))
+    } finally {
+      isAuthBusy.value = false
+    }
+  }
+
+  async function logoutCodexAuth() {
+    if (isAuthBusy.value) return
+    isAuthBusy.value = true
+    stopAuthPolling()
+    try {
+      const result = await requestCodexAuth('logout')
+      updateAuthState(result)
+      ElMessage.success(ui().chatgptDisconnected)
+    } catch (error) {
+      ElMessage.error(ui().chatgptLoginFailed.replace('{error}', error.message))
+    } finally {
+      isAuthBusy.value = false
+    }
   }
 
   async function clearApiKey() {
@@ -372,9 +475,11 @@ export function useAiAssistant() {
   }
 
   // 初始化时从服务端同步（不阻塞 UI）
-  syncFromServer()
+  syncFromServer().then(refreshCodexAuth)
 
   function onProviderChange(providerValue) {
+    stopAuthPolling()
+    config.authMode = 'apiKey'
     const provider = AI_PROVIDERS.find((p) => p.value === providerValue)
     if (provider) {
       config.apiBase = provider.base
@@ -387,15 +492,35 @@ export function useAiAssistant() {
     fetchRemoteModels()
   }
 
+  function onAuthModeChange(authMode) {
+    stopAuthPolling()
+    isConnected.value = false
+    remoteModels.value = []
+    if (authMode === 'chatgpt') {
+      config.model = CHATGPT_MODELS[0]
+      refreshCodexAuth()
+    } else if (CHATGPT_MODELS.includes(config.model) || String(config.model || '').includes('codex')) {
+      config.model = AI_PROVIDERS.find((p) => p.value === 'openai').models[0]
+    }
+  }
+
   // ===== 模型列表 =====
 
-  async function fetchRemoteModels() {
-    if (!config.apiBase) return
+  async function fetchRemoteModels(notify = true) {
+    if (!config.apiBase && config.authMode !== 'chatgpt') return
+    if (config.provider === 'openai' && config.authMode === 'chatgpt' && !config.codexConnected) {
+      ElMessage.warning(ui().chatgptLoginFirst)
+      return
+    }
     isFetchingModels.value = true
     try {
-      const models = await fetchModels(config.apiBase, config.apiKey, config.provider, syncToServer)
+      const models = await fetchModels(config.apiBase, config.apiKey, config.provider, syncToServer, config.authMode)
       remoteModels.value = models
-      if (models.length > 0) {
+      if (config.provider === 'openai' && config.authMode === 'chatgpt' && models.length > 0 && !models.includes(config.model)) {
+        config.model = models[0]
+        await saveConfig(false)
+      }
+      if (notify && models.length > 0) {
         ElMessage.success(ui().modelsFetched.replace('{count}', models.length))
       }
     } catch (error) {
@@ -407,6 +532,9 @@ export function useAiAssistant() {
   }
 
   const availableModels = computed(() => {
+    if (config.provider === 'openai' && config.authMode === 'chatgpt') {
+      return [...new Set([...CHATGPT_MODELS, ...remoteModels.value])]
+    }
     const provider = AI_PROVIDERS.find((p) => p.value === config.provider)
     const preset = provider?.models || []
     const remote = remoteModels.value || []
@@ -420,8 +548,8 @@ export function useAiAssistant() {
   // ===== 连接测试 =====
 
   async function testConnection() {
-    if (!hasApiKey(config) && isApiKeyRequired(config)) {
-      ElMessage.warning(ui().apiKeyRequired)
+    if (!hasAiCredentials(config)) {
+      ElMessage.warning(config.authMode === 'chatgpt' ? ui().chatgptLoginFirst : ui().apiKeyRequired)
       return false
     }
 
@@ -455,8 +583,8 @@ export function useAiAssistant() {
       return false
     }
 
-    if (!hasApiKey(config) && isApiKeyRequired(config)) {
-      ElMessage.warning(ui().apiKeyRequired)
+    if (!hasAiCredentials(config)) {
+      ElMessage.warning(config.authMode === 'chatgpt' ? ui().chatgptLoginFirst : ui().apiKeyRequired)
       return false
     }
 
@@ -540,17 +668,30 @@ export function useAiAssistant() {
   // 监听聊天记录变化自动保存到 sessionStorage
   watch(chatHistory, saveChatHistory, { deep: true })
 
+  onUnmounted(() => {
+    stopAuthPolling()
+    clearTimeout(saveTimer)
+  })
+
   return {
     config,
     needsConfiguration,
     isConnected,
     isLoading,
     isClearingApiKey,
+    isAuthBusy,
+    authPending,
+    authUserCode,
+    authVerificationUri,
     isFetchingModels,
     chatHistory,
     currentInput,
     availableModels,
     onProviderChange,
+    onAuthModeChange,
+    startCodexAuth,
+    logoutCodexAuth,
+    openCodexVerification,
     fetchRemoteModels,
     testConnection,
     sendMessage,

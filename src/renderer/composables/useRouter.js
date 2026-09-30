@@ -70,7 +70,7 @@ const routeConfig = {
     title: '画质增强',
   },
   [ROUTES.TOOLBOX]: { name: ROUTES.TOOLBOX, component: 'ControlPanelPage', title: '工具箱' },
-  [ROUTES.PANEL_SETTINGS]: { name: ROUTES.PANEL_SETTINGS, component: 'ControlPanelPage', title: '控制面板设置' },
+  [ROUTES.PANEL_SETTINGS]: { name: ROUTES.PANEL_SETTINGS, component: 'ControlPanelPage', title: '面板设置' },
   [ROUTES.HELP]: { name: ROUTES.HELP, component: 'ControlPanelPage', title: '帮助与关于' },
 }
 

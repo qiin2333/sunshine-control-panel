@@ -1,712 +1,336 @@
 @import '../styles/theme.less';
-
-// ========== 主容器 ==========
 .sidebar-wrapper {
+  --nav-text: #ddd1d4;
+  --nav-muted: #b7a8ac;
+  --nav-active: #e6d5b8;
+  --nav-selected: rgba(230, 213, 184, 0.14);
+  --nav-line: rgba(230, 213, 184, 0.14);
   display: flex;
   width: 100%;
   height: 100vh;
   overflow: hidden;
-  background: linear-gradient(135deg, @morandi-dark-bg 0%, @morandi-mid-bg 50%, @morandi-light-bg 100%);
   border-radius: @border-radius;
+  background: @morandi-dark-bg;
+  font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
 }
-
 .gura-background {
   position: absolute;
   bottom: 0;
   right: 0;
-  width: 160px;
-  height: 160px;
+  width: 140px;
+  height: 140px;
   pointer-events: none;
-  z-index: 0;
-  opacity: 0.15;
-  transition: all 0.3s ease;
+  opacity: 0.08;
   overflow: hidden;
-
   .gura-bg-img {
     width: 160px;
     height: 160px;
     object-fit: contain;
-    transform: rotate(-15deg);
     image-rendering: pixelated;
-    image-rendering: crisp-edges;
+    transform: rotate(-15deg);
     position: absolute;
-    bottom: -40px;
+    bottom: -35px;
     right: -28px;
   }
 }
-
-// ========== 侧边栏 ==========
 .sidebar {
   width: @sidebar-width;
-  height: 100vh;
-  background: linear-gradient(180deg, @morandi-mid-bg 0%, @morandi-dark-bg 100%);
+  flex-shrink: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
   position: relative;
-  transition: width @transition-smooth;
   z-index: 1000;
-  border-radius: @border-radius 0 0 @border-radius;
-
-  // 优雅的分隔线 - 使用渐变边框
-  &::after {
-    content: '';
-    position: absolute;
-    right: 0;
-    top: 0;
-    bottom: 0;
-    width: 1px;
-    background: linear-gradient(
-      180deg,
-      transparent 0%,
-      rgba(230, 213, 184, 0.2) 20%,
-      rgba(230, 213, 184, 0.3) 50%,
-      rgba(230, 213, 184, 0.2) 80%,
-      transparent 100%
-    );
-    transition: opacity @transition-smooth;
-    pointer-events: none;
-  }
-
+  background: @morandi-mid-bg;
+  border-right: 1px solid var(--nav-line);
+  transition: width @transition-smooth;
   &.collapsed {
     width: @sidebar-collapsed-width;
-
-    &::after {
-      opacity: 0.6;
-    }
   }
 }
-
-// ========== Logo 区域 ==========
 .sidebar-header {
-  padding: 24px 20px;
+  flex-shrink: 0;
+  padding: 24px 16px;
   display: flex;
   align-items: center;
-  gap: 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  margin-bottom: 20px;
+  gap: 11px;
   position: relative;
-  z-index: 10; // 确保在 Gura 背景上方
   touch-action: none;
+  min-height: 90px;
 }
-
 .logo {
   width: 40px;
   height: 40px;
-  .morandi-gradient();
-  border-radius: @border-radius;
-  .flex-center();
-  color: white;
   flex-shrink: 0;
-  overflow: hidden;
+  .morandi-gradient();
+  border-radius: 12px;
   padding: 6px;
-  box-shadow: 0 2px 8px rgba(230, 213, 184, 0.2);
+  .flex-center();
+  overflow: hidden;
 }
-
 .logo-img {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  animation: logoFloat 3s ease-in-out infinite;
 }
-
-@keyframes logoFloat {
-  0%,
-  100% {
-    transform: translateY(0) scale(1);
-  }
-  50% {
-    transform: translateY(-3px) scale(1.05);
-  }
-}
-
 .app-name {
-  color: @morandi-yellow;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   margin: 0;
-  white-space: nowrap;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+  color: var(--nav-active);
+  span:last-child {
+    font-size: 12px;
+    color: var(--nav-muted);
+  }
 }
-
-// ========== 折叠按钮 ==========
 .collapse-btn {
   position: absolute;
   right: -10px;
   top: 76px;
-  padding: 0;
+  z-index: 20;
   background: transparent;
-  border: none;
-  width: auto;
-  height: auto;
-  transform: none;
-  box-shadow: none;
+  border: 0;
+  padding: 0;
   .flex-center();
   cursor: pointer;
-  z-index: 20; // 确保在 Gura 背景上方
-
-  &::before,
-  &::after {
-    content: none;
-    display: none;
-  }
-
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
   .clip-icon {
     width: 26px;
     height: 26px;
     transform: rotate(90deg);
     transform-origin: 50% 50%;
-    transition: transform @transition-fast, filter @transition-fast;
+    transition:
+      transform @transition-fast,
+      filter @transition-fast;
   }
-
-  &:hover,
-  &:active {
-    transform: none;
-    box-shadow: none;
+  .clip-icon.collapsed {
+    transform: rotate(-90deg);
+  }
+  &:hover .clip-icon {
+    transform: rotate(90deg) scale(1.06);
+    filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.25));
+  }
+  &:active .clip-icon {
+    transform: rotate(90deg) scale(0.96);
   }
 }
-
-// 发卡交互：悬停放大、按下压缩；根据收起状态切换方向
-.collapse-btn:hover .clip-icon {
-  transform: rotate(90deg) scale(1.06);
-  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.25));
+.sidebar.collapsed {
+  .sidebar-header {
+    justify-content: center;
+    padding: 24px 8px;
+  }
+  .menu-item {
+    justify-content: center;
+    padding-left: 6px;
+    padding-right: 6px;
+  }
 }
-
-.collapse-btn:active .clip-icon {
-  transform: rotate(90deg) scale(0.96);
-}
-
-.clip-icon.collapsed {
-  transform: rotate(-90deg);
-}
-
-// ========== 菜单区域 ==========
 .menu-scrollbar {
   flex: 1;
+  min-height: 0;
   padding: 0 12px;
   position: relative;
-  z-index: 10; // 确保在 Gura 背景上方
-
   :deep(.el-scrollbar__wrap) {
     overflow-x: hidden;
   }
 }
-
 .menu-section {
-  margin-bottom: 24px;
+  margin-bottom: 22px;
 }
-
 .section-title {
-  color: #d4c4a8;
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  margin: 0 0 12px 12px;
-  transition: opacity @transition-smooth;
+  color: var(--nav-muted);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  margin: 0 12px 8px;
 }
-
-// ========== 菜单项 ==========
 .menu-item {
+  width: 100%;
+  min-height: 43px;
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 16px;
-  margin-bottom: 6px;
-  border-radius: @border-radius;
-  color: @morandi-yellow;
+  margin-bottom: 4px;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--nav-text);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
   cursor: pointer;
-  transition: all @transition-smooth;
   position: relative;
-  overflow: hidden;
-  user-select: none;
-
-  // 左侧装饰条
-  &::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 2px;
-    height: 0;
-    background: @morandi-yellow;
-    border-radius: 0 2px 2px 0;
-    transition: height @transition-smooth, opacity @transition-smooth;
-    opacity: 0;
-  }
-
-  // 悬停效果
-  &:hover {
-    background: rgba(212, 165, 165, 0.12);
-    color: #f0e5cc;
-
-    .el-icon {
-      transform: scale(1.05);
-    }
-  }
-
-  // 按下效果
-  &:active {
-    transform: scale(0.98);
-  }
-
-  // 危险操作样式
-  &.danger:hover {
-    background: rgba(212, 165, 165, 0.2);
-    color: @morandi-red;
-  }
-
-  &.warning {
-    color: @gura-yellow;
-
-    &:hover {
-      background: rgba(255, 193, 7, 0.12);
-      color: #ff9800;
-    }
-  }
-
-  // 活动状态样式
-  &.active {
-    background: rgba(230, 213, 184, 0.15);
-    color: @morandi-yellow;
-    font-weight: 500;
-
-    &::before {
-      height: 60%;
-      opacity: 1;
-    }
-
-    .el-icon {
-      color: @morandi-yellow;
-    }
-
-    &:hover {
-      background: rgba(230, 213, 184, 0.2);
-    }
-  }
-
-  // 图标
+  transition:
+    background 0.15s,
+    color 0.15s;
   .el-icon {
+    color: var(--nav-muted);
     flex-shrink: 0;
-    transition: all @transition-smooth;
   }
-
-  // 文本
   span {
-    font-size: 14px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  &:hover {
+    background: var(--nav-selected);
+  }
+  &.active {
+    background: var(--nav-selected);
+    color: var(--nav-active);
     font-weight: 500;
-    white-space: nowrap;
-    transition: opacity @transition-smooth;
-  }
-}
-
-.sidebar.collapsed {
-  .menu-item span {
-    opacity: 0;
-  }
-}
-
-// ========== 更新菜单项（带内测开关） ==========
-.menu-item-switch {
-  .update-item-content {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    width: 100%;
-    gap: 8px;
-    flex: 1;
-
-    span {
-      flex: 1;
+    .el-icon {
+      color: var(--nav-active);
     }
-  }
-
-  :deep(.el-switch) {
-    flex-shrink: 0;
-    height: 18px;
-
-    .el-switch__label {
-      font-size: 11px;
-      color: @morandi-yellow;
-      transform: scale(0.8) translateX(-10px);
-      transition: color @transition-smooth;
-    }
-
-    &.is-checked {
-      .el-switch__label {
-        color: @morandi-yellow;
-      }
-
-      .el-switch__core {
-        background-color: @morandi-yellow;
-        border-color: @morandi-yellow;
-      }
+    &::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 12px;
+      bottom: 12px;
+      width: 3px;
+      background: var(--nav-active);
+      border-radius: 3px;
     }
   }
 }
-
-// ========== 底部区域 ==========
+button:focus-visible {
+  outline: 2px solid var(--nav-active);
+  outline-offset: -2px;
+}
 .sidebar-footer {
-  padding: 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  margin-top: auto;
+  margin: auto 12px 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--nav-line);
   position: relative;
-  z-index: 10; // 确保在 Gura 背景上方
+  flex-shrink: 0;
 }
-
-// ========== 主内容区域 ==========
 .main-content {
-  flex: 1;
-  width: calc(100% - @sidebar-width);
-  height: 100vh;
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  height: 100%;
+  background: @morandi-dark-bg;
   position: relative;
-  transition: width @transition-smooth;
-  background: linear-gradient(135deg, @morandi-mid-bg 0%, @morandi-light-bg 100%);
   overflow: hidden;
-  border-radius: 0 @border-radius @border-radius 0;
-
-  &.expanded {
-    width: calc(100% - @sidebar-collapsed-width);
-  }
 }
-
-// ========== 顶部拖动区域 ==========
 .drag-region {
   position: absolute;
   top: 0;
   left: 0;
-  right: 138px; // 右侧留空给三个窗口控制按钮
+  // Keep the three window controls outside the caption.
+  right: 138px;
   height: 32px;
   z-index: 100;
-  cursor: move;
-  pointer-events: auto;
   touch-action: none;
-
-  // 调试模式可视化（可选，生产环境可移除）
+  cursor: move;
   &:hover {
     background: rgba(230, 213, 184, 0.03);
   }
 }
-
-// ========== Windows 经典窗口控制按钮 ==========
 .window-controls {
   position: absolute;
   top: 0;
   right: 0;
   display: flex;
   z-index: 10000;
-  pointer-events: auto;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
 }
-
 .control-btn {
   width: 46px;
   height: 32px;
   .flex-center();
-  cursor: pointer;
-  transition: all 0.15s ease;
-  border: none;
+  border: 0;
   background: transparent;
-
-  .el-icon,
+  color: var(--nav-active);
+  cursor: pointer;
+  transition: background 0.15s ease;
   .control-icon {
-    // 多重阴影让图标看起来更粗
     filter: drop-shadow(0 0.5px 0 currentColor) drop-shadow(0.5px 0 0 currentColor) drop-shadow(0 -0.5px 0 currentColor)
       drop-shadow(-0.5px 0 0 currentColor);
-    font-weight: bold;
     transform: scale(1.05);
     transition: transform 0.15s ease;
   }
-
-  &.minimize {
-    color: @morandi-yellow;
-
-    &:hover {
-      background: rgba(230, 213, 184, 0.25);
-      color: #fff8e7;
-
-      .el-icon,
-      .control-icon {
-        transform: scale(1.15);
-      }
-    }
-
-    &:active {
-      background: rgba(230, 213, 184, 0.35);
-      color: #fff8e7;
+  &:hover {
+    background: var(--nav-selected);
+    .control-icon {
+      transform: scale(1.15);
     }
   }
-
-  &.maximize {
-    color: @morandi-yellow;
-
-    &:hover {
-      background: rgba(230, 213, 184, 0.25);
-      color: #fff8e7;
-
-      .el-icon,
-      .control-icon {
-        transform: scale(1.15);
-      }
-    }
-
-    &:active {
-      background: rgba(230, 213, 184, 0.35);
-      color: #fff8e7;
-    }
+  &:active {
+    background: rgba(230, 213, 184, 0.35);
   }
-
-  &.close {
-    color: @morandi-red;
-
-    &:hover {
-      background: #e81123;
-      color: white;
-
-      .el-icon,
-      .control-icon {
-        transform: scale(1.15);
-      }
-    }
-
-    &:active {
-      background: #c50f1f;
-      color: rgba(255, 255, 255, 0.8);
-    }
+  &.close:hover {
+    background: #e81123;
+    color: white;
+  }
+  &.close:active {
+    background: #c50f1f;
+    color: rgba(255, 255, 255, 0.8);
   }
 }
-
-// ========== 页面内容 ==========
 .page-content {
   flex: 1;
+  min-height: 0;
   overflow: auto;
 }
-
-// ========== 动画 ==========
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.2s;
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
-
-// ========== 浅色模式样式 ==========
 [data-bs-theme='light'] {
   .sidebar-wrapper {
-    background: linear-gradient(135deg, @gura-bg-light 0%, @gura-bg-mid 50%, #d4e8ff 100%);
+    --nav-text: #31425a;
+    --nav-muted: #687c95;
+    --nav-active: #3484ef;
+    --nav-selected: #d8eaff;
+    --nav-line: #dce7f5;
+    background: #f5f9ff;
   }
-
   .sidebar {
-    background: linear-gradient(180deg, @gura-bg-mid 0%, @gura-bg-light 100%);
-
-    // 浅色模式的分隔线
-    &::after {
-      background: linear-gradient(
-        180deg,
-        transparent 0%,
-        rgba(74, 158, 255, 0.25) 20%,
-        rgba(74, 158, 255, 0.35) 50%,
-        rgba(74, 158, 255, 0.25) 80%,
-        transparent 100%
-      );
-    }
-
-    &.collapsed {
-      &::after {
-        opacity: 0.6;
-      }
-    }
-
-    &-header,
-    &-footer {
-      border-color: rgba(74, 158, 255, 0.2);
-    }
+    background: #eaf3ff;
   }
-
   .logo {
-    background: linear-gradient(135deg, @gura-blue 0%, @gura-light-blue 100%);
-    box-shadow: 0 2px 8px rgba(74, 158, 255, 0.3);
+    .gura-gradient();
   }
-
-  .app-name {
-    color: @gura-blue;
-    text-shadow: 0 2px 4px rgba(74, 158, 255, 0.2);
-  }
-
-  .collapse-btn {
-    background: transparent !important;
-    color: inherit;
-    box-shadow: none;
-
-    &::before,
-    &::after {
-      content: none;
-      display: none;
-    }
-
-    &:hover {
-      background: transparent;
-      box-shadow: none;
-    }
-  }
-
-  .section-title {
-    color: #5a8db8;
-  }
-
-  .menu-item {
-    color: @gura-accent;
-
-    &::before {
-      background: @gura-blue;
-    }
-
-    &:hover {
-      background: rgba(74, 158, 255, 0.12);
-      color: @gura-blue;
-
-      .el-icon {
-        transform: scale(1.05);
-      }
-    }
-
-    &.danger:hover {
-      background: rgba(74, 158, 255, 0.2);
-      color: #3a7ed5;
-    }
-
-    // 活动状态样式（浅色模式
-    &.active {
-      background: rgba(122, 184, 255, 0.15);
-      color: @gura-blue;
-      font-weight: 500;
-
-      &::before {
-        height: 60%;
-        opacity: 1;
-      }
-
-      .el-icon {
-        color: @gura-blue;
-      }
-
-      &:hover {
-        background: rgba(122, 184, 255, 0.2);
-      }
-    }
-
-    :deep(.el-switch) {
-      .el-switch__label {
-        color: @gura-accent;
-      }
-
-      &.is-checked {
-        .el-switch__label {
-          color: @gura-blue;
-        }
-
-        .el-switch__core {
-          background-color: @gura-blue;
-          border-color: @gura-blue;
-        }
-      }
-    }
-  }
-
   .main-content {
-    background: linear-gradient(135deg, @gura-bg-mid 0%, #d4e8ff 100%);
+    background: #f5f9ff;
   }
-
-  .drag-region {
-    &:hover {
-      background: rgba(74, 158, 255, 0.03);
-    }
+  .drag-region:hover {
+    background: rgba(74, 158, 255, 0.03);
   }
-
-  // Windows 控制按钮
-  .control-btn {
-    &.minimize {
-      color: @gura-text;
-
-      &:hover {
-        background: rgba(74, 158, 255, 0.3);
-        color: @gura-blue;
-
-        .el-icon {
-          transform: scale(1.15);
-        }
-      }
-
-      &:active {
-        background: rgba(74, 158, 255, 0.4);
-        color: @gura-blue;
-      }
-    }
-
-    &.maximize {
-      color: @gura-text;
-
-      &:hover {
-        background: rgba(74, 158, 255, 0.3);
-        color: @gura-blue;
-
-        .el-icon {
-          transform: scale(1.15);
-        }
-      }
-
-      &:active {
-        background: rgba(74, 158, 255, 0.4);
-        color: @gura-blue;
-      }
-    }
-
-    &.close {
-      color: @gura-text;
-
-      &:hover {
-        background: #e81123;
-        color: white;
-
-        .el-icon {
-          transform: scale(1.15);
-        }
-      }
-
-      &:active {
-        background: #c50f1f;
-        color: rgba(255, 255, 255, 0.8);
-      }
-    }
+  .control-btn:not(.close):hover {
+    background: rgba(74, 158, 255, 0.3);
+  }
+  .control-btn:not(.close):active {
+    background: rgba(74, 158, 255, 0.4);
   }
 }
-
-// ========== 响应式设计 ==========
-@media (max-width: 768px) {
-  .sidebar {
-    position: relative;
-    left: auto;
-    top: auto;
-    z-index: 1000;
-  }
-
-  .main-content {
-    width: auto !important;
-  }
-}
-
-// Native WebView2 caption regions handle touch/DPI in the OS; the pointer handler
-// is a fallback where app-region is unavailable. Keep controls outside the caption.
 .sidebar-header,
 .drag-region {
   app-region: drag;
   -webkit-app-region: drag;
 }
-.window-controls {
-  app-region: no-drag;
-  -webkit-app-region: no-drag;
+@media (pointer: coarse) {
+  .menu-item {
+    min-height: 44px;
+  }
+  .collapse-btn {
+    width: 44px;
+    height: 44px;
+    right: -19px;
+    top: 67px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  .menu-item,
+  .clip-icon,
+  .control-icon {
+    transition: none;
+  }
 }

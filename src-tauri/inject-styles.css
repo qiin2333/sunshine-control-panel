@@ -37,3 +37,12 @@ body {
 #bd-theme {
   display: none;
 }
+
+/* Only the native panel proxy injects this stylesheet. Page headers stay untouched. */
+html[data-sunshine-navigation='unified'] .navbar {
+  display: none !important;
+}
+html[data-sunshine-navigation='unified'] body {
+  /* Reserve the native caption's hit area without retaining the WebUI navbar gap. */
+  padding-top: 32px !important;
+}

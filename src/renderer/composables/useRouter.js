@@ -12,9 +12,12 @@ export const ROUTES = {
   CONTROLLERS: 'controllers',
   // Compatibility alias for callers that still navigate to the original page id.
   DUALSENSE: 'dualsense',
-  // 控制器中心（多控制器类型原型，dev-only）
+  // Compatibility alias for the device hub's original page id.
   CONTROLLERS_HUB: 'controllers-hub',
   HDR_ENHANCED: 'hdr-enhanced',
+  TOOLBOX: 'toolbox',
+  PANEL_SETTINGS: 'panel-settings',
+  HELP: 'help',
 }
 
 /**
@@ -24,7 +27,7 @@ const routeConfig = {
   [ROUTES.HOME]: {
     name: ROUTES.HOME,
     component: null, // 使用 slot
-    title: '高级设置',
+    title: '串流管理',
   },
   [ROUTES.VDD_SETTINGS]: {
     name: ROUTES.VDD_SETTINGS,
@@ -66,6 +69,9 @@ const routeConfig = {
     component: 'HdrEnhancedManager',
     title: '画质增强',
   },
+  [ROUTES.TOOLBOX]: { name: ROUTES.TOOLBOX, component: 'ControlPanelPage', title: '工具箱' },
+  [ROUTES.PANEL_SETTINGS]: { name: ROUTES.PANEL_SETTINGS, component: 'ControlPanelPage', title: '面板设置' },
+  [ROUTES.HELP]: { name: ROUTES.HELP, component: 'ControlPanelPage', title: '帮助与关于' },
 }
 
 /**

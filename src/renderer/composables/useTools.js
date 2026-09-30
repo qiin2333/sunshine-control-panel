@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import { ElMessage, ElMessageBox, ElLoading, ElNotification } from 'element-plus'
-import { openExternalUrl, tools, vmouse, controllerMeta } from '@/tauri-adapter.js'
+import { openExternalUrl, tools, controllerMeta } from '@/tauri-adapter.js'
 import { useI18n } from '../desktop/i18n/index.js'
 
 // Module-scoped reactive flag so all sidebar instances share state.
@@ -13,87 +13,6 @@ let clipboardSyncPollTimer = null
  */
 export function useTools() {
   const { t } = useI18n()
-
-  /**
-   * 公共确认对话框操作
-   * @param {string} message - 确认消息
-   * @param {string} title - 对话框标题
-   * @param {function} action - 执行的操作
-   * @param {string} successMsg - 成功消息
-   */
-  const confirmAction = async (
-    message,
-    title,
-    action,
-    successMsg,
-    { confirmButtonText = '确定', cancelButtonText = '取消' } = {}
-  ) => {
-    try {
-      await ElMessageBox.confirm(message, title, {
-        confirmButtonText,
-        cancelButtonText,
-        type: 'warning',
-      })
-      await action()
-      ElMessage.success(successMsg)
-    } catch (error) {
-      if (error !== 'cancel') {
-        ElMessage.error(`操作失败: ${error}`)
-      }
-    }
-  }
-
-  /**
-   * 卸载 VDD
-   */
-  const uninstallVdd = async () => {
-    await confirmAction(
-      t.value.systemTools.vddUninstallConfirm,
-      t.value.systemTools.vddUninstallTitle,
-      tools.uninstallVddDriver,
-      t.value.systemTools.vddUninstallSuccess,
-      {
-        confirmButtonText: t.value.systemTools.confirm,
-        cancelButtonText: t.value.systemTools.cancel,
-      }
-    )
-  }
-
-  /**
-   * 重启显卡驱动
-   */
-  const restartDriver = async () => {
-    await confirmAction(
-      '确定要重启显卡驱动吗？这将暂时中断屏幕显示。',
-      '确认重启',
-      tools.restartGraphicsDriver,
-      '重启请求已发送'
-    )
-  }
-
-  /**
-   * 重启 Sunshine 服务
-   */
-  const restartSunshine = async () => {
-    await confirmAction(
-      '确定要重启 Sunshine 服务吗？这将断开当前所有连接。\n\n如果弹出 UAC 提示，请点击"是"以确认。\nSunshine 服务将在几秒钟内重启。',
-      '确认重启',
-      tools.restartSunshineService,
-      '重启请求已发送'
-    )
-  }
-
-  /**
-   * 以用户模式重启 Sunshine（非服务模式）
-   */
-  const restartSunshineInUserMode = async () => {
-    await confirmAction(
-      '确定要以用户模式重启 Sunshine 吗？\n\n这将：\n1. 停止 Sunshine 服务\n2. 关闭所有 Sunshine 进程\n3. 以用户模式启动 Sunshine \n\n这将断开当前所有连接。',
-      '确认重启',
-      tools.restartSunshineInUserMode,
-      '用户模式重启请求已发送'
-    )
-  }
 
   /**
    * 打开串流计时器
@@ -143,7 +62,7 @@ export function useTools() {
             showClose: false,
             closeOnClickModal: false,
             closeOnPressEscape: false,
-          }
+          },
         )
       } catch {
         // The launch failure has already been handled and must not escape the UI action.
@@ -190,7 +109,7 @@ export function useTools() {
           confirmButtonText: '确定',
           cancelButtonText: '取消',
           type: 'warning',
-        }
+        },
       )
 
       // 显示加载提示
@@ -216,7 +135,7 @@ export function useTools() {
             {
               confirmButtonText: '确定',
               type: 'success',
-            }
+            },
           )
         } else {
           ElMessage.success(result.message)
@@ -326,30 +245,6 @@ export function useTools() {
   }
 
   /**
-   * 安装虚拟鼠标驱动
-   */
-  const installVmouse = async () => {
-    await confirmAction(
-      '将安装虚拟鼠标驱动，此操作需要管理员权限。\n安装后可能需要重启系统才能生效。',
-      '确认安装',
-      vmouse.install,
-      '安装请求已发送'
-    )
-  }
-
-  /**
-   * 卸载虚拟鼠标驱动
-   */
-  const uninstallVmouse = async () => {
-    await confirmAction(
-      '确定要卸载虚拟鼠标驱动吗？此操作需要管理员权限。\nSunshine 将回退到 SendInput 方式。',
-      '确认卸载',
-      vmouse.uninstall,
-      '卸载请求已发送'
-    )
-  }
-
-  /**
    * 打开手柄测试工具（ControllerMeta）
    *
    * 流程：
@@ -364,10 +259,17 @@ export function useTools() {
     ElMessage.info('正在准备手柄测试工具...')
 
     // 规范化版本号比较：忽略 v 前缀、按数字段比较
-    const normalizeVersion = (v) => String(v || '').trim().replace(/^v/i, '')
+    const normalizeVersion = (v) =>
+      String(v || '')
+        .trim()
+        .replace(/^v/i, '')
     const compareVersion = (a, b) => {
-      const pa = normalizeVersion(a).split('.').map((x) => parseInt(x, 10) || 0)
-      const pb = normalizeVersion(b).split('.').map((x) => parseInt(x, 10) || 0)
+      const pa = normalizeVersion(a)
+        .split('.')
+        .map((x) => parseInt(x, 10) || 0)
+      const pb = normalizeVersion(b)
+        .split('.')
+        .map((x) => parseInt(x, 10) || 0)
       const len = Math.max(pa.length, pb.length)
       for (let i = 0; i < len; i++) {
         const d = (pa[i] || 0) - (pb[i] || 0)
@@ -378,9 +280,7 @@ export function useTools() {
 
     // 执行下载 + 启动的完整流程（已有 loading 实例时复用）
     const downloadAndLaunch = async (release, loading) => {
-      const sizeMb = release.download_size
-        ? (release.download_size / 1024 / 1024).toFixed(1)
-        : '?'
+      const sizeMb = release.download_size ? (release.download_size / 1024 / 1024).toFixed(1) : '?'
       loading.setText(`⏳ 正在下载 ControllerMeta ${release.version} (${sizeMb} MB)... 0%`)
 
       const { listen } = await import('@tauri-apps/api/event')
@@ -415,9 +315,7 @@ export function useTools() {
         // 已安装：先启动（不阻塞），然后后台检查更新
         try {
           await controllerMeta.launch()
-          ElMessage.success(
-            `已启动 ControllerMeta${status.version ? ' ' + status.version : ''}`
-          )
+          ElMessage.success(`已启动 ControllerMeta${status.version ? ' ' + status.version : ''}`)
         } catch (err) {
           ElMessage.error(`启动失败: ${err}`)
           return
@@ -427,11 +325,7 @@ export function useTools() {
         ;(async () => {
           try {
             const release = await controllerMeta.checkRelease()
-            if (
-              release?.download_url &&
-              status.version &&
-              compareVersion(release.version, status.version) > 0
-            ) {
+            if (release?.download_url && status.version && compareVersion(release.version, status.version) > 0) {
               ElNotification({
                 title: 'ControllerMeta 有新版本',
                 message: `当前 ${status.version}，最新 ${release.version}。点击「更新」下载并重启。`,
@@ -517,8 +411,7 @@ export function useTools() {
 
   /**
    * Clipboard sync is enabled by default whenever the user-session agent is
-   * alive. The sidebar button no longer toggles anything — it only reflects
-   * status and reports it on click.
+   * alive. Panel settings show connection status; the action reports details.
    */
   const refreshClipboardSyncStatus = async () => {
     try {
@@ -555,37 +448,32 @@ export function useTools() {
     }
   }
 
-  /** Initial read on first sidebar render so the indicator dot is correct. */
+  /** Load status once for the panel, then keep the settings page up to date. */
   const initClipboardSyncStatus = async () => {
     if (clipboardSyncInitialised) return
     clipboardSyncInitialised = true
     await refreshClipboardSyncStatus()
     clipboardSyncPollTimer = window.setInterval(refreshClipboardSyncStatus, 5000)
-    window.addEventListener('beforeunload', () => {
-      if (clipboardSyncPollTimer) window.clearInterval(clipboardSyncPollTimer)
-      clipboardSyncPollTimer = null
-    }, { once: true })
+    window.addEventListener(
+      'beforeunload',
+      () => {
+        if (clipboardSyncPollTimer) window.clearInterval(clipboardSyncPollTimer)
+        clipboardSyncPollTimer = null
+      },
+      { once: true },
+    )
   }
 
   return {
-    confirmAction,
-    uninstallVdd,
-    restartDriver,
-    restartSunshine,
-    restartSunshineInUserMode,
     openTimer,
     openStylusInputProbe,
     openUrl,
     cleanupCovers,
     restartAsAdmin,
     checkForUpdates,
-    createWindow,
-    installVmouse,
-    uninstallVmouse,
     openGamepadTest,
     showClipboardSyncStatus,
     initClipboardSyncStatus,
     clipboardSyncEnabled,
   }
 }
-

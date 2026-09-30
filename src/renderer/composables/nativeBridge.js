@@ -1,4 +1,5 @@
 const NATIVE_MESSAGE_TYPES = new Set([
+  'native-navigation-context-request',
   'native-updater-context-request',
   'native-update-request',
   'native-rtx-hdr-context-request',
@@ -10,7 +11,5 @@ export function isNativeControlPanelMessage(data) {
 }
 
 export function isTrustedNativeControlPanelMessage(data, eventTrusted) {
-  return isNativeControlPanelMessage(data)
-    && eventTrusted
-    && data.source === 'sunshine-webui'
+  return isNativeControlPanelMessage(data) && eventTrusted && data.source === 'sunshine-webui'
 }

@@ -72,6 +72,16 @@
   width: 100%;
   height: 100%;
   object-fit: contain;
+  animation: logoFloat 3s ease-in-out infinite;
+}
+@keyframes logoFloat {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-3px) scale(1.05);
+  }
 }
 .app-name {
   flex: 1;

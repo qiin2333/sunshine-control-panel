@@ -134,8 +134,10 @@ export function initTheme() {
   const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
 
   const updateTheme = (isDark) => {
-    const theme = isDark ? 'dark' : 'light'
+    const savedTheme = localStorage.getItem('sunshine-theme')
+    const theme = savedTheme === 'light' || savedTheme === 'dark' ? savedTheme : isDark ? 'dark' : 'light'
     html.setAttribute('data-bs-theme', theme)
+    html.style.colorScheme = theme
   }
 
   updateTheme(mediaQuery.matches)

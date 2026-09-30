@@ -1,5 +1,10 @@
 <template>
-  <SidebarMenu ref="sidebarMenuRef" @route-change="handleRouteChange">
+  <SidebarMenu
+    ref="sidebarMenuRef"
+    :webui-path="currentPath"
+    @route-change="handleRouteChange"
+    @webui-navigate="handleWebuiNavigate"
+  >
     <div class="iframe-container">
       <transition name="fade-loading">
         <div v-if="loading" class="loading-overlay">
@@ -40,6 +45,7 @@ import { checkLocalProxyHealth } from '../utils/proxyHealth.js'
 import { isNativeControlPanelMessage, isTrustedNativeControlPanelMessage } from '../composables/nativeBridge.js'
 import { useI18n } from '../desktop/i18n/index.js'
 import SidebarMenu from './SidebarMenu.vue'
+import { isWebuiNavigationPath } from '../composables/webuiNavigation.js'
 
 invoke('main_panel_loading').catch(() => {})
 const { t } = useI18n()
@@ -62,6 +68,7 @@ let proxyBase = '' // 代理服务器基础 URL，用于恢复 iframe 到正确�
 let loadedFrameRevealTimer = null
 let awaitingAppReady = true
 let localProxyVerified = false
+let requestedWebuiPath = ''
 
 // Constants
 const ALLOWED_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']
@@ -168,9 +175,20 @@ let savedIframeUrl = ''
 // 窗口隐藏/最小化时的 iframe URL 保存（与 tab 切换分开追踪）
 let windowSuspendedUrl = ''
 
+const handleWebuiNavigate = (path) => {
+  if (!isWebuiNavigationPath(path)) return
+  requestedWebuiPath = path
+  savedIframeUrl = ''
+  windowSuspendedUrl = ''
+  if (path === currentPath.value && sunshineUrl.value && sunshineUrl.value !== 'about:blank') return
+  currentPath.value = path
+  beginLoading()
+  if (proxyBase && localProxyVerified) sunshineUrl.value = proxyBase + path
+}
+
 const handleRouteChange = ({ from, to }) => {
   if (from === 'home' && to !== 'home') {
-    // 离开高级设置页 → 强制卸载 iframe 内容以终止所有定时器
+    // Leaving the streaming pages suspends the iframe and its timers.
     savedIframeUrl = proxyBase ? proxyBase + currentPath.value : sunshineUrl.value
     sunshineUrl.value = 'about:blank'
     beginLoading()
@@ -180,7 +198,7 @@ const handleRouteChange = ({ from, to }) => {
     }
     console.log('[SunshineFrame] iframe 休眠: 已导航到 about:blank')
   } else if (from !== 'home' && to === 'home') {
-    // 返回高级设置页 → 恢复 iframe 内容
+    // Resume the last page unless an explicit sidebar destination was requested.
     if (savedIframeUrl && savedIframeUrl !== 'about:blank') {
       sunshineUrl.value = savedIframeUrl
       savedIframeUrl = ''
@@ -240,6 +258,13 @@ const createMessageHandler = () => {
   }
 
   const handlers = {
+    'native-navigation-context-request': (_data, event) => {
+      replyToSunshine(event, {
+        type: 'native-navigation-context',
+        source: 'sunshine-control-panel',
+        unified: true,
+      })
+    },
     'path-update': (data) => {
       currentPath.value = data.path
     },
@@ -331,6 +356,7 @@ const createMessageHandler = () => {
       return
     }
     if (data?.type && handlers[data.type]) {
+      if (['path-update', 'navigation-start', 'webui-ready'].includes(data.type) && !isTrustedSunshineEvent(event)) return
       await handlers[data.type](data, event)
     }
   }
@@ -458,8 +484,8 @@ onMounted(async () => {
     messageHandler = createMessageHandler()
     window.addEventListener('message', messageHandler)
 
-    if (cmdLineUrl) {
-      const targetPath = extractPathFromUrl(cmdLineUrl)
+    if (cmdLineUrl || requestedWebuiPath) {
+      const targetPath = requestedWebuiPath || extractPathFromUrl(cmdLineUrl)
       const fullUrl = proxyBaseUrl + targetPath
 
       if (isWelcomePath(fullUrl)) {

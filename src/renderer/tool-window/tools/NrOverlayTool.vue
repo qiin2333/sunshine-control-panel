@@ -12,9 +12,10 @@
     <div class="nr-reveal" :inert="!expanded" :aria-hidden="!expanded">
       <div class="nr-clip">
         <div class="nr-body">
-          <select v-if="pipelines.length > 1 || (selectionExpired && pipelines.length)" v-model="selectedId" :aria-label="text.session" :disabled="busy">
+          <button v-if="selectionExpired && pipelines.length === 1" class="stream-select" :disabled="busy" @click="selectedId = pipelines[0].id">{{ text.reselect }}</button>
+          <select v-else-if="pipelines.length > 1" v-model="selectedId" :aria-label="text.session" :disabled="busy">
             <option :value="null" disabled>{{ text.choose }}</option>
-            <option v-for="item in pipelines" :key="item.id" :value="item.id">{{ text.session }} #{{ item.id }} · {{ nrOutputLabel(item) }}</option>
+            <option v-for="(item, index) in pipelines" :key="item.id" :value="item.id">{{ streamLabel(item, index) }}</option>
           </select>
           <div class="switch-row">
             <span>{{ text.enhancement }}</span>
@@ -100,6 +101,10 @@ const touchDrag = useTouchWindowDrag(null, { restoreMaximized: false, onFinish: 
 defineEmits(['close'])
 const { locale } = useI18n()
 const text = computed(() => nrOverlayText(locale.value))
+function streamLabel(item, index) {
+  const size = nrProcessingSize(item, 100)
+  return `${text.value.stream} ${index + 1} · ${nrOutputLabel(item)}${size ? ` · ${size}` : ''}`
+}
 const expanded = ref(false)
 const opacity = ref(62)
 async function saveOpacity() {
@@ -123,7 +128,18 @@ const actionError = ref('')
 const error = computed(() => actionError.value || text.value[errorCode.value] || '')
 const saveState = ref('')
 const shortcut = ref('')
-watch(selectedId, id => { if (id !== null && !disposed) void invoke('nr_overlay_select_session', { id }).catch(error => { actionError.value = enhancementError(enhancementControlsText(locale.value), error) }) })
+watch(selectedId, id => {
+  if (id === null || disposed) return
+  selectionExpired.value = false
+  void invoke('nr_overlay_select_session', { id }).catch(error => {
+    if (disposed) return
+    if (selectedId.value === id) {
+      selectedId.value = null
+      selectionExpired.value = true
+    }
+    actionError.value = enhancementError(enhancementControlsText(locale.value), error)
+  })
+})
 const pipeline = computed(() => pipelines.value.find(item => item.id === selectedId.value))
 const state = computed(() => nrOverlayState(pipeline.value, online.value))
 const compactLabel = computed(() => state.value === 'active' ? `NR · ${pipeline.value?.nr_scale_percent ?? 100}%` : text.value.states[state.value])
@@ -318,6 +334,7 @@ kbd { border: 1px solid #d2dbc6; background: #d2dbc6; color: #101508; padding: 2
 .notice { font-size: 12px; color: #f3c74c; margin: 8px 0 12px; overflow-wrap: anywhere; }
 .notice button { border: 0; background: none; text-decoration: underline; }
 select { width: 100%; margin-top: 10px; background: #151b10; color: #f4f5ef; border: 1px solid #83916f; border-radius: 0; }
+.stream-select { width: 100%; margin-top: 10px; padding: 3px 6px; background: #151b10; border: 1px solid #83916f; text-align: left; }
 .nr-overlay:not(.expanded) { border-color: #ffffff1c; box-shadow: none; }
 .nr-overlay:not(.expanded) .nr-head { height: 26px; background: transparent; color: #d4dace; padding: 0 7px; }
 .nr-overlay:not(.expanded) .pill { font-size: 11px; font-weight: 600; letter-spacing: .15px; }

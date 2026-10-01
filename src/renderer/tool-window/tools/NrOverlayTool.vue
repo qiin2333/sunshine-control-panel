@@ -131,7 +131,14 @@ const shortcut = ref('')
 watch(selectedId, id => {
   if (id === null || disposed) return
   selectionExpired.value = false
-  void invoke('nr_overlay_select_session', { id }).catch(error => { actionError.value = enhancementError(enhancementControlsText(locale.value), error) })
+  void invoke('nr_overlay_select_session', { id }).catch(error => {
+    if (disposed) return
+    if (selectedId.value === id) {
+      selectedId.value = null
+      selectionExpired.value = true
+    }
+    actionError.value = enhancementError(enhancementControlsText(locale.value), error)
+  })
 })
 const pipeline = computed(() => pipelines.value.find(item => item.id === selectedId.value))
 const state = computed(() => nrOverlayState(pipeline.value, online.value))

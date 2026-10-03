@@ -294,7 +294,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from '../../desktop/i18n/index.js'
-import { STORAGE_KEY, DEFAULT_CONFIG } from '../../composables/aiProviders.js'
+import { CODEX_AUTH_CHANGED_KEY, STORAGE_KEY, DEFAULT_CONFIG } from '../../composables/aiProviders.js'
 import { hasAiCredentials } from '../../composables/aiClient.js'
 import PetVisionConsentDialog from '../../components/PetVisionConsentDialog.vue'
 import {
@@ -687,7 +687,7 @@ function syncSettingFromStorage(event) {
     return
   }
 
-  if (event.key === STORAGE_KEY) {
+  if (event.key === STORAGE_KEY || event.key === CODEX_AUTH_CHANGED_KEY) {
     aiConfigVersion.value += 1
     void refreshAiConfigStatus().then((applied) => {
       if (applied) correctVisionEnabled()

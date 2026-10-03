@@ -22,17 +22,20 @@ async function fetchJson(url, options = {}) {
   const data = await resp.json().catch(() => ({}))
   if (!resp.ok || data.status === 'error') {
     const message = typeof data.error === 'string' ? data.error : data.error?.message
-    throw new Error(message || `${resp.status} - ${JSON.stringify(data).substring(0, 200)}`)
+    const error = new Error(message || `${resp.status} - ${JSON.stringify(data).substring(0, 200)}`)
+    error.status = resp.status
+    error.payload = data
+    throw error
   }
   return data
 }
 
-export async function requestCodexAuth(path = '') {
+export async function requestCodexAuth(path = '', body = {}) {
   const proxyUrl = await getProxyUrl()
   const options = path ? {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: '{}',
+    body: JSON.stringify(body),
   } : {}
   return fetchJson(`${proxyUrl}/api/ai/codex/auth${path ? `/${path}` : ''}`, options)
 }
@@ -42,6 +45,17 @@ export function codexAuthPhase(result) {
   if (result.error) return 'error'
   if (result.connected) return 'connected'
   return 'disconnected'
+}
+
+export function codexAuthRetryDelay(intervalSeconds, failureCount) {
+  const interval = Math.max(1, Number(intervalSeconds) || 5)
+  const exponent = Math.min(5, Math.max(0, Math.floor(Number(failureCount) || 0)))
+  return Math.min(30, interval * (2 ** exponent))
+}
+
+export function isCodexAuthTerminalError(error) {
+  const status = Number(error?.status)
+  return status >= 400 && status < 500 && ![408, 425, 429].includes(status)
 }
 
 function isSunshineUnavailableError(error) {
@@ -217,7 +231,8 @@ export async function callVisionLLM(
   maxTokens = 512,
   requestOptions = {}
 ) {
-  const isAnthropic = getCompatibility(config.provider) === 'anthropic-messages' || config.compatibility === 'anthropic-messages'
+  const isCodexAccount = config.provider === 'openai' && config.authMode === 'chatgpt'
+  const isAnthropic = !isCodexAccount && (getCompatibility(config.provider) === 'anthropic-messages' || config.compatibility === 'anthropic-messages')
   const content = isAnthropic
     ? buildAnthropicVisionContent(userText, imageDataUrl)
     : buildVisionContent(userText, imageDataUrl)

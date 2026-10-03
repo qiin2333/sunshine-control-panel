@@ -1,8 +1,8 @@
 import { ref, reactive, computed, watch, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { callLLM, codexAuthPhase, fetchModels, hasAiCredentials, requestCodexAuth } from './aiClient.js'
+import { callLLM, codexAuthPhase, codexAuthRetryDelay, fetchModels, hasAiCredentials, isCodexAuthTerminalError, requestCodexAuth } from './aiClient.js'
 import { getAppsContext, getLogsContext, parseAction, executeAction } from './aiActions.js'
-import { AI_PROVIDERS, CHATGPT_MODELS, DEFAULT_CONFIG, STORAGE_KEY } from './aiProviders.js'
+import { AI_PROVIDERS, CHATGPT_MODELS, CODEX_AUTH_CHANGED_KEY, DEFAULT_CONFIG, STORAGE_KEY } from './aiProviders.js'
 import { useI18n } from '../desktop/i18n/index.js'
 import { openExternalUrl } from '../tauri-adapter.js'
 
@@ -198,6 +198,7 @@ Reply to the user in ${replyLanguage}. All user-facing explanations, command nam
  * AI 助手 Composable — 状态管理 + 对话逻辑
  */
 export function useAiAssistant() {
+  let disposed = false
   const { t, locale } = useI18n()
   const ui = () => t.value.aiAssistant.runtime
 
@@ -259,8 +260,9 @@ export function useAiAssistant() {
     try {
       const proxyUrl = await getProxyUrl()
       const resp = await fetch(`${proxyUrl}/api/ai/config`)
-      if (!resp.ok) return
+      if (disposed || !resp.ok) return
       const remote = await resp.json()
+      if (disposed) return
       const localKey = config.apiKey || ''
       Object.assign(config, normalizeConfig(remote))
       config.apiKey = ''
@@ -319,6 +321,9 @@ export function useAiAssistant() {
 
   let authPollTimer = null
   let authGeneration = 0
+  let authPollFailures = 0
+  let authFlowId = ''
+  let modelDiscoveryGeneration = 0
 
   function stopAuthPolling() {
     authGeneration++
@@ -327,52 +332,92 @@ export function useAiAssistant() {
   }
 
   function updateAuthState(result) {
+    const previousConnected = config.codexConnected
+    const previousPending = authPending.value
+    const previousFlowId = authFlowId
     config.codexConnected = Boolean(result.connected)
+    if (previousConnected !== config.codexConnected) {
+      modelDiscoveryGeneration++
+      isFetchingModels.value = false
+      if (config.authMode === 'chatgpt') remoteModels.value = []
+    }
     if (!config.codexConnected) isConnected.value = false
     authPending.value = Boolean(result.pending)
+    authFlowId = authPending.value ? (result.flowId || authFlowId) : ''
     authUserCode.value = authPending.value ? (result.userCode || authUserCode.value) : ''
     authVerificationUri.value = authPending.value ? (result.verificationUri || authVerificationUri.value) : ''
     authInterval.value = Math.max(1, Number(result.interval) || authInterval.value)
+    if (previousConnected !== config.codexConnected || previousPending !== authPending.value || previousFlowId !== authFlowId) {
+      try {
+        localStorage.setItem(CODEX_AUTH_CHANGED_KEY, `${Date.now()}-${Math.random()}`)
+      } catch { /* ignore unavailable storage */ }
+    }
   }
 
-  function scheduleAuthPoll(generation = authGeneration) {
-    if (!authPending.value || config.provider !== 'openai' || config.authMode !== 'chatgpt') return
+  function scheduleAuthPoll(generation = authGeneration, delaySeconds = authInterval.value) {
+    if (disposed || !authPending.value || config.provider !== 'openai' || config.authMode !== 'chatgpt') return
     clearTimeout(authPollTimer)
-    authPollTimer = setTimeout(() => pollCodexAuth(generation), authInterval.value * 1000)
+    authPollTimer = setTimeout(() => pollCodexAuth(generation), delaySeconds * 1000)
   }
 
   async function pollCodexAuth(generation) {
     try {
-      const result = await requestCodexAuth('poll')
-      if (generation !== authGeneration) return
+      const result = await requestCodexAuth('poll', { flowId: authFlowId })
+      if (disposed || generation !== authGeneration) return
       updateAuthState(result)
       const phase = codexAuthPhase(result)
       if (phase === 'pending') {
-        scheduleAuthPoll(generation)
+        if (result.retryable) {
+          const delay = codexAuthRetryDelay(authInterval.value, authPollFailures++)
+          scheduleAuthPoll(generation, delay)
+        } else {
+          authPollFailures = 0
+          scheduleAuthPoll(generation)
+        }
       } else if (phase === 'connected') {
+        authPollFailures = 0
         ElMessage.success(ui().chatgptConnected)
         await fetchRemoteModels(false)
       } else if (phase === 'error') {
+        authPollFailures = 0
         ElMessage.error(ui().chatgptLoginFailed.replace('{error}', result.error))
       }
     } catch (error) {
-      if (generation !== authGeneration) return
-      authPending.value = false
-      ElMessage.error(ui().chatgptLoginFailed.replace('{error}', error.message))
+      if (disposed || generation !== authGeneration) return
+      if (isCodexAuthTerminalError(error)) {
+        const wasPending = authPending.value
+        authPending.value = false
+        authFlowId = ''
+        authUserCode.value = ''
+        authVerificationUri.value = ''
+        authPollFailures = 0
+        if (wasPending) {
+          try {
+            localStorage.setItem(CODEX_AUTH_CHANGED_KEY, `${Date.now()}-${Math.random()}`)
+          } catch { /* ignore unavailable storage */ }
+        }
+        ElMessage.error(ui().chatgptLoginFailed.replace('{error}', error.message))
+        return
+      }
+      const delay = codexAuthRetryDelay(authInterval.value, authPollFailures++)
+      console.warn('ChatGPT device sign-in poll failed; retrying with backoff')
+      scheduleAuthPoll(generation, delay)
     }
   }
 
   async function refreshCodexAuth() {
-    if (config.provider !== 'openai' || config.authMode !== 'chatgpt') return
+    if (disposed || config.provider !== 'openai' || config.authMode !== 'chatgpt') return
     stopAuthPolling()
+    authPollFailures = 0
     const generation = authGeneration
     try {
       const result = await requestCodexAuth()
-      if (generation !== authGeneration) return
+      if (disposed || generation !== authGeneration) return
       updateAuthState(result)
       scheduleAuthPoll(generation)
       if (codexAuthPhase(result) === 'connected') await fetchRemoteModels(false)
     } catch (error) {
+      if (disposed || generation !== authGeneration) return
       ElMessage.error(ui().chatgptLoginFailed.replace('{error}', error.message))
     }
   }
@@ -385,21 +430,24 @@ export function useAiAssistant() {
   }
 
   async function startCodexAuth() {
-    if (isAuthBusy.value) return
+    if (disposed || isAuthBusy.value) return
     isAuthBusy.value = true
     stopAuthPolling()
     authPending.value = false
+    authFlowId = ''
     authUserCode.value = ''
     authVerificationUri.value = ''
     const generation = authGeneration
     try {
       await syncToServer()
+      if (disposed || generation !== authGeneration || config.provider !== 'openai' || config.authMode !== 'chatgpt') return
       const result = await requestCodexAuth('start')
-      if (generation !== authGeneration) return
+      if (disposed || generation !== authGeneration) return
       updateAuthState(result)
       await openCodexVerification()
       scheduleAuthPoll(generation)
     } catch (error) {
+      if (disposed || generation !== authGeneration) return
       ElMessage.error(ui().chatgptLoginFailed.replace('{error}', error.message))
     } finally {
       isAuthBusy.value = false
@@ -407,14 +455,16 @@ export function useAiAssistant() {
   }
 
   async function logoutCodexAuth() {
-    if (isAuthBusy.value) return
+    if (disposed || isAuthBusy.value) return
     isAuthBusy.value = true
     stopAuthPolling()
     try {
       const result = await requestCodexAuth('logout')
+      if (disposed) return
       updateAuthState(result)
       ElMessage.success(ui().chatgptDisconnected)
     } catch (error) {
+      if (disposed) return
       ElMessage.error(ui().chatgptLoginFailed.replace('{error}', error.message))
     } finally {
       isAuthBusy.value = false
@@ -475,10 +525,19 @@ export function useAiAssistant() {
   }
 
   // 初始化时从服务端同步（不阻塞 UI）
-  syncFromServer().then(refreshCodexAuth)
+  syncFromServer().then(() => {
+    if (!disposed) refreshCodexAuth()
+  })
+
+  function onStorage(event) {
+    if (event.key === CODEX_AUTH_CHANGED_KEY && !disposed) refreshCodexAuth()
+  }
+  if (typeof window !== 'undefined') window.addEventListener('storage', onStorage)
 
   function onProviderChange(providerValue) {
     stopAuthPolling()
+    modelDiscoveryGeneration++
+    isFetchingModels.value = false
     config.authMode = 'apiKey'
     const provider = AI_PROVIDERS.find((p) => p.value === providerValue)
     if (provider) {
@@ -494,9 +553,12 @@ export function useAiAssistant() {
 
   function onAuthModeChange(authMode) {
     stopAuthPolling()
+    modelDiscoveryGeneration++
+    isFetchingModels.value = false
     isConnected.value = false
     remoteModels.value = []
     if (authMode === 'chatgpt') {
+      config.compatibility = 'openai-chat'
       config.model = CHATGPT_MODELS[0]
       refreshCodexAuth()
     } else if (CHATGPT_MODELS.includes(config.model) || String(config.model || '').includes('codex')) {
@@ -507,14 +569,22 @@ export function useAiAssistant() {
   // ===== 模型列表 =====
 
   async function fetchRemoteModels(notify = true) {
-    if (!config.apiBase && config.authMode !== 'chatgpt') return
+    const generation = ++modelDiscoveryGeneration
+    const provider = config.provider
+    const authMode = config.authMode
+    if (!config.apiBase && config.authMode !== 'chatgpt') {
+      isFetchingModels.value = false
+      return
+    }
     if (config.provider === 'openai' && config.authMode === 'chatgpt' && !config.codexConnected) {
+      isFetchingModels.value = false
       ElMessage.warning(ui().chatgptLoginFirst)
       return
     }
     isFetchingModels.value = true
     try {
       const models = await fetchModels(config.apiBase, config.apiKey, config.provider, syncToServer, config.authMode)
+      if (disposed || generation !== modelDiscoveryGeneration || provider !== config.provider || authMode !== config.authMode) return
       remoteModels.value = models
       if (config.provider === 'openai' && config.authMode === 'chatgpt' && models.length > 0 && !models.includes(config.model)) {
         config.model = models[0]
@@ -524,10 +594,11 @@ export function useAiAssistant() {
         ElMessage.success(ui().modelsFetched.replace('{count}', models.length))
       }
     } catch (error) {
+      if (disposed || generation !== modelDiscoveryGeneration) return
       console.warn('拉取模型列表失败:', error.message)
       remoteModels.value = []
     } finally {
-      isFetchingModels.value = false
+      if (generation === modelDiscoveryGeneration) isFetchingModels.value = false
     }
   }
 
@@ -669,8 +740,11 @@ export function useAiAssistant() {
   watch(chatHistory, saveChatHistory, { deep: true })
 
   onUnmounted(() => {
+    disposed = true
     stopAuthPolling()
+    modelDiscoveryGeneration++
     clearTimeout(saveTimer)
+    if (typeof window !== 'undefined') window.removeEventListener('storage', onStorage)
   })
 
   return {

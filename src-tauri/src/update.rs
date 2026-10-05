@@ -101,10 +101,22 @@ impl DownloadCommandError {
 struct UpdaterHelperState {
     installer_path: String,
     extension: String,
+    expected_size: Option<u64>,
+    expected_sha256: String,
     target_version: Option<String>,
     gui_exe_path: String,
     result_path: String,
     parent_pid: u32,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug)]
+struct UpdaterHelperLaunchContext {
+    installer_path: String,
+    expected_size: Option<u64>,
+    expected_sha256: String,
+    gui_exe_path: String,
+    result_path: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -290,7 +302,40 @@ pub fn try_run_updater_helper_from_args() -> bool {
 
     #[cfg(target_os = "windows")]
     {
-        let _ = run_updater_helper(Path::new(state_path));
+        let Some(installer_path) = args.get(index + 2) else {
+            return true;
+        };
+        let Some(expected_size_value) = args.get(index + 3) else {
+            return true;
+        };
+        let Some(expected_sha256) = args
+            .get(index + 4)
+            .and_then(|value| normalize_sha256(value))
+        else {
+            return true;
+        };
+        let Some(gui_exe_path) = args.get(index + 5) else {
+            return true;
+        };
+        let Some(result_path) = args.get(index + 6) else {
+            return true;
+        };
+        let expected_size = if expected_size_value == "-" {
+            None
+        } else {
+            match expected_size_value.parse::<u64>() {
+                Ok(value) => Some(value),
+                Err(_) => return true,
+            }
+        };
+        let launch = UpdaterHelperLaunchContext {
+            installer_path: installer_path.clone(),
+            expected_size,
+            expected_sha256,
+            gui_exe_path: gui_exe_path.clone(),
+            result_path: result_path.clone(),
+        };
+        let _ = run_updater_helper(Path::new(state_path), &launch);
     }
 
     true
@@ -358,11 +403,24 @@ fn updater_cleanup_dir_for_result(result_path: &Path) -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "windows")]
-fn run_updater_helper(state_path: &Path) -> Result<(), String> {
+fn run_updater_helper(
+    state_path: &Path,
+    launch: &UpdaterHelperLaunchContext,
+) -> Result<(), String> {
     let state_content =
         fs::read_to_string(state_path).map_err(|e| format!("read updater state failed: {}", e))?;
     let state: UpdaterHelperState = serde_json::from_str(&state_content)
         .map_err(|e| format!("parse updater state failed: {}", e))?;
+
+    if state.extension != "exe"
+        || state.installer_path != launch.installer_path
+        || state.expected_size != launch.expected_size
+        || state.expected_sha256 != launch.expected_sha256
+        || state.gui_exe_path != launch.gui_exe_path
+        || state.result_path != launch.result_path
+    {
+        return Err("updater state identity mismatch".to_string());
+    }
 
     run_updater_panel(state)?;
     Ok(())
@@ -1056,28 +1114,65 @@ fn is_pid_running(pid: u32) -> bool {
 }
 
 #[cfg(target_os = "windows")]
+fn stage_installer_for_elevated_run(state: &UpdaterHelperState) -> Result<PathBuf, String> {
+    let staging_dir = crate::sunshine::install_dir().join("updates");
+    fs::create_dir_all(&staging_dir)
+        .map_err(|e| format!("create protected updater directory failed: {}", e))?;
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| format!("get updater staging time failed: {}", e))?
+        .as_nanos();
+    for attempt in 0..10u32 {
+        let staged_path = staging_dir.join(format!(
+            "sunshine-update-{}-{}-{}.exe",
+            std::process::id(),
+            nonce,
+            attempt
+        ));
+        if staged_path.exists() {
+            continue;
+        }
+
+        fs::copy(&state.installer_path, &staged_path)
+            .map_err(|e| format!("stage installer in protected directory failed: {}", e))?;
+        if let Err(error) = validate_download_file_identity(
+            &staged_path,
+            state.expected_size,
+            Some(&state.expected_sha256),
+            Some("windows-x64-installer"),
+        ) {
+            let _ = fs::remove_file(&staged_path);
+            return Err(format!(
+                "protected installer verification failed: {}",
+                error
+            ));
+        }
+        return Ok(staged_path);
+    }
+
+    Err("create unique protected installer path failed".to_string())
+}
+
+#[cfg(target_os = "windows")]
 fn run_installer_and_wait(state: &UpdaterHelperState) -> Result<i32, String> {
     use std::os::windows::process::CommandExt;
     use std::process::Command;
 
     const CREATE_NO_WINDOW: u32 = 0x08000000;
-    let installer = Path::new(&state.installer_path);
-    if !installer.exists() {
-        return Err(format!("Installer not found: {}", state.installer_path));
+    if state.extension != "exe" {
+        return Err("Only Windows Installer .exe files are supported".to_string());
     }
+    let installer_path = stage_installer_for_elevated_run(state)?;
+    let installer = installer_path.to_string_lossy().to_string();
 
-    let status = match state.extension.as_str() {
-        "msi" => Command::new("msiexec")
-            .args(["/i", &state.installer_path, "/qn", "/norestart"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .status(),
-        "exe" => Command::new(&state.installer_path)
-            .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .status(),
-        other => return Err(format!("Unsupported installer extension: {}", other)),
-    }
-    .map_err(|e| format!("start installer failed: {}", e))?;
+    let status = Command::new(&installer)
+        .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map_err(|e| format!("start installer failed: {}", e));
+    let _ = fs::remove_file(&installer_path);
+    let status = status?;
 
     Ok(status.code().unwrap_or(-1))
 }
@@ -2200,21 +2295,26 @@ fn create_updater_work_dir() -> Result<PathBuf, String> {
 fn prepare_updater_helper(
     file_path: &str,
     extension: &str,
+    expected_size: Option<u64>,
+    expected_sha256: &str,
     target_version: Option<String>,
-) -> Result<(PathBuf, PathBuf), String> {
+) -> Result<(PathBuf, PathBuf, UpdaterHelperState), String> {
     let current_exe =
         std::env::current_exe().map_err(|e| format!("get current exe failed: {}", e))?;
     let work_dir = create_updater_work_dir()?;
 
-    let helper_exe = work_dir.join("sunshine-updater-helper.exe");
-    fs::copy(&current_exe, &helper_exe)
-        .map_err(|e| format!("copy updater helper failed: {}", e))?;
+    // The helper is the installed GUI executable itself. Keeping the elevated
+    // entry point outside the user-writable temp directory prevents a medium
+    // integrity process from replacing the helper before UAC approval.
+    let helper_exe = current_exe.clone();
 
     let state_path = work_dir.join("state.json");
     let result_path = work_dir.join("result.json");
     let state = UpdaterHelperState {
         installer_path: file_path.to_string(),
         extension: extension.to_string(),
+        expected_size,
+        expected_sha256: expected_sha256.to_string(),
         target_version,
         gui_exe_path: current_exe.to_string_lossy().to_string(),
         result_path: result_path.to_string_lossy().to_string(),
@@ -2226,16 +2326,24 @@ fn prepare_updater_helper(
     fs::write(&state_path, state_content)
         .map_err(|e| format!("write updater state failed: {}", e))?;
 
-    Ok((helper_exe, state_path))
+    Ok((helper_exe, state_path, state))
 }
 
 #[cfg(target_os = "windows")]
-fn launch_updater_helper(helper_exe: &Path, state_path: &Path) -> Result<(), String> {
-    launch_updater_helper_elevated(helper_exe, state_path)
+fn launch_updater_helper(
+    helper_exe: &Path,
+    state_path: &Path,
+    state: &UpdaterHelperState,
+) -> Result<(), String> {
+    launch_updater_helper_elevated(helper_exe, state_path, state)
 }
 
 #[cfg(target_os = "windows")]
-fn launch_updater_helper_elevated(helper_exe: &Path, state_path: &Path) -> Result<(), String> {
+fn launch_updater_helper_elevated(
+    helper_exe: &Path,
+    state_path: &Path,
+    state: &UpdaterHelperState,
+) -> Result<(), String> {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::Shell::{SHELLEXECUTEINFOW, ShellExecuteExW};
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
@@ -2243,10 +2351,19 @@ fn launch_updater_helper_elevated(helper_exe: &Path, state_path: &Path) -> Resul
 
     let verb = to_wide_null("runas");
     let file = to_wide_null(&helper_exe.to_string_lossy());
+    let expected_size = state
+        .expected_size
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "-".to_string());
     let params = to_wide_null(&format!(
-        "{} \"{}\"",
+        "{} \"{}\" \"{}\" \"{}\" \"{}\" \"{}\" \"{}\"",
         UPDATER_HELPER_ARG,
-        state_path.to_string_lossy()
+        state_path.to_string_lossy(),
+        state.installer_path,
+        expected_size,
+        state.expected_sha256,
+        state.gui_exe_path,
+        state.result_path,
     ));
     let directory = helper_exe
         .parent()
@@ -2310,17 +2427,22 @@ pub async fn install_update(
             .to_lowercase();
 
         emit_install_progress(&app_handle, "building-command", None, false);
-        let (helper_exe, state_path) =
-            match prepare_updater_helper(&path.to_string_lossy(), &extension, target_version) {
-                Ok(paths) => paths,
-                Err(e) => {
-                    emit_install_progress(&app_handle, "failed", Some(&e), true);
-                    return Err(e);
-                }
-            };
+        let (helper_exe, state_path, state) = match prepare_updater_helper(
+            &path.to_string_lossy(),
+            &extension,
+            expected_size,
+            &expected_sha256,
+            target_version,
+        ) {
+            Ok(paths) => paths,
+            Err(e) => {
+                emit_install_progress(&app_handle, "failed", Some(&e), true);
+                return Err(e);
+            }
+        };
 
         emit_install_progress(&app_handle, "launching-installer", None, false);
-        if let Err(e) = launch_updater_helper(&helper_exe, &state_path) {
+        if let Err(e) = launch_updater_helper(&helper_exe, &state_path, &state) {
             emit_install_progress(&app_handle, "failed", Some(&e), true);
             return Err(e);
         }

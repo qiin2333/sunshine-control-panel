@@ -10,17 +10,52 @@ const CNB_RELEASES_URL = 'https://cnb.cool/AlkaidLab/foundation-sunshine-release
 const METADATA_COM_URL = 'https://www.alkaidlab.com/release-metadata/foundation-sunshine.json'
 const METADATA_CN_URL = 'https://www.alkaidlab.cn/release-metadata/foundation-sunshine.json'
 
-const isAllowedReleaseUrl = (value) => {
-  if (typeof value !== 'string' || !value) return false
+const decodePathSegment = (value) => {
   try {
-    const url = new URL(value)
-    return url.protocol === 'https:' && (url.hostname === 'github.com' || url.hostname === 'cnb.cool')
+    return decodeURIComponent(value)
   } catch {
-    return false
+    return null
   }
 }
 
-const allowedReleaseUrl = (value) => (isAllowedReleaseUrl(value) ? value : null)
+const allowedReleaseAssetUrl = (value, tag, name) => {
+  if (typeof value !== 'string' || !value) return null
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) return null
+    const segments = url.pathname.split('/').filter(Boolean).map(decodePathSegment)
+    if (segments.some((segment) => segment === null)) return null
+    const prefix = url.hostname === 'github.com'
+      ? ['AlkaidLab', 'foundation-sunshine', 'releases', 'download']
+      : url.hostname === 'cnb.cool'
+        ? ['AlkaidLab', 'foundation-sunshine-release', '-', 'releases', 'download']
+        : null
+    if (!prefix || segments.length !== prefix.length + 2) return null
+    if (!prefix.every((segment, index) => segments[index] === segment)) return null
+    if (segments[prefix.length] !== tag || segments[prefix.length + 1] !== name) return null
+    return value
+  } catch {
+    return null
+  }
+}
+
+const allowedReleasePageUrl = (value, tag) => {
+  if (typeof value !== 'string' || !value) return null
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'https:' || url.hostname !== 'github.com' || url.username || url.password || url.search || url.hash) {
+      return null
+    }
+    const segments = url.pathname.split('/').filter(Boolean).map(decodePathSegment)
+    if (segments.length !== 5 || segments.some((segment) => segment === null)) return null
+    if (segments[0] !== 'AlkaidLab' || segments[1] !== 'foundation-sunshine' || segments[2] !== 'releases' || segments[3] !== 'tag' || segments[4] !== tag) {
+      return null
+    }
+    return value
+  } catch {
+    return null
+  }
+}
 
 const isInstallerAsset = (asset) => {
   const name = String(asset?.name || '')
@@ -47,16 +82,16 @@ const fetchJson = async (url) => {
 const releasePageUrl = (version) =>
   `https://github.com/${FOUNDATION_REPOSITORY}/releases/tag/${encodeURIComponent(version)}`
 
-const metadataReleaseInfo = (release) => {
+const metadataReleaseInfo = (release, language) => {
   const asset = release?.assets?.find(isInstallerAsset)
   if (!release?.version || !asset) return null
 
   const urls = [asset.url, asset.fallbackUrl]
-    .map(allowedReleaseUrl)
+    .map((url) => allowedReleaseAssetUrl(url, release.version, asset.name))
     .filter(Boolean)
   const githubUrl = urls.find((url) => new URL(url).hostname === 'github.com') || null
   const cnbUrl = urls.find((url) => new URL(url).hostname === 'cnb.cool') || null
-  const preferredUrl = currentLang.value === 'zh'
+  const preferredUrl = language === 'zh'
     ? (cnbUrl || githubUrl)
     : (githubUrl || cnbUrl)
 
@@ -71,15 +106,15 @@ const metadataReleaseInfo = (release) => {
   }
 }
 
-const githubReleaseInfo = (release) => {
+const githubReleaseInfo = (release, language) => {
   const asset = release?.assets?.find(isInstallerAsset)
-  const downloadUrl = allowedReleaseUrl(asset?.browser_download_url)
+  const downloadUrl = allowedReleaseAssetUrl(asset?.browser_download_url, release?.tag_name, asset?.name)
   if (!release?.tag_name || !downloadUrl) return null
   return {
     version: release.tag_name,
     downloadUrl,
-    mirrorUrl: currentLang.value === 'zh' ? CNB_RELEASES_URL : GITHUB_RELEASES_URL,
-    releaseUrl: allowedReleaseUrl(release.html_url) || releasePageUrl(release.tag_name),
+    mirrorUrl: language === 'zh' ? CNB_RELEASES_URL : GITHUB_RELEASES_URL,
+    releaseUrl: allowedReleasePageUrl(release.html_url, release.tag_name) || releasePageUrl(release.tag_name),
     body: release.body || '',
   }
 }
@@ -132,7 +167,10 @@ const versionInfo = ref({
 })
 
 // 检查最新版本：首页使用公开 metadata 或 GitHub API，下载链接只指向官方发布源。
+let versionCheckSeq = 0
 const checkLatestVersion = async () => {
+  const sequence = ++versionCheckSeq
+  const language = currentLang.value
   try {
     versionInfo.value.loading = true
     versionInfo.value.error = null
@@ -142,7 +180,7 @@ const checkLatestVersion = async () => {
     let latest = null
     let preRelease = null
 
-    if (currentLang.value === 'zh') {
+    if (language === 'zh') {
       // 两个官方 metadata 入口并发请求，固定优先 .com。
       const results = await Promise.allSettled([
         fetchJson(METADATA_COM_URL),
@@ -153,8 +191,8 @@ const checkLatestVersion = async () => {
         : results[1].status === 'fulfilled'
           ? results[1].value
           : null
-      latest = metadataReleaseInfo(metadata?.channels?.latest)
-      preRelease = metadataReleaseInfo(metadata?.channels?.['pre-latest'])
+      latest = metadataReleaseInfo(metadata?.channels?.latest, language)
+      preRelease = metadataReleaseInfo(metadata?.channels?.['pre-latest'], language)
     }
 
     // 非中文环境直接使用 GitHub API；中文 metadata 不可用时也回退到 GitHub。
@@ -164,15 +202,17 @@ const checkLatestVersion = async () => {
         fetchJson(GITHUB_RELEASES_API_URL),
       ])
       if (latestResult.status === 'fulfilled') {
-        latest = githubReleaseInfo(latestResult.value)
+        latest = githubReleaseInfo(latestResult.value, language)
       }
       if (releasesResult.status === 'fulfilled' && Array.isArray(releasesResult.value)) {
         const release = releasesResult.value.find((item) => item?.prerelease && !item?.draft)
-        preRelease = githubReleaseInfo(release)
+        preRelease = githubReleaseInfo(release, language)
       }
     }
 
     if (!latest) throw new Error('没有找到可用的 Windows Installer')
+
+    if (sequence !== versionCheckSeq) return
 
     versionInfo.value.latest = latest
     versionInfo.value.preRelease = preRelease
@@ -180,12 +220,13 @@ const checkLatestVersion = async () => {
     downloadLinks.value.windows = latest.downloadUrl
     downloadLinks.value.mirror = latest.mirrorUrl
   } catch (error) {
+    if (sequence !== versionCheckSeq) return
     console.error('版本检查失败:', error)
     downloadLinks.value.windows = GITHUB_RELEASES_URL
-    downloadLinks.value.mirror = currentLang.value === 'zh' ? CNB_RELEASES_URL : GITHUB_RELEASES_URL
+    downloadLinks.value.mirror = language === 'zh' ? CNB_RELEASES_URL : GITHUB_RELEASES_URL
     versionInfo.value.error = error instanceof Error ? error.message : String(error)
   } finally {
-    versionInfo.value.loading = false
+    if (sequence === versionCheckSeq) versionInfo.value.loading = false
   }
 }
 

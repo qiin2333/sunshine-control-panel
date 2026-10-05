@@ -899,9 +899,14 @@ async fn probe_cnb_asset_size(
     .await
     .ok()?
     .ok()?;
-    response
-        .content_length()
-        .filter(|length| *length > 1)
+    let header_length = response
+        .headers()
+        .get(reqwest::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<u64>().ok());
+    let is_partial = response.status() == reqwest::StatusCode::PARTIAL_CONTENT;
+    header_length
+        .filter(|length| !is_partial && *length > 0)
         .or_else(|| {
             response
                 .headers()

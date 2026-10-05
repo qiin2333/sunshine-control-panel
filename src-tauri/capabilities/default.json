@@ -59,11 +59,9 @@
       "https://127.0.0.1:*",
       "https://*.lizardbyte.dev/*",
       "https://github.com/*",
-      "https://*.github.com/*",
       "https://ghfast.top/*",
       "https://*.qq.com/*",
-      "https://*.alkaidlab.com/*",
-      "https://*.alkaidlab.cn/*"
+      "https://*.alkaidlab.com/*"
     ]
   }
 }

@@ -18,22 +18,11 @@ const decodePathSegment = (value) => {
   }
 }
 
-const allowedReleaseAssetUrl = (value, tag, name) => {
+const allowedReleaseAssetUrl = (value) => {
   if (typeof value !== 'string' || !value) return null
   try {
     const url = new URL(value)
-    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) return null
-    const segments = url.pathname.split('/').filter(Boolean).map(decodePathSegment)
-    if (segments.some((segment) => segment === null)) return null
-    const prefix = url.hostname === 'github.com'
-      ? ['AlkaidLab', 'foundation-sunshine', 'releases', 'download']
-      : url.hostname === 'cnb.cool'
-        ? ['AlkaidLab', 'foundation-sunshine-release', '-', 'releases', 'download']
-        : null
-    if (!prefix || segments.length !== prefix.length + 2) return null
-    if (!prefix.every((segment, index) => segments[index] === segment)) return null
-    if (segments[prefix.length] !== tag || segments[prefix.length + 1] !== name) return null
-    return value
+    return url.protocol === 'https:' ? value : null
   } catch {
     return null
   }
@@ -87,20 +76,21 @@ const metadataReleaseInfo = (release, language) => {
   if (!release?.version || !asset) return null
 
   const urls = [asset.url, asset.fallbackUrl]
-    .map((url) => allowedReleaseAssetUrl(url, release.version, asset.name))
+    .map(allowedReleaseAssetUrl)
     .filter(Boolean)
   const githubUrl = urls.find((url) => new URL(url).hostname === 'github.com') || null
   const cnbUrl = urls.find((url) => new URL(url).hostname === 'cnb.cool') || null
+  const primaryUrl = urls[0] || null
   const preferredUrl = language === 'zh'
-    ? (cnbUrl || githubUrl)
-    : (githubUrl || cnbUrl)
+    ? (cnbUrl || primaryUrl)
+    : (githubUrl || primaryUrl)
 
   if (!preferredUrl) return null
   return {
     version: release.version,
     downloadUrl: preferredUrl,
-    // 首页主按钮沿用当前语言的首选源，另一个按钮保留另一条官方直链。
-    mirrorUrl: githubUrl || CNB_RELEASES_URL,
+    // 首页主按钮沿用当前语言的首选源，另一个按钮保留 metadata 提供的备用直链。
+    mirrorUrl: urls.find((url) => url !== preferredUrl) || githubUrl || cnbUrl || CNB_RELEASES_URL,
     releaseUrl: releasePageUrl(release.version),
     body: release.releaseNotes || '',
   }
@@ -108,7 +98,7 @@ const metadataReleaseInfo = (release, language) => {
 
 const githubReleaseInfo = (release, language) => {
   const asset = release?.assets?.find(isInstallerAsset)
-  const downloadUrl = allowedReleaseAssetUrl(asset?.browser_download_url, release?.tag_name, asset?.name)
+  const downloadUrl = allowedReleaseAssetUrl(asset?.browser_download_url)
   if (!release?.tag_name || !downloadUrl) return null
   return {
     version: release.tag_name,

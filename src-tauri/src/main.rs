@@ -8,9 +8,9 @@ mod clipboard;
 mod commands;
 mod controller_hub;
 mod controller_input;
-mod device_config;
 mod controllermeta;
 mod desktop_settings;
+mod device_config;
 mod dualsense;
 #[cfg(target_os = "windows")]
 mod elevation;
@@ -28,8 +28,8 @@ mod proxy_server;
 mod rtss;
 use native_components::providers::nvidia_rtx_hdr as rtx_hdr;
 mod hdr_enhanced;
-mod nr_overlay;
 mod native_components;
+mod nr_overlay;
 #[cfg(target_os = "windows")]
 mod shell_context_menu;
 mod sunshine;
@@ -45,11 +45,11 @@ mod utils;
 mod vdd;
 mod vdd_calibration;
 #[cfg(target_os = "windows")]
-mod win_clipboard;
-#[cfg(target_os = "windows")]
 mod vdd_ioctl;
 mod vigem;
 mod vmouse;
+#[cfg(target_os = "windows")]
+mod win_clipboard;
 mod windows;
 
 use log::info;
@@ -120,7 +120,9 @@ fn main() {
     configure_loopback_proxy_bypass();
 
     #[cfg(target_os = "windows")]
-    if let Some(exit_code) = native_components::providers::nvidia_dlssnr::try_handle_elevated_command() {
+    if let Some(exit_code) =
+        native_components::providers::nvidia_dlssnr::try_handle_elevated_command()
+    {
         std::process::exit(exit_code);
     }
     if let Some(exit_code) = rtx_hdr::try_handle_elevated_command() {

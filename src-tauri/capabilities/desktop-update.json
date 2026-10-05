@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop-update",
+  "description": "Allows only the bundled desktop window to check for updates.",
+  "windows": ["desktop"],
+  "local": true,
+  "permissions": [
+    "allow-check-for-updates"
+  ]
+}

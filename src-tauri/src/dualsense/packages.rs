@@ -7,7 +7,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::github_download::{
-    self, DEFAULT_IDLE_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT, DownloadAttemptPhase, DownloadRequest,
+    self, DEFAULT_IDLE_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT, DownloadAttemptPhase, DownloadCandidate,
+    DownloadProgress, DownloadRequest,
 };
 
 use super::{
@@ -73,6 +74,7 @@ pub(crate) struct ComponentDownloadSpec<'a> {
     pub(crate) url: &'a str,
     pub(crate) destination: &'a Path,
     pub(crate) expected_size: Option<u64>,
+    pub(crate) expected_sha256: Option<&'a str>,
     pub(crate) max_size: u64,
     pub(crate) stage: &'a str,
     pub(crate) progress_start: u32,
@@ -84,36 +86,58 @@ pub(crate) async fn download_component_asset(
     spec: ComponentDownloadSpec<'_>,
     progress: &ProgressReporter<'_>,
 ) -> Result<(), String> {
+    download_component_asset_internal(spec, None, progress).await
+}
+
+pub(crate) async fn download_component_asset_from_candidates(
+    spec: ComponentDownloadSpec<'_>,
+    candidates: &[DownloadCandidate],
+    progress: &ProgressReporter<'_>,
+) -> Result<(), String> {
+    download_component_asset_internal(spec, Some(candidates), progress).await
+}
+
+async fn download_component_asset_internal(
+    spec: ComponentDownloadSpec<'_>,
+    candidates: Option<&[DownloadCandidate]>,
+    progress: &ProgressReporter<'_>,
+) -> Result<(), String> {
     report_progress(progress, spec.stage, spec.progress_start);
     let mut highest_progress = spec.progress_start;
-    github_download::download_to_file_with_fallbacks(
-        DownloadRequest {
-            url: spec.url,
-            destination: spec.destination,
-            expected_size: spec.expected_size,
-            max_size: Some(spec.max_size),
-            user_agent: "foundation-sunshine-dualsense-component",
-            connect_timeout: std::time::Duration::from_secs(10),
-            response_timeout: DEFAULT_RESPONSE_TIMEOUT,
-            idle_timeout: DEFAULT_IDLE_TIMEOUT,
-            overall_timeout: Some(COMPONENT_DOWNLOAD_OVERALL_TIMEOUT),
-        },
-        |event| {
-            if event.phase != DownloadAttemptPhase::Downloading || event.total == 0 {
-                return;
-            }
-            let value = spec.progress_start
-                + (event.downloaded.saturating_mul(spec.progress_span as u64) / event.total)
-                    .min(spec.progress_span as u64) as u32;
-            if value > highest_progress {
-                highest_progress = value;
-                report_progress(progress, spec.stage, value);
-            }
-        },
-    )
-    .await
-    .map(|_| ())
-    .map_err(|error| format!("{}: download failed: {error}", spec.error_code))
+    let request = DownloadRequest {
+        url: spec.url,
+        destination: spec.destination,
+        expected_size: spec.expected_size,
+        expected_sha256: spec.expected_sha256,
+        max_size: Some(spec.max_size),
+        user_agent: "foundation-sunshine-dualsense-component",
+        connect_timeout: std::time::Duration::from_secs(10),
+        response_timeout: DEFAULT_RESPONSE_TIMEOUT,
+        idle_timeout: DEFAULT_IDLE_TIMEOUT,
+        overall_timeout: Some(COMPONENT_DOWNLOAD_OVERALL_TIMEOUT),
+    };
+    let mut on_progress = |event: DownloadProgress| {
+        if event.phase != DownloadAttemptPhase::Downloading || event.total == 0 {
+            return;
+        }
+        let value = spec.progress_start
+            + (event.downloaded.saturating_mul(spec.progress_span as u64) / event.total)
+                .min(spec.progress_span as u64) as u32;
+        if value > highest_progress {
+            highest_progress = value;
+            report_progress(progress, spec.stage, value);
+        }
+    };
+    let result = match candidates {
+        Some(candidates) => {
+            github_download::download_to_file_from_candidates(request, candidates, &mut on_progress)
+                .await
+        }
+        None => github_download::download_to_file_with_fallbacks(request, &mut on_progress).await,
+    };
+    result
+        .map(|_| ())
+        .map_err(|error| format!("{}: download failed: {error}", spec.error_code))
 }
 
 pub(crate) fn component_root() -> PathBuf {

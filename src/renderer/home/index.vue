@@ -1,6 +1,88 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { translations } from './i18n.js'
+
+const FOUNDATION_REPOSITORY = 'AlkaidLab/foundation-sunshine'
+const GITHUB_RELEASES_URL = `https://github.com/${FOUNDATION_REPOSITORY}/releases/`
+const GITHUB_LATEST_API_URL = `https://api.github.com/repos/${FOUNDATION_REPOSITORY}/releases/latest`
+const GITHUB_RELEASES_API_URL = `https://api.github.com/repos/${FOUNDATION_REPOSITORY}/releases?per_page=30`
+const CNB_RELEASES_URL = 'https://cnb.cool/AlkaidLab/foundation-sunshine-release/-/releases'
+const METADATA_COM_URL = 'https://www.alkaidlab.com/release-metadata/foundation-sunshine.json'
+const METADATA_CN_URL = 'https://www.alkaidlab.cn/release-metadata/foundation-sunshine.json'
+
+const isAllowedReleaseUrl = (value) => {
+  if (typeof value !== 'string' || !value) return false
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' && (url.hostname === 'github.com' || url.hostname === 'cnb.cool')
+  } catch {
+    return false
+  }
+}
+
+const allowedReleaseUrl = (value) => (isAllowedReleaseUrl(value) ? value : null)
+
+const isInstallerAsset = (asset) => {
+  const name = String(asset?.name || '')
+  const type = asset?.type
+  return (type === 'windows-x64-installer' || (!type && name.toLowerCase().includes('windowsinstaller')))
+    && name.toLowerCase().endsWith('.exe')
+}
+
+const fetchJson = async (url) => {
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), 5000)
+  try {
+    const response = await fetch(url, {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    return await response.json()
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
+
+const releasePageUrl = (version) =>
+  `https://github.com/${FOUNDATION_REPOSITORY}/releases/tag/${encodeURIComponent(version)}`
+
+const metadataReleaseInfo = (release) => {
+  const asset = release?.assets?.find(isInstallerAsset)
+  if (!release?.version || !asset) return null
+
+  const urls = [asset.url, asset.fallbackUrl]
+    .map(allowedReleaseUrl)
+    .filter(Boolean)
+  const githubUrl = urls.find((url) => new URL(url).hostname === 'github.com') || null
+  const cnbUrl = urls.find((url) => new URL(url).hostname === 'cnb.cool') || null
+  const preferredUrl = currentLang.value === 'zh'
+    ? (cnbUrl || githubUrl)
+    : (githubUrl || cnbUrl)
+
+  if (!preferredUrl) return null
+  return {
+    version: release.version,
+    downloadUrl: preferredUrl,
+    // 首页主按钮沿用当前语言的首选源，另一个按钮保留另一条官方直链。
+    mirrorUrl: githubUrl || CNB_RELEASES_URL,
+    releaseUrl: releasePageUrl(release.version),
+    body: release.releaseNotes || '',
+  }
+}
+
+const githubReleaseInfo = (release) => {
+  const asset = release?.assets?.find(isInstallerAsset)
+  const downloadUrl = allowedReleaseUrl(asset?.browser_download_url)
+  if (!release?.tag_name || !downloadUrl) return null
+  return {
+    version: release.tag_name,
+    downloadUrl,
+    mirrorUrl: currentLang.value === 'zh' ? CNB_RELEASES_URL : GITHUB_RELEASES_URL,
+    releaseUrl: allowedReleaseUrl(release.html_url) || releasePageUrl(release.tag_name),
+    body: release.body || '',
+  }
+}
 
 // 语言状态管理
 const getDefaultLang = () => {
@@ -49,53 +131,59 @@ const versionInfo = ref({
   error: null,
 })
 
-// 检查最新版本
+// 检查最新版本：首页使用公开 metadata 或 GitHub API，下载链接只指向官方发布源。
 const checkLatestVersion = async () => {
   try {
     versionInfo.value.loading = true
     versionInfo.value.error = null
+    versionInfo.value.latest = null
+    versionInfo.value.preRelease = null
 
-    // 获取最新稳定版
-    const latestResponse = await fetch('https://api.github.com/repos/qiin2333/Sunshine/releases/latest')
-    const latestRelease = await latestResponse.json()
+    let latest = null
+    let preRelease = null
 
-    // 获取所有发布版本
-    const allReleasesResponse = await fetch('https://api.github.com/repos/qiin2333/Sunshine/releases')
-    const allReleases = await allReleasesResponse.json()
-
-    // 查找预发布版本
-    const preRelease = allReleases.find((release) => release.prerelease)
-
-    versionInfo.value.latest = {
-      version: latestRelease.tag_name,
-      downloadUrl: latestRelease.assets.find((asset) => asset.name.includes('sunshine-windows-installer.exe'))
-        ?.browser_download_url,
-      releaseUrl: latestRelease.html_url,
-      body: latestRelease.body,
+    if (currentLang.value === 'zh') {
+      // 两个官方 metadata 入口并发请求，固定优先 .com。
+      const results = await Promise.allSettled([
+        fetchJson(METADATA_COM_URL),
+        fetchJson(METADATA_CN_URL),
+      ])
+      const metadata = results[0].status === 'fulfilled'
+        ? results[0].value
+        : results[1].status === 'fulfilled'
+          ? results[1].value
+          : null
+      latest = metadataReleaseInfo(metadata?.channels?.latest)
+      preRelease = metadataReleaseInfo(metadata?.channels?.['pre-latest'])
     }
 
-    if (preRelease) {
-      versionInfo.value.preRelease = {
-        version: preRelease.tag_name,
-        downloadUrl: preRelease.assets.find((asset) => asset.name.includes('sunshine-windows-installer.exe'))
-          ?.browser_download_url,
-        releaseUrl: preRelease.html_url,
-        body: preRelease.body,
+    // 非中文环境直接使用 GitHub API；中文 metadata 不可用时也回退到 GitHub。
+    if (!latest) {
+      const [latestResult, releasesResult] = await Promise.allSettled([
+        fetchJson(GITHUB_LATEST_API_URL),
+        fetchJson(GITHUB_RELEASES_API_URL),
+      ])
+      if (latestResult.status === 'fulfilled') {
+        latest = githubReleaseInfo(latestResult.value)
+      }
+      if (releasesResult.status === 'fulfilled' && Array.isArray(releasesResult.value)) {
+        const release = releasesResult.value.find((item) => item?.prerelease && !item?.draft)
+        preRelease = githubReleaseInfo(release)
       }
     }
 
-    // 更新下载链接
-    if (versionInfo.value.latest.downloadUrl) {
-      downloadLinks.value.latest = versionInfo.value.latest.downloadUrl
-      downloadLinks.value.windows = versionInfo.value.latest.downloadUrl
-      downloadLinks.value.mirror = `https://ghfast.top/${versionInfo.value.latest.downloadUrl}`
-    }
+    if (!latest) throw new Error('没有找到可用的 Windows Installer')
+
+    versionInfo.value.latest = latest
+    versionInfo.value.preRelease = preRelease
+    downloadLinks.value.latest = latest.downloadUrl
+    downloadLinks.value.windows = latest.downloadUrl
+    downloadLinks.value.mirror = latest.mirrorUrl
   } catch (error) {
     console.error('版本检查失败:', error)
-    versionInfo.value.error = error.message
-    // 使用默认下载地址
-    downloadLinks.value.windows = 'https://vip.123pan.cn/1813496318/26878949'
-    downloadLinks.value.mirror = 'https://vip.123pan.cn/1813496318/26878949'
+    downloadLinks.value.windows = GITHUB_RELEASES_URL
+    downloadLinks.value.mirror = currentLang.value === 'zh' ? CNB_RELEASES_URL : GITHUB_RELEASES_URL
+    versionInfo.value.error = error instanceof Error ? error.message : String(error)
   } finally {
     versionInfo.value.loading = false
   }
@@ -119,7 +207,7 @@ onMounted(() => {
   img.onerror = () => {
     starHistoryError.value = true
   }
-  img.src = 'https://api.star-history.com/svg?repos=qiin2333/Sunshine-Foundation&type=Date&width=800&height=400'
+  img.src = `https://api.star-history.com/svg?repos=${FOUNDATION_REPOSITORY}&type=Date&width=800&height=400`
 
   // 检查最新版本
   checkLatestVersion()
@@ -127,12 +215,14 @@ onMounted(() => {
 
 // 下载链接
 const downloadLinks = ref({
-  windows:
-    'https://ghfast.top/https://github.com/qiin2333/Sunshine/releases/download/foundation/sunshine-windows-installer.exe',
-  github: 'https://github.com/qiin2333/Sunshine-Foundation/releases/',
-  mirror:
-    'https://ghfast.top/https://github.com/qiin2333/Sunshine/releases/download/foundation/sunshine-windows-installer.exe',
+  windows: GITHUB_RELEASES_URL,
+  github: GITHUB_RELEASES_URL,
+  mirror: currentLang.value === 'zh' ? CNB_RELEASES_URL : GITHUB_RELEASES_URL,
   latest: null,
+})
+
+watch(currentLang, () => {
+  checkLatestVersion()
 })
 
 // 客户端推荐
@@ -324,7 +414,7 @@ const clients = [
           <div v-else-if="starHistoryError" class="error-state">
             <p>{{ t.stats.error }}</p>
             <a
-              href="https://star-history.com/#qiin2333/Sunshine-Foundation&Date"
+              :href="`https://star-history.com/#${FOUNDATION_REPOSITORY}&Date`"
               target="_blank"
               class="btn btn-secondary"
             >
@@ -333,18 +423,18 @@ const clients = [
           </div>
           <img
             v-else
-            src="https://api.star-history.com/svg?repos=qiin2333/Sunshine-Foundation&type=Date&width=800&height=400"
+            :src="`https://api.star-history.com/svg?repos=${FOUNDATION_REPOSITORY}&type=Date&width=800&height=400`"
             :alt="`${t.title} Star History`"
             class="star-history-chart"
             loading="lazy"
           />
         </div>
         <div class="stats-actions">
-          <a href="https://github.com/qiin2333/Sunshine-Foundation" class="btn btn-primary" target="_blank">
+          <a :href="`https://github.com/${FOUNDATION_REPOSITORY}`" class="btn btn-primary" target="_blank">
             {{ t.stats.giveStar }}
           </a>
           <a
-            href="https://star-history.com/#qiin2333/Sunshine-Foundation&Date"
+            :href="`https://star-history.com/#${FOUNDATION_REPOSITORY}&Date`"
             class="btn btn-secondary"
             target="_blank"
           >
@@ -390,7 +480,7 @@ const clients = [
           <div class="footer-section">
             <h4>{{ t.footer.links }}</h4>
             <ul>
-              <li><a href="https://github.com/qiin2333/Sunshine" target="_blank">GitHub</a></li>
+              <li><a :href="`https://github.com/${FOUNDATION_REPOSITORY}`" target="_blank">GitHub</a></li>
               <li><a href="https://github.com/LizardByte/awesome-sunshine" target="_blank">awesome-sunshine</a></li>
             </ul>
           </div>

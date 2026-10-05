@@ -7,6 +7,7 @@
 
 use futures_util::StreamExt;
 use log::{debug, info, warn};
+use sha2::{Digest, Sha256};
 use std::fmt;
 use std::path::Path;
 use std::time::Duration;
@@ -64,12 +65,20 @@ pub(crate) struct DownloadRequest<'a> {
     pub(crate) url: &'a str,
     pub(crate) destination: &'a Path,
     pub(crate) expected_size: Option<u64>,
+    pub(crate) expected_sha256: Option<&'a str>,
     pub(crate) max_size: Option<u64>,
     pub(crate) user_agent: &'a str,
     pub(crate) connect_timeout: Duration,
     pub(crate) response_timeout: Duration,
     pub(crate) idle_timeout: Duration,
     pub(crate) overall_timeout: Option<Duration>,
+}
+
+/// A caller-owned ordered download candidate. The updater uses this for the
+/// CNB primary URL followed by the GitHub fallback URL.
+pub(crate) struct DownloadCandidate {
+    pub(crate) name: &'static str,
+    pub(crate) url: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -252,6 +261,7 @@ where
     let mut file = BufWriter::with_capacity(DOWNLOAD_BUFFER_BYTES, file);
     let mut stream = response.bytes_stream();
     let mut downloaded = 0u64;
+    let mut digest = request.expected_sha256.map(|_| Sha256::new());
     while let Some(item) = stream.next().await {
         let chunk = item.map_err(|error| format!("download stream failed: {error}"))?;
         let next_size = downloaded
@@ -270,6 +280,9 @@ where
         file.write_all(&chunk)
             .await
             .map_err(|error| format!("could not write partial download: {error}"))?;
+        if let Some(digest) = digest.as_mut() {
+            digest.update(&chunk);
+        }
         downloaded = next_size;
         on_progress(DownloadProgress {
             phase: DownloadAttemptPhase::Downloading,
@@ -293,11 +306,89 @@ where
             "download size mismatch: expected {required} bytes, got {downloaded} bytes"
         ));
     }
+    if let Some(expected) = request.expected_sha256 {
+        let expected = normalize_sha256(expected)
+            .ok_or_else(|| "expected SHA-256 must contain 64 hexadecimal characters".to_string())?;
+        let actual = format!(
+            "{:x}",
+            digest
+                .expect("digest exists when SHA-256 is requested")
+                .finalize()
+        );
+        if actual != expected {
+            return Err(format!(
+                "SHA-256 mismatch: expected {expected}, got {actual}"
+            ));
+        }
+    }
     Ok(DownloadOutcome {
         source: source.name,
         downloaded,
         total,
     })
+}
+
+fn normalize_sha256(value: &str) -> Option<String> {
+    let value = value.strip_prefix("sha256:").unwrap_or(value).trim();
+    (value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| value.to_ascii_lowercase())
+}
+
+/// Download from explicit candidates without adding third-party proxy URLs.
+/// Each candidate is attempted once and the shared expected SHA-256 is checked
+/// while streaming the candidate into the partial file.
+pub(crate) async fn download_to_file_from_candidates<F>(
+    request: DownloadRequest<'_>,
+    candidates: &[DownloadCandidate],
+    on_progress: F,
+) -> Result<DownloadOutcome, DownloadError>
+where
+    F: FnMut(DownloadProgress),
+{
+    if candidates.is_empty() {
+        return Err(DownloadError {
+            kind: DownloadErrorKind::Setup,
+            detail: "no download candidates were provided".to_string(),
+        });
+    }
+    if request.expected_size == Some(0) || request.max_size == Some(0) {
+        return Err(DownloadError {
+            kind: DownloadErrorKind::Setup,
+            detail: "download size constraints must be greater than zero".to_string(),
+        });
+    }
+    if let Some(expected_sha256) = request.expected_sha256
+        && normalize_sha256(expected_sha256).is_none()
+    {
+        return Err(DownloadError {
+            kind: DownloadErrorKind::Setup,
+            detail: "expected SHA-256 must contain 64 hexadecimal characters".to_string(),
+        });
+    }
+    let mut sources = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        let parsed = reqwest::Url::parse(&candidate.url).map_err(|error| DownloadError {
+            kind: DownloadErrorKind::Setup,
+            detail: format!("invalid download candidate: {error}"),
+        })?;
+        if parsed.scheme() != "https" {
+            return Err(DownloadError {
+                kind: DownloadErrorKind::Setup,
+                detail: "download candidates must use HTTPS".to_string(),
+            });
+        }
+        sources.push(DownloadSource {
+            name: candidate.name,
+            url: candidate.url.clone(),
+        });
+    }
+    download_from_sources(
+        request,
+        &sources,
+        DownloadClientPolicy::HttpsOnly,
+        on_progress,
+    )
+    .await
 }
 
 pub(crate) async fn download_to_file_with_fallbacks<F>(
@@ -376,7 +467,7 @@ where
             downloaded: 0,
             total: request.expected_size.unwrap_or(0),
         });
-        info!("Trying GitHub download source: {}", source.name);
+        info!("Trying download source: {}", source.name);
         let attempt = download_source_to_file(
             &client,
             source,
@@ -455,6 +546,7 @@ mod tests {
             url: "https://github.com/example/project/releases/download/v1/a.zip",
             destination: Path::new("unused"),
             expected_size: None,
+            expected_sha256: None,
             max_size: None,
             user_agent: "test",
             connect_timeout: DEFAULT_CONNECT_TIMEOUT,
@@ -500,6 +592,7 @@ mod tests {
             url: "https://github.com/example/project/releases/download/v1/a.zip",
             destination: &destination,
             expected_size: Some(5),
+            expected_sha256: None,
             max_size: Some(5),
             user_agent: "test",
             connect_timeout: DEFAULT_CONNECT_TIMEOUT,
@@ -537,11 +630,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sha256_mismatch_is_treated_as_a_failed_candidate() {
+        let app = Router::new()
+            .route(
+                "/wrong",
+                get(|| async { ([("content-type", "application/octet-stream")], "wrong") }),
+            )
+            .route(
+                "/right",
+                get(|| async { ([("content-type", "application/octet-stream")], "asset") }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let destination = std::env::temp_dir().join(format!(
+            "sunshine-github-download-sha-test-{}-{}.partial",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let expected = format!("{:x}", Sha256::digest(b"asset"));
+        let request = DownloadRequest {
+            url: "https://github.com/example/project/releases/download/v1/a.zip",
+            destination: &destination,
+            expected_size: Some(5),
+            expected_sha256: Some(&expected),
+            max_size: Some(5),
+            user_agent: "test",
+            connect_timeout: DEFAULT_CONNECT_TIMEOUT,
+            response_timeout: DEFAULT_RESPONSE_TIMEOUT,
+            idle_timeout: DEFAULT_IDLE_TIMEOUT,
+            overall_timeout: None,
+        };
+        let sources = [
+            DownloadSource {
+                name: "wrong",
+                url: format!("http://{address}/wrong"),
+            },
+            DownloadSource {
+                name: "right",
+                url: format!("http://{address}/right"),
+            },
+        ];
+
+        let outcome = download_from_sources(
+            request,
+            &sources,
+            DownloadClientPolicy::AllowHttpForTests,
+            |_| {},
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome.source, "right");
+        assert_eq!(tokio::fs::read(&destination).await.unwrap(), b"asset");
+        let _ = tokio::fs::remove_file(&destination).await;
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn production_client_rejects_http_sources() {
         let request = DownloadRequest {
             url: "https://github.com/example/project/releases/download/v1/a.zip",
             destination: Path::new("unused"),
             expected_size: None,
+            expected_sha256: None,
             max_size: None,
             user_agent: "test",
             connect_timeout: DEFAULT_CONNECT_TIMEOUT,
@@ -596,6 +752,7 @@ mod tests {
             url: "https://github.com/example/project/releases/download/v1/a.zip",
             destination: &destination,
             expected_size: Some(5),
+            expected_sha256: None,
             max_size: Some(5),
             user_agent: "test",
             connect_timeout: Duration::from_secs(1),

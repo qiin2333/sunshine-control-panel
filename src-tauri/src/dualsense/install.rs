@@ -14,8 +14,9 @@ use super::config::{
 use super::packages::{
     ComponentDownloadSpec, InstalledComponentManifest, LocalComponentPackages,
     SidecarPackageManifest, SidecarRuntimeMetadata, UsbipInstallResult, active_dir, component_root,
-    download_component_asset, manually_placed_sidecar_package, purge_stale_handoff_packages,
-    sha256_file, sidecar_package_manifest, sidecar_package_manifest_path, sidecar_path,
+    download_component_asset, download_component_asset_from_candidates,
+    manually_placed_sidecar_package, purge_stale_handoff_packages, sha256_file,
+    sidecar_package_manifest, sidecar_package_manifest_path, sidecar_path,
 };
 use super::probe::{component_test_failure, local_uninstalled_status, run_probe, run_with_timeout};
 use super::{
@@ -245,18 +246,28 @@ pub(crate) async fn acquire_sidecar_package(
                 .to_string(),
         );
     }
+    let candidates = crate::update::resolve_component_download_candidates(
+        "dualsense-sidecar-zip",
+        &manifest.asset_name,
+        &manifest.sha256,
+        &manifest.download_url,
+    )
+    .await
+    .map_err(|error| format!("DS5-PKG-001: unable to resolve Sidecar download sources: {error}"))?;
     report_progress(progress, "sidecar_downloading", 12);
-    download_component_asset(
+    download_component_asset_from_candidates(
         ComponentDownloadSpec {
             url: &manifest.download_url,
             destination,
             expected_size: Some(manifest.size),
+            expected_sha256: Some(&manifest.sha256),
             max_size: MAX_SIDECAR_PACKAGE_BYTES,
             stage: "sidecar_downloading",
             progress_start: 12,
             progress_span: 24,
             error_code: "DS5-PKG-001",
         },
+        &candidates,
         progress,
     )
     .await
@@ -354,6 +365,7 @@ pub(crate) async fn ensure_pinned_usbip(
                     url: USBIP_URL,
                     destination: &installer_path,
                     expected_size: None,
+                    expected_sha256: None,
                     max_size: MAX_USBIP_INSTALLER_BYTES,
                     stage: "transport_downloading",
                     progress_start: 3,
@@ -667,6 +679,7 @@ pub(crate) async fn dualsense_install_impl(
                     url: HIDMAESTRO_URL,
                     destination: &archive_path,
                     expected_size: None,
+                    expected_sha256: None,
                     max_size: MAX_ARCHIVE_BYTES,
                     stage: "downloading",
                     progress_start: 38,

@@ -1,5 +1,6 @@
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -11,30 +12,26 @@ use crate::github_download::{
     DownloadAttemptPhase, DownloadRequest,
 };
 
-mod channel;
+mod metadata;
 mod preferences;
 
-use channel::ReleaseChannel;
+pub(crate) use metadata::resolve_component_download_candidates;
+
+use metadata::{
+    ReleaseAsset, ReleaseCandidate, ReleaseCatalog, UpdateChannel, candidate_is_newer_than,
+    resolve_catalog, select_candidate,
+};
 
 const UPDATER_HELPER_ARG: &str = "--updater-helper";
 const UPDATE_RESULT_ARG: &str = "--update-result";
 
 // ========== 常量定义 ==========
-const GITHUB_API_URL: &str = "https://api.github.com/repos/qiin2333/sunshine/releases";
-const GITHUB_API_URL_LATEST: &str =
-    "https://api.github.com/repos/qiin2333/sunshine/releases/latest";
 const UPDATE_CHECK_INTERVAL: u64 = 4 * 60 * 60; // 4小时（秒）
-const HTTP_TIMEOUT_SECS: u64 = 3;
-const GITHUB_RELEASE_HOST: &str = "github.com";
-const MAX_RELEASES_TO_CHECK: usize = 10; // 最多检查的发布数量
 
 /// temp 目录中记录“已下载待安装”安装包的标记文件名。
 const UPDATE_CACHE_MARKER_FILE: &str = "sunshine-update-cache.json";
 /// 已下载安装包的最长保留期，超过后随临时目录清理一起删除。
 const UPDATE_CACHE_MAX_AGE_SECS: u64 = 14 * 24 * 60 * 60;
-
-// GitHub API 加速代理列表（按优先级排序）
-const API_PROXY_PREFIXES: &[&str] = &["https://ghapi.hackhub.cn/", "https://mirror.ghproxy.com/"];
 
 // ========== 数据结构定义 ==========
 
@@ -44,35 +41,18 @@ pub struct UpdateInfo {
     pub version: String,
     pub release_notes: String,
     pub download_url: Option<String>,
+    #[serde(default)]
+    pub download_fallback_url: Option<String>,
     pub download_name: Option<String>,
     pub download_size: Option<u64>,
+    #[serde(default)]
+    pub download_sha256: Option<String>,
+    #[serde(default)]
+    pub download_type: Option<String>,
     pub release_page: String,
     /// `true` = 已是最新（只读浏览），`false`（默认）= 有可用更新
     #[serde(default)]
     pub is_latest: bool,
-}
-
-/// GitHub Release 数据结构
-#[derive(Debug, Serialize, Deserialize)]
-struct GitHubRelease {
-    tag_name: String,
-    body: String,
-    assets: Vec<GitHubAsset>,
-    html_url: String,
-    #[serde(default)]
-    prerelease: bool,
-    #[serde(default)]
-    draft: bool,
-    published_at: Option<String>,
-}
-
-/// GitHub Release Asset 数据结构
-#[derive(Debug, Serialize, Deserialize)]
-struct GitHubAsset {
-    name: String,
-    browser_download_url: String,
-    #[serde(default)]
-    size: u64,
 }
 
 /// temp 目录中已下载安装包的缓存标记，用于跳过重复下载并免于被清理。
@@ -121,10 +101,22 @@ impl DownloadCommandError {
 struct UpdaterHelperState {
     installer_path: String,
     extension: String,
+    expected_size: Option<u64>,
+    expected_sha256: String,
     target_version: Option<String>,
     gui_exe_path: String,
     result_path: String,
     parent_pid: u32,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug)]
+struct UpdaterHelperLaunchContext {
+    installer_path: String,
+    expected_size: Option<u64>,
+    expected_sha256: String,
+    gui_exe_path: String,
+    result_path: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -160,195 +152,71 @@ static UPDATE_CHECKER_STARTED: OnceLock<()> = OnceLock::new();
 #[cfg(target_os = "windows")]
 static UPDATER_CONSTRUCTION_FRAMES: OnceLock<Option<Vec<UpdaterAnimationFrame>>> = OnceLock::new();
 
-// ========== 版本相关 ==========
+// ========== 版本和通道相关 ==========
 
-/// 获取当前 Sunshine 版本
 async fn get_current_sunshine_version() -> Result<String, String> {
-    use crate::sunshine;
-    sunshine::get_sunshine_version().await
+    crate::sunshine::get_sunshine_version().await
 }
 
-/// 规范化版本号（移除 v/V 前缀）
-fn normalize_version(version: &str) -> String {
-    version
-        .trim_start_matches('v')
-        .trim_start_matches('V')
-        .to_string()
-}
-
-/// 比较版本号，判断是否有新版本
-fn is_new_version_available(current: &str, latest: &str) -> bool {
-    let current = normalize_version(current);
-    let latest = normalize_version(latest);
-
-    let current_parts: Vec<u32> = current.split('.').filter_map(|s| s.parse().ok()).collect();
-
-    let latest_parts: Vec<u32> = latest.split('.').filter_map(|s| s.parse().ok()).collect();
-
-    let max_len = current_parts.len().max(latest_parts.len());
-
-    for i in 0..max_len {
-        let current_part = current_parts.get(i).copied().unwrap_or(0);
-        let latest_part = latest_parts.get(i).copied().unwrap_or(0);
-
-        if latest_part > current_part {
-            return true;
-        } else if latest_part < current_part {
-            return false;
-        }
-    }
-
-    false
-}
-
-fn is_full_sunshine_windows_installer(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    if !lower.starts_with("sunshine") {
-        return false;
-    }
-
-    let normalized: String = lower
-        .chars()
-        .filter(|character| character.is_ascii_alphanumeric())
-        .collect();
-    let supported_extension = lower.ends_with(".exe") || lower.ends_with(".msi");
-
-    supported_extension && normalized.contains("windowsinstaller")
-}
-
-/// 查找完整 Sunshine Windows 安装包。
-fn find_best_download_asset(
-    assets: &[GitHubAsset],
-) -> (Option<String>, Option<String>, Option<u64>) {
-    if let Some(asset) = assets
-        .iter()
-        .find(|asset| is_full_sunshine_windows_installer(&asset.name))
-    {
-        (
-            Some(asset.browser_download_url.clone()),
-            Some(asset.name.clone()),
-            (asset.size > 0).then_some(asset.size),
-        )
-    } else {
-        (None, None, None)
+fn channel_description(channel: UpdateChannel) -> &'static str {
+    match channel {
+        UpdateChannel::StableOnly => "稳定版",
+        UpdateChannel::StableAndPrerelease => "稳定版及测试版",
+        UpdateChannel::PrereleaseOnly => "测试版",
     }
 }
 
-// ========== HTTP 请求相关 ==========
-
-/// 构建代理 URL
-fn build_proxy_url(proxy: &str, original_url: &str) -> String {
-    let url_without_protocol = original_url.trim_start_matches("https://");
-    if proxy.ends_with('/') {
-        format!("{}{}", proxy, url_without_protocol)
-    } else {
-        format!("{}/{}", proxy, url_without_protocol)
-    }
+fn preferred_asset_type() -> &'static str {
+    // The Panel only supports the Windows Installer update flow. Portable
+    // archives may remain in metadata for other consumers, but are never
+    // selected or downloaded here.
+    "windows-x64-installer"
 }
 
-/// 创建 GitHub API HTTP 客户端
-fn create_api_http_client(timeout_secs: u64) -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(timeout_secs))
-        .build()
-        .map_err(|e| format!("创建HTTP客户端失败: {}", e))
+fn is_supported_installer_filename(filename: &str) -> bool {
+    Path::new(filename)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
 }
 
-/// 尝试单个 GitHub API URL 请求
-async fn try_api_request(client: &reqwest::Client, url: &str) -> Result<reqwest::Response, String> {
-    let response = client
-        .get(url)
-        .header("User-Agent", "Sunshine-Control-Panel")
-        .header("Accept", "application/vnd.github.v3+json")
-        .send()
-        .await
-        .map_err(|e| format!("请求失败: {}", e))?;
-
-    if response.status().is_success() {
-        debug!("✅ 请求成功，来源: {}", url);
-        Ok(response)
-    } else {
-        Err(format!("HTTP状态码 {}", response.status().as_u16()))
-    }
+fn selected_asset<'a>(candidate: &'a ReleaseCandidate) -> Option<&'a ReleaseAsset> {
+    candidate.assets.iter().find(|asset| {
+        asset.asset_type == preferred_asset_type() && is_supported_installer_filename(&asset.name)
+    })
 }
 
-/// 按顺序尝试全部 GitHub API 地址。
-async fn fetch_api_with_fallbacks(
-    urls: &[String],
-    timeout_secs: u64,
-) -> Result<reqwest::Response, String> {
-    let client = create_api_http_client(timeout_secs)?;
-
-    for url in urls {
-        match try_api_request(&client, url).await {
-            Ok(response) => return Ok(response),
-            Err(e) => warn!("⚠️ {}: {}", url, e),
-        }
-    }
-
-    Err("所有请求方式都失败了".to_string())
+fn select_compatible_candidate(
+    catalog: &ReleaseCatalog,
+    channel: UpdateChannel,
+) -> Option<ReleaseCandidate> {
+    let compatible_catalog = ReleaseCatalog {
+        latest: catalog
+            .latest
+            .as_ref()
+            .filter(|candidate| selected_asset(candidate).is_some())
+            .cloned(),
+        pre_latest: catalog
+            .pre_latest
+            .as_ref()
+            .filter(|candidate| selected_asset(candidate).is_some())
+            .cloned(),
+    };
+    select_candidate(&compatible_catalog, channel)
 }
 
-/// 使用适当的加速代理获取GitHub API数据
-async fn http_get_with_proxies(url: &str) -> Result<String, String> {
-    // 构造尝试的URL列表：先直连，再尝试代理
-    let mut urls_to_try = vec![url.to_string()];
-
-    for proxy in API_PROXY_PREFIXES {
-        urls_to_try.push(build_proxy_url(proxy, url));
-    }
-
-    let response = fetch_api_with_fallbacks(&urls_to_try, HTTP_TIMEOUT_SECS).await?;
-
-    response
-        .text()
-        .await
-        .map_err(|e| format!("读取响应内容失败: {}", e))
-}
-
-/// 获取所有发布版本（包括预发布）
-async fn fetch_all_releases() -> Result<Vec<GitHubRelease>, String> {
-    let json = http_get_with_proxies(GITHUB_API_URL).await?;
-
-    let releases: Vec<GitHubRelease> =
-        serde_json::from_str(&json).map_err(|e| format!("解析GitHub API响应失败: {}", e))?;
-
-    Ok(releases)
-}
-
-/// 获取最新稳定版本
-async fn fetch_latest_stable_release() -> Result<GitHubRelease, String> {
-    let json = http_get_with_proxies(GITHUB_API_URL_LATEST).await?;
-
-    let release: GitHubRelease =
-        serde_json::from_str(&json).map_err(|e| format!("解析GitHub API响应失败: {}", e))?;
-
-    Ok(release)
-}
-
-/// 获取发布版本列表（包含回退逻辑）
-async fn get_releases() -> Result<Vec<GitHubRelease>, String> {
-    match fetch_all_releases().await {
-        Ok(releases) => Ok(releases),
-        Err(e) => {
-            warn!("⚠️ 获取所有发布版本失败: {}, 尝试获取最新稳定版本", e);
-            let release = fetch_latest_stable_release().await?;
-            Ok(vec![release])
-        }
-    }
-}
-
-/// 从 GitHub release 构建 `UpdateInfo`（`is_latest` 默认为 `false`，调用方按需设置）。
-fn create_update_info(release: &GitHubRelease) -> UpdateInfo {
-    let (download_url, download_name, download_size) = find_best_download_asset(&release.assets);
-
+fn create_update_info(candidate: &ReleaseCandidate) -> UpdateInfo {
+    let asset = selected_asset(candidate);
     UpdateInfo {
-        version: release.tag_name.clone(),
-        release_notes: release.body.clone(),
-        download_url,
-        download_name,
-        download_size,
-        release_page: release.html_url.clone(),
+        version: candidate.version.clone(),
+        release_notes: candidate.release_notes.clone(),
+        download_url: asset.map(|asset| asset.url.clone()),
+        download_fallback_url: asset.and_then(|asset| asset.fallback_url.clone()),
+        download_name: asset.map(|asset| asset.name.clone()),
+        download_size: asset.map(|asset| asset.size),
+        download_sha256: asset.map(|asset| asset.sha256.clone()),
+        download_type: asset.map(|asset| asset.asset_type.clone()),
+        release_page: candidate.release_page.clone(),
         is_latest: false,
     }
 }
@@ -362,68 +230,56 @@ pub async fn check_for_updates_internal(
     include_prerelease: bool,
 ) -> Result<Option<UpdateInfo>, String> {
     let channel = if include_prerelease {
-        ReleaseChannel::IncludePrerelease
+        UpdateChannel::StableAndPrerelease
     } else {
-        ReleaseChannel::Stable
+        UpdateChannel::StableOnly
     };
     check_for_updates_in_channel(manual, channel).await
 }
 
 async fn check_for_updates_in_channel(
     manual: bool,
-    channel: ReleaseChannel,
+    channel: UpdateChannel,
 ) -> Result<Option<UpdateInfo>, String> {
-    info!("🔍 开始检查更新... (通道: {})", channel.description());
+    info!(
+        "🔍 开始检查更新... (通道: {})",
+        channel_description(channel)
+    );
 
     // 获取当前 Sunshine 版本
     let current_version = match get_current_sunshine_version().await {
-        Ok(ver) => normalize_version(&ver),
+        Ok(ver) => ver,
         Err(e) => {
             warn!("⚠️ 获取 Sunshine 版本失败: {}, 使用默认版本 0.0.0", e);
             "0.0.0".to_string()
         }
     };
 
-    // 获取发布版本列表
-    let releases = get_releases().await?;
-
-    if releases.is_empty() {
-        return Err("未找到任何发布版本".to_string());
-    }
-
-    // 查找最新的可用发布版本
-    let release = releases
-        .iter()
-        .take(MAX_RELEASES_TO_CHECK)
-        .filter(|release| !release.draft)
-        .find(|release| channel.matches(release.prerelease))
-        .ok_or_else(|| "未找到可用的发布版本".to_string())?;
-
-    let latest_version = normalize_version(&release.tag_name);
+    let catalog = resolve_catalog(channel).await?;
+    let candidate = select_compatible_candidate(&catalog, channel)
+        .ok_or_else(|| format!("未找到包含 {} 更新资产的发布版本", preferred_asset_type()))?;
 
     info!(
-        "📊 当前 Sunshine 版本: {}, 最新版本: {} ({})",
+        "📊 当前 Sunshine 版本: {}, 候选版本: {} ({})",
         current_version,
-        latest_version,
-        if release.prerelease {
+        candidate.version,
+        if candidate.prerelease {
             "预发布"
         } else {
             "稳定版"
         }
     );
 
-    if !is_new_version_available(&current_version, &latest_version) {
+    if !candidate_is_newer_than(&current_version, &candidate) {
         if manual {
-            let mut info = create_update_info(release);
+            let mut info = create_update_info(&candidate);
             info.is_latest = true;
             return Ok(Some(info));
         }
         return Ok(None);
     }
 
-    // 存在可用的新版本
-    let update_info = create_update_info(release);
-    Ok(Some(update_info))
+    Ok(Some(create_update_info(&candidate)))
 }
 
 /// 获取当前时间戳（秒）
@@ -446,7 +302,40 @@ pub fn try_run_updater_helper_from_args() -> bool {
 
     #[cfg(target_os = "windows")]
     {
-        let _ = run_updater_helper(Path::new(state_path));
+        let Some(installer_path) = args.get(index + 2) else {
+            return true;
+        };
+        let Some(expected_size_value) = args.get(index + 3) else {
+            return true;
+        };
+        let Some(expected_sha256) = args
+            .get(index + 4)
+            .and_then(|value| normalize_sha256(value))
+        else {
+            return true;
+        };
+        let Some(gui_exe_path) = args.get(index + 5) else {
+            return true;
+        };
+        let Some(result_path) = args.get(index + 6) else {
+            return true;
+        };
+        let expected_size = if expected_size_value == "-" {
+            None
+        } else {
+            match expected_size_value.parse::<u64>() {
+                Ok(value) => Some(value),
+                Err(_) => return true,
+            }
+        };
+        let launch = UpdaterHelperLaunchContext {
+            installer_path: installer_path.clone(),
+            expected_size,
+            expected_sha256,
+            gui_exe_path: gui_exe_path.clone(),
+            result_path: result_path.clone(),
+        };
+        let _ = run_updater_helper(Path::new(state_path), &launch);
     }
 
     true
@@ -514,11 +403,24 @@ fn updater_cleanup_dir_for_result(result_path: &Path) -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "windows")]
-fn run_updater_helper(state_path: &Path) -> Result<(), String> {
+fn run_updater_helper(
+    state_path: &Path,
+    launch: &UpdaterHelperLaunchContext,
+) -> Result<(), String> {
     let state_content =
         fs::read_to_string(state_path).map_err(|e| format!("read updater state failed: {}", e))?;
     let state: UpdaterHelperState = serde_json::from_str(&state_content)
         .map_err(|e| format!("parse updater state failed: {}", e))?;
+
+    if state.extension != "exe"
+        || state.installer_path != launch.installer_path
+        || state.expected_size != launch.expected_size
+        || state.expected_sha256 != launch.expected_sha256
+        || state.gui_exe_path != launch.gui_exe_path
+        || state.result_path != launch.result_path
+    {
+        return Err("updater state identity mismatch".to_string());
+    }
 
     run_updater_panel(state)?;
     Ok(())
@@ -605,108 +507,6 @@ fn is_gui_component_installer(path: &Path) -> bool {
         .and_then(|name| name.to_str())
         .map(|name| name.to_ascii_lowercase().starts_with("sunshine-gui-setup-"))
         .unwrap_or(false)
-}
-
-#[cfg(test)]
-mod component_installer_tests {
-    use super::*;
-
-    #[test]
-    fn recognizes_gui_component_installer_name() {
-        assert!(is_gui_component_installer(Path::new(
-            "Sunshine-GUI-Setup-1.2.3.exe"
-        )));
-        assert!(!is_gui_component_installer(Path::new("Sunshine.exe")));
-    }
-
-    #[test]
-    fn full_update_asset_ignores_gui_component() {
-        let assets = vec![
-            GitHubAsset {
-                name: "Sunshine-GUI-Setup-1.2.3.exe".to_string(),
-                browser_download_url: "https://example.invalid/gui".to_string(),
-                size: 10,
-            },
-            GitHubAsset {
-                name: "Sunshine.v1.2.3.WindowsInstaller.exe".to_string(),
-                browser_download_url: "https://example.invalid/full".to_string(),
-                size: 20,
-            },
-        ];
-
-        let (url, name, size) = find_best_download_asset(&assets);
-        assert_eq!(url.as_deref(), Some("https://example.invalid/full"));
-        assert_eq!(
-            name.as_deref(),
-            Some("Sunshine.v1.2.3.WindowsInstaller.exe")
-        );
-        assert_eq!(size, Some(20));
-    }
-
-    #[test]
-    fn full_update_asset_ignores_sidecar_and_portable_archives() {
-        let assets = vec![
-            GitHubAsset {
-                name: "Sunshine.Ds5Sidecar.Windows-x64.zip".to_string(),
-                browser_download_url: "https://example.invalid/sidecar".to_string(),
-                size: 10,
-            },
-            GitHubAsset {
-                name: "Sunshine.v1.2.3.WindowsPortable.zip".to_string(),
-                browser_download_url: "https://example.invalid/portable".to_string(),
-                size: 20,
-            },
-            GitHubAsset {
-                name: "Sunshine.v1.2.3.WindowsInstaller.exe".to_string(),
-                browser_download_url: "https://example.invalid/installer".to_string(),
-                size: 30,
-            },
-        ];
-
-        let (url, name, size) = find_best_download_asset(&assets);
-        assert_eq!(url.as_deref(), Some("https://example.invalid/installer"));
-        assert_eq!(
-            name.as_deref(),
-            Some("Sunshine.v1.2.3.WindowsInstaller.exe")
-        );
-        assert_eq!(size, Some(30));
-    }
-
-    #[test]
-    fn full_update_returns_none_without_an_installer() {
-        let assets = vec![
-            GitHubAsset {
-                name: "checksums.json".to_string(),
-                browser_download_url: "https://example.invalid/checksums".to_string(),
-                size: 10,
-            },
-            GitHubAsset {
-                name: "Sunshine.Ds5Sidecar.Windows-x64.zip".to_string(),
-                browser_download_url: "https://example.invalid/sidecar".to_string(),
-                size: 20,
-            },
-        ];
-
-        assert_eq!(find_best_download_asset(&assets), (None, None, None));
-    }
-
-    #[test]
-    fn full_update_returns_none_for_gui_only_release() {
-        let assets = vec![
-            GitHubAsset {
-                name: "Sunshine-GUI-Setup-1.2.3.exe".to_string(),
-                browser_download_url: "https://example.invalid/gui-setup".to_string(),
-                size: 10,
-            },
-            GitHubAsset {
-                name: "sunshine-gui.exe".to_string(),
-                browser_download_url: "https://example.invalid/gui-exe".to_string(),
-                size: 20,
-            },
-        ];
-
-        assert_eq!(find_best_download_asset(&assets), (None, None, None));
-    }
 }
 
 #[cfg(target_os = "windows")]
@@ -1314,28 +1114,65 @@ fn is_pid_running(pid: u32) -> bool {
 }
 
 #[cfg(target_os = "windows")]
+fn stage_installer_for_elevated_run(state: &UpdaterHelperState) -> Result<PathBuf, String> {
+    let staging_dir = crate::sunshine::install_dir().join("updates");
+    fs::create_dir_all(&staging_dir)
+        .map_err(|e| format!("create protected updater directory failed: {}", e))?;
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| format!("get updater staging time failed: {}", e))?
+        .as_nanos();
+    for attempt in 0..10u32 {
+        let staged_path = staging_dir.join(format!(
+            "sunshine-update-{}-{}-{}.exe",
+            std::process::id(),
+            nonce,
+            attempt
+        ));
+        if staged_path.exists() {
+            continue;
+        }
+
+        fs::copy(&state.installer_path, &staged_path)
+            .map_err(|e| format!("stage installer in protected directory failed: {}", e))?;
+        if let Err(error) = validate_download_file_identity(
+            &staged_path,
+            state.expected_size,
+            Some(&state.expected_sha256),
+            Some("windows-x64-installer"),
+        ) {
+            let _ = fs::remove_file(&staged_path);
+            return Err(format!(
+                "protected installer verification failed: {}",
+                error
+            ));
+        }
+        return Ok(staged_path);
+    }
+
+    Err("create unique protected installer path failed".to_string())
+}
+
+#[cfg(target_os = "windows")]
 fn run_installer_and_wait(state: &UpdaterHelperState) -> Result<i32, String> {
     use std::os::windows::process::CommandExt;
     use std::process::Command;
 
     const CREATE_NO_WINDOW: u32 = 0x08000000;
-    let installer = Path::new(&state.installer_path);
-    if !installer.exists() {
-        return Err(format!("Installer not found: {}", state.installer_path));
+    if state.extension != "exe" {
+        return Err("Only Windows Installer .exe files are supported".to_string());
     }
+    let installer_path = stage_installer_for_elevated_run(state)?;
+    let installer = installer_path.to_string_lossy().to_string();
 
-    let status = match state.extension.as_str() {
-        "msi" => Command::new("msiexec")
-            .args(["/i", &state.installer_path, "/qn", "/norestart"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .status(),
-        "exe" => Command::new(&state.installer_path)
-            .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .status(),
-        other => return Err(format!("Unsupported installer extension: {}", other)),
-    }
-    .map_err(|e| format!("start installer failed: {}", e))?;
+    let status = Command::new(&installer)
+        .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map_err(|e| format!("start installer failed: {}", e));
+    let _ = fs::remove_file(&installer_path);
+    let status = status?;
 
     Ok(status.code().unwrap_or(-1))
 }
@@ -1404,27 +1241,31 @@ pub fn set_include_prerelease_preference(app: AppHandle, include: bool) {
 pub async fn check_for_updates(app: AppHandle) -> Result<Option<UpdateInfo>, String> {
     let include_prerelease = get_include_prerelease(&app);
     let result = check_for_updates_internal(true, include_prerelease).await;
-    save_last_check_time(&app);
+    if result.is_ok() {
+        save_last_check_time(&app);
+    }
     result
 }
 
 /// Tauri 命令：按首页中用户明确选择的发布通道检查更新。
 ///
-/// 该命令不修改侧栏 Beta 偏好；它只保证原生更新器展示的版本与用户点击的
-/// 稳定版/预发布版卡片一致。
+/// 该命令不修改侧栏 Beta 偏好；测试版仍同时比较 stable 和 prerelease，
+/// 只保证原生更新器展示的候选与用户选择的通道一致。
 #[tauri::command]
 pub async fn check_for_updates_for_channel(
     app: AppHandle,
     channel: String,
 ) -> Result<Option<UpdateInfo>, String> {
     let channel = match channel.as_str() {
-        "stable" => ReleaseChannel::Stable,
-        "prerelease" => ReleaseChannel::Prerelease,
+        "stable" => UpdateChannel::StableOnly,
+        "prerelease" => UpdateChannel::StableAndPrerelease,
         _ => return Err(format!("不支持的更新通道: {channel}")),
     };
 
     let result = check_for_updates_in_channel(true, channel).await;
-    save_last_check_time(&app);
+    if result.is_ok() {
+        save_last_check_time(&app);
+    }
     result
 }
 
@@ -1637,14 +1478,47 @@ async fn stop_sunshine_and_gui() -> Result<(), String> {
 
 // ========== 下载相关 ==========
 
-fn validate_download_url(url: &str) -> Result<(), String> {
+fn validate_download_url(url: &str, expected_filename: Option<&str>) -> Result<(), String> {
     let parsed =
         reqwest::Url::parse(url).map_err(|error| format!("下载地址格式无效: {}", error))?;
-    if parsed.scheme() != "https" {
-        return Err("下载地址必须使用 HTTPS".to_string());
+    if parsed.scheme() != "https"
+        || parsed.port().is_some_and(|port| port != 443)
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err("下载地址必须是无凭据的 HTTPS 地址".to_string());
     }
-    if parsed.host_str() != Some(GITHUB_RELEASE_HOST) {
-        return Err(format!("下载地址必须来自 {}", GITHUB_RELEASE_HOST));
+    let expected_prefix: &[&str] = match parsed.host_str() {
+        Some("github.com") => &["AlkaidLab", "foundation-sunshine", "releases", "download"],
+        Some("cnb.cool") => &[
+            "AlkaidLab",
+            "foundation-sunshine-release",
+            "-",
+            "releases",
+            "download",
+        ],
+        _ => return Err("下载地址不是允许的 Foundation Sunshine Release 地址".to_string()),
+    };
+    let segments = parsed
+        .path_segments()
+        .ok_or_else(|| "下载地址缺少路径".to_string())?
+        .collect::<Vec<_>>();
+    if segments.len() != expected_prefix.len() + 2
+        || !segments
+            .iter()
+            .take(expected_prefix.len())
+            .zip(expected_prefix)
+            .all(|(actual, expected)| *actual == *expected)
+    {
+        return Err("下载地址不是 Foundation Sunshine Release 附件".to_string());
+    }
+    if let Some(expected_filename) = expected_filename {
+        let actual_filename = metadata::decode_segment(segments[expected_prefix.len() + 1])?;
+        if actual_filename != expected_filename {
+            return Err("下载地址的文件名与 metadata 不一致".to_string());
+        }
     }
     Ok(())
 }
@@ -1665,6 +1539,121 @@ fn validate_download_filename(filename: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn download_source_name(url: &str) -> &'static str {
+    match reqwest::Url::parse(url)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(str::to_ascii_lowercase))
+        .as_deref()
+    {
+        Some("cnb.cool") => "CNB",
+        _ => "GitHub",
+    }
+}
+
+fn normalize_sha256(value: &str) -> Option<String> {
+    let value = value.strip_prefix("sha256:").unwrap_or(value).trim();
+    (value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| value.to_ascii_lowercase())
+}
+
+fn validate_download_file_identity(
+    path: &Path,
+    expected_size: Option<u64>,
+    expected_sha256: Option<&str>,
+    asset_type: Option<&str>,
+) -> Result<(), String> {
+    let metadata = fs::metadata(path).map_err(|error| format!("读取下载文件失败: {error}"))?;
+    if !metadata.is_file() {
+        return Err("下载结果不是普通文件".to_string());
+    }
+    if let Some(expected_size) = expected_size.filter(|size| *size > 0)
+        && metadata.len() != expected_size
+    {
+        return Err(format!(
+            "文件大小不匹配: expected {expected_size}, got {}",
+            metadata.len()
+        ));
+    }
+
+    let mut file = fs::File::open(path).map_err(|error| format!("打开下载文件失败: {error}"))?;
+    let mut digest = sha2::Sha256::new();
+    let mut buffer = [0u8; 1024 * 1024];
+    use std::io::Read;
+    loop {
+        let count = file
+            .read(&mut buffer)
+            .map_err(|error| format!("读取下载文件失败: {error}"))?;
+        if count == 0 {
+            break;
+        }
+        digest.update(&buffer[..count]);
+    }
+    if let Some(expected_sha256) = expected_sha256 {
+        let expected_sha256 = normalize_sha256(expected_sha256)
+            .ok_or_else(|| "expected SHA-256 必须是 64 位十六进制字符串".to_string())?;
+        let actual = format!("{:x}", digest.finalize());
+        if actual != expected_sha256 {
+            return Err(format!(
+                "SHA-256 不匹配: expected {expected_sha256}, got {actual}"
+            ));
+        }
+    }
+
+    let mut header = [0u8; 4];
+    let mut header_file =
+        fs::File::open(path).map_err(|error| format!("打开下载文件失败: {error}"))?;
+    let count = header_file
+        .read(&mut header)
+        .map_err(|error| format!("读取文件头失败: {error}"))?;
+    let valid_type = match asset_type {
+        Some("windows-x64-installer") => count >= 2 && &header[..2] == b"MZ",
+        Some("dualsense-sidecar-zip") => count >= 2 && &header[..2] == b"PK",
+        Some("checksum-json") | Some("checksum-text") | None => true,
+        Some(other) => return Err(format!("不支持的下载资产类型: {other}")),
+    };
+    if !valid_type {
+        return Err("下载文件格式与资产类型不匹配".to_string());
+    }
+    Ok(())
+}
+
+fn validate_installer_path(
+    path: &Path,
+    expected_size: Option<u64>,
+    expected_sha256: Option<&str>,
+) -> Result<PathBuf, String> {
+    let file = path
+        .canonicalize()
+        .map_err(|error| format!("无法定位安装包: {error}"))?;
+    let temp_path = std::env::temp_dir();
+    let temp_dir = temp_path
+        .canonicalize()
+        .map_err(|error| format!("无法定位临时目录: {error}"))?;
+    if file.parent() != Some(temp_dir.as_path()) {
+        return Err("安装包必须位于临时目录的顶层".to_string());
+    }
+
+    let filename = file
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "安装包文件名无效".to_string())?;
+    validate_download_filename(filename)?;
+    if !is_supported_installer_filename(filename) {
+        return Err("Panel 只支持 Windows Installer .exe 安装包".to_string());
+    }
+    validate_download_file_identity(
+        &file,
+        expected_size,
+        expected_sha256,
+        Some("windows-x64-installer"),
+    )?;
+    // Keep the validated, normal temp path for the Windows installer. The
+    // canonical path can contain a `\\?\` prefix which older installers do
+    // not consistently accept, while the canonical checks above already
+    // enforce the directory boundary and file identity.
+    Ok(temp_path.join(filename))
 }
 
 /// 发送下载进度事件到前端
@@ -1742,16 +1731,45 @@ async fn finalize_download_file(
 #[tauri::command]
 pub async fn download_update(
     url: String,
+    fallback_url: Option<String>,
     filename: String,
     expected_size: Option<u64>,
+    expected_sha256: Option<String>,
+    asset_type: Option<String>,
     app_handle: AppHandle,
 ) -> Result<serde_json::Value, DownloadCommandError> {
-    validate_download_url(&url).map_err(|detail| {
+    validate_download_url(&url, Some(&filename)).map_err(|detail| {
         DownloadCommandError::new(DownloadErrorCode::FilePreparationFailed, detail)
     })?;
     validate_download_filename(&filename).map_err(|detail| {
         DownloadCommandError::new(DownloadErrorCode::FilePreparationFailed, detail)
     })?;
+    if asset_type.as_deref() != Some("windows-x64-installer") {
+        return Err(DownloadCommandError::new(
+            DownloadErrorCode::FilePreparationFailed,
+            "Panel 只支持 Windows Installer 安装包，不下载 Portable 压缩包".to_string(),
+        ));
+    }
+    if !is_supported_installer_filename(&filename) {
+        return Err(DownloadCommandError::new(
+            DownloadErrorCode::FilePreparationFailed,
+            "Panel 只支持 Windows Installer .exe 安装包".to_string(),
+        ));
+    }
+    let expected_sha256 = expected_sha256
+        .as_deref()
+        .and_then(normalize_sha256)
+        .ok_or_else(|| {
+            DownloadCommandError::new(
+                DownloadErrorCode::FilePreparationFailed,
+                "更新 metadata 缺少有效 SHA-256".to_string(),
+            )
+        })?;
+    if let Some(fallback_url) = fallback_url.as_deref() {
+        validate_download_url(fallback_url, Some(&filename)).map_err(|detail| {
+            DownloadCommandError::new(DownloadErrorCode::FilePreparationFailed, detail)
+        })?;
+    }
 
     info!("📥 开始下载更新: {}", filename);
 
@@ -1763,7 +1781,12 @@ pub async fn download_update(
     let window = app_handle.get_webview_window("main");
 
     // 安装包已完整下载（例如用户在上次确认框点了取消）时直接复用
-    if let Some(cached_path) = find_cached_installer(&filename, expected_size) {
+    if let Some(cached_path) = find_cached_installer_verified(
+        &filename,
+        expected_size,
+        Some(&expected_sha256),
+        asset_type.as_deref(),
+    ) {
         info!("♻️ 已存在完整安装包，跳过下载: {}", filename);
         write_update_cache_marker(
             &filename,
@@ -1782,19 +1805,37 @@ pub async fn download_update(
         "清理旧的临时下载文件",
     )?;
 
+    let mut candidates = vec![github_download::DownloadCandidate {
+        name: download_source_name(&url),
+        url: url.clone(),
+    }];
+    if let Some(fallback_url) = fallback_url {
+        if !candidates
+            .iter()
+            .any(|candidate| candidate.url == fallback_url)
+        {
+            candidates.push(github_download::DownloadCandidate {
+                name: download_source_name(&fallback_url),
+                url: fallback_url,
+            });
+        }
+    }
+
     let mut last_progress_percent = 0;
-    let outcome = github_download::download_to_file_with_fallbacks(
+    let outcome = github_download::download_to_file_from_candidates(
         DownloadRequest {
             url: &url,
             destination: &partial_path,
             expected_size: expected_size.filter(|size| *size > 0),
+            expected_sha256: Some(&expected_sha256),
             max_size: expected_size.filter(|size| *size > 0),
             user_agent: "Sunshine-Control-Panel updater",
             connect_timeout: DEFAULT_CONNECT_TIMEOUT,
             response_timeout: DEFAULT_RESPONSE_TIMEOUT,
             idle_timeout: DEFAULT_IDLE_TIMEOUT,
-            overall_timeout: None,
+            overall_timeout: Some(Duration::from_secs(30 * 60)),
         },
+        &candidates,
         |event| {
             let Some(win) = window.as_ref() else {
                 return;
@@ -1839,6 +1880,19 @@ pub async fn download_update(
         };
         DownloadCommandError::new(code, error.to_string())
     })?;
+
+    if let Err(error) = validate_download_file_identity(
+        &partial_path,
+        expected_size,
+        Some(&expected_sha256),
+        asset_type.as_deref(),
+    ) {
+        let _ = tokio::fs::remove_file(&partial_path).await;
+        return Err(DownloadCommandError::new(
+            DownloadErrorCode::SourcesExhausted,
+            error,
+        ));
+    }
 
     if let Some(ref win) = window {
         emit_download_progress(
@@ -1886,8 +1940,25 @@ pub async fn download_update(
 
 /// 查询更新安装包是否已在 temp 目录中完整下载（未命中返回 `None`）。
 #[tauri::command]
-pub fn check_cached_update(filename: String, expected_size: Option<u64>) -> Option<String> {
-    find_cached_installer(&filename, expected_size).map(|path| path.to_string_lossy().to_string())
+pub fn check_cached_update(
+    filename: String,
+    expected_size: Option<u64>,
+    expected_sha256: Option<String>,
+    asset_type: Option<String>,
+) -> Option<String> {
+    if asset_type.as_deref() != Some("windows-x64-installer") {
+        return None;
+    }
+    if !is_supported_installer_filename(&filename) {
+        return None;
+    }
+    find_cached_installer_verified(
+        &filename,
+        expected_size,
+        expected_sha256.as_deref(),
+        asset_type.as_deref(),
+    )
+    .map(|path| path.to_string_lossy().to_string())
 }
 
 #[cfg(test)]
@@ -1895,25 +1966,115 @@ mod download_source_tests {
     use super::*;
 
     #[test]
-    fn download_url_requires_https_and_the_github_release_host() {
+    fn download_url_requires_an_allowlisted_foundation_release_host() {
         assert!(
             validate_download_url(
-                "https://github.com/qiin2333/sunshine/releases/download/v1/setup.exe"
+                "https://github.com/AlkaidLab/foundation-sunshine/releases/download/v1/setup.exe",
+                None,
             )
             .is_ok()
         );
+        assert!(validate_download_url(
+            "https://cnb.cool/AlkaidLab/foundation-sunshine-release/-/releases/download/v1/setup.exe",
+            None,
+        )
+        .is_ok());
 
         for invalid_url in [
-            "http://github.com/qiin2333/sunshine/releases/download/v1/setup.exe",
-            "https://github.com.example.invalid/releases/download/v1/setup.exe",
-            "https://example.invalid/qiin2333/sunshine/releases/download/v1/setup.exe",
+            "http://github.com/AlkaidLab/foundation-sunshine/releases/download/v1/setup.exe",
+            "https://github.com.example.invalid/AlkaidLab/foundation-sunshine/releases/download/v1/setup.exe",
+            "https://github.com/AlkaidLab/other/releases/download/v1/setup.exe",
+            "https://user:secret@github.com/AlkaidLab/foundation-sunshine/releases/download/v1/setup.exe",
             "not a url",
         ] {
             assert!(
-                validate_download_url(invalid_url).is_err(),
+                validate_download_url(invalid_url, None).is_err(),
                 "unexpectedly accepted {invalid_url}"
             );
         }
+
+        assert!(
+            validate_download_url(
+                "https://github.com/AlkaidLab/foundation-sunshine/releases/download/v1/setup.exe",
+                Some("setup.exe"),
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_download_url(
+                "https://github.com/AlkaidLab/foundation-sunshine/releases/download/v1/other.exe",
+                Some("setup.exe"),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn installer_path_is_limited_to_a_valid_temp_file() {
+        let temp_dir = std::env::temp_dir();
+        let filename = format!("sunshine-installer-path-test-{}.exe", std::process::id());
+        let file = temp_dir.join(&filename);
+        let nested_dir = temp_dir.join(format!(
+            "sunshine-installer-path-test-{}",
+            std::process::id()
+        ));
+        let nested_file = nested_dir.join(&filename);
+        let _ = fs::remove_file(&file);
+        let _ = fs::remove_dir_all(&nested_dir);
+
+        fs::write(&file, b"MZtest").unwrap();
+        fs::create_dir(&nested_dir).unwrap();
+        fs::write(&nested_file, b"MZtest").unwrap();
+
+        assert_eq!(validate_installer_path(&file, None, None).unwrap(), file);
+        assert!(validate_installer_path(&nested_file, None, None).is_err());
+
+        let expected_sha256 = format!("{:x}", sha2::Sha256::digest(b"MZtest"));
+        assert_eq!(
+            validate_installer_path(&file, Some(6), Some(&expected_sha256)).unwrap(),
+            file
+        );
+        assert!(validate_installer_path(&file, Some(6), Some(&"0".repeat(64))).is_err());
+
+        let _ = fs::remove_file(&file);
+        let _ = fs::remove_dir_all(&nested_dir);
+    }
+
+    #[test]
+    fn test_channel_falls_back_when_newer_candidate_has_no_compatible_asset() {
+        let asset_type = preferred_asset_type().to_string();
+        let latest = ReleaseCandidate {
+            version: "v2026.925.152547.杂鱼".to_string(),
+            prerelease: false,
+            github_release_id: Some(10),
+            published_at: None,
+            release_notes: String::new(),
+            release_page: String::new(),
+            assets: vec![ReleaseAsset {
+                asset_type,
+                name: "Sunshine-update.exe".to_string(),
+                size: 1,
+                sha256: "a".repeat(64),
+                url: String::new(),
+                fallback_url: None,
+            }],
+        };
+        let pre_latest = ReleaseCandidate {
+            version: "v2026.1001.112543.杂鱼".to_string(),
+            prerelease: true,
+            github_release_id: Some(11),
+            ..latest.clone()
+        };
+        let mut pre_without_asset = pre_latest;
+        pre_without_asset.assets.clear();
+        let catalog = ReleaseCatalog {
+            latest: Some(latest),
+            pre_latest: Some(pre_without_asset),
+        };
+
+        let selected =
+            select_compatible_candidate(&catalog, UpdateChannel::StableAndPrerelease).unwrap();
+        assert!(!selected.prerelease);
     }
 
     #[test]
@@ -1978,6 +2139,43 @@ mod update_cache_tests {
         // 大小一致才复用
         assert!(find_cached_installer(&filename, Some(size)).is_some());
         assert!(find_cached_installer(&filename, Some(size + 1)).is_none());
+
+        // 同名且同大小但内容变化时，SHA-256 不匹配，不能复用旧缓存。
+        fs::write(&file_path, b"MZold").unwrap();
+        let content_size = 5;
+        let old_sha256 = format!("{:x}", sha2::Sha256::digest(b"MZold"));
+        let new_sha256 = format!("{:x}", sha2::Sha256::digest(b"MZnew"));
+        assert!(
+            find_cached_installer_verified(
+                &filename,
+                Some(content_size),
+                Some(&old_sha256),
+                Some("windows-x64-installer"),
+            )
+            .is_some()
+        );
+        fs::write(&file_path, b"MZnew").unwrap();
+        assert!(
+            find_cached_installer_verified(
+                &filename,
+                Some(content_size),
+                Some(&old_sha256),
+                Some("windows-x64-installer"),
+            )
+            .is_none()
+        );
+        assert!(!file_path.exists(), "SHA-256 不匹配的缓存应被删除");
+        fs::write(&file_path, b"MZnew").unwrap();
+        assert!(
+            find_cached_installer_verified(
+                &filename,
+                Some(content_size),
+                Some(&new_sha256),
+                Some("windows-x64-installer"),
+            )
+            .is_some()
+        );
+        fs::write(&file_path, b"payload-payload").unwrap();
 
         // 期望大小缺省（或为 0）时回退到缓存标记
         write_update_cache_marker(&filename, size);
@@ -2097,21 +2295,26 @@ fn create_updater_work_dir() -> Result<PathBuf, String> {
 fn prepare_updater_helper(
     file_path: &str,
     extension: &str,
+    expected_size: Option<u64>,
+    expected_sha256: &str,
     target_version: Option<String>,
-) -> Result<(PathBuf, PathBuf), String> {
+) -> Result<(PathBuf, PathBuf, UpdaterHelperState), String> {
     let current_exe =
         std::env::current_exe().map_err(|e| format!("get current exe failed: {}", e))?;
     let work_dir = create_updater_work_dir()?;
 
-    let helper_exe = work_dir.join("sunshine-updater-helper.exe");
-    fs::copy(&current_exe, &helper_exe)
-        .map_err(|e| format!("copy updater helper failed: {}", e))?;
+    // The helper is the installed GUI executable itself. Keeping the elevated
+    // entry point outside the user-writable temp directory prevents a medium
+    // integrity process from replacing the helper before UAC approval.
+    let helper_exe = current_exe.clone();
 
     let state_path = work_dir.join("state.json");
     let result_path = work_dir.join("result.json");
     let state = UpdaterHelperState {
         installer_path: file_path.to_string(),
         extension: extension.to_string(),
+        expected_size,
+        expected_sha256: expected_sha256.to_string(),
         target_version,
         gui_exe_path: current_exe.to_string_lossy().to_string(),
         result_path: result_path.to_string_lossy().to_string(),
@@ -2123,16 +2326,24 @@ fn prepare_updater_helper(
     fs::write(&state_path, state_content)
         .map_err(|e| format!("write updater state failed: {}", e))?;
 
-    Ok((helper_exe, state_path))
+    Ok((helper_exe, state_path, state))
 }
 
 #[cfg(target_os = "windows")]
-fn launch_updater_helper(helper_exe: &Path, state_path: &Path) -> Result<(), String> {
-    launch_updater_helper_elevated(helper_exe, state_path)
+fn launch_updater_helper(
+    helper_exe: &Path,
+    state_path: &Path,
+    state: &UpdaterHelperState,
+) -> Result<(), String> {
+    launch_updater_helper_elevated(helper_exe, state_path, state)
 }
 
 #[cfg(target_os = "windows")]
-fn launch_updater_helper_elevated(helper_exe: &Path, state_path: &Path) -> Result<(), String> {
+fn launch_updater_helper_elevated(
+    helper_exe: &Path,
+    state_path: &Path,
+    state: &UpdaterHelperState,
+) -> Result<(), String> {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::Shell::{SHELLEXECUTEINFOW, ShellExecuteExW};
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
@@ -2140,10 +2351,19 @@ fn launch_updater_helper_elevated(helper_exe: &Path, state_path: &Path) -> Resul
 
     let verb = to_wide_null("runas");
     let file = to_wide_null(&helper_exe.to_string_lossy());
+    let expected_size = state
+        .expected_size
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "-".to_string());
     let params = to_wide_null(&format!(
-        "{} \"{}\"",
+        "{} \"{}\" \"{}\" \"{}\" \"{}\" \"{}\" \"{}\"",
         UPDATER_HELPER_ARG,
-        state_path.to_string_lossy()
+        state_path.to_string_lossy(),
+        state.installer_path,
+        expected_size,
+        state.expected_sha256,
+        state.gui_exe_path,
+        state.result_path,
     ));
     let directory = helper_exe
         .parent()
@@ -2171,6 +2391,8 @@ fn launch_updater_helper_elevated(helper_exe: &Path, state_path: &Path) -> Resul
 pub async fn install_update(
     file_path: String,
     target_version: Option<String>,
+    expected_size: Option<u64>,
+    expected_sha256: Option<String>,
     app_handle: AppHandle,
 ) -> Result<(), String> {
     #[cfg(target_os = "windows")]
@@ -2179,32 +2401,48 @@ pub async fn install_update(
 
         // 先启动更新助手；如果用户取消 UAC，串流仍然保持运行。
         emit_install_progress(&app_handle, "preparing", None, false);
-        // 检查文件扩展名
-        let path = std::path::Path::new(&file_path);
+        let expected_sha256 = match expected_sha256.as_deref().and_then(normalize_sha256) {
+            Some(value) => value,
+            None => {
+                let error = "安装前缺少有效的更新 SHA-256".to_string();
+                emit_install_progress(&app_handle, "failed", Some(&error), true);
+                return Err(error);
+            }
+        };
+        let path = match validate_installer_path(
+            Path::new(&file_path),
+            expected_size,
+            Some(&expected_sha256),
+        ) {
+            Ok(path) => path,
+            Err(error) => {
+                emit_install_progress(&app_handle, "failed", Some(&error), true);
+                return Err(error);
+            }
+        };
         let extension = path
             .extension()
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_lowercase();
 
-        if !matches!(extension.as_str(), "msi" | "exe") {
-            let error = format!("Unsupported installer extension: {}", extension);
-            emit_install_progress(&app_handle, "failed", Some(&error), true);
-            return Err(error);
-        }
-
         emit_install_progress(&app_handle, "building-command", None, false);
-        let (helper_exe, state_path) =
-            match prepare_updater_helper(&file_path, &extension, target_version) {
-                Ok(paths) => paths,
-                Err(e) => {
-                    emit_install_progress(&app_handle, "failed", Some(&e), true);
-                    return Err(e);
-                }
-            };
+        let (helper_exe, state_path, state) = match prepare_updater_helper(
+            &path.to_string_lossy(),
+            &extension,
+            expected_size,
+            &expected_sha256,
+            target_version,
+        ) {
+            Ok(paths) => paths,
+            Err(e) => {
+                emit_install_progress(&app_handle, "failed", Some(&e), true);
+                return Err(e);
+            }
+        };
 
         emit_install_progress(&app_handle, "launching-installer", None, false);
-        if let Err(e) = launch_updater_helper(&helper_exe, &state_path) {
+        if let Err(e) = launch_updater_helper(&helper_exe, &state_path, &state) {
             emit_install_progress(&app_handle, "failed", Some(&e), true);
             return Err(e);
         }
@@ -2306,6 +2544,26 @@ fn find_cached_installer(filename: &str, expected_size: Option<u64>) -> Option<P
     let actual = fs::metadata(&file_path).ok()?.len();
 
     (actual == expected).then_some(file_path)
+}
+
+fn find_cached_installer_verified(
+    filename: &str,
+    expected_size: Option<u64>,
+    expected_sha256: Option<&str>,
+    asset_type: Option<&str>,
+) -> Option<PathBuf> {
+    // A cached file must be checked against the current release identity. A
+    // size-only match is not sufficient because two releases may reuse a
+    // filename and have the same byte length.
+    let expected_sha256 = normalize_sha256(expected_sha256?)?;
+    let path = find_cached_installer(filename, expected_size)?;
+    if validate_download_file_identity(&path, expected_size, Some(&expected_sha256), asset_type)
+        .is_ok()
+    {
+        return Some(path);
+    }
+    let _ = fs::remove_file(&path);
+    None
 }
 
 /// 清理临时目录中的旧安装包

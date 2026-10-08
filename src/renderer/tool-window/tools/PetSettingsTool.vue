@@ -294,7 +294,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from '../../desktop/i18n/index.js'
-import { CODEX_AUTH_CHANGED_KEY, STORAGE_KEY, DEFAULT_CONFIG } from '../../composables/aiProviders.js'
+import { applyCodexConnectionStatus, cacheCodexConnected, CODEX_AUTH_CHANGED_KEY, DEFAULT_CONFIG, readCachedCodexConnected, STORAGE_KEY } from '../../composables/aiProviders.js'
 import { hasAiCredentials } from '../../composables/aiClient.js'
 import PetVisionConsentDialog from '../../components/PetVisionConsentDialog.vue'
 import {
@@ -411,7 +411,7 @@ const aiConfigReady = computed(() => {
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
     const localConfig = saved ? { ...DEFAULT_CONFIG, ...JSON.parse(saved) } : { ...DEFAULT_CONFIG }
-    const cfg = serverAiConfig.value || localConfig
+    const cfg = serverAiConfig.value || applyCodexConnectionStatus(localConfig, readCachedCodexConnected())
     return !!(cfg.enabled && hasAiCredentials(cfg))
   } catch {
     return false
@@ -420,16 +420,27 @@ const aiConfigReady = computed(() => {
 
 async function refreshAiConfigStatus() {
   const generation = ++aiConfigRefreshGeneration
+  let proxyUrl = ''
   try {
-    const proxyUrl = await invoke('get_proxy_url_command')
+    proxyUrl = await invoke('get_proxy_url_command')
     const response = await fetch(`${proxyUrl}/api/ai/config`)
     if (!response.ok) throw new Error(`Failed to load AI configuration (${response.status})`)
     const remoteConfig = await response.json()
     if (generation !== aiConfigRefreshGeneration) return false
+    if (typeof remoteConfig.codexConnected === 'boolean') cacheCodexConnected(remoteConfig.codexConnected)
     serverAiConfig.value = { ...DEFAULT_CONFIG, ...remoteConfig, apiKey: '' }
   } catch {
     if (generation !== aiConfigRefreshGeneration) return false
+    if (proxyUrl) {
+      try {
+        const response = await fetch(`${proxyUrl}/api/ai/codex/auth`)
+        const authStatus = response.ok ? await response.json() : null
+        if (typeof authStatus?.connected === 'boolean') cacheCodexConnected(authStatus.connected)
+      } catch { /* use the most recently cached account status */ }
+    }
+    if (generation !== aiConfigRefreshGeneration) return false
     serverAiConfig.value = null
+    aiConfigVersion.value += 1
   }
   return true
 }

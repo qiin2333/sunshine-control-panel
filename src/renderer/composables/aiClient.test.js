@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { callLLM, callVisionLLM, codexAuthPhase, codexAuthRetryDelay, fetchModels, hasAiCredentials, isCodexAuthTerminalError, requestCodexAuth } from './aiClient.js'
-import { CHATGPT_MODELS } from './aiProviders.js'
+import { applyCodexConnectionStatus, cacheCodexConnected, CHATGPT_MODELS, CODEX_AUTH_CONNECTED_KEY, readCachedCodexConnected } from './aiProviders.js'
 
 test('ChatGPT model presets use current Codex models', () => {
   assert.deepEqual(CHATGPT_MODELS, ['gpt-6-luna', 'gpt-6-sol', 'gpt-6-astra'])
@@ -31,6 +31,31 @@ test('AI credentials respect the selected OpenAI authentication mode', () => {
   assert.equal(hasAiCredentials({ provider: 'openai', authMode: 'apiKey', apiBase: 'https://api.openai.com/v1', apiKeyConfigured: true }), true)
   assert.equal(hasAiCredentials({ provider: 'openai', authMode: 'apiKey', apiBase: 'https://api.openai.com/v1' }), false)
   assert.equal(hasAiCredentials({ provider: 'ollama', apiBase: 'http://localhost:11434/v1' }), true)
+})
+
+test('ChatGPT local fallback uses the latest cached account connection state', () => {
+  const previousStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+  const values = new Map()
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, String(value)),
+    },
+  })
+  try {
+    const localConfig = { provider: 'openai', authMode: 'chatgpt', apiKeyConfigured: false }
+    assert.equal(readCachedCodexConnected(), null)
+    cacheCodexConnected(true)
+    assert.equal(values.get(CODEX_AUTH_CONNECTED_KEY), 'true')
+    assert.equal(hasAiCredentials(applyCodexConnectionStatus(localConfig, readCachedCodexConnected())), true)
+    cacheCodexConnected(false)
+    assert.equal(hasAiCredentials(applyCodexConnectionStatus(localConfig, readCachedCodexConnected())), false)
+    assert.equal(applyCodexConnectionStatus({ authMode: 'apiKey' }, true).codexConnected, undefined)
+  } finally {
+    if (previousStorage) Object.defineProperty(globalThis, 'localStorage', previousStorage)
+    else delete globalThis.localStorage
+  }
 })
 
 test('ChatGPT model discovery uses Sunshine even when an API key is saved', async () => {

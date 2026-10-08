@@ -47,7 +47,7 @@ import { cursorPosition } from '@tauri-apps/api/window'
 import { useTouchWindowDrag } from '../composables/useTouchWindowDrag.js'
 import { useI18n } from '../desktop/i18n/index.js'
 import { callVisionLLM, hasAiCredentials } from '../composables/aiClient.js'
-import { STORAGE_KEY, DEFAULT_CONFIG } from '../composables/aiProviders.js'
+import { applyCodexConnectionStatus, cacheCodexConnected, readCachedCodexConnected, STORAGE_KEY, DEFAULT_CONFIG } from '../composables/aiProviders.js'
 import {
   loadMasterEnabled,
   loadRandomEnabled,
@@ -324,9 +324,11 @@ const getAiConfig = async (signal) => {
   } catch {
     localConfig = { ...DEFAULT_CONFIG, apiKey: '' }
   }
+  localConfig = applyCodexConnectionStatus(localConfig, readCachedCodexConnected())
 
+  let proxyUrl = ''
   try {
-    const proxyUrl = await awaitWithSignal(invoke('get_proxy_url_command'), signal)
+    proxyUrl = await awaitWithSignal(invoke('get_proxy_url_command'), signal)
     if (legacyKey) {
       const migration = await fetch(`${proxyUrl}/api/ai/config`, {
         method: 'POST',
@@ -341,9 +343,25 @@ const getAiConfig = async (signal) => {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitizedStoredConfig))
     }
     const response = await fetch(`${proxyUrl}/api/ai/config`, { signal })
-    if (response.ok) return { ...localConfig, ...(await response.json()), apiKey: '' }
+    if (response.ok) {
+      const serverConfig = await response.json()
+      if (typeof serverConfig.codexConnected === 'boolean') cacheCodexConnected(serverConfig.codexConnected)
+      return { ...localConfig, ...serverConfig, apiKey: '' }
+    }
   } catch {
     // Fall back to the safe local snapshot while Sunshine is unavailable.
+  }
+  if (proxyUrl && localConfig.authMode === 'chatgpt') {
+    try {
+      const response = await fetch(`${proxyUrl}/api/ai/codex/auth`, { signal })
+      const authStatus = response.ok ? await response.json() : null
+      if (typeof authStatus?.connected === 'boolean') {
+        cacheCodexConnected(authStatus.connected)
+        localConfig = applyCodexConnectionStatus(localConfig, authStatus.connected)
+      }
+    } catch {
+      // Keep the last known connection status in the local fallback.
+    }
   }
   return localConfig
 }

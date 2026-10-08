@@ -2,7 +2,7 @@ import { ref, reactive, computed, watch, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { callLLM, codexAuthPhase, codexAuthRetryDelay, fetchModels, hasAiCredentials, isCodexAuthTerminalError, requestCodexAuth } from './aiClient.js'
 import { getAppsContext, getLogsContext, parseAction, executeAction } from './aiActions.js'
-import { AI_PROVIDERS, CHATGPT_MODELS, CODEX_AUTH_CHANGED_KEY, DEFAULT_CONFIG, STORAGE_KEY } from './aiProviders.js'
+import { AI_PROVIDERS, cacheCodexConnected, CHATGPT_MODELS, CODEX_AUTH_CHANGED_KEY, DEFAULT_CONFIG, STORAGE_KEY } from './aiProviders.js'
 import { useI18n } from '../desktop/i18n/index.js'
 import { openExternalUrl } from '../tauri-adapter.js'
 
@@ -336,6 +336,7 @@ export function useAiAssistant() {
     const previousPending = authPending.value
     const previousFlowId = authFlowId
     config.codexConnected = Boolean(result.connected)
+    cacheCodexConnected(config.codexConnected)
     if (previousConnected !== config.codexConnected) {
       modelDiscoveryGeneration++
       isFetchingModels.value = false
@@ -458,16 +459,17 @@ export function useAiAssistant() {
     if (disposed || isAuthBusy.value) return
     isAuthBusy.value = true
     stopAuthPolling()
+    const generation = authGeneration
     try {
       const result = await requestCodexAuth('logout')
-      if (disposed) return
+      if (disposed || generation !== authGeneration) return
       updateAuthState(result)
       ElMessage.success(ui().chatgptDisconnected)
     } catch (error) {
-      if (disposed) return
+      if (disposed || generation !== authGeneration) return
       ElMessage.error(ui().chatgptLoginFailed.replace('{error}', error.message))
     } finally {
-      isAuthBusy.value = false
+      if (!disposed) isAuthBusy.value = false
     }
   }
 

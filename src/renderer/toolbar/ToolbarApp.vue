@@ -1920,11 +1920,16 @@ const initBubbleClickThrough = () => {
 
 const initMenuOutsideClose = async () => {
   try {
-    unlistenMenuOutsideClose = await appWindow.onFocusChanged(({ payload: focused }) => {
+    const unlisten = await appWindow.onFocusChanged(({ payload: focused }) => {
       if (!focused) {
         menuVisible.value = false
       }
     })
+    if (componentDisposed) {
+      unlisten()
+      return
+    }
+    unlistenMenuOutsideClose = unlisten
   } catch (error) {
     console.warn('[桌宠HitTest] onFocusChanged 失败', error)
   }

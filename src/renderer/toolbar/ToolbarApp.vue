@@ -1349,6 +1349,7 @@ const finishDrag = (generation, pointerId, preserveMoved = false) => {
   if (!isCurrentDrag(generation, pointerId)) return
 
   clearDragState({ preserveMoved })
+  applyToolbarWindowMode()
   if (preserveMoved) {
     resetMovedAfterClick()
   }
@@ -1657,6 +1658,13 @@ const touchApplyPosition = async () => {
   }
 }
 
+// Idle keeps the native window at the pet size. Touch does not move the Win32
+// cursor, so a 240x240 transparent window plus cursor-based hit testing can
+// pass the first finger press through to the desktop.
+watch(menuVisible, () => {
+  applyToolbarWindowMode()
+})
+
 const onDragMove = (e) => {
   if (
     !isDragging ||
@@ -1782,7 +1790,8 @@ const onIconClick = () => {
   if (!hasMoved) toggleMenu()
 }
 
-// 窗口鼠标命中测试：透明区域穿透到下层窗口/桌面。
+// 窗口鼠标命中测试：菜单关闭时窗口本身已经缩小到桌宠尺寸，不需要穿透。
+// 只有话术气泡需要暂时使用 240x240 视觉区域，才继续用鼠标光标做穿透。
 // Tauri 透明窗口默认整窗吃鼠标事件，CSS 的 pointer-events:none 只影响 DOM，
 // 必须用 setIgnoreCursorEvents 在 OS 层切换。
 //
@@ -1796,6 +1805,7 @@ const onIconClick = () => {
 let cursorIgnoreDesired = false
 let cursorIgnoreApplied = false
 let cursorIgnoreUpdate = null
+let activeToolbarWindowExpanded = null
 let lastHitCursorX = Number.NaN
 let lastHitCursorY = Number.NaN
 let cursorMotionObserved = false
@@ -1918,6 +1928,45 @@ const initBubbleClickThrough = () => {
   scheduleNextHitTest(0)
 }
 
+const stopCursorHitTest = () => {
+  hitTestEnabled = false
+  if (hitTestTimer !== null) {
+    clearTimeout(hitTestTimer)
+    hitTestTimer = null
+  }
+  setCursorIgnore(false)
+}
+
+const applyToolbarWindowMode = async () => {
+  const expanded = menuVisible.value || speechVisible.value
+  if (activeToolbarWindowExpanded === expanded) {
+    stopCursorHitTest()
+    if (expanded && !menuVisible.value) {
+      initBubbleClickThrough()
+    }
+    return
+  }
+
+  activeToolbarWindowExpanded = expanded
+  stopCursorHitTest()
+  try {
+    await invoke('set_toolbar_window_expanded', { expanded })
+  } catch (error) {
+    activeToolbarWindowExpanded = null
+    console.warn('[桌宠HitTest] set_toolbar_window_expanded 失败', expanded, error)
+    return
+  }
+  if (expanded && !menuVisible.value) {
+    initBubbleClickThrough()
+  }
+}
+
+watch(speechVisible, () => {
+  if (dragPointerId === null) {
+    applyToolbarWindowMode()
+  }
+})
+
 const initMenuOutsideClose = async () => {
   try {
     const unlisten = await appWindow.onFocusChanged(({ payload: focused }) => {
@@ -1937,10 +1986,10 @@ const initMenuOutsideClose = async () => {
 
 onMounted(async () => {
   componentDisposed = false
-  // 先建立跨窗口通信和命中测试，避免资源加载期间丢失设置请求。
+  // 先建立跨窗口通信，再把原生窗口缩到桌宠尺寸，让第一次触摸直接可命中。
   initSpeechBroadcast()
   initMenuOutsideClose()
-  initBubbleClickThrough()
+  applyToolbarWindowMode()
   try {
     await initPixiApp()
   } catch (error) {
@@ -1991,8 +2040,7 @@ onUnmounted(() => {
   cancelSpeechAnimationFrame()
   cleanupPixiApp()
   // 清理拖拽
-  hitTestEnabled = false
-  if (hitTestTimer) { clearTimeout(hitTestTimer); hitTestTimer = null }
+  stopCursorHitTest()
   if (unlistenMenuOutsideClose) {
     unlistenMenuOutsideClose()
     unlistenMenuOutsideClose = null

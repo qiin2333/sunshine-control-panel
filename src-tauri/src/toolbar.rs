@@ -4,7 +4,13 @@ use crate::windows;
 use log::{debug, error, warn};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
+
+/// The toolbar is compact while idle and expands only for the radial menu.
+/// Keeping the idle window at the 80x80 pet size lets touch input reach the pet
+/// directly; OS cursor hit-testing cannot see where a finger is touching.
+static TOOLBAR_EXPANDED: AtomicBool = AtomicBool::new(false);
 
 // 获取工具栏配置文件路径
 fn get_toolbar_config_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
@@ -265,6 +271,57 @@ fn default_toolbar_position(
     )
 }
 
+fn set_toolbar_window_expanded_internal<R: Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    expanded: bool,
+) -> Result<(), String> {
+    const COMPACT_SIZE: f64 = 80.0;
+    const EXPANDED_SIZE: f64 = 240.0;
+
+    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    let target_logical = if expanded {
+        EXPANDED_SIZE
+    } else {
+        COMPACT_SIZE
+    };
+    let target_physical = (target_logical * scale).round() as i32;
+    let current_size = window.outer_size().map_err(|e| e.to_string())?;
+    let expected_size = target_physical.max(1) as u32;
+    if current_size.width == expected_size && current_size.height == expected_size {
+        return Ok(());
+    }
+
+    let current_position = window.outer_position().map_err(|e| e.to_string())?;
+    let center_x = current_position.x as f64 + current_size.width as f64 / 2.0;
+    let center_y = current_position.y as f64 + current_size.height as f64 / 2.0;
+    let target_position = tauri::PhysicalPosition::new(
+        (center_x - target_physical as f64 / 2.0).round() as i32,
+        (center_y - target_physical as f64 / 2.0).round() as i32,
+    );
+    let target_position =
+        clamp_tool_window_position(window, target_position, target_logical, target_logical);
+
+    window
+        .set_size(tauri::Size::Physical(tauri::PhysicalSize::new(
+            expected_size,
+            expected_size,
+        )))
+        .map_err(|e| e.to_string())?;
+    window
+        .set_position(target_position)
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_toolbar_window_expanded(
+    window: tauri::WebviewWindow,
+    expanded: bool,
+) -> Result<(), String> {
+    TOOLBAR_EXPANDED.store(expanded, Ordering::SeqCst);
+    set_toolbar_window_expanded_internal(&window, expanded)
+}
+
 // 辅助函数：创建工具窗口
 pub fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &str) -> Result<(), String> {
     let is_nr = tool_type == "nr";
@@ -471,23 +528,16 @@ pub fn create_toolbar_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<
             windows::disable_context_menu(&win);
             crate::power::refresh_ecoqos_state(app);
 
-            // 延迟 500ms 检查窗口尺寸（WebView2 初始化可能意外扩大窗口）
+            // 延迟 500ms 检查窗口尺寸（WebView2 初始化可能意外扩大窗口）。
+            // Idle is compact so touch can hit the pet without a mouse cursor.
             let win_check = win.clone();
-            let target = toolbar_size;
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                if let Ok(size) = win_check.inner_size() {
-                    let sf = win_check.scale_factor().unwrap_or(1.0);
-                    let expected_phys = (target * sf) as u32;
-                    if size.width != expected_phys || size.height != expected_phys {
-                        warn!(
-                            "⚠️ 窗口尺寸异常！期望 {}x{} 实际 {}x{}",
-                            expected_phys, expected_phys, size.width, size.height
-                        );
-                        let _ = win_check.set_size(tauri::Size::Physical(
-                            tauri::PhysicalSize::new(expected_phys, expected_phys),
-                        ));
-                    }
+                if TOOLBAR_EXPANDED.load(Ordering::SeqCst) {
+                    return;
+                }
+                if let Err(e) = set_toolbar_window_expanded_internal(&win_check, false) {
+                    warn!("⚠️ 工具栏紧凑尺寸设置失败: {}", e);
                 }
             });
 

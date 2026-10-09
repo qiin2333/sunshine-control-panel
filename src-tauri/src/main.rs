@@ -196,6 +196,7 @@ fn main() {
             toolbar::handle_toolbar_menu_action,
             toolbar::save_toolbar_position,
             toolbar::is_primary_mouse_button_pressed,
+            toolbar::set_toolbar_window_expanded,
             system::get_current_dpi,
             system::set_desktop_dpi,
             native_tools::open_native_tool,

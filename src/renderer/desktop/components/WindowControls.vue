@@ -3,7 +3,7 @@
     <button 
       class="control-btn minimize-btn" 
       @click="handleMinimize" 
-      title="最小化"
+      :title="t.sidebar.minimize"
       :disabled="disabled"
     >
       <svg viewBox="0 0 10 1">
@@ -13,7 +13,7 @@
     <button 
       class="control-btn maximize-btn" 
       @click="handleToggleMaximize" 
-      :title="isMaximized ? '还原' : '最大化'"
+      :title="isMaximized ? t.sidebar.restore : t.sidebar.maximize"
       :disabled="disabled"
     >
       <svg v-if="!isMaximized" viewBox="0 0 10 10">
@@ -27,7 +27,7 @@
     <button 
       class="control-btn close-btn" 
       @click="handleClose" 
-      title="关闭"
+      :title="t.windowActions.close"
       :disabled="disabled"
     >
       <svg viewBox="0 0 10 10">
@@ -41,6 +41,9 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useWindowControls } from '../composables/useWindowControls'
+import { useI18n } from '../i18n/index.js'
+
+const { t } = useI18n()
 
 const props = defineProps({
   disabled: {

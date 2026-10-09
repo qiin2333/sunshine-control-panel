@@ -1,9 +1,12 @@
 import { ElMessage } from 'element-plus'
+import { useI18n } from '../desktop/i18n/index.js'
+import { formatMessage } from '../shared/format-message.js'
 
 /**
  * 窗口控制 Composable
  */
 export function useWindowControls(isMaximized) {
+  const { t } = useI18n()
   /**
    * 执行窗口操作
    * @param {string} action - 操作名称 (minimize/hide)
@@ -17,7 +20,7 @@ export function useWindowControls(isMaximized) {
       console.log(`✅ 窗口已${actionName}`)
     } catch (error) {
       console.error(`${actionName}窗口失败:`, error)
-      ElMessage.error(`${actionName}失败: ${error.message}`)
+      ElMessage.error(formatMessage(t.value.windowActions.actionFailed, { action: actionName }))
     }
   }
 
@@ -25,7 +28,7 @@ export function useWindowControls(isMaximized) {
    * 最小化窗口
    */
   const minimizeWindow = async () => {
-    await performWindowAction('minimize', '最小化')
+    await performWindowAction('minimize', t.value.windowActions.minimize)
   }
 
   /**
@@ -49,7 +52,7 @@ export function useWindowControls(isMaximized) {
       }
     } catch (error) {
       console.error('❌ 切换最大化失败:', error)
-      ElMessage.error(`切换最大化失败: ${error}`)
+      ElMessage.error(t.value.windowActions.toggleMaximizeFailed)
     }
   }
 
@@ -57,7 +60,7 @@ export function useWindowControls(isMaximized) {
    * 关闭窗口（隐藏）
    */
   const closeWindow = async () => {
-    await performWindowAction('hide', '隐藏')
+    await performWindowAction('hide', t.value.windowActions.hide)
   }
 
   return {

@@ -1,4 +1,70 @@
 export const en = {
+  windowTitles: { toolbar: 'Toolbar', toolWindow: 'Tool Window' },
+  "toolActions": {
+    "adminRequiredTitle": "Administrator Privileges Required",
+    "cleanupAdminRequired": "Cleaning temporary files requires administrator privileges.\n\nRestart the app as administrator?",
+    "restartAsAdmin": "Restart as Administrator",
+    "cleanupTitle": "Clean Unused Files",
+    "cleanupConfirm": "This will delete:\n1. Cover images not used by any app\n2. temp_ files in the config directory\n\nContinue?",
+    "cleaning": "Cleaning unused files...",
+    "cleanupComplete": "Cleanup Complete",
+    "cleanupSummary": "Deleted files: {count}\nFreed space: {size} KB",
+    "cleanupEmpty": "No files need cleaning.",
+    "cleanupFailed": "Could not clean unused files. See the log for details.",
+    "elevateTitle": "Administrator Privileges",
+    "elevateConfirm": "The app will restart with administrator privileges and this window will close. Continue?",
+    "requestingAdmin": "Requesting administrator privileges...",
+    "restartingAsAdmin": "Restarting as administrator...",
+    "restartFailed": "Could not restart the app. See the log for details.",
+    "checkingUpdates": "Checking for updates...",
+    "checkUpdatesFailed": "Could not check for updates. See the log for details.",
+    "versionSkipped": "Version {version} will be skipped during the next automatic update check.",
+    "windowCreateFailed": "Could not create the {title} window. See the log for details.",
+    "windowOpenFailed": "Could not open {title}. See the log for details."
+  },
+  "controllerMeta": {
+    "preparing": "Preparing the gamepad test tool...",
+    "title": "Gamepad Test Tool",
+    "description": "ControllerMeta is a high-precision gamepad analysis tool (live stick trajectories, 8000 Hz polling rate detection, vibration tests, and more).\n\nFirst use requires downloading and installing it (about 17 MB, from GitHub Releases).",
+    "downloadAndLaunch": "Download and Launch",
+    "openWeb": "Open Web Version",
+    "downloading": "⏳ Downloading ControllerMeta {version} ({size} MB)... 0%",
+    "downloadProgress": "⏳ Downloading {version} - {downloaded}/{size} MB ({progress}%)",
+    "installed": "ControllerMeta {version} installed. Launching...",
+    "launched": "ControllerMeta{version} launched.",
+    "launchFailed": "Could not launch ControllerMeta. See the log for details.",
+    "notInstalled": "ControllerMeta is not installed. Download it first.",
+    "downloadFailed": "Could not download ControllerMeta. Check your connection and see the log for details.",
+    "closeBeforeUpdate": "Close ControllerMeta before updating it, then try again.",
+    "updateTitle": "ControllerMeta Update Available",
+    "updateMessage": "Installed: {current}. Latest: {latest}. Click this notification to download the update and restart ControllerMeta.",
+    "preparingUpdate": "Preparing the update...",
+    "checkingRelease": "🔍 Checking the latest ControllerMeta release...",
+    "releaseFailed": "Could not check the ControllerMeta release. Check your connection and see the log for details.",
+    "noDownload": "No downloadable installer was found. Opening the official website.",
+    "unavailable": "The gamepad test tool is unavailable. See the log for details."
+  },
+  "coverPicker": {
+    "title": "Update Cover",
+    "searchPlaceholder": "Search Steam games...",
+    "searching": "Searching...",
+    "search": "Search",
+    "noResults": "No matching results found",
+    "searchFailed": "Could not search Steam covers. See the log for details.",
+    "uploadFailed": "Could not upload the cover. See the log for details."
+  },
+  "windowActions": {
+    "close": "Close",
+    "select": "Please select",
+    "actionFailed": "Could not {action} the window. See the log for details.",
+    "minimize": "minimize",
+    "hide": "hide",
+    "toggleMaximizeFailed": "Could not maximize or restore the window. See the log for details."
+  },
+  "routeTitles": {
+    "home": "Streaming Management",
+    "welcome": "Welcome"
+  },
   sunshineFrame: {
     preparing: 'Preparing {path} ...',
     proxyUnavailable: 'The local Sunshine Web UI could not be reached. A proxy or TUN service may be intercepting localhost, 127.0.0.0/8, or IPv6 loopback traffic. Exclude loopback traffic from the proxy and try again.',
@@ -681,6 +747,7 @@ Output only one short sentence, no explanation. Reply in English.`,
   },
 
   hwinfo: {
+    selectSensors: 'Select sensors to monitor first.',
     title: 'HWiNFO Hardware Monitor',
     unavailable: 'HWiNFO is not running or shared memory is disabled',
     enableHint: 'Enable Shared Memory Support in HWiNFO settings',

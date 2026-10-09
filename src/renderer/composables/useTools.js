@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import { ElMessage, ElMessageBox, ElLoading, ElNotification } from 'element-plus'
 import { openExternalUrl, tools, controllerMeta } from '@/tauri-adapter.js'
 import { useI18n } from '../desktop/i18n/index.js'
+import { formatMessage } from '../shared/format-message.js'
 
 // Module-scoped reactive flag so all sidebar instances share state.
 const clipboardSyncEnabled = ref(false)
@@ -18,7 +19,7 @@ export function useTools() {
    * 打开串流计时器
    */
   const openTimer = async () => {
-    await createWindow('/stop-clock-canvas/index.html', '串流计时器', {
+    await createWindow('/stop-clock-canvas/index.html', t.value.sidebar.streamTimer, {
       prefix: 'timer',
       width: 1080,
       height: 600,
@@ -90,9 +91,9 @@ export function useTools() {
 
       if (!isRunningAsAdmin) {
         // 不是管理员，提示重启
-        await ElMessageBox.confirm('清理临时文件需要管理员权限。\n\n是否以管理员身份重启应用？', '需要管理员权限', {
-          confirmButtonText: '以管理员重启',
-          cancelButtonText: '取消',
+        await ElMessageBox.confirm(t.value.toolActions.cleanupAdminRequired, t.value.toolActions.adminRequiredTitle, {
+          confirmButtonText: t.value.toolActions.restartAsAdmin,
+          cancelButtonText: t.value.common.cancel,
           type: 'warning',
         })
 
@@ -103,18 +104,18 @@ export function useTools() {
 
       // 已经是管理员，继续执行清理
       await ElMessageBox.confirm(
-        '此操作将删除：\n1. 未被应用使用的封面图片\n2. config 目录下的 temp_ 临时文件\n\n是否继续？',
-        '清理无用文件',
+        t.value.toolActions.cleanupConfirm,
+        t.value.toolActions.cleanupTitle,
         {
-          confirmButtonText: '确定',
-          cancelButtonText: '取消',
+          confirmButtonText: t.value.common.confirm,
+          cancelButtonText: t.value.common.cancel,
           type: 'warning',
         },
       )
 
       // 显示加载提示
       const loading = ElMessage({
-        message: '正在清理无用文件...',
+        message: t.value.toolActions.cleaning,
         type: 'info',
         duration: 0,
       })
@@ -128,25 +129,27 @@ export function useTools() {
       if (result.success) {
         if (result.deleted_count > 0) {
           ElMessageBox.alert(
-            `${result.message}\n\n删除的文件数: ${result.deleted_count}\n释放的空间: ${(
-              result.freed_space / 1024
-            ).toFixed(2)} KB`,
-            '清理完成',
+            formatMessage(t.value.toolActions.cleanupSummary, {
+              count: result.deleted_count,
+              size: (result.freed_space / 1024).toFixed(2),
+            }),
+            t.value.toolActions.cleanupComplete,
             {
-              confirmButtonText: '确定',
+              confirmButtonText: t.value.common.confirm,
               type: 'success',
             },
           )
         } else {
-          ElMessage.success(result.message)
+          ElMessage.success(t.value.toolActions.cleanupEmpty)
         }
       } else {
-        ElMessage.error('清理失败: ' + result.message)
+        console.error('Cleanup failed:', result.message)
+        ElMessage.error(t.value.toolActions.cleanupFailed)
       }
     } catch (error) {
       if (error !== 'cancel') {
         console.error('清理文件失败:', error)
-        ElMessage.error('清理文件失败: ' + error)
+        ElMessage.error(t.value.toolActions.cleanupFailed)
       }
     }
   }
@@ -157,25 +160,25 @@ export function useTools() {
   const restartAsAdmin = async () => {
     try {
       // 确认对话框
-      await ElMessageBox.confirm('将以管理员权限重启应用，当前窗口会关闭。是否继续？', '提升权限', {
-        confirmButtonText: '确定',
-        cancelButtonText: '取消',
+      await ElMessageBox.confirm(t.value.toolActions.elevateConfirm, t.value.toolActions.elevateTitle, {
+        confirmButtonText: t.value.common.confirm,
+        cancelButtonText: t.value.common.cancel,
         type: 'warning',
       })
 
       // 显示提示
-      ElMessage.info('正在请求管理员权限...')
+      ElMessage.info(t.value.toolActions.requestingAdmin)
 
       // 调用 Tauri 命令
       const { invoke } = await import('@tauri-apps/api/core')
       await invoke('restart_as_admin')
 
       // 如果到这里说明成功请求了重启
-      ElMessage.success('正在以管理员权限重启...')
+      ElMessage.success(t.value.toolActions.restartingAsAdmin)
     } catch (error) {
       if (error !== 'cancel') {
         console.error('重启失败:', error)
-        ElMessage.error('重启失败: ' + error)
+        ElMessage.error(t.value.toolActions.restartFailed)
       }
     }
   }
@@ -187,7 +190,7 @@ export function useTools() {
     try {
       const { invoke } = await import('@tauri-apps/api/core')
 
-      ElMessage.info('正在检查更新...')
+      ElMessage.info(t.value.toolActions.checkingUpdates)
 
       const hasExplicitChannel = channel === 'stable' || channel === 'prerelease'
       const result = hasExplicitChannel
@@ -200,7 +203,7 @@ export function useTools() {
       return null
     } catch (error) {
       console.error('检查更新失败:', error)
-      ElMessage.error('检查更新失败: ' + error)
+      ElMessage.error(t.value.toolActions.checkUpdatesFailed)
       return null
     }
   }
@@ -236,11 +239,11 @@ export function useTools() {
 
       newWindow.once('tauri://error', (e) => {
         console.error(`❌ ${title}窗口创建失败:`, e)
-        ElMessage.error(`${title}窗口创建失败`)
+        ElMessage.error(formatMessage(t.value.toolActions.windowCreateFailed, { title }))
       })
     } catch (error) {
       console.error(`❌ 打开${title}失败:`, error)
-      ElMessage.error(`打开${title}失败: ${error.message}`)
+      ElMessage.error(formatMessage(t.value.toolActions.windowOpenFailed, { title }))
     }
   }
 
@@ -256,7 +259,7 @@ export function useTools() {
     const FALLBACK_WEB = 'https://hardwaretester.com/gamepad'
     const OFFICIAL_SITE = 'https://www.controllermeta.com/'
 
-    ElMessage.info('正在准备手柄测试工具...')
+    ElMessage.info(t.value.controllerMeta.preparing)
 
     // 规范化版本号比较：忽略 v 前缀、按数字段比较
     const normalizeVersion = (v) =>
@@ -281,30 +284,33 @@ export function useTools() {
     // 执行下载 + 启动的完整流程（已有 loading 实例时复用）
     const downloadAndLaunch = async (release, loading) => {
       const sizeMb = release.download_size ? (release.download_size / 1024 / 1024).toFixed(1) : '?'
-      loading.setText(`⏳ 正在下载 ControllerMeta ${release.version} (${sizeMb} MB)... 0%`)
+      loading.setText(formatMessage(t.value.controllerMeta.downloading, { version: release.version, size: sizeMb }))
 
       const { listen } = await import('@tauri-apps/api/event')
       const unlisten = await listen('controllermeta-download-progress', (event) => {
         const p = event.payload?.progress ?? 0
         const downloaded = ((event.payload?.downloaded ?? 0) / 1024 / 1024).toFixed(1)
-        loading.setText(`⏳ 下载中 ${release.version} - ${downloaded}/${sizeMb} MB (${p}%)`)
+        loading.setText(formatMessage(t.value.controllerMeta.downloadProgress, { version: release.version, downloaded, size: sizeMb, progress: p }))
       })
 
       try {
         await controllerMeta.download(release.download_url, release.version)
         unlisten()
         loading.close()
-        ElMessage.success(`ControllerMeta ${release.version} 安装完成，正在启动...`)
+        ElMessage.success(formatMessage(t.value.controllerMeta.installed, { version: release.version }))
         try {
           await controllerMeta.launch()
         } catch (err) {
-          ElMessage.error(`启动失败: ${err}`)
+          console.error('[ControllerMeta] launch failed:', err)
+          ElMessage.error(String(err).includes('ControllerMeta 未安装')
+            ? t.value.controllerMeta.notInstalled : t.value.controllerMeta.launchFailed)
         }
       } catch (err) {
         unlisten()
         loading.close()
         console.error('[ControllerMeta] download failed:', err)
-        ElMessage.error(`下载失败: ${err}`)
+        ElMessage.error(String(err).includes('无法覆盖已有版本')
+          ? t.value.controllerMeta.closeBeforeUpdate : t.value.controllerMeta.downloadFailed)
       }
     }
 
@@ -315,9 +321,11 @@ export function useTools() {
         // 已安装：先启动（不阻塞），然后后台检查更新
         try {
           await controllerMeta.launch()
-          ElMessage.success(`已启动 ControllerMeta${status.version ? ' ' + status.version : ''}`)
+          ElMessage.success(formatMessage(t.value.controllerMeta.launched, { version: status.version ? ' ' + status.version : '' }))
         } catch (err) {
-          ElMessage.error(`启动失败: ${err}`)
+          console.error('[ControllerMeta] launch failed:', err)
+          ElMessage.error(String(err).includes('ControllerMeta 未安装')
+            ? t.value.controllerMeta.notInstalled : t.value.controllerMeta.launchFailed)
           return
         }
 
@@ -327,8 +335,8 @@ export function useTools() {
             const release = await controllerMeta.checkRelease()
             if (release?.download_url && status.version && compareVersion(release.version, status.version) > 0) {
               ElNotification({
-                title: 'ControllerMeta 有新版本',
-                message: `当前 ${status.version}，最新 ${release.version}。点击「更新」下载并重启。`,
+                title: t.value.controllerMeta.updateTitle,
+                message: formatMessage(t.value.controllerMeta.updateMessage, { current: status.version, latest: release.version }),
                 type: 'info',
                 duration: 0,
                 position: 'bottom-right',
@@ -336,7 +344,7 @@ export function useTools() {
                 onClick: async () => {
                   const loading = ElLoading.service({
                     lock: true,
-                    text: '准备更新...',
+                    text: t.value.controllerMeta.preparingUpdate,
                     background: 'rgba(0, 0, 0, 0.5)',
                   })
                   await downloadAndLaunch(release, loading)
@@ -355,13 +363,13 @@ export function useTools() {
       let choice
       try {
         choice = await ElMessageBox({
-          title: '手柄测试工具',
+          title: t.value.controllerMeta.title,
           message:
-            'ControllerMeta 是一款高精度手柄分析工具（实时摇杆轨迹、8000Hz 回报率检测、震动测试等）。\n\n首次使用需要下载安装（约 17 MB，来自 GitHub Releases）。',
+            t.value.controllerMeta.description,
           showCancelButton: true,
           distinguishCancelAndClose: true,
-          confirmButtonText: '下载并启动',
-          cancelButtonText: '打开网页版',
+          confirmButtonText: t.value.controllerMeta.downloadAndLaunch,
+          cancelButtonText: t.value.controllerMeta.openWeb,
           closeOnClickModal: false,
           type: 'info',
         })
@@ -379,7 +387,7 @@ export function useTools() {
 
       const loading = ElLoading.service({
         lock: true,
-        text: '🔍 正在查询 ControllerMeta 最新版本...',
+        text: t.value.controllerMeta.checkingRelease,
         background: 'rgba(0, 0, 0, 0.5)',
       })
 
@@ -389,14 +397,14 @@ export function useTools() {
       } catch (err) {
         loading.close()
         console.error('[ControllerMeta] checkRelease failed:', err)
-        ElMessage.error(`查询版本失败（可能是网络问题）: ${err}`)
+        ElMessage.error(t.value.controllerMeta.releaseFailed)
         await openExternalUrl(OFFICIAL_SITE)
         return
       }
 
       if (!release?.download_url) {
         loading.close()
-        ElMessage.warning('未找到可下载的安装包，已打开官网')
+        ElMessage.warning(t.value.controllerMeta.noDownload)
         await openExternalUrl(OFFICIAL_SITE)
         return
       }
@@ -404,7 +412,7 @@ export function useTools() {
       await downloadAndLaunch(release, loading)
     } catch (err) {
       console.error('[ControllerMeta] openGamepadTest failed:', err)
-      ElMessage.error(`手柄测试工具不可用: ${err}`)
+      ElMessage.error(t.value.controllerMeta.unavailable)
       await openExternalUrl(FALLBACK_WEB)
     }
   }

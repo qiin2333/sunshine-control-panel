@@ -81,6 +81,8 @@ export const translations = {
       viewPrerelease: '查看预发布版本'
     },
     clients: {
+      enhancedAndroid: '威力加强版 Moonlight-Android',
+      crownAndroid: '王冠版 Moonlight-Android',
       title: '📱 推荐的 Moonlight Client',
       subtitle: '建议使用以下经过优化的客户端获得最佳的串流体验',
       downloadBtn: '下载 →'
@@ -187,6 +189,8 @@ export const translations = {
       viewPrerelease: 'View Pre-release'
     },
     clients: {
+      enhancedAndroid: 'Moonlight-Android (Enhanced)',
+      crownAndroid: 'Moonlight-Android (Crown)',
       title: '📱 Recommended Moonlight Clients',
       subtitle: 'Use these optimized clients for the best streaming experience',
       downloadBtn: 'Download →'

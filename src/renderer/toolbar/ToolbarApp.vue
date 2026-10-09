@@ -1,6 +1,7 @@
 <template>
   <div id="toolbar-container" :class="{ 'menu-open': menuVisible }"
        @click.self="handleOutsideClick"
+       @pointerup.self="handleOutsideClick"
        @pointerdown.self="onContainerDragStart"
        @contextmenu.prevent>
     <!-- 气泡菜单 -->
@@ -10,7 +11,7 @@
           <div
             class="bubble-item"
             :class="{ danger: item.danger }"
-            :style="{ animationDelay: `${index * 100}ms` }"
+            :style="{ animationDelay: `${index * 40}ms` }"
             @click="handleMenuItem(item.id)"
             :title="item.label"
           >
@@ -791,8 +792,9 @@ const toggleMenu = () => {
 }
 
 const handleOutsideClick = () => {
-  // 点击容器空白区域时关闭菜单
-  if (menuVisible.value) {
+  // 触摸 pointerdown 被 preventDefault 后，WebView2 可能不再合成 click。
+  // 在同一个空白区域监听 pointerup，同时保留 mouse click 路径。
+  if (menuVisible.value && !hasMoved) {
     menuVisible.value = false
   }
 }
@@ -825,7 +827,7 @@ const getBubbleStyle = (index) => {
 
   return {
     transform: `translate(${Math.cos(rad) * outerRadius}px, ${Math.sin(rad) * outerRadius}px)`,
-    transitionDelay: `${index * 200}ms`,
+    transitionDelay: `${index * 40}ms`,
   }
 }
 
@@ -1794,10 +1796,15 @@ const onIconClick = () => {
 let cursorIgnoreDesired = false
 let cursorIgnoreApplied = false
 let cursorIgnoreUpdate = null
+let lastHitCursorX = Number.NaN
+let lastHitCursorY = Number.NaN
+let cursorMotionObserved = false
+let unlistenMenuOutsideClose = null
 let hitTestTimer = null
 let hitTestEnabled = false
 const HIT_TEST_ACTIVE_INTERVAL_MS = 80
 const HIT_TEST_IDLE_INTERVAL_MS = 250
+const CURSOR_MOTION_THRESHOLD_PX = 1
 
 const flushCursorIgnore = async () => {
   let failed = false
@@ -1829,6 +1836,10 @@ const setCursorIgnore = (ignore) => {
 
 const hitTestTick = async () => {
   // 拖拽会话结束前维持非穿透，避免打断原生拖拽或触摸收尾。
+  if (menuVisible.value) {
+    setCursorIgnore(false)
+    return
+  }
   if (dragPointerId !== null) {
     setCursorIgnore(false)
     return
@@ -1839,10 +1850,33 @@ const hitTestTick = async () => {
       appWindow.outerSize(),
       cursorPosition(),
     ])
+    if (menuVisible.value) {
+      setCursorIgnore(false)
+      return
+    }
     if (dragPointerId !== null) {
       setCursorIgnore(false)
       return
     }
+
+    // cursorPosition() 只有鼠标位置。启动阶段不能据此立即穿透，否则触摸屏
+    // 用户的第一下点击会被 OS 送往下层窗口；只有看到鼠标真正移动后才启用
+    // 鼠标光标命中判断。
+    const cursorMoved = Number.isFinite(lastHitCursorX) && (
+      Math.abs(cur.x - lastHitCursorX) > CURSOR_MOTION_THRESHOLD_PX ||
+      Math.abs(cur.y - lastHitCursorY) > CURSOR_MOTION_THRESHOLD_PX
+    )
+    if (!cursorMotionObserved) {
+      if (!cursorMoved) {
+        lastHitCursorX = cur.x
+        lastHitCursorY = cur.y
+        setCursorIgnore(false)
+        return
+      }
+      cursorMotionObserved = true
+    }
+    lastHitCursorX = cur.x
+    lastHitCursorY = cur.y
 
     // PhysicalPosition: 物理像素
     const relX = cur.x - winPos.x
@@ -1868,9 +1902,9 @@ const hitTestTick = async () => {
 }
 
 const initBubbleClickThrough = () => {
-  // 初始进入穿透状态，由轮询决定何时取消
+  // 先保持可命中，等确认鼠标移动后再进入按光标穿透的模式。
   hitTestEnabled = true
-  setCursorIgnore(true)
+  setCursorIgnore(false)
   const scheduleNextHitTest = (delay) => {
     if (!hitTestEnabled) return
     hitTestTimer = setTimeout(async () => {
@@ -1884,10 +1918,23 @@ const initBubbleClickThrough = () => {
   scheduleNextHitTest(0)
 }
 
+const initMenuOutsideClose = async () => {
+  try {
+    unlistenMenuOutsideClose = await appWindow.onFocusChanged(({ payload: focused }) => {
+      if (!focused) {
+        menuVisible.value = false
+      }
+    })
+  } catch (error) {
+    console.warn('[桌宠HitTest] onFocusChanged 失败', error)
+  }
+}
+
 onMounted(async () => {
   componentDisposed = false
   // 先建立跨窗口通信和命中测试，避免资源加载期间丢失设置请求。
   initSpeechBroadcast()
+  initMenuOutsideClose()
   initBubbleClickThrough()
   try {
     await initPixiApp()
@@ -1941,6 +1988,10 @@ onUnmounted(() => {
   // 清理拖拽
   hitTestEnabled = false
   if (hitTestTimer) { clearTimeout(hitTestTimer); hitTestTimer = null }
+  if (unlistenMenuOutsideClose) {
+    unlistenMenuOutsideClose()
+    unlistenMenuOutsideClose = null
+  }
   if (speechBroadcast) {
     try { speechBroadcast.close() } catch (_) {}
     speechBroadcast = null

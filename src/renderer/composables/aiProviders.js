@@ -3,9 +3,36 @@
  */
 
 export const STORAGE_KEY = 'sunshine-ai-config'
+export const CODEX_AUTH_CHANGED_KEY = `${STORAGE_KEY}:codex-auth-changed`
+export const CODEX_AUTH_CONNECTED_KEY = `${STORAGE_KEY}:codex-connected`
+
+export function cacheCodexConnected(connected) {
+  if (typeof connected !== 'boolean') return
+  try {
+    localStorage.setItem(CODEX_AUTH_CONNECTED_KEY, String(connected))
+  } catch { /* ignore unavailable storage */ }
+}
+
+export function readCachedCodexConnected() {
+  try {
+    const value = localStorage.getItem(CODEX_AUTH_CONNECTED_KEY)
+    return value === 'true' ? true : value === 'false' ? false : null
+  } catch {
+    return null
+  }
+}
+
+export function applyCodexConnectionStatus(config, connected) {
+  if (config?.authMode !== 'chatgpt' || typeof connected !== 'boolean') return config
+  return { ...config, codexConnected: connected }
+}
+
+export const CHATGPT_MODELS = ['gpt-6-luna', 'gpt-6-sol', 'gpt-6-astra']
 
 export const DEFAULT_CONFIG = {
   provider: 'openai',
+  authMode: 'apiKey',
+  codexConnected: false,
   apiKey: '',
   apiKeyConfigured: false,
   apiBase: 'https://api.openai.com/v1',

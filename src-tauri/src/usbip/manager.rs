@@ -57,6 +57,19 @@ fn parse_version(value: &str) -> Option<[u32; 4]> {
     Some(version)
 }
 
+// Inno Setup's English display name used to include "version". Newer
+// usbip-win2 installers register the same product as "USBip 0.9.8.1".
+// Keep discovery and the missing-DisplayVersion fallback consistent.
+fn version_from_display_name(display_name: &str) -> Option<&str> {
+    display_name
+        .strip_prefix("USBip version ")
+        .or_else(|| {
+            display_name
+                .strip_prefix("USBip ")
+                .filter(|version| parse_version(version).is_some())
+        })
+}
+
 fn consistent_version(
     versions: impl IntoIterator<Item = String>,
 ) -> Result<Option<String>, String> {
@@ -121,7 +134,7 @@ pub(crate) fn uninstall_entries() -> Result<Vec<UninstallEntry>, String> {
             let display_name = key
                 .get_value::<String, _>("DisplayName")
                 .unwrap_or_default();
-            if display_name.starts_with("USBip version ") {
+            if version_from_display_name(&display_name).is_some() {
                 entries.push(UninstallEntry { key, display_name });
             }
         }
@@ -140,9 +153,8 @@ fn entry_version(entry: &UninstallEntry) -> String {
         .key
         .get_value::<String, _>("DisplayVersion")
         .unwrap_or_else(|_| {
-            entry
-                .display_name
-                .trim_start_matches("USBip version ")
+            version_from_display_name(&entry.display_name)
+                .unwrap_or_default()
                 .to_string()
         })
 }
@@ -207,6 +219,55 @@ mod tests {
     use super::*;
 
     #[test]
+    fn discovers_legacy_and_current_installer_display_names() {
+        for (name, version) in [
+            ("USBip version 0.9.7.7", "0.9.7.7"),
+            ("USBip version 0.9.8.0", "0.9.8.0"),
+            ("USBip 0.9.8.0", "0.9.8.0"),
+            ("USBip version 0.9.8.1", "0.9.8.1"),
+            ("USBip 0.9.8.1", "0.9.8.1"),
+        ] {
+            let discovered = version_from_display_name(name);
+            assert_eq!(discovered, Some(version));
+            assert_eq!(
+                install_disposition(discovered).unwrap(),
+                InstallDisposition::Ready
+            );
+        }
+        // Preserve the existing fail-closed handling of malformed legacy
+        // registrations, without treating other USB/IP products as usbip-win2.
+        assert_eq!(version_from_display_name("USBip version bad"), Some("bad"));
+        assert!(install_disposition(Some("bad")).is_err());
+        for name in ["USBip Tools", "USBip Server", "Other USBip 0.9.8.1", "USBip"] {
+            assert_eq!(version_from_display_name(name), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn mixed_installer_display_names_still_detect_conflicting_versions() {
+        for names in [
+            ["USBip version 0.9.7.7", "USBip 0.9.8.1"],
+            ["USBip 0.9.8.1", "USBip version 0.9.7.7"],
+            ["USBip 0.9.8.0", "USBip 0.9.8.1"],
+        ] {
+            assert!(
+                consistent_version(
+                    names.map(|name| version_from_display_name(name).unwrap().to_string())
+                )
+                .is_err()
+            );
+        }
+        assert_eq!(
+            consistent_version(
+                ["USBip version 0.9.8.1", "USBip 0.9.8.1"]
+                    .map(|name| version_from_display_name(name).unwrap().to_string())
+            )
+            .unwrap(),
+            Some("0.9.8.1".to_string())
+        );
+    }
+
+    #[test]
     fn shared_transport_never_silently_replaces_another_version() {
         assert_eq!(
             install_disposition(Some(PINNED_VERSION)).unwrap(),
@@ -225,7 +286,9 @@ mod tests {
 
     #[test]
     fn supported_versions_are_compared_numerically() {
-        for version in ["0.9.7.7", "0.9.7.8", "0.9.7.10", "0.10.0.0", "1.0.0.0"] {
+        for version in [
+            "0.9.7.7", "0.9.7.8", "0.9.7.10", "0.9.8.0", "0.9.8.1", "0.10.0.0", "1.0.0.0",
+        ] {
             assert!(supported_version_installed(Some(version)), "{version}");
         }
         for version in [

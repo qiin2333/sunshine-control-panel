@@ -296,6 +296,7 @@ struct ObserverState {
 
 static PRESENCE: Mutex<Option<PresenceState>> = Mutex::new(None);
 static OBSERVER: Mutex<Option<ObserverState>> = Mutex::new(None);
+static LIFECYCLE: Mutex<()> = Mutex::new(());
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 static ENABLED: AtomicBool = AtomicBool::new(true);
 
@@ -422,6 +423,7 @@ fn observer_loop(
     let initialized = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.is_ok();
     if !initialized {
         warn!("text context observer could not initialize COM");
+        let _lifecycle = LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
         clear_capability_if_owned(&capability, generation);
         return;
     }
@@ -430,19 +432,21 @@ fn observer_loop(
         unsafe { CoCreateInstance(&FRAMEWORK_INPUT_PANE, None, CLSCTX_INPROC_SERVER).ok() };
     let automation: Option<IUIAutomation> =
         unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok() };
-    if stop.load(Ordering::Acquire) || !owns_generation(&capability, generation) {
-        unsafe { CoUninitialize() };
-        return;
+    {
+        let _lifecycle = LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
+        if stop.load(Ordering::Acquire) || !owns_generation(&capability, generation) {
+            unsafe { CoUninitialize() };
+            return;
+        }
+        capability
+            .input_pane_available
+            .store(pane.is_some(), Ordering::Release);
+        capability
+            .uia_available
+            .store(automation.is_some(), Ordering::Release);
+        capability.observer_active.store(true, Ordering::Release);
+        capability.wake.notify_one();
     }
-    capability
-        .input_pane_available
-        .store(pane.is_some(), Ordering::Release);
-    capability
-        .uia_available
-        .store(automation.is_some(), Ordering::Release);
-    capability.observer_active.store(true, Ordering::Release);
-    capability.generation.store(generation, Ordering::Release);
-    capability.wake.notify_one();
     info!(
         "text context observer started (input_pane={}, uia={})",
         pane.is_some(),
@@ -495,9 +499,11 @@ fn observer_loop(
     let mut previous_pane_visible = false;
     let mut previous_focus: Option<FocusSignature> = None;
     let mut editor_focused = false;
-    // Prime both deadlines so the first iteration establishes a baseline.
-    let mut last_snapshot = Instant::now() - FOCUS_WATCHDOG_POLL;
+    // A stream can start while an editor already has focus, so request a
+    // baseline snapshot even when no focus event is raised.
+    let mut last_snapshot = Instant::now();
     let mut last_pane_check = Instant::now();
+    RESCAN_AT.with(|slot| slot.set(Some(Instant::now() - RESCAN_DEBOUNCE)));
 
     while !stop.load(Ordering::Acquire) {
         pump_messages();
@@ -620,6 +626,7 @@ fn observer_loop(
             let _ = UnhookWinEvent(hook_foreground);
         }
     }
+    let _lifecycle = LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
     clear_capability_if_owned(&capability, generation);
     drop(cache);
     drop(pane);
@@ -679,7 +686,7 @@ async fn publish_capability(capability: &CapabilityState) {
 }
 
 pub fn register_presence() {
-    let mut presence = PRESENCE.lock().unwrap();
+    let mut presence = PRESENCE.lock().unwrap_or_else(|e| e.into_inner());
     if presence.is_some() {
         return;
     }
@@ -707,6 +714,7 @@ pub fn register_presence() {
 }
 
 pub fn reconcile_streaming_state(active: bool) {
+    let _lifecycle = LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
     if active && ENABLED.load(Ordering::Acquire) {
         start_observer();
     } else {
@@ -715,16 +723,21 @@ pub fn reconcile_streaming_state(active: bool) {
 }
 
 pub fn set_enabled(enabled: bool) {
+    let _lifecycle = LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
     ENABLED.store(enabled, Ordering::Release);
     if !enabled {
         stop_observer();
-        let capability = PRESENCE.lock().unwrap().as_ref().map(|presence| {
-            presence
-                .capability
-                .agent_present
-                .store(false, Ordering::Release);
-            presence.capability.clone()
-        });
+        let capability = PRESENCE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|presence| {
+                presence
+                    .capability
+                    .agent_present
+                    .store(false, Ordering::Release);
+                presence.capability.clone()
+            });
         if let Some(capability) = capability {
             tauri::async_runtime::spawn(async move {
                 publish_capability(&capability).await;
@@ -741,18 +754,21 @@ pub fn set_enabled(enabled: bool) {
 }
 
 fn start_observer() {
+    if !ENABLED.load(Ordering::Acquire) {
+        return;
+    }
     register_presence();
 
-    let capability = {
-        let presence = PRESENCE.lock().unwrap();
-        presence
-            .as_ref()
-            .expect("text context presence must be registered")
-            .capability
-            .clone()
+    let Some(capability) = PRESENCE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .map(|presence| presence.capability.clone())
+    else {
+        return;
     };
 
-    let mut state = OBSERVER.lock().unwrap();
+    let mut state = OBSERVER.lock().unwrap_or_else(|e| e.into_inner());
     if state.is_some() {
         return;
     }
@@ -826,11 +842,11 @@ async fn observation_loop(stop: Arc<AtomicBool>, queue: Arc<ObservationQueue>) {
 }
 
 fn stop_observer() {
-    let Some(mut state) = OBSERVER.lock().unwrap().take() else {
+    let Some(mut state) = OBSERVER.lock().unwrap_or_else(|e| e.into_inner()).take() else {
         return;
     };
 
-    if let Some(presence) = PRESENCE.lock().unwrap().as_ref() {
+    if let Some(presence) = PRESENCE.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
         clear_capability_if_owned(&presence.capability, state.generation);
     }
 
@@ -865,13 +881,14 @@ fn stop_observer() {
 }
 
 pub fn stop() {
+    let _lifecycle = LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
     stop_observer();
 
     stop_presence();
 }
 
 fn stop_presence() {
-    let Some(presence) = PRESENCE.lock().unwrap().take() else {
+    let Some(presence) = PRESENCE.lock().unwrap_or_else(|e| e.into_inner()).take() else {
         return;
     };
 

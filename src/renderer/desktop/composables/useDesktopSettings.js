@@ -13,6 +13,7 @@ export const defaultDesktopSettings = {
   updateNotify: true,
   devMode: false,
   logLevel: 'info',
+  textContextEnabled: true,
 }
 
 export const desktopSettings = ref({ ...defaultDesktopSettings })

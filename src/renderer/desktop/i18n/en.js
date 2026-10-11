@@ -192,6 +192,8 @@ export const en = {
     advanced: 'Advanced',
     devMode: 'Developer Mode',
     devModeDesc: 'Show debug information and developer tools',
+    textContextEnabled: 'Windows text focus and on-screen keyboard assistance',
+    textContextEnabledDesc: 'Detect focused editable controls during streaming to support the on-screen keyboard and caret positioning. Disable this optional observer if it affects system performance. Ordinary remote keyboard input is unchanged.',
     logLevel: 'Log Level',
     logLevelDesc: 'Set the verbosity of logging',
     logLevels: {

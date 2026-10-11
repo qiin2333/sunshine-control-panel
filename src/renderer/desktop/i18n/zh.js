@@ -192,6 +192,8 @@ export const zh = {
     advanced: '高级',
     devMode: '开发者模式',
     devModeDesc: '显示调试信息和开发者工具',
+    textContextEnabled: 'Windows 文本焦点与软键盘辅助',
+    textContextEnabledDesc: '串流期间识别获得焦点的可编辑控件，用于软键盘自动弹出和光标定位。若影响系统性能，可以关闭；普通远程键盘输入不受影响。',
     logLevel: 'Log Level',
     logLevelDesc: '设置日志记录的详细程度',
     logLevels: {

@@ -7,6 +7,16 @@
       />
     </SettingsRow>
 
+    <SettingsRow
+      :name="t.settings.textContextEnabled"
+      :description="t.settings.textContextEnabledDesc"
+    >
+      <SettingsSwitch
+        :model-value="Boolean(values.textContextEnabled)"
+        @update:model-value="emit('update-value', 'textContextEnabled', $event)"
+      />
+    </SettingsRow>
+
     <SettingsRow :name="t.settings.logLevel" :description="t.settings.logLevelDesc">
       <SettingsSelect
         :model-value="values.logLevel"

@@ -3,6 +3,9 @@
   "version": "0.0.0-dev",
   "description": "A GUI for sunshine",
   "type": "module",
+  "allowScripts": {
+    "esbuild@0.28.1": true
+  },
   "scripts": {
     "dev": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-native-plugins.ps1 -Configuration Debug && tauri dev",
     "dev-webui": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-native-plugins.ps1 -Configuration Debug && cross-env WEBUI_DEV_TARGET=https://localhost:3000 tauri dev",

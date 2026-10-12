@@ -1,4 +1,70 @@
 export const zh = {
+  windowTitles: { toolbar: '工具栏', toolWindow: '工具窗口' },
+  "toolActions": {
+    "adminRequiredTitle": "需要管理员权限",
+    "cleanupAdminRequired": "清理临时文件需要管理员权限。\n\n是否以管理员身份重启应用？",
+    "restartAsAdmin": "以管理员重启",
+    "cleanupTitle": "清理无用文件",
+    "cleanupConfirm": "此操作将删除：\n1. 未被应用使用的封面图片\n2. config 目录下的 temp_ 临时文件\n\n是否继续？",
+    "cleaning": "正在清理无用文件...",
+    "cleanupComplete": "清理完成",
+    "cleanupSummary": "删除的文件数: {count}\n释放的空间: {size} KB",
+    "cleanupEmpty": "没有发现需要清理的文件",
+    "cleanupFailed": "清理文件失败，请查看日志了解详情。",
+    "elevateTitle": "提升权限",
+    "elevateConfirm": "将以管理员权限重启应用，当前窗口会关闭。是否继续？",
+    "requestingAdmin": "正在请求管理员权限...",
+    "restartingAsAdmin": "正在以管理员权限重启...",
+    "restartFailed": "重启失败，请查看日志了解详情。",
+    "checkingUpdates": "正在检查更新...",
+    "checkUpdatesFailed": "检查更新失败，请查看日志了解详情。",
+    "versionSkipped": "已忽略版本 {version}，下次自动检查更新时将跳过此版本",
+    "windowCreateFailed": "{title}窗口创建失败，请查看日志了解详情。",
+    "windowOpenFailed": "打开{title}失败，请查看日志了解详情。"
+  },
+  "controllerMeta": {
+    "preparing": "正在准备手柄测试工具...",
+    "title": "手柄测试工具",
+    "description": "ControllerMeta 是一款高精度手柄分析工具（实时摇杆轨迹、8000Hz 回报率检测、震动测试等）。\n\n首次使用需要下载安装（约 17 MB，来自 GitHub Releases）。",
+    "downloadAndLaunch": "下载并启动",
+    "openWeb": "打开网页版",
+    "downloading": "⏳ 正在下载 ControllerMeta {version} ({size} MB)... 0%",
+    "downloadProgress": "⏳ 下载中 {version} - {downloaded}/{size} MB ({progress}%)",
+    "installed": "ControllerMeta {version} 安装完成，正在启动...",
+    "launched": "已启动 ControllerMeta{version}",
+    "launchFailed": "启动 ControllerMeta 失败，请查看日志了解详情。",
+    "notInstalled": "ControllerMeta 未安装，请先下载。",
+    "downloadFailed": "下载 ControllerMeta 失败，请检查网络并查看日志了解详情。",
+    "closeBeforeUpdate": "请先关闭 ControllerMeta 后再更新，然后重试。",
+    "updateTitle": "ControllerMeta 有新版本",
+    "updateMessage": "当前 {current}，最新 {latest}。点击此通知下载更新并重启 ControllerMeta。",
+    "preparingUpdate": "准备更新...",
+    "checkingRelease": "🔍 正在查询 ControllerMeta 最新版本...",
+    "releaseFailed": "查询 ControllerMeta 版本失败，请检查网络并查看日志了解详情。",
+    "noDownload": "未找到可下载的安装包，已打开官网",
+    "unavailable": "手柄测试工具不可用，请查看日志了解详情。"
+  },
+  "coverPicker": {
+    "title": "更新封面",
+    "searchPlaceholder": "搜索 Steam 游戏...",
+    "searching": "搜索中...",
+    "search": "搜索",
+    "noResults": "未找到匹配结果",
+    "searchFailed": "搜索 Steam 封面失败，请查看日志了解详情。",
+    "uploadFailed": "上传封面失败，请查看日志了解详情。"
+  },
+  "windowActions": {
+    "close": "关闭",
+    "select": "请选择",
+    "actionFailed": "{action}窗口失败，请查看日志了解详情。",
+    "minimize": "最小化",
+    "hide": "隐藏",
+    "toggleMaximizeFailed": "切换最大化失败，请查看日志了解详情。"
+  },
+  "routeTitles": {
+    "home": "串流管理",
+    "welcome": "欢迎页面"
+  },
   sunshineFrame: {
     preparing: '正在准备 {path} ...',
     proxyUnavailable: '无法连接本机 Sunshine WebUI。代理或 TUN 软件可能拦截了 localhost、127.0.0.0/8 或 IPv6 环回地址，请将本机环回流量设为直连后重试。',
@@ -681,6 +747,7 @@ export const zh = {
   },
 
   hwinfo: {
+    selectSensors: '请先选择要监控的传感器',
     title: 'HWiNFO 硬件监控',
     unavailable: 'HWiNFO 未运行或未启用共享内存',
     enableHint: '请在 HWiNFO 设置中启用 Shared Memory Support',

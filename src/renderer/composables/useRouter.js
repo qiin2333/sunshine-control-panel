@@ -1,4 +1,5 @@
 import { ref, computed } from 'vue'
+import { useI18n } from '../desktop/i18n/index.js'
 
 /**
  * 路由定义
@@ -27,57 +28,58 @@ const routeConfig = {
   [ROUTES.HOME]: {
     name: ROUTES.HOME,
     component: null, // 使用 slot
-    title: '串流管理',
+    titleKey: 'home',
   },
   [ROUTES.VDD_SETTINGS]: {
     name: ROUTES.VDD_SETTINGS,
     component: 'VddSettings',
-    title: '基地显示器（ZakoVDD）',
+    titleKey: 'virtualDisplay',
   },
   [ROUTES.WELCOME]: {
     name: ROUTES.WELCOME,
     component: 'Welcome',
-    title: '欢迎页面',
+    titleKey: 'welcome',
   },
   [ROUTES.WEB_STREAM]: {
     name: ROUTES.WEB_STREAM,
     component: 'WebStreamSettings',
-    title: 'Web 串流',
+    titleKey: 'webStream',
   },
   [ROUTES.AI_ASSISTANT]: {
     name: ROUTES.AI_ASSISTANT,
     component: 'AiAssistant',
-    title: '米塔',
+    titleKey: 'aiAssistant',
   },
   [ROUTES.CONTROLLERS]: {
     name: ROUTES.CONTROLLERS,
     component: 'ControllersHub',
-    title: '设备中心',
+    titleKey: 'deviceHub',
   },
   [ROUTES.DUALSENSE]: {
     name: ROUTES.DUALSENSE,
     component: 'ControllersHub',
-    title: '设备中心',
+    titleKey: 'deviceHub',
   },
   [ROUTES.CONTROLLERS_HUB]: {
     name: ROUTES.CONTROLLERS_HUB,
     component: 'ControllersHub',
-    title: '设备中心',
+    titleKey: 'deviceHub',
   },
   [ROUTES.HDR_ENHANCED]: {
     name: ROUTES.HDR_ENHANCED,
     component: 'HdrEnhancedManager',
-    title: '画质增强',
+    titleKey: 'hdrEnhanced',
   },
-  [ROUTES.TOOLBOX]: { name: ROUTES.TOOLBOX, component: 'ControlPanelPage', title: '工具箱' },
-  [ROUTES.PANEL_SETTINGS]: { name: ROUTES.PANEL_SETTINGS, component: 'ControlPanelPage', title: '面板设置' },
-  [ROUTES.HELP]: { name: ROUTES.HELP, component: 'ControlPanelPage', title: '帮助与关于' },
+  [ROUTES.TOOLBOX]: { name: ROUTES.TOOLBOX, component: 'ControlPanelPage', titleKey: 'toolbox' },
+  [ROUTES.PANEL_SETTINGS]: { name: ROUTES.PANEL_SETTINGS, component: 'ControlPanelPage', titleKey: 'panelSettings' },
+  [ROUTES.HELP]: { name: ROUTES.HELP, component: 'ControlPanelPage', titleKey: 'helpAbout' },
 }
 
 /**
  * 路由管理 Composable
  */
 export function useRouter() {
+  const { t } = useI18n()
   const currentRoute = ref(ROUTES.HOME)
   const routeHistory = ref([ROUTES.HOME])
 
@@ -127,7 +129,8 @@ export function useRouter() {
    * 获取当前路由配置
    */
   const getCurrentRouteConfig = computed(() => {
-    return routeConfig[currentRoute.value] || routeConfig[ROUTES.HOME]
+    const config = routeConfig[currentRoute.value] || routeConfig[ROUTES.HOME]
+    return { ...config, title: t.value.routeTitles[config.titleKey] || t.value.sidebar[config.titleKey] }
   })
 
   /**

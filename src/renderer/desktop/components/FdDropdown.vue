@@ -20,11 +20,14 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useI18n } from '../i18n/index.js'
+
+const { t } = useI18n()
 
 const props = defineProps({
   modelValue: { type: [Number, String], required: true },
   options: { type: Array, required: true },
-  placeholder: { type: String, default: '请选择' },
+  placeholder: { type: String, default: undefined },
 })
 
 const emit = defineEmits(['update:modelValue'])
@@ -34,7 +37,7 @@ const root = ref(null)
 
 const displayText = computed(() => {
   const found = props.options.find(o => o.value === props.modelValue)
-  return found ? found.label : props.placeholder
+  return found ? found.label : (props.placeholder ?? t.value.windowActions.select)
 })
 
 function select(value) {

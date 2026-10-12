@@ -200,7 +200,7 @@ const checkLatestVersion = async () => {
       }
     }
 
-    if (!latest) throw new Error('没有找到可用的 Windows Installer')
+    if (!latest) throw new Error(currentLang.value === 'zh' ? '没有找到可用的 Windows Installer' : 'No Windows installer is available')
 
     if (sequence !== versionCheckSeq) return
 
@@ -257,7 +257,7 @@ watch(currentLang, () => {
 })
 
 // 客户端推荐
-const clients = [
+const clients = computed(() => [
   {
     name: 'Moonlight-PC',
     platform: 'Windows/macOS/Linux',
@@ -265,13 +265,13 @@ const clients = [
     color: 'red',
   },
   {
-    name: '威力加强版 Moonlight-Android',
+    name: t.value.clients.enhancedAndroid,
     platform: 'Android',
     link: 'https://github.com/qiin2333/moonlight-android/releases/tag/shortcut',
     color: 'green',
   },
   {
-    name: '王冠版 Moonlight-Android',
+    name: t.value.clients.crownAndroid,
     platform: 'Android',
     link: 'https://github.com/WACrown/moonlight-android',
     color: 'blue',
@@ -282,7 +282,7 @@ const clients = [
     link: 'https://github.com/The-Fried-Fish/VoidLink-previously-moonlight-zwm',
     color: 'grey',
   },
-]
+])
 </script>
 
 <template>

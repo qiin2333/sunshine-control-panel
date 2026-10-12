@@ -150,7 +150,7 @@ async function toggleInject(val) {
 
 async function startInject() {
   if (selectedIds.value.size === 0) {
-    emit('message', '请先选择要监控的传感器', 'warning')
+    emit('message', t.value.hwinfo.selectSensors, 'warning')
     return
   }
   injecting.value = true

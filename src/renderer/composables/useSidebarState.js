@@ -2,6 +2,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter, ROUTES } from './useRouter.js'
 import { useI18n } from '../desktop/i18n/index.js'
+import { formatMessage } from '../shared/format-message.js'
 
 const STORAGE_KEYS = {
   SKIPPED_VERSION: 'sunshine-skipped-version',
@@ -120,7 +121,7 @@ export function useSidebarState() {
     const normalized = normalizeVersion(version)
     skippedVersion.value = normalized
     localStorage.setItem(STORAGE_KEYS.SKIPPED_VERSION, normalized)
-    ElMessage.info(`已忽略版本 ${version}，下次自动检查更新时将跳过此版本`)
+    ElMessage.info(formatMessage(t.value.toolActions.versionSkipped, { version }))
   }
 
   /**
@@ -248,7 +249,8 @@ export function useSidebarState() {
     const unlistenCheckResult = await listen('update-check-result', ({ payload }) => {
       const { error } = payload
       if (error) {
-        ElMessage.error(`检查更新失败: ${error}`)
+        console.error('Update check failed:', error)
+        ElMessage.error(t.value.toolActions.checkUpdatesFailed)
       }
     })
     cleanupFns.push(unlistenCheckResult)

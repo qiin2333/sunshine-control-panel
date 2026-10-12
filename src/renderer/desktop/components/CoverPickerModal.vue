@@ -4,7 +4,7 @@
       <div v-if="open" class="cover-modal-mask" @click.self="$emit('close')">
         <div ref="modalRef" class="cover-modal">
           <div class="modal-header">
-            <h3><Picture /> 更新封面 — {{ appName }}</h3>
+            <h3><Picture /> {{ t.coverPicker.title }} — {{ appName }}</h3>
             <button class="modal-close" @click="$emit('close')">✕</button>
           </div>
 
@@ -13,11 +13,11 @@
             <input
               v-model="searchQuery"
               class="search-input"
-              placeholder="搜索 Steam 游戏..."
+              :placeholder="t.coverPicker.searchPlaceholder"
               @keyup.enter="doSearch"
             />
             <button class="search-btn" @click="doSearch" :disabled="searching">
-              {{ searching ? '搜索中...' : '搜索' }}
+              {{ searching ? t.coverPicker.searching : t.coverPicker.search }}
             </button>
           </div>
 
@@ -41,7 +41,7 @@
           </div>
 
           <div v-else-if="!searching && !error && searched" class="no-results">
-            未找到匹配结果
+            {{ t.coverPicker.noResults }}
           </div>
         </div>
       </div>
@@ -52,6 +52,9 @@
 <script setup>
 import { ref, watch } from 'vue'
 import { Picture } from '@element-plus/icons-vue'
+import { useI18n } from '../i18n/index.js'
+
+const { t } = useI18n()
 import { tauriInvoke } from '../composables/useTauri'
 import { useModalFocusScope } from '../composables/useFocusNav.js'
 
@@ -101,7 +104,8 @@ async function doSearch() {
       query: searchQuery.value.trim(),
     })
   } catch (e) {
-    error.value = String(e)
+    console.error('Steam cover search failed:', e)
+    error.value = t.value.coverPicker.searchFailed
   } finally {
     searching.value = false
     searched.value = true
@@ -122,7 +126,8 @@ async function selectAndUpload(candidate) {
     emit('updated', props.appName)
     emit('close')
   } catch (e) {
-    error.value = `上传失败: ${e}`
+    console.error('Steam cover upload failed:', e)
+    error.value = t.value.coverPicker.uploadFailed
   } finally {
     uploadingId.value = null
   }

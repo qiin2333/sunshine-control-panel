@@ -10,6 +10,10 @@ import './styles/dialog.less'  // 导入对话框样式
 // 导入 Tauri polyfill
 import './tauri-polyfill.js'
 import { i18n, getDefaultLocale, setLocale } from '../i18n/index.js'
+import { getInitialSimpleLocale } from './shared/simple-i18n.js'
+
+const bootMessage = document.querySelector('.boot-loading p')
+if (bootMessage && getInitialSimpleLocale() === 'zh') bootMessage.textContent = '正在准备 Sunshine...'
 
 // 初始化语言
 setLocale(getDefaultLocale())

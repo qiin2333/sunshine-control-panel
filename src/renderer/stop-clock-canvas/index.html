@@ -11,7 +11,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <title>串流屏摄专用钟钟钟钟钟（作者：串流群友）</title>
+  <title>Stream Timer</title>
   <style>
     body {
       display: flex;
@@ -52,6 +52,16 @@
     }
   </style>
 
+<script type="module">
+    import { getInitialSimpleLocale, syncSimpleLocaleFromSunshine } from '../shared/simple-i18n.js'
+    const titles = { en: 'Stream Timer', zh: '串流计时器' }
+    const applyTitle = (locale) => { document.title = titles[locale] || titles.en }
+    applyTitle(getInitialSimpleLocale())
+    syncSimpleLocaleFromSunshine(titles, applyTitle)
+    window.addEventListener('storage', (event) => {
+      if (event.key === 'language' || event.key === 'sunshine-locale') applyTitle(getInitialSimpleLocale())
+    })
+  </script>
 </head>
 
 <body>

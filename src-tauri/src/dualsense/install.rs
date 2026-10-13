@@ -1,10 +1,8 @@
 //! Install, self-test, and uninstall orchestration.
 
 use log::{info, warn};
-use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs::{self, File};
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -16,14 +14,14 @@ use super::packages::{
     SidecarPackageManifest, SidecarRuntimeMetadata, UsbipInstallResult, active_dir, component_root,
     download_component_asset, download_component_asset_from_candidates,
     manually_placed_sidecar_package, purge_stale_handoff_packages, sha256_file,
-    sidecar_package_manifest, sidecar_package_manifest_path, sidecar_path,
+    sidecar_package_manifest, sidecar_package_manifest_path, validate_core_integrity,
 };
 use super::probe::{component_test_failure, local_uninstalled_status, run_probe, run_with_timeout};
 use super::{
     COMPONENT_FS_RETRY_ATTEMPTS, COMPONENT_FS_RETRY_DELAY, COMPONENT_VERSION, DualSenseStatus,
-    HIDMAESTRO_SHA256, HIDMAESTRO_URL, HIDMAESTRO_VERSION, MAX_ARCHIVE_BYTES, MAX_ARCHIVE_FILES,
-    MAX_EXTRACTED_BYTES, MAX_SIDECAR_PACKAGE_BYTES, MAX_USBIP_INSTALLER_BYTES, PROTOCOL_VERSION,
-    ProgressReporter, SIDECAR_EXE, SIDECAR_PACKAGE_TARGET, dualsense_get_status, report_progress,
+    HIDMAESTRO_VERSION, MAX_ARCHIVE_FILES, MAX_EXTRACTED_BYTES, MAX_SIDECAR_PACKAGE_BYTES,
+    MAX_USBIP_INSTALLER_BYTES, PROTOCOL_VERSION, ProgressReporter, SIDECAR_EXE,
+    SIDECAR_PACKAGE_TARGET, dualsense_get_status, report_progress,
 };
 use crate::usbip::{
     InstallDisposition, USBIP_SHA256, USBIP_URL, USBIP_VERSION, install_disposition,
@@ -80,18 +78,26 @@ pub(crate) fn copy_runtime_files(source: &Path, destination: &Path) -> Result<()
             .map_err(|error| error.to_string())?
             .is_file()
         {
-            if entry
-                .file_name()
-                .to_string_lossy()
-                .eq_ignore_ascii_case("HIDMaestro.Core.dll")
-            {
-                continue;
-            }
             fs::copy(entry.path(), destination.join(entry.file_name()))
                 .map_err(|error| format!("DS5-PKG-002: unable to copy sidecar runtime: {error}"))?;
         }
     }
+    validate_complete_runtime(destination)?;
     Ok(())
+}
+
+pub(crate) fn validate_complete_runtime(directory: &Path) -> Result<(), String> {
+    for name in [
+        SIDECAR_EXE,
+        "HIDMaestro.Core.dll",
+        "LICENSE.HIDMaestro",
+        "THIRD-PARTY-NOTICES.txt",
+    ] {
+        if !directory.join(name).is_file() {
+            return Err(format!("DS5-PKG-002: component package is missing {name}"));
+        }
+    }
+    validate_sidecar_runtime_metadata(directory)
 }
 
 pub(crate) fn validate_sidecar_runtime_metadata(directory: &Path) -> Result<(), String> {
@@ -137,10 +143,7 @@ pub(crate) fn validate_component_backup(directory: &Path) -> Result<(), String> 
     {
         return Err("backup sidecar integrity check failed".to_string());
     }
-    let hidmaestro_hash = sha256_file(&directory.join("HIDMaestro.Core.dll"))?;
-    if manifest.sha256.len() != 64 || !hidmaestro_hash.eq_ignore_ascii_case(&manifest.sha256) {
-        return Err("backup HIDMaestro integrity check failed".to_string());
-    }
+    validate_core_integrity(&directory.join("HIDMaestro.Core.dll"), &manifest)?;
     Ok(())
 }
 
@@ -192,11 +195,6 @@ pub(crate) fn extract_sidecar_package(
         let Some(name) = relative.file_name().and_then(|name| name.to_str()) else {
             return Err("DS5-PKG-002: sidecar package contains an invalid file name".to_string());
         };
-        if name.eq_ignore_ascii_case("HIDMaestro.Core.dll") {
-            return Err(
-                "DS5-PKG-002: sidecar package must not bundle HIDMaestro.Core.dll".to_string(),
-            );
-        }
         if !names.insert(name.to_ascii_lowercase()) {
             return Err("DS5-PKG-002: sidecar package contains duplicate files".to_string());
         }
@@ -207,7 +205,7 @@ pub(crate) fn extract_sidecar_package(
     if !staging.join(SIDECAR_EXE).is_file() {
         return Err("DS5-PKG-002: sidecar executable is missing from the package".to_string());
     }
-    validate_sidecar_runtime_metadata(staging)?;
+    validate_complete_runtime(staging)?;
     Ok(())
 }
 
@@ -271,65 +269,6 @@ pub(crate) async fn acquire_sidecar_package(
         progress,
     )
     .await
-}
-
-pub(crate) fn extract_verified_package(archive_path: &Path, staging: &Path) -> Result<(), String> {
-    let mut archive_file = File::open(archive_path).map_err(|error| error.to_string())?;
-    let mut digest = Sha256::new();
-    let mut buffer = [0u8; 64 * 1024];
-    loop {
-        let count = archive_file
-            .read(&mut buffer)
-            .map_err(|error| error.to_string())?;
-        if count == 0 {
-            break;
-        }
-        digest.update(&buffer[..count]);
-    }
-    let actual = format!("{:x}", digest.finalize());
-    if actual != HIDMAESTRO_SHA256 {
-        return Err(format!(
-            "DS5-PKG-001: expected {HIDMAESTRO_SHA256}, got {actual}"
-        ));
-    }
-
-    let mut archive =
-        zip::ZipArchive::new(File::open(archive_path).map_err(|error| error.to_string())?)
-            .map_err(|error| format!("DS5-PKG-002: invalid release archive: {error}"))?;
-    if archive.len() > MAX_ARCHIVE_FILES {
-        return Err("DS5-PKG-002: release archive contains too many files".to_string());
-    }
-    let mut extracted_bytes = 0u64;
-    for index in 0..archive.len() {
-        let mut item = archive.by_index(index).map_err(|error| error.to_string())?;
-        extracted_bytes = extracted_bytes.saturating_add(item.size());
-        if extracted_bytes > MAX_EXTRACTED_BYTES {
-            return Err("DS5-PKG-002: release archive exceeds the extraction limit".to_string());
-        }
-        let Some(relative) = item.enclosed_name() else {
-            return Err("DS5-PKG-002: release archive contains an unsafe path".to_string());
-        };
-        // Runtime integration needs only the root assembly and compliance files.
-        if relative.components().count() != 1 || item.is_dir() {
-            continue;
-        }
-        let name = relative
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default();
-        if !matches!(
-            name,
-            "HIDMaestro.Core.dll" | "LICENSE" | "README.md" | "THIRD-PARTY-NOTICES.txt"
-        ) {
-            continue;
-        }
-        let mut output = File::create(staging.join(name)).map_err(|error| error.to_string())?;
-        std::io::copy(&mut item, &mut output).map_err(|error| error.to_string())?;
-    }
-    if !staging.join("HIDMaestro.Core.dll").is_file() || !staging.join("LICENSE").is_file() {
-        return Err("DS5-PKG-002: required runtime or license file is missing".to_string());
-    }
-    Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -572,6 +511,7 @@ pub(crate) async fn install_error_after_rollback(
 pub(crate) async fn dualsense_install_impl(
     progress: &ProgressReporter<'_>,
     local_packages: LocalComponentPackages,
+    install_transport: bool,
 ) -> Result<DualSenseStatus, String> {
     report_progress(progress, "preparing", 1);
     let selected_sidecar_package = local_packages.sidecar.as_deref();
@@ -627,21 +567,19 @@ pub(crate) async fn dualsense_install_impl(
         .map_err(|error| format!("DS5-PKG-002: staging cleanup task failed: {error}"))??;
     }
     fs::create_dir(&staging).map_err(|error| error.to_string())?;
-    let current_handoff_packages = [
-        local_sidecar_package,
-        local_packages.hidmaestro.as_deref(),
-        local_packages.usbip.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>();
+    let current_handoff_packages = [local_sidecar_package, local_packages.usbip.as_deref()]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
     purge_stale_handoff_packages(&root, &current_handoff_packages);
-    let archive_path = root.join(format!("{operation}-hidmaestro.partial"));
     let sidecar_archive_path = root.join(format!("{operation}-sidecar.partial.zip"));
     let had_previous = active.exists();
     let install_result: Result<UsbipInstallResult, String> = async {
-        let usbip_install_result =
-            ensure_pinned_usbip(progress, &root, local_packages.usbip.as_deref()).await?;
+        let usbip_install_result = if install_transport {
+            ensure_pinned_usbip(progress, &root, local_packages.usbip.as_deref()).await?
+        } else {
+            UsbipInstallResult::Ready
+        };
         if let Some(manifest) = package_manifest.as_ref() {
             if using_discovered_package {
                 report_progress(progress, "sidecar_local", 12);
@@ -668,35 +606,6 @@ pub(crate) async fn dualsense_install_impl(
             return Err("DS5-PKG-002: no DualSense sidecar source is available".to_string());
         }
 
-        if let Some(source) = local_packages.hidmaestro.as_deref() {
-            report_progress(progress, "runtime_local", 38);
-            tokio::fs::copy(source, &archive_path).await.map_err(|error| {
-                format!("DS5-PKG-002: unable to stage the local HIDMaestro package: {error}")
-            })?;
-        } else {
-            download_component_asset(
-                ComponentDownloadSpec {
-                    url: HIDMAESTRO_URL,
-                    destination: &archive_path,
-                    expected_size: None,
-                    expected_sha256: None,
-                    max_size: MAX_ARCHIVE_BYTES,
-                    stage: "downloading",
-                    progress_start: 38,
-                    progress_span: 34,
-                    error_code: "DS5-PKG-001",
-                },
-                progress,
-            )
-            .await?;
-        }
-
-        report_progress(progress, "verifying", 74);
-        let archive = archive_path.clone();
-        let destination = staging.clone();
-        tokio::task::spawn_blocking(move || extract_verified_package(&archive, &destination))
-            .await
-            .map_err(|error| error.to_string())??;
         report_progress(progress, "probing", 86);
         let probe_executable = staging.join(SIDECAR_EXE);
         let probe_path = probe_executable.clone();
@@ -704,13 +613,13 @@ pub(crate) async fn dualsense_install_impl(
             .await
             .map_err(|error| format!("DS5-PKG-003: sidecar probe task failed: {error}"))??;
         let sidecar_sha256 = sha256_file(&probe_executable)?;
+        let core_sha256 = sha256_file(&staging.join("HIDMaestro.Core.dll"))?;
         fs::write(
             staging.join("component.json"),
             serde_json::to_vec_pretty(&serde_json::json!({
                 "component_version": COMPONENT_VERSION,
                 "hidmaestro_version": HIDMAESTRO_VERSION,
-                "source": if local_packages.hidmaestro.is_some() { "selected-local" } else { HIDMAESTRO_URL },
-                "sha256": HIDMAESTRO_SHA256,
+                "sha256": core_sha256,
                 "sidecar_source": if using_discovered_package {
                     "discovered-local"
                 } else if using_selected_package {
@@ -727,6 +636,8 @@ pub(crate) async fn dualsense_install_impl(
         )
         .map_err(|error| error.to_string())?;
 
+        // A stream may have started while the package was downloading.
+        super::probe::ensure_no_active_session().await?;
         let activation_staging = staging.clone();
         let activation_active = active.clone();
         let activation_backup = backup.clone();
@@ -743,7 +654,6 @@ pub(crate) async fn dualsense_install_impl(
         Ok(usbip_install_result)
     }
     .await;
-    let _ = fs::remove_file(&archive_path);
     let _ = fs::remove_file(&sidecar_archive_path);
     if install_result.is_err() {
         let failed_staging = staging.clone();
@@ -796,10 +706,10 @@ pub(crate) async fn dualsense_self_test_impl(profile: String) -> Result<serde_js
     let result_path = component_root().join(format!("self-test-{}.json", std::process::id()));
     #[cfg(target_os = "windows")]
     {
-        let executable = sidecar_path();
         let test_profile = profile.clone();
         let test_result = result_path.clone();
         tokio::task::spawn_blocking(move || {
+            let executable = super::packages::verified_sidecar_path()?;
             let _ = fs::remove_file(&test_result);
             let mut command = Command::new(&executable);
             command

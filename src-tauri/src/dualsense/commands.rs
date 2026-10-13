@@ -76,7 +76,7 @@ pub async fn dualsense_install(
         .map(PathBuf::from)
         .collect::<Vec<_>>();
     if selected_packages.len() > MAX_LOCAL_COMPONENT_PACKAGES {
-        return Err("DS5-PKG-002: select no more than three local component packages".to_string());
+        return Err("DS5-PKG-002: select no more than two local component packages".to_string());
     }
     #[cfg(target_os = "windows")]
     {
@@ -99,7 +99,7 @@ pub async fn dualsense_install(
         .map_err(|error| {
             format!("DS5-PKG-002: local package classification task failed: {error}")
         })??;
-        dualsense_install_impl(&progress, local_packages).await
+        dualsense_install_impl(&progress, local_packages, true).await
     }
 }
 

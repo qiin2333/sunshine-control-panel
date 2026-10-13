@@ -108,6 +108,7 @@ impl Default for MonitoringConfig {
                 "session_state".into(),
                 "stream_fps".into(),
                 "stream_bitrate".into(),
+                "pipeline_fps".into(),
             ],
             title_color: "FFD700".into(),
             label_color: "AAAAAA".into(),
@@ -1141,8 +1142,8 @@ pub async fn rtss_get_available_metrics() -> Vec<MetricDef> {
         },
         MetricDef {
             id: "stream_fps".into(),
-            label_zh: "串流帧率".into(),
-            label_en: "Stream FPS".into(),
+            label_zh: "目标帧率".into(),
+            label_en: "Target FPS".into(),
             group: "session".into(),
         },
         MetricDef {
@@ -1176,6 +1177,12 @@ pub async fn rtss_get_available_metrics() -> Vec<MetricDef> {
             group: "session".into(),
         },
         // 主机串流性能
+        MetricDef {
+            id: "pipeline_fps".into(),
+            label_zh: "链路帧率对照".into(),
+            label_en: "Pipeline FPS".into(),
+            group: "host_perf".into(),
+        },
         MetricDef {
             id: "host_perf_p95".into(),
             label_zh: "Host P95".into(),
@@ -1843,6 +1850,7 @@ fn insert_host_perf_defaults(map: &mut std::collections::HashMap<String, String>
         "host_perf_budget",
         "pipeline_encode",
         "pipeline_total",
+        "pipeline_fps",
     ] {
         map.insert(key.into(), value.into());
     }
@@ -1893,6 +1901,10 @@ async fn fetch_host_perf_info() -> std::collections::HashMap<String, String> {
                 item.get("active")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false)
+                    && !item
+                        .get("control_only")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
                     && latest_session_id.map_or(true, |id| {
                         item.get("session_id").and_then(|v| v.as_u64()) == Some(id)
                     })
@@ -1902,6 +1914,10 @@ async fn fetch_host_perf_info() -> std::collections::HashMap<String, String> {
                     item.get("active")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false)
+                        && !item
+                            .get("control_only")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false)
                 })
             })
     });
@@ -1943,6 +1959,7 @@ async fn fetch_host_perf_info() -> std::collections::HashMap<String, String> {
         "pipeline_total".into(),
         format_ms_value(get_number_at(session, &["pipeline", "total", "p95_ms"])),
     );
+    map.insert("pipeline_fps".into(), crate::rtss_frame_rates::format_frame_rates(session));
 
     map
 }
@@ -1982,7 +1999,7 @@ fn format_osd_text(
             "session_state" => "State",
             "stream_client" => "Client",
             "stream_resolution" => "Res",
-            "stream_fps" => "FPS",
+            "stream_fps" => "Target FPS",
             "stream_bitrate" => "Bitrate",
             "stream_codec" => "Codec",
             "stream_hdr" => "HDR",
@@ -1994,6 +2011,7 @@ fn format_osd_text(
             "host_perf_budget" => "Budget",
             "pipeline_encode" => "Encode",
             "pipeline_total" => "Pipe",
+            "pipeline_fps" => "Link FPS",
             "process_cpu" => "CPU",
             "process_mem" => "Mem",
             "process_threads" => "Threads",
@@ -2068,6 +2086,7 @@ async fn monitoring_loop(config: MonitoringConfig) {
                     | "host_perf_budget"
                     | "pipeline_encode"
                     | "pipeline_total"
+                    | "pipeline_fps"
             )
         });
 

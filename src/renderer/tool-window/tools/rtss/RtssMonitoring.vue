@@ -23,6 +23,12 @@
       </div>
     </div>
 
+    <small v-if="config.metrics.includes('pipeline_fps')" class="frame-rate-hint">
+      {{ locale === 'zh'
+        ? 'Src 源更新 · Cap 捕获交付 · Submit 编码提交 · Out 编码输出 · Repeat 重复提交（FPS）。与 RTSS 游戏帧率对照；首次统计需约 1 秒。'
+        : 'Src source updates · Cap capture delivery · Submit encoder input · Out encoded output · Repeat repeated input (FPS). Compare with RTSS game FPS; allow about 1 second to warm up.' }}
+    </small>
+
     <!-- 样式配置 -->
     <div class="monitor-style">
       <div class="style-row">
@@ -80,7 +86,7 @@ const STORAGE_KEY = 'rtss-monitoring-config'
 
 const DEFAULT_CONFIG = {
   interval_ms: 1000,
-  metrics: ['session_state', 'stream_fps', 'stream_bitrate', 'host_perf_p95'],
+  metrics: ['session_state', 'stream_fps', 'stream_bitrate', 'pipeline_fps', 'host_perf_p95'],
   title_color: 'FFD700',
   label_color: 'AAAAAA',
   value_color: '00FF00',
@@ -204,6 +210,12 @@ defineExpose({ loadState })
 </script>
 
 <style lang="less" scoped>
+.frame-rate-hint {
+  display: block;
+  color: rgba(255, 255, 255, 0.6);
+  line-height: 1.6;
+}
+
 .metric-groups {
   display: flex;
   flex-direction: column;

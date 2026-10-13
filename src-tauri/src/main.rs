@@ -27,6 +27,7 @@ mod power;
 mod proxy_server;
 mod rtss;
 mod rtss_frame_rates;
+mod perf;
 use native_components::providers::nvidia_rtx_hdr as rtx_hdr;
 mod hdr_enhanced;
 mod native_components;

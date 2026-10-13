@@ -4,6 +4,9 @@ pub(crate) fn format_frame_rates(session: &serde_json::Value) -> String {
     let Some(rates) = session.get("frame_rates").filter(|rates| rates.is_object()) else {
         return "N/A".into();
     };
+    if rates.get("enabled").and_then(|v| v.as_bool()) == Some(false) {
+        return "collection off".into();
+    }
     if rates.get("ready").and_then(|v| v.as_bool()) != Some(true) {
         return "warming up".into();
     }
@@ -93,6 +96,12 @@ mod tests {
     #[test]
     fn missing_measurements_never_use_the_target_fps() {
         assert_eq!(format_frame_rates(&json!({"fps": 120})), "N/A");
+        assert_eq!(
+            format_frame_rates(&json!({"frame_rates": {
+                "enabled": false, "ready": true, "capture": {"fps": 120}
+            }})),
+            "collection off"
+        );
         for value in [
             json!(null),
             json!("invalid"),

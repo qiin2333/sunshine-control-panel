@@ -5,11 +5,8 @@ use log::{debug, info, warn};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::ffi::CString;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
-use tokio::sync::Mutex;
+use std::sync::Arc;
+use tokio::sync::{Mutex, watch};
 
 // ─── Busy flag RAII guard ─────────────────────────────────────
 
@@ -136,8 +133,38 @@ pub struct MonitoringSnapshot {
     pub metrics: std::collections::HashMap<String, String>,
 }
 
-// 全局监控状态
-static MONITORING_ACTIVE: Lazy<Arc<AtomicBool>> = Lazy::new(|| Arc::new(AtomicBool::new(false)));
+// Serialize stop/reconfigure so a retired loop cannot renew after its replacement.
+struct MonitoringTask {
+    stop: watch::Sender<bool>,
+    handle: tokio::task::JoinHandle<()>,
+}
+
+static MONITORING_TASK: Lazy<Mutex<Option<MonitoringTask>>> = Lazy::new(|| Mutex::new(None));
+
+async fn finish_monitoring_task(task: &mut Option<MonitoringTask>) {
+    if let Some(task) = task.take() {
+        let _ = task.stop.send(true);
+        if let Err(e) = task.handle.await {
+            warn!("RTSS monitoring task failed: {}", e);
+        }
+        *MONITORING_SNAPSHOT.lock().await = MonitoringSnapshot::default();
+    }
+}
+
+/// Publish the accepted task's state before its first asynchronous polling cycle.
+async fn launch_monitoring_task<F, Fut>(task: &mut Option<MonitoringTask>, run: F)
+where
+    F: FnOnce(watch::Receiver<bool>) -> Fut,
+    Fut: std::future::Future<Output = ()> + Send + 'static,
+{
+    let (stop, receiver) = watch::channel(false);
+    *MONITORING_SNAPSHOT.lock().await = MonitoringSnapshot {
+        active: true,
+        ..MonitoringSnapshot::default()
+    };
+    let handle = tokio::spawn(run(receiver));
+    *task = Some(MonitoringTask { stop, handle });
+}
 
 /// CPU 采样历史 (prev_cpu_time, prev_sys_time)，用于计算瞬时 CPU 使用率
 #[cfg(target_os = "windows")]
@@ -2014,8 +2041,20 @@ fn format_osd_text(
 }
 
 /// 监控循环主体
-async fn monitoring_loop(config: MonitoringConfig) {
-    let interval = std::time::Duration::from_millis(config.interval_ms.max(500));
+async fn monitoring_loop(config: MonitoringConfig, mut stop: watch::Receiver<bool>) {
+    let subscription = if config.metrics.iter().any(|metric| metric == "pipeline_fps") {
+        HOST_PERF_CLIENT.as_ref().map(|client| {
+            crate::perf::frame_rates::FrameRateSubscription::new(client.clone(), &crate::proxy_server::get_proxy_url())
+        })
+    } else {
+        None
+    };
+    let interval_ms = if subscription.is_some() {
+        config.interval_ms.clamp(500, crate::perf::frame_rates::MAX_RENEW_INTERVAL_MS)
+    } else {
+        config.interval_ms.max(500)
+    };
+    let interval = std::time::Duration::from_millis(interval_ms);
     let owner = "Foundation Sunshine".to_string();
 
     info!(
@@ -2023,7 +2062,12 @@ async fn monitoring_loop(config: MonitoringConfig) {
         config.interval_ms, config.metrics
     );
 
-    while MONITORING_ACTIVE.load(Ordering::Relaxed) {
+    while !*stop.borrow() {
+        if let Some(subscription) = &subscription {
+            if let Err(e) = subscription.renew().await {
+                debug!("failed to renew frame-rate collection: {}", e);
+            }
+        }
         let mut metrics = std::collections::HashMap::new();
 
         // 是否需要会话信息
@@ -2130,9 +2174,17 @@ async fn monitoring_loop(config: MonitoringConfig) {
             warn!("RTSS OSD 写入失败: {}", e);
         }
 
-        tokio::time::sleep(interval).await;
+        tokio::select! {
+            _ = tokio::time::sleep(interval) => {},
+            _ = stop.changed() => break,
+        }
     }
 
+    if let Some(subscription) = &subscription {
+        if let Err(e) = subscription.release().await {
+            debug!("failed to release frame-rate collection (lease will expire): {}", e);
+        }
+    }
     // 释放 OSD 槽位（零填整个 entry）
     #[cfg(target_os = "windows")]
     {
@@ -2158,17 +2210,10 @@ async fn monitoring_loop(config: MonitoringConfig) {
 /// 启动 OSD 实时监控
 #[tauri::command]
 pub async fn rtss_start_monitoring(config: MonitoringConfig) -> Result<(), String> {
-    if MONITORING_ACTIVE.load(Ordering::Relaxed) {
-        // 先停止旧的
-        MONITORING_ACTIVE.store(false, Ordering::Relaxed);
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    }
+    let mut task = MONITORING_TASK.lock().await;
+    finish_monitoring_task(&mut task).await;
 
-    MONITORING_ACTIVE.store(true, Ordering::Relaxed);
-
-    tokio::spawn(async move {
-        monitoring_loop(config).await;
-    });
+    launch_monitoring_task(&mut task, move |receiver| monitoring_loop(config, receiver)).await;
 
     Ok(())
 }
@@ -2176,9 +2221,10 @@ pub async fn rtss_start_monitoring(config: MonitoringConfig) -> Result<(), Strin
 /// 停止 OSD 实时监控
 #[tauri::command]
 pub async fn rtss_stop_monitoring() -> Result<(), String> {
-    MONITORING_ACTIVE.store(false, Ordering::Relaxed);
+    let mut task = MONITORING_TASK.lock().await;
+    finish_monitoring_task(&mut task).await;
 
-    // 立即释放 OSD 槽位，不等后台循环
+    // 后台任务已退出；无任务时也确保槽位和快照被清除。
     #[cfg(target_os = "windows")]
     {
         let _ = release_osd_slots("Foundation Sunshine");
@@ -2201,6 +2247,29 @@ pub async fn rtss_stop_monitoring() -> Result<(), String> {
 pub async fn rtss_get_monitoring_status() -> MonitoringSnapshot {
     let snapshot = MONITORING_SNAPSHOT.lock().await;
     snapshot.clone()
+}
+
+#[cfg(test)]
+mod monitoring_task_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn slow_first_cycle_is_active_as_soon_as_the_task_is_accepted() {
+        let mut task = None;
+        // Keep the first cycle pending without touching a live RTSS instance.
+        launch_monitoring_task(&mut task, |mut stop| async move {
+            let _ = stop.changed().await;
+        }).await;
+        let initial = rtss_get_monitoring_status().await;
+        assert!(initial.active);
+        assert!(initial.osd_text.is_empty());
+        assert!(initial.metrics.is_empty());
+        tokio::task::yield_now().await;
+        assert!(rtss_get_monitoring_status().await.active);
+        finish_monitoring_task(&mut task).await;
+        assert!(task.is_none());
+        assert!(!rtss_get_monitoring_status().await.active);
+    }
 }
 
 // ─── OSD 属性配置 ──────────────────────────────────────────

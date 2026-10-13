@@ -147,7 +147,23 @@ async fn finish_monitoring_task(task: &mut Option<MonitoringTask>) {
         if let Err(e) = task.handle.await {
             warn!("RTSS monitoring task failed: {}", e);
         }
+        *MONITORING_SNAPSHOT.lock().await = MonitoringSnapshot::default();
     }
+}
+
+/// Publish the accepted task's state before its first asynchronous polling cycle.
+async fn launch_monitoring_task<F, Fut>(task: &mut Option<MonitoringTask>, run: F)
+where
+    F: FnOnce(watch::Receiver<bool>) -> Fut,
+    Fut: std::future::Future<Output = ()> + Send + 'static,
+{
+    let (stop, receiver) = watch::channel(false);
+    *MONITORING_SNAPSHOT.lock().await = MonitoringSnapshot {
+        active: true,
+        ..MonitoringSnapshot::default()
+    };
+    let handle = tokio::spawn(run(receiver));
+    *task = Some(MonitoringTask { stop, handle });
 }
 
 /// CPU 采样历史 (prev_cpu_time, prev_sys_time)，用于计算瞬时 CPU 使用率
@@ -2197,11 +2213,7 @@ pub async fn rtss_start_monitoring(config: MonitoringConfig) -> Result<(), Strin
     let mut task = MONITORING_TASK.lock().await;
     finish_monitoring_task(&mut task).await;
 
-    let (stop, receiver) = watch::channel(false);
-    let handle = tokio::spawn(async move {
-        monitoring_loop(config, receiver).await;
-    });
-    *task = Some(MonitoringTask { stop, handle });
+    launch_monitoring_task(&mut task, move |receiver| monitoring_loop(config, receiver)).await;
 
     Ok(())
 }
@@ -2235,6 +2247,29 @@ pub async fn rtss_stop_monitoring() -> Result<(), String> {
 pub async fn rtss_get_monitoring_status() -> MonitoringSnapshot {
     let snapshot = MONITORING_SNAPSHOT.lock().await;
     snapshot.clone()
+}
+
+#[cfg(test)]
+mod monitoring_task_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn slow_first_cycle_is_active_as_soon_as_the_task_is_accepted() {
+        let mut task = None;
+        // Keep the first cycle pending without touching a live RTSS instance.
+        launch_monitoring_task(&mut task, |mut stop| async move {
+            let _ = stop.changed().await;
+        }).await;
+        let initial = rtss_get_monitoring_status().await;
+        assert!(initial.active);
+        assert!(initial.osd_text.is_empty());
+        assert!(initial.metrics.is_empty());
+        tokio::task::yield_now().await;
+        assert!(rtss_get_monitoring_status().await.active);
+        finish_monitoring_task(&mut task).await;
+        assert!(task.is_none());
+        assert!(!rtss_get_monitoring_status().await.active);
+    }
 }
 
 // ─── OSD 属性配置 ──────────────────────────────────────────

@@ -53,15 +53,13 @@ pub(crate) fn select_perf_session(body: &serde_json::Value) -> Option<&serde_jso
         })
 }
 
-/// Match the runtime snapshot by ID; a missing match must not select another client.
+/// Match a known perf session ID; without one, preserve standalone runtime metrics.
 pub(crate) fn select_runtime_session(
     body: &serde_json::Value,
     session_id: Option<u64>,
-    require_match: bool,
 ) -> Option<&serde_json::Value> {
     let sessions = body.get("sessions")?.as_array()?;
-    if require_match {
-        let id = session_id?;
+    if let Some(id) = session_id {
         sessions
             .iter()
             .find(|session| session.get("session_id").and_then(|v| v.as_u64()) == Some(id))
@@ -130,7 +128,7 @@ mod tests {
         ]});
         let selected = select_perf_session(&perf).unwrap();
         let id = selected["session_id"].as_u64();
-        let matched = select_runtime_session(&runtime, id, true).unwrap();
+        let matched = select_runtime_session(&runtime, id).unwrap();
         assert_eq!(selected["session_id"], matched["session_id"]);
         assert_eq!(matched["fps"], 120);
         let mut older_latest = perf.clone();
@@ -160,12 +158,31 @@ mod tests {
     #[test]
     fn absent_runtime_match_never_falls_back_to_another_session() {
         let runtime = json!({"sessions": [{"session_id": 1, "fps": 60}]});
-        assert!(select_runtime_session(&runtime, Some(2), true).is_none());
-        assert!(select_runtime_session(&runtime, None, true).is_none());
-        // Older hosts can still expose standalone runtime metrics without perf data.
-        assert_eq!(
-            select_runtime_session(&runtime, None, false).unwrap()["fps"],
-            60
-        );
+        assert!(select_runtime_session(&runtime, Some(2)).is_none());
+    }
+
+    #[test]
+    fn unavailable_perf_preserves_runtime_metrics_and_recovery_restores_id_matching() {
+        let runtime = json!({"sessions": [
+            {"session_id": 1, "state": "RUNNING", "fps": 60},
+            {"session_id": 2, "state": "RUNNING", "fps": 120}
+        ]});
+        // Network failures, older hosts and snapshots with no video session yield no ID.
+        for perf in [
+            json!(null),
+            json!({"success": false}),
+            json!({"sessions": []}),
+        ] {
+            let id = select_perf_session(&perf).and_then(|s| s["session_id"].as_u64());
+            let session = select_runtime_session(&runtime, id).unwrap();
+            assert_eq!(session["state"], "RUNNING");
+            assert_eq!(session["fps"], 60);
+        }
+        let recovered = json!({"latest_session_id": 2, "sessions": [
+            {"session_id": 2, "active": true}
+        ]});
+        let id = select_perf_session(&recovered).and_then(|s| s["session_id"].as_u64());
+        assert_eq!(select_runtime_session(&runtime, id).unwrap()["fps"], 120);
+        assert!(select_runtime_session(&json!({"sessions": []}), None).is_none());
     }
 }

@@ -1737,10 +1737,7 @@ fn get_capture_method() -> String {
 }
 
 /// 从 Sunshine API 获取串流会话信息
-async fn fetch_session_info(
-    session_id: Option<u64>,
-    require_match: bool,
-) -> std::collections::HashMap<String, String> {
+async fn fetch_session_info(session_id: Option<u64>) -> std::collections::HashMap<String, String> {
     use std::collections::HashMap;
     let mut map = HashMap::new();
 
@@ -1760,11 +1757,9 @@ async fn fetch_session_info(
         Ok(resp) => {
             if let Ok(body) = resp.json::<serde_json::Value>().await {
                 // API 返回结构: {success, total_sessions, sessions: [...]}
-                if let Some(session) = crate::rtss_frame_rates::select_runtime_session(
-                    &body,
-                    session_id,
-                    require_match,
-                ) {
+                if let Some(session) =
+                    crate::rtss_frame_rates::select_runtime_session(&body, session_id)
+                {
                     if let Some(state) = session.get("state").and_then(|v| v.as_str()) {
                         map.insert("session_state".into(), state.to_string());
                     }
@@ -2073,7 +2068,7 @@ async fn monitoring_loop(config: MonitoringConfig) {
         };
 
         if needs_session {
-            let session_info = fetch_session_info(selected_session_id, needs_host_perf).await;
+            let session_info = fetch_session_info(selected_session_id).await;
             metrics.extend(session_info);
         }
 

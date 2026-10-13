@@ -11,6 +11,9 @@ use std::process::Command;
 use super::config::{
     get_core_ds5_settings, require_entity_tag, save_core_ds5_settings, update_config_fields,
 };
+use super::core_patch::{
+    CORE_PATCH_ID, ORIGINAL_CORE_SHA256, apply_staged_core_patch, core_patch_dir, read_core_patch,
+};
 use super::packages::{
     ComponentDownloadSpec, InstalledComponentManifest, LocalComponentPackages,
     SidecarPackageManifest, SidecarRuntimeMetadata, UsbipInstallResult, active_dir, component_root,
@@ -138,7 +141,20 @@ pub(crate) fn validate_component_backup(directory: &Path) -> Result<(), String> 
         return Err("backup sidecar integrity check failed".to_string());
     }
     let hidmaestro_hash = sha256_file(&directory.join("HIDMaestro.Core.dll"))?;
-    if manifest.sha256.len() != 64 || !hidmaestro_hash.eq_ignore_ascii_case(&manifest.sha256) {
+    // Legacy manifests stored the ZIP digest in sha256, not the DLL digest.
+    // A main-package upgrade can also have patched an old active component
+    // before its manifest gained core_sha256. Accept only the known assembly
+    // or the current, verified main-package patch in those cases.
+    let recorded_core_matches = (!manifest.core_sha256.is_empty()
+        && hidmaestro_hash.eq_ignore_ascii_case(&manifest.core_sha256))
+        || (manifest.core_sha256.is_empty()
+            && hidmaestro_hash.eq_ignore_ascii_case(&manifest.sha256));
+    let compatible_legacy_core = manifest.hidmaestro_version == HIDMAESTRO_VERSION
+        && manifest.sha256.eq_ignore_ascii_case(HIDMAESTRO_SHA256)
+        && (hidmaestro_hash == ORIGINAL_CORE_SHA256
+            || read_core_patch(&core_patch_dir())
+                .is_ok_and(|patch| hidmaestro_hash.eq_ignore_ascii_case(&patch.sha256)));
+    if !recorded_core_matches && !compatible_legacy_core {
         return Err("backup HIDMaestro integrity check failed".to_string());
     }
     Ok(())
@@ -697,6 +713,7 @@ pub(crate) async fn dualsense_install_impl(
         tokio::task::spawn_blocking(move || extract_verified_package(&archive, &destination))
             .await
             .map_err(|error| error.to_string())??;
+        let core_sha256 = apply_staged_core_patch(&core_patch_dir(), &staging)?;
         report_progress(progress, "probing", 86);
         let probe_executable = staging.join(SIDECAR_EXE);
         let probe_path = probe_executable.clone();
@@ -711,6 +728,8 @@ pub(crate) async fn dualsense_install_impl(
                 "hidmaestro_version": HIDMAESTRO_VERSION,
                 "source": if local_packages.hidmaestro.is_some() { "selected-local" } else { HIDMAESTRO_URL },
                 "sha256": HIDMAESTRO_SHA256,
+                "core_sha256": core_sha256,
+                "core_patch": CORE_PATCH_ID,
                 "sidecar_source": if using_discovered_package {
                     "discovered-local"
                 } else if using_selected_package {
@@ -800,6 +819,9 @@ pub(crate) async fn dualsense_self_test_impl(profile: String) -> Result<serde_js
         let test_profile = profile.clone();
         let test_result = result_path.clone();
         tokio::task::spawn_blocking(move || {
+            // Old sidecars do not check the patch marker themselves. Upgrade
+            // them before a direct elevated self-test can create a controller.
+            apply_staged_core_patch(&core_patch_dir(), executable.parent().unwrap())?;
             let _ = fs::remove_file(&test_result);
             let mut command = Command::new(&executable);
             command

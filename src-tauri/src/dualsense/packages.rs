@@ -42,6 +42,7 @@ pub(crate) struct InstalledComponentManifest {
     pub(crate) protocol: u32,
     pub(crate) sidecar_file: String,
     pub(crate) sidecar_sha256: String,
+    pub(crate) core_sha256: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]

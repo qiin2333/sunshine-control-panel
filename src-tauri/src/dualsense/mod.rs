@@ -8,6 +8,7 @@
 
 mod commands;
 mod config;
+mod core_patch;
 #[cfg(target_os = "windows")]
 mod elevated;
 mod install;

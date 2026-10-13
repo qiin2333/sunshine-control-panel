@@ -40,6 +40,7 @@ fn write_valid_component(directory: &std::path::Path, marker: &[u8]) {
             "component_version": "1.0.0",
             "hidmaestro_version": "1.6.1",
             "sha256": sha256_file(&directory.join("HIDMaestro.Core.dll")).unwrap(),
+            "core_sha256": sha256_file(&directory.join("HIDMaestro.Core.dll")).unwrap(),
             "protocol": super::PROTOCOL_VERSION,
             "sidecar_file": super::SIDECAR_EXE,
             "sidecar_sha256": sha256_file(&directory.join(super::SIDECAR_EXE)).unwrap(),
@@ -53,6 +54,24 @@ fn write_valid_component(directory: &std::path::Path, marker: &[u8]) {
 fn composite_profile_requires_usbip() {
     let error = validate_requested_profile(true, false, false).unwrap_err();
     assert!(error.starts_with("DS5-RUN-003:"));
+}
+
+#[test]
+fn legacy_backup_with_a_recorded_dll_digest_remains_recoverable() {
+    let root = std::env::temp_dir().join(format!(
+        "sunshine-legacy-core-backup-{}",
+        uuid::Uuid::new_v4()
+    ));
+    write_valid_component(&root, b"legacy-runtime");
+    let manifest_path = root.join("component.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest.as_object_mut().unwrap().remove("core_sha256");
+    std::fs::write(&manifest_path, manifest.to_string()).unwrap();
+    assert!(super::install::validate_component_backup(&root).is_ok());
+    std::fs::write(root.join("HIDMaestro.Core.dll"), b"tampered").unwrap();
+    assert!(super::install::validate_component_backup(&root).is_err());
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -139,6 +158,7 @@ fn component_status_separates_updates_from_same_version_repairs() {
         protocol: super::PROTOCOL_VERSION,
         sidecar_file: super::SIDECAR_EXE.to_string(),
         sidecar_sha256: "a".repeat(64),
+        core_sha256: String::new(),
     };
     assert!(!component_update_available(Some(&current)));
     assert!(component_matches_current_runtime(

@@ -10,7 +10,7 @@ use std::process::Command;
 use super::config::{CoreDualSenseResponse, get_core_ds5_settings, resolve_core_config};
 use super::packages::{
     active_dir, component_matches_current_runtime, component_update_available,
-    installed_component_manifest, sidecar_path, validate_sidecar_integrity,
+    installed_component_manifest, sidecar_path, verified_sidecar_path,
 };
 use super::{COMPONENT_VERSION, DualSenseStatus, PROTOCOL_VERSION, observe_config_revision};
 use crate::usbip::{installed_usbip_version, supported_usbip_installed};
@@ -20,7 +20,6 @@ use crate::usbip::{installed_usbip_version, supported_usbip_installed};
 pub(crate) struct ProbeResult {
     pub(crate) protocol: u32,
     pub(crate) runtime_version: String,
-    pub(crate) core_patch: String,
     pub(crate) standard: bool,
     pub(crate) composite: bool,
     pub(crate) genshin_compatibility_identity: bool,
@@ -208,18 +207,11 @@ pub(crate) fn run_probe(executable: &Path) -> Result<ProbeResult, String> {
                 .to_string(),
         );
     }
-    if result.core_patch != "registry-isolation-1" {
-        return Err("DS5-PROTO-001: component must include the patched Core".to_string());
-    }
     Ok(result)
 }
 
 pub(crate) fn run_installed_probe() -> Result<ProbeResult, String> {
-    let executable = sidecar_path();
-    let manifest = installed_component_manifest()
-        .ok_or_else(|| "DS5-PKG-001: installed component manifest is missing".to_string())?;
-    validate_sidecar_integrity(&executable, &manifest)?;
-    run_probe(&executable)
+    run_probe(&verified_sidecar_path()?)
 }
 
 pub(crate) fn component_test_failure(output: &std::process::Output, result_path: &Path) -> String {

@@ -62,10 +62,6 @@ fn legacy_backup_with_a_recorded_dll_digest_remains_recoverable() {
         uuid::Uuid::new_v4()
     ));
     write_valid_component(&root, b"legacy-runtime");
-    let manifest_path = root.join("component.json");
-    let manifest: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
-    std::fs::write(&manifest_path, manifest.to_string()).unwrap();
     assert!(super::install::validate_component_backup(&root).is_ok());
     std::fs::write(root.join("HIDMaestro.Core.dll"), b"tampered").unwrap();
     assert!(super::install::validate_component_backup(&root).is_err());
@@ -151,13 +147,15 @@ fn component_state_prioritizes_stream_ownership_and_recovery() {
 }
 
 #[test]
-fn installed_sidecar_integrity_rejects_a_replaced_executable() {
+fn installed_sidecar_requires_current_version_and_rejects_replaced_executable() {
     let root = std::env::temp_dir().join(format!("sunshine-ds5-test-{}", uuid::Uuid::new_v4()));
     write_valid_component(&root, b"trusted");
-    let manifest: InstalledComponentManifest =
+    let mut manifest: InstalledComponentManifest =
         serde_json::from_slice(&std::fs::read(root.join("component.json")).unwrap()).unwrap();
     let executable = root.join(super::SIDECAR_EXE);
 
+    assert!(validate_sidecar_integrity(&executable, &manifest).is_err());
+    manifest.component_version = super::COMPONENT_VERSION.into();
     assert!(validate_sidecar_integrity(&executable, &manifest).is_ok());
     std::fs::write(&executable, b"replaced").unwrap();
     assert!(validate_sidecar_integrity(&executable, &manifest).is_err());

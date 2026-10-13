@@ -14,7 +14,7 @@ use super::packages::{
     SidecarPackageManifest, SidecarRuntimeMetadata, UsbipInstallResult, active_dir, component_root,
     download_component_asset, download_component_asset_from_candidates,
     manually_placed_sidecar_package, purge_stale_handoff_packages, sha256_file,
-    sidecar_package_manifest, sidecar_package_manifest_path, sidecar_path, validate_core_integrity,
+    sidecar_package_manifest, sidecar_package_manifest_path, validate_core_integrity,
 };
 use super::probe::{component_test_failure, local_uninstalled_status, run_probe, run_with_timeout};
 use super::{
@@ -706,11 +706,10 @@ pub(crate) async fn dualsense_self_test_impl(profile: String) -> Result<serde_js
     let result_path = component_root().join(format!("self-test-{}.json", std::process::id()));
     #[cfg(target_os = "windows")]
     {
-        let executable = sidecar_path();
         let test_profile = profile.clone();
         let test_result = result_path.clone();
         tokio::task::spawn_blocking(move || {
-            super::probe::run_installed_probe()?;
+            let executable = super::packages::verified_sidecar_path()?;
             let _ = fs::remove_file(&test_result);
             let mut command = Command::new(&executable);
             command

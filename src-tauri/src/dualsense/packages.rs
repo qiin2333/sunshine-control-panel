@@ -335,6 +335,14 @@ pub(crate) fn installed_component_manifest() -> Option<InstalledComponentManifes
     serde_json::from_slice(&contents).ok()
 }
 
+pub(crate) fn verified_sidecar_path() -> Result<PathBuf, String> {
+    let executable = sidecar_path();
+    let manifest = installed_component_manifest()
+        .ok_or_else(|| "DS5-PKG-001: installed component manifest is missing".to_string())?;
+    validate_sidecar_integrity(&executable, &manifest)?;
+    Ok(executable)
+}
+
 /// Verify the installed executable and Core before capability probing.
 pub(crate) fn validate_sidecar_integrity(
     executable: &Path,
@@ -345,7 +353,10 @@ pub(crate) fn validate_sidecar_integrity(
             .sidecar_sha256
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit());
-    if manifest.sidecar_file != SIDECAR_EXE || !valid_digest {
+    if manifest.component_version != COMPONENT_VERSION
+        || manifest.sidecar_file != SIDECAR_EXE
+        || !valid_digest
+    {
         return Err("DS5-PKG-001: installed sidecar manifest is invalid".to_string());
     }
     let actual = sha256_file(executable)?;

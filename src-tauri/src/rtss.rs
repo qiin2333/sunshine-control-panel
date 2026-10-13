@@ -108,6 +108,7 @@ impl Default for MonitoringConfig {
                 "session_state".into(),
                 "stream_fps".into(),
                 "stream_bitrate".into(),
+                "pipeline_fps".into(),
             ],
             title_color: "FFD700".into(),
             label_color: "AAAAAA".into(),
@@ -1141,8 +1142,8 @@ pub async fn rtss_get_available_metrics() -> Vec<MetricDef> {
         },
         MetricDef {
             id: "stream_fps".into(),
-            label_zh: "串流帧率".into(),
-            label_en: "Stream FPS".into(),
+            label_zh: "目标帧率".into(),
+            label_en: "Target FPS".into(),
             group: "session".into(),
         },
         MetricDef {
@@ -1176,6 +1177,12 @@ pub async fn rtss_get_available_metrics() -> Vec<MetricDef> {
             group: "session".into(),
         },
         // 主机串流性能
+        MetricDef {
+            id: "pipeline_fps".into(),
+            label_zh: "链路帧率对照".into(),
+            label_en: "Pipeline FPS".into(),
+            group: "host_perf".into(),
+        },
         MetricDef {
             id: "host_perf_p95".into(),
             label_zh: "Host P95".into(),
@@ -1730,7 +1737,7 @@ fn get_capture_method() -> String {
 }
 
 /// 从 Sunshine API 获取串流会话信息
-async fn fetch_session_info() -> std::collections::HashMap<String, String> {
+async fn fetch_session_info(session_id: Option<u64>) -> std::collections::HashMap<String, String> {
     use std::collections::HashMap;
     let mut map = HashMap::new();
 
@@ -1750,8 +1757,9 @@ async fn fetch_session_info() -> std::collections::HashMap<String, String> {
         Ok(resp) => {
             if let Ok(body) = resp.json::<serde_json::Value>().await {
                 // API 返回结构: {success, total_sessions, sessions: [...]}
-                let sessions = body.get("sessions").and_then(|v| v.as_array());
-                if let Some(session) = sessions.and_then(|arr| arr.first()) {
+                if let Some(session) =
+                    crate::rtss_frame_rates::select_runtime_session(&body, session_id)
+                {
                     if let Some(state) = session.get("state").and_then(|v| v.as_str()) {
                         map.insert("session_state".into(), state.to_string());
                     }
@@ -1843,6 +1851,7 @@ fn insert_host_perf_defaults(map: &mut std::collections::HashMap<String, String>
         "host_perf_budget",
         "pipeline_encode",
         "pipeline_total",
+        "pipeline_fps",
     ] {
         map.insert(key.into(), value.into());
     }
@@ -1856,7 +1865,7 @@ static HOST_PERF_CLIENT: Lazy<Option<reqwest::Client>> = Lazy::new(|| {
         .ok()
 });
 
-async fn fetch_host_perf_info() -> std::collections::HashMap<String, String> {
+async fn fetch_host_perf_info() -> (std::collections::HashMap<String, String>, Option<u64>) {
     use std::collections::HashMap;
     let mut map = HashMap::new();
 
@@ -1865,7 +1874,7 @@ async fn fetch_host_perf_info() -> std::collections::HashMap<String, String> {
 
     let Some(client) = HOST_PERF_CLIENT.as_ref() else {
         insert_host_perf_defaults(&mut map, "N/A");
-        return map;
+        return (map, None);
     };
 
     let body = match client.get(&url).send().await {
@@ -1874,41 +1883,19 @@ async fn fetch_host_perf_info() -> std::collections::HashMap<String, String> {
             Err(e) => {
                 debug!("failed to parse Sunshine perf snapshot: {}", e);
                 insert_host_perf_defaults(&mut map, "N/A");
-                return map;
+                return (map, None);
             }
         },
         Err(e) => {
             debug!("failed to fetch Sunshine perf snapshot: {}", e);
             insert_host_perf_defaults(&mut map, "N/A");
-            return map;
+            return (map, None);
         }
     };
 
-    let sessions = body.get("sessions").and_then(|v| v.as_array());
-    let latest_session_id = body.get("latest_session_id").and_then(|v| v.as_u64());
-    let session = sessions.and_then(|items| {
-        items
-            .iter()
-            .find(|item| {
-                item.get("active")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false)
-                    && latest_session_id.map_or(true, |id| {
-                        item.get("session_id").and_then(|v| v.as_u64()) == Some(id)
-                    })
-            })
-            .or_else(|| {
-                items.iter().find(|item| {
-                    item.get("active")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false)
-                })
-            })
-    });
-
-    let Some(session) = session else {
+    let Some(session) = crate::rtss_frame_rates::select_perf_session(&body) else {
         insert_host_perf_defaults(&mut map, "-");
-        return map;
+        return (map, None);
     };
 
     let fps = session
@@ -1943,8 +1930,12 @@ async fn fetch_host_perf_info() -> std::collections::HashMap<String, String> {
         "pipeline_total".into(),
         format_ms_value(get_number_at(session, &["pipeline", "total", "p95_ms"])),
     );
+    map.insert(
+        "pipeline_fps".into(),
+        crate::rtss_frame_rates::format_frame_rates(session),
+    );
 
-    map
+    (map, session.get("session_id").and_then(|v| v.as_u64()))
 }
 
 /// 构建 OSD 格式化文本
@@ -1982,7 +1973,7 @@ fn format_osd_text(
             "session_state" => "State",
             "stream_client" => "Client",
             "stream_resolution" => "Res",
-            "stream_fps" => "FPS",
+            "stream_fps" => "Target FPS",
             "stream_bitrate" => "Bitrate",
             "stream_codec" => "Codec",
             "stream_hdr" => "HDR",
@@ -1994,6 +1985,7 @@ fn format_osd_text(
             "host_perf_budget" => "Budget",
             "pipeline_encode" => "Encode",
             "pipeline_total" => "Pipe",
+            "pipeline_fps" => "Link FPS",
             "process_cpu" => "CPU",
             "process_mem" => "Mem",
             "process_threads" => "Threads",
@@ -2049,11 +2041,6 @@ async fn monitoring_loop(config: MonitoringConfig) {
             )
         });
 
-        if needs_session {
-            let session_info = fetch_session_info().await;
-            metrics.extend(session_info);
-        }
-
         // 捕获方式（从 sunshine.conf 读取，独立于会话）
         if config.metrics.iter().any(|m| m == "capture_method") {
             metrics.insert("capture_method".into(), get_capture_method());
@@ -2068,12 +2055,21 @@ async fn monitoring_loop(config: MonitoringConfig) {
                     | "host_perf_budget"
                     | "pipeline_encode"
                     | "pipeline_total"
+                    | "pipeline_fps"
             )
         });
 
-        if needs_host_perf {
-            let host_perf_info = fetch_host_perf_info().await;
+        let selected_session_id = if needs_host_perf {
+            let (host_perf_info, session_id) = fetch_host_perf_info().await;
             metrics.extend(host_perf_info);
+            session_id
+        } else {
+            None
+        };
+
+        if needs_session {
+            let session_info = fetch_session_info(selected_session_id).await;
+            metrics.extend(session_info);
         }
 
         // 是否需要进程统计

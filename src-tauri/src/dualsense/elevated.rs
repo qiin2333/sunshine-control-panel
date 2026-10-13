@@ -28,6 +28,7 @@ pub(crate) const ELEVATION_CONNECT_TIMEOUT: std::time::Duration =
 pub(crate) enum ElevatedOperation {
     Install,
     InstallLocal,
+    Update,
     TestStandard,
     TestComposite,
     Uninstall,
@@ -39,6 +40,7 @@ impl ElevatedOperation {
         match self {
             Self::Install => "install",
             Self::InstallLocal => "install-local",
+            Self::Update => "update",
             Self::TestStandard => "test-standard",
             Self::TestComposite => "test-composite",
             Self::Uninstall => "uninstall",
@@ -49,6 +51,7 @@ impl ElevatedOperation {
         match value {
             "install" => Some(Self::Install),
             "install-local" => Some(Self::InstallLocal),
+            "update" => Some(Self::Update),
             "test-standard" => Some(Self::TestStandard),
             "test-composite" => Some(Self::TestComposite),
             "uninstall" => Some(Self::Uninstall),
@@ -58,9 +61,11 @@ impl ElevatedOperation {
 
     pub(crate) fn timeout(self) -> std::time::Duration {
         match self {
-            // Installation can include three component downloads with a shared
+            // Installation can include two component downloads with a shared
             // thirty-minute budget each, followed by the USB/IP installer.
-            Self::Install | Self::InstallLocal => std::time::Duration::from_secs(110 * 60),
+            Self::Install | Self::InstallLocal | Self::Update => {
+                std::time::Duration::from_secs(110 * 60)
+            }
             Self::TestStandard | Self::TestComposite => std::time::Duration::from_secs(90),
             Self::Uninstall => std::time::Duration::from_secs(120),
         }
@@ -237,8 +242,17 @@ async fn run_elevated_helper(operation: ElevatedOperation, token: uuid::Uuid) ->
             return Err("DS5-PKG-004: administrator authorization was not granted".to_string());
         }
         ensure_no_active_session().await?;
+        // Recheck after elevation: a manual install/uninstall may have completed
+        // while the authorization prompt was open.
+        if operation == ElevatedOperation::Update && !super::auto_update::installed_update_needed()
+        {
+            return serde_json::to_value(super::dualsense_get_status().await?)
+                .map_err(|error| error.to_string());
+        }
         match operation {
-            ElevatedOperation::Install | ElevatedOperation::InstallLocal => {
+            ElevatedOperation::Install
+            | ElevatedOperation::InstallLocal
+            | ElevatedOperation::Update => {
                 let local_packages = local_packages?;
                 let classified = if local_packages.is_empty() {
                     LocalComponentPackages::default()
@@ -255,8 +269,15 @@ async fn run_elevated_helper(operation: ElevatedOperation, token: uuid::Uuid) ->
                         format!("DS5-PKG-002: local package classification task failed: {error}")
                     })??
                 };
-                serde_json::to_value(dualsense_install_impl(&progress, classified).await?)
-                    .map_err(|error| error.to_string())
+                serde_json::to_value(
+                    dualsense_install_impl(
+                        &progress,
+                        classified,
+                        operation != ElevatedOperation::Update,
+                    )
+                    .await?,
+                )
+                .map_err(|error| error.to_string())
             }
             ElevatedOperation::TestStandard => {
                 dualsense_self_test_impl("standard".to_string()).await
@@ -372,7 +393,7 @@ pub(crate) async fn run_elevated_operation(
     let mut local_packages = if operation == ElevatedOperation::InstallLocal {
         if selected_packages.is_empty() || selected_packages.len() > MAX_LOCAL_COMPONENT_PACKAGES {
             return Err(
-                "DS5-PKG-002: select between one and three local component packages".to_string(),
+                "DS5-PKG-002: select between one and two local component packages".to_string(),
             );
         }
         let mut total_size = 0u64;
@@ -501,13 +522,11 @@ pub(crate) async fn run_elevated_operation(
             return Err("DS5-PKG-004: administrator operation timed out".to_string());
         }
     };
-    let status = crate::elevation::wait_for_exit(
-        &elevated_process,
-        std::time::Duration::from_secs(5),
-    )
-    .await
-    .map_err(|error| format!("DS5-PKG-004: administrator helper wait failed: {error}"))?
-    .ok_or_else(|| "DS5-PKG-004: administrator helper did not exit".to_string())?;
+    let status =
+        crate::elevation::wait_for_exit(&elevated_process, std::time::Duration::from_secs(5))
+            .await
+            .map_err(|error| format!("DS5-PKG-004: administrator helper wait failed: {error}"))?
+            .ok_or_else(|| "DS5-PKG-004: administrator helper did not exit".to_string())?;
     match final_result {
         Some(Ok(data)) if status == 0 => Ok(data),
         Some(Err(error)) => Err(error),

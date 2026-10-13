@@ -22,14 +22,12 @@ use crate::usbip::USBIP_SHA256;
 #[derive(Clone, Default)]
 pub(crate) struct LocalComponentPackages {
     pub(crate) sidecar: Option<PathBuf>,
-    pub(crate) hidmaestro: Option<PathBuf>,
     pub(crate) usbip: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum LocalComponentKind {
     Sidecar,
-    Hidmaestro,
     Usbip,
 }
 
@@ -42,7 +40,6 @@ pub(crate) struct InstalledComponentManifest {
     pub(crate) protocol: u32,
     pub(crate) sidecar_file: String,
     pub(crate) sidecar_sha256: String,
-    pub(crate) core_sha256: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -272,7 +269,6 @@ where
         };
         let (slot, component) = match kind {
             LocalComponentKind::Sidecar => (&mut classified.sidecar, "Sunshine Sidecar"),
-            LocalComponentKind::Hidmaestro => (&mut classified.hidmaestro, "HIDMaestro"),
             LocalComponentKind::Usbip => (&mut classified.usbip, "USB/IP"),
         };
         if slot.replace(package.to_path_buf()).is_some() {
@@ -289,9 +285,7 @@ pub(crate) fn local_component_kind(
     digest: &str,
     sidecar_digest: Option<&str>,
 ) -> Option<LocalComponentKind> {
-    if digest.eq_ignore_ascii_case(HIDMAESTRO_SHA256) {
-        Some(LocalComponentKind::Hidmaestro)
-    } else if digest.eq_ignore_ascii_case(USBIP_SHA256) {
+    if digest.eq_ignore_ascii_case(USBIP_SHA256) {
         Some(LocalComponentKind::Usbip)
     } else if sidecar_digest.is_some_and(|expected| digest.eq_ignore_ascii_case(expected)) {
         Some(LocalComponentKind::Sidecar)
@@ -341,8 +335,7 @@ pub(crate) fn installed_component_manifest() -> Option<InstalledComponentManifes
     serde_json::from_slice(&contents).ok()
 }
 
-/// Verifies only the Sunshine-owned executable before it is launched from the active install.
-/// `sha256` is the HIDMaestro archive digest and must not be compared with an extracted DLL.
+/// Verify the installed executable and Core before capability probing.
 pub(crate) fn validate_sidecar_integrity(
     executable: &Path,
     manifest: &InstalledComponentManifest,
@@ -359,7 +352,7 @@ pub(crate) fn validate_sidecar_integrity(
     if !actual.eq_ignore_ascii_case(&manifest.sidecar_sha256) {
         return Err("DS5-PKG-001: installed sidecar integrity check failed".to_string());
     }
-    Ok(())
+    validate_core_integrity(&executable.with_file_name("HIDMaestro.Core.dll"), manifest)
 }
 
 pub(crate) fn component_update_available(manifest: Option<&InstalledComponentManifest>) -> bool {
@@ -376,7 +369,8 @@ pub(crate) fn component_matches_current_runtime(
     };
     manifest.component_version == COMPONENT_VERSION
         && manifest.hidmaestro_version == HIDMAESTRO_VERSION
-        && manifest.sha256.eq_ignore_ascii_case(HIDMAESTRO_SHA256)
+        && manifest.sha256.len() == 64
+        && manifest.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
         && manifest.protocol == PROTOCOL_VERSION
         && manifest.sidecar_file == SIDECAR_EXE
         && genshin_compatibility_available
@@ -398,4 +392,41 @@ pub(crate) fn sha256_file(path: &Path) -> Result<String, String> {
         digest.update(&buffer[..count]);
     }
     Ok(format!("{:x}", digest.finalize()))
+}
+
+// Before complete Sidecar packages, sha256 held the upstream ZIP digest.
+// Preserve recovery of that known legacy Core without a second runtime manifest.
+pub(crate) fn validate_core_integrity(
+    core: &Path,
+    manifest: &InstalledComponentManifest,
+) -> Result<(), String> {
+    let actual = sha256_file(core)?;
+    let legacy = legacy_core_digest_matches(manifest, &actual);
+    if !actual.eq_ignore_ascii_case(&manifest.sha256) && !legacy {
+        return Err("DS5-PKG-001: installed Core integrity check failed".to_string());
+    }
+    Ok(())
+}
+
+pub(crate) fn legacy_core_digest_matches(
+    manifest: &InstalledComponentManifest,
+    actual: &str,
+) -> bool {
+    if manifest.component_version == COMPONENT_VERSION {
+        return false;
+    }
+    // Only versions shipped by this Control Panel. DLL hashes were derived
+    // from the archives whose digests the old installer pinned.
+    let (archive, core) = match manifest.hidmaestro_version.as_str() {
+        "v1.7.3" => (
+            HIDMAESTRO_SHA256,
+            "95c6d3ec0d41cd7b3adda80da3ffbcd19c9466cc50e08a973c7745a16c7e0bde",
+        ),
+        "v1.6.2" => (
+            "6ae8df0cf317baf7e65777e2929f618916a67831b5ff1162205310f2c08b80ff",
+            "df59cd5b6031311f03031c32b794901fc1f45503410f4f6ad55eaa854cee8746",
+        ),
+        _ => return false,
+    };
+    manifest.sha256.eq_ignore_ascii_case(archive) && actual.eq_ignore_ascii_case(core)
 }

@@ -1,14 +1,14 @@
 //! Optional DualSense component lifecycle.
 //!
-//! HIDMaestro is downloaded from its pinned upstream release and verified before
-//! extraction. The Sunshine-owned sidecar is acquired from a release asset
+//! The complete sidecar, including patched HIDMaestro Core, is acquired from a release asset
 //! pinned by the installed Sunshine manifest, from a matching user-selected
 //! package, or from an explicit development override. This keeps the optional
 //! self-contained .NET runtime out of the main Sunshine package.
 
+#[cfg(any(target_os = "windows", test))]
+mod auto_update;
 mod commands;
 mod config;
-mod core_patch;
 #[cfg(target_os = "windows")]
 mod elevated;
 mod install;
@@ -65,11 +65,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::Emitter;
 
-pub(crate) const COMPONENT_VERSION: &str = "1.2.0";
+pub(crate) const COMPONENT_VERSION: &str = "1.3.0";
 pub(crate) const PROTOCOL_VERSION: u32 = 1;
 pub(crate) const HIDMAESTRO_VERSION: &str = "v1.7.3";
-pub(crate) const HIDMAESTRO_URL: &str =
-    "https://github.com/hifihedgehog/HIDMaestro/releases/download/v1.7.3/HIDMaestro-v1.7.3.zip";
+// Legacy archive digest, used only to identify existing backups.
 pub(crate) const HIDMAESTRO_SHA256: &str =
     "a337ddc70e90ff969deaaaad8c3f3f8b7a0ee5b61a6a9ff6183ca35950bd8503";
 pub(crate) const MAX_ARCHIVE_BYTES: u64 = 160 * 1024 * 1024;
@@ -83,10 +82,10 @@ pub(crate) const SIDECAR_PACKAGE_TARGET: &str = "win-x64-self-contained";
 pub(crate) const SIDECAR_PACKAGE_LICENSE: &str = "GPL-3.0-only";
 pub(crate) const MAX_SIDECAR_PACKAGE_MANIFEST_BYTES: u64 = 64 * 1024;
 pub(crate) const MAX_SIDECAR_PACKAGE_BYTES: u64 = 160 * 1024 * 1024;
-pub(crate) const MAX_LOCAL_COMPONENT_PACKAGES: usize = 3;
+pub(crate) const MAX_LOCAL_COMPONENT_PACKAGES: usize = 2;
 pub(crate) const MAX_LOCAL_COMPONENT_PACKAGE_BYTES: u64 = MAX_ARCHIVE_BYTES;
 pub(crate) const MAX_LOCAL_COMPONENT_TOTAL_BYTES: u64 =
-    MAX_SIDECAR_PACKAGE_BYTES + MAX_ARCHIVE_BYTES + MAX_USBIP_INSTALLER_BYTES;
+    MAX_SIDECAR_PACKAGE_BYTES + MAX_USBIP_INSTALLER_BYTES;
 pub(crate) const COMPONENT_DOWNLOAD_OVERALL_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(30 * 60);
 pub(crate) const COMPONENT_FS_RETRY_ATTEMPTS: usize = 20;
@@ -160,3 +159,6 @@ pub(crate) fn emit_progress(app: &tauri::AppHandle, stage: &str, progress: u32) 
 pub(crate) fn report_progress(progress: &ProgressReporter<'_>, stage: &str, value: u32) {
     progress(stage, value.min(100));
 }
+
+#[cfg(target_os = "windows")]
+pub(crate) use auto_update::start_installed_component_update;

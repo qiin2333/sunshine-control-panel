@@ -7,7 +7,6 @@ test('installs the components from the packages selected by the user', async () 
   const installCalls = []
   const packagePaths = [
     'C:\\Packages\\Sunshine.Ds5Sidecar.x64.zip',
-    'C:\\Packages\\HIDMaestro-v1.6.2.zip',
     'C:\\Packages\\USBip-0.9.7.7-x64.exe',
   ]
   const result = await installSelectedDualSensePackages({

@@ -40,7 +40,6 @@ fn write_valid_component(directory: &std::path::Path, marker: &[u8]) {
             "component_version": "1.0.0",
             "hidmaestro_version": "1.6.1",
             "sha256": sha256_file(&directory.join("HIDMaestro.Core.dll")).unwrap(),
-            "core_sha256": sha256_file(&directory.join("HIDMaestro.Core.dll")).unwrap(),
             "protocol": super::PROTOCOL_VERSION,
             "sidecar_file": super::SIDECAR_EXE,
             "sidecar_sha256": sha256_file(&directory.join(super::SIDECAR_EXE)).unwrap(),
@@ -64,14 +63,44 @@ fn legacy_backup_with_a_recorded_dll_digest_remains_recoverable() {
     ));
     write_valid_component(&root, b"legacy-runtime");
     let manifest_path = root.join("component.json");
-    let mut manifest: serde_json::Value =
+    let manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
-    manifest.as_object_mut().unwrap().remove("core_sha256");
     std::fs::write(&manifest_path, manifest.to_string()).unwrap();
     assert!(super::install::validate_component_backup(&root).is_ok());
     std::fs::write(root.join("HIDMaestro.Core.dll"), b"tampered").unwrap();
     assert!(super::install::validate_component_backup(&root).is_err());
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn shipped_legacy_zip_digests_require_the_exact_extracted_core() {
+    for (runtime, archive, core) in [
+        (
+            "v1.7.3",
+            super::HIDMAESTRO_SHA256,
+            "95c6d3ec0d41cd7b3adda80da3ffbcd19c9466cc50e08a973c7745a16c7e0bde",
+        ),
+        (
+            "v1.6.2",
+            "6ae8df0cf317baf7e65777e2929f618916a67831b5ff1162205310f2c08b80ff",
+            "df59cd5b6031311f03031c32b794901fc1f45503410f4f6ad55eaa854cee8746",
+        ),
+    ] {
+        let mut manifest = InstalledComponentManifest {
+            component_version: "1.2.0".into(),
+            hidmaestro_version: runtime.into(),
+            sha256: archive.into(),
+            ..Default::default()
+        };
+        assert!(super::packages::legacy_core_digest_matches(&manifest, core));
+        assert!(!super::packages::legacy_core_digest_matches(
+            &manifest, "corrupt"
+        ));
+        manifest.component_version = super::COMPONENT_VERSION.into();
+        assert!(!super::packages::legacy_core_digest_matches(
+            &manifest, core
+        ));
+    }
 }
 
 #[test]
@@ -154,11 +183,10 @@ fn component_status_separates_updates_from_same_version_repairs() {
     let current = InstalledComponentManifest {
         component_version: super::COMPONENT_VERSION.to_string(),
         hidmaestro_version: super::HIDMAESTRO_VERSION.to_string(),
-        sha256: super::HIDMAESTRO_SHA256.to_uppercase(),
+        sha256: "b".repeat(64),
         protocol: super::PROTOCOL_VERSION,
         sidecar_file: super::SIDECAR_EXE.to_string(),
         sidecar_sha256: "a".repeat(64),
-        core_sha256: String::new(),
     };
     assert!(!component_update_available(Some(&current)));
     assert!(component_matches_current_runtime(
@@ -269,6 +297,14 @@ fn sidecar_package_extracts_only_matching_runtime() {
     let options = zip::write::SimpleFileOptions::default();
     archive.start_file(super::SIDECAR_EXE, options).unwrap();
     archive.write_all(b"MZ-test").unwrap();
+    for name in [
+        "HIDMaestro.Core.dll",
+        "LICENSE.HIDMaestro",
+        "THIRD-PARTY-NOTICES.txt",
+    ] {
+        archive.start_file(name, options).unwrap();
+        archive.write_all(b"fixture").unwrap();
+    }
     archive.start_file("runtime.json", options).unwrap();
     archive
         .write_all(
@@ -297,6 +333,12 @@ fn sidecar_package_extracts_only_matching_runtime() {
     extract_sidecar_package(&archive_path, &staging, &manifest).unwrap();
     assert!(staging.join(super::SIDECAR_EXE).is_file());
     assert!(staging.join("runtime.json").is_file());
+    assert_eq!(
+        std::fs::read(staging.join("HIDMaestro.Core.dll")).unwrap(),
+        b"fixture"
+    );
+    std::fs::write(&archive_path, b"modified archive").unwrap();
+    assert!(extract_sidecar_package(&archive_path, &staging, &manifest).is_err());
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -323,6 +365,31 @@ fn bundled_runtime_rejects_stale_component_metadata() {
 
     assert!(error.contains("runtime metadata does not match Sunshine"));
     assert!(!destination.join(super::SIDECAR_EXE).exists());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn incomplete_component_does_not_pass_staging_validation() {
+    let root = std::env::temp_dir().join(format!("sunshine-ds5-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join(super::SIDECAR_EXE), b"fixture").unwrap();
+    let error = super::install::validate_complete_runtime(&root).unwrap_err();
+    assert!(error.contains("HIDMaestro.Core.dll"));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn current_component_core_digest_covers_replaced_dependencies() {
+    let root = std::env::temp_dir().join(format!("sunshine-ds5-test-{}", uuid::Uuid::new_v4()));
+    write_valid_component(&root, b"trusted");
+    let mut manifest: InstalledComponentManifest =
+        serde_json::from_slice(&std::fs::read(root.join("component.json")).unwrap()).unwrap();
+    manifest.component_version = super::COMPONENT_VERSION.into();
+    manifest.hidmaestro_version = super::HIDMAESTRO_VERSION.into();
+    let executable = root.join(super::SIDECAR_EXE);
+    assert!(validate_sidecar_integrity(&executable, &manifest).is_ok());
+    std::fs::write(root.join("HIDMaestro.Core.dll"), b"replaced").unwrap();
+    assert!(validate_sidecar_integrity(&executable, &manifest).is_err());
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -449,7 +516,7 @@ fn stale_handoff_cleanup_preserves_current_and_unrelated_entries() {
 fn local_component_hashes_are_identified_without_trusting_file_names() {
     assert_eq!(
         super::local_component_kind(super::HIDMAESTRO_SHA256, None),
-        Some(super::LocalComponentKind::Hidmaestro)
+        None
     );
     assert_eq!(
         super::local_component_kind(USBIP_SHA256, None),
@@ -471,7 +538,6 @@ fn online_install_does_not_require_a_local_package_manifest_for_classification()
         super::classify_local_component_packages(std::iter::empty::<std::path::PathBuf>()).unwrap();
 
     assert!(packages.sidecar.is_none());
-    assert!(packages.hidmaestro.is_none());
     assert!(packages.usbip.is_none());
 }
 
@@ -696,6 +762,10 @@ fn elevated_operations_are_strictly_allowlisted() {
         Some(ElevatedOperation::InstallLocal)
     ));
     assert!(matches!(
+        ElevatedOperation::parse("update"),
+        Some(ElevatedOperation::Update)
+    ));
+    assert!(matches!(
         ElevatedOperation::parse("test-standard"),
         Some(ElevatedOperation::TestStandard)
     ));
@@ -731,11 +801,7 @@ fn elevated_ipc_uses_a_random_local_pipe_and_typed_messages() {
 async fn elevated_ipc_receives_multiple_local_packages_with_bounded_framing() {
     let root = std::env::temp_dir().join(format!("sunshine-ds5-test-{}", uuid::Uuid::new_v4()));
     let token = uuid::Uuid::new_v4();
-    let contents = [
-        b"sidecar".as_slice(),
-        b"hidmaestro".as_slice(),
-        b"usbip".as_slice(),
-    ];
+    let contents = [b"sidecar".as_slice(), b"usbip".as_slice()];
     let mut encoded = vec![contents.len() as u8];
     for content in contents {
         encoded.extend_from_slice(&(content.len() as u64).to_le_bytes());

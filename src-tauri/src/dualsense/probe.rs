@@ -20,6 +20,7 @@ use crate::usbip::{installed_usbip_version, supported_usbip_installed};
 pub(crate) struct ProbeResult {
     pub(crate) protocol: u32,
     pub(crate) runtime_version: String,
+    pub(crate) core_patch: String,
     pub(crate) standard: bool,
     pub(crate) composite: bool,
     pub(crate) genshin_compatibility_identity: bool,
@@ -206,6 +207,9 @@ pub(crate) fn run_probe(executable: &Path) -> Result<ProbeResult, String> {
             "DS5-PROTO-001: the sidecar runtime does not support Genshin compatibility mode"
                 .to_string(),
         );
+    }
+    if result.core_patch != "registry-isolation-1" {
+        return Err("DS5-PROTO-001: component must include the patched Core".to_string());
     }
     Ok(result)
 }

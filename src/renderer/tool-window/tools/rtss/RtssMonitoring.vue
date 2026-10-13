@@ -25,8 +25,8 @@
 
     <small v-if="config.metrics.includes('pipeline_fps')" class="frame-rate-hint">
       {{ locale === 'zh'
-        ? 'Src 源更新 · Cap 捕获交付 · Submit 编码提交 · Out 编码输出 · Repeat 重复提交（FPS）。与 RTSS 游戏帧率对照；首次统计需约 1 秒。'
-        : 'Src source updates · Cap capture delivery · Submit encoder input · Out encoded output · Repeat repeated input (FPS). Compare with RTSS game FPS; allow about 1 second to warm up.' }}
+        ? 'Src 源更新 · Cap 捕获交付 · Submit 编码提交 · Out 编码输出 · Repeat 重复提交（FPS）。与 RTSS 游戏帧率对照；仅在监控开启并选择该指标时启用本入口采集，重新开启需约 1 秒预热。'
+        : 'Src source updates · Cap capture delivery · Submit encoder input · Out encoded output · Repeat repeated input (FPS). Compare with RTSS game FPS. This monitor collects only while enabled with this metric selected; allow about 1 second to warm up after enabling.' }}
     </small>
 
     <!-- 样式配置 -->

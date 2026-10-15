@@ -129,6 +129,17 @@ export const zh = {
 
   // === 串流配置 ===
   stream: {
+    nvidiaVsync: {
+      title: "虚拟屏串流时强制 NVIDIA 垂直同步",
+      description: "临时将 NVIDIA 全局垂直同步设为“开”，改善部分 DLSS 插帧游戏在虚拟屏上的捕获帧率。可能影响串流期间启动的其他游戏，最后一个相关会话结束后恢复原设置。请在启动游戏前保存；已运行的游戏需要重启。游戏独立驱动设置优先于全局设置。",
+      disabled: "默认关闭。",
+      next_launch: "保存后将在下次虚拟屏会话中、启动游戏前应用。",
+      active: "已为当前会话应用。修改此选项将在下次会话生效。",
+      error: "无法应用或恢复驱动设置，请查看 Sunshine 日志；串流可继续。",
+      unknown: "无法确认 NVIDIA 支持状态，请重新切回此窗口或打开页面重试。",
+      unsupported: "主机没有受支持的 NVIDIA 显卡，已保存的偏好仍会保留。",
+      unmanaged: "请在 Web UI → NVIDIA NVENC → 高级设置中允许管理驱动设置。",
+    },
     pageTitle: '串流配置',
     pageSubtitle: '快速调整 Sunshine 核心串流参数',
     loading: '正在读取 Sunshine 配置…',

@@ -129,6 +129,17 @@ export const en = {
 
   // === Stream Configuration ===
   stream: {
+    nvidiaVsync: {
+      title: "Force NVIDIA VSync during virtual-display streaming",
+      description: "Temporarily forces global NVIDIA VSync on to help capture some DLSS Frame Generation games at full frame rate on virtual displays. May affect other games launched during streaming. Restores the original setting after the last participating session ends. Save before launching; already-running games must be restarted. Per-game driver settings take precedence.",
+      disabled: "Disabled by default.",
+      next_launch: "Saved changes apply to the next virtual-display session, before the game starts.",
+      active: "Applied for the current session. Changes to this option apply to the next session.",
+      error: "Could not apply or restore the driver setting. Check the Sunshine log; streaming can continue.",
+      unknown: "Cannot check NVIDIA support. Refocus this window or reopen the page to retry.",
+      unsupported: "No supported NVIDIA adapter on this host. Your saved preference is retained.",
+      unmanaged: "Enable driver settings management in Web UI → NVIDIA NVENC → Advanced settings.",
+    },
     pageTitle: 'Stream Configuration',
     pageSubtitle: 'Quick adjustment of Sunshine core streaming parameters',
     loading: 'Reading Sunshine configuration...',

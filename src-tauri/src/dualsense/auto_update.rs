@@ -61,8 +61,9 @@ pub(crate) fn start_installed_component_update(app: tauri::AppHandle) {
                 return;
             }
             let Ok(package) = sidecar_package_manifest() else {
-                // Wait for a matching Sunshine release rather than installing
-                // from an unpinned source or downgrading a newer component.
+                // The host package, not the optional component installer,
+                // supplies this pin. A newer standalone GUI must wait for a
+                // matching Sunshine update; never reuse an older URL/digest.
                 return;
             };
             if package.download_url.is_empty() && manually_placed_sidecar_package().is_none() {
@@ -101,13 +102,13 @@ mod tests {
             sidecar_file: super::super::SIDECAR_EXE.into(),
             ..Default::default()
         };
-        for installed in ["1.0.0", "1.1.0", "1.2.0"] {
+        for installed in ["1.0.0", "1.1.0", "1.2.0", "1.3.0"] {
             manifest.component_version = installed.into();
             assert!(needs_update(Some(&manifest)));
         }
         for installed in [
             COMPONENT_VERSION,
-            "1.4.0",
+            "1.5.0",
             "2.0.0",
             "invalid",
             "1.2.0-dev",

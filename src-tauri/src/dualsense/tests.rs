@@ -73,7 +73,7 @@ fn shipped_legacy_zip_digests_require_the_exact_extracted_core() {
     for (runtime, archive, core) in [
         (
             "v1.7.3",
-            super::HIDMAESTRO_SHA256,
+            super::LEGACY_HIDMAESTRO_1_7_3_SHA256,
             "95c6d3ec0d41cd7b3adda80da3ffbcd19c9466cc50e08a973c7745a16c7e0bde",
         ),
         (
@@ -237,6 +237,12 @@ fn sidecar_package_manifest_requires_pinned_release_asset() {
         size: 1024,
     };
     assert!(validate_sidecar_package_manifest(manifest.clone()).is_ok());
+
+    let old_component = SidecarPackageManifest {
+        component_version: "1.3.0".to_string(),
+        ..manifest.clone()
+    };
+    assert!(validate_sidecar_package_manifest(old_component).is_err());
 
     let untrusted = SidecarPackageManifest {
         download_url: format!("https://example.com/{}", super::SIDECAR_PACKAGE_ASSET),
@@ -513,7 +519,7 @@ fn stale_handoff_cleanup_preserves_current_and_unrelated_entries() {
 #[test]
 fn local_component_hashes_are_identified_without_trusting_file_names() {
     assert_eq!(
-        super::local_component_kind(super::HIDMAESTRO_SHA256, None),
+        super::local_component_kind(super::LEGACY_HIDMAESTRO_1_7_3_SHA256, None),
         None
     );
     assert_eq!(

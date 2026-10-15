@@ -4,6 +4,11 @@
 //! pinned by the installed Sunshine manifest, from a matching user-selected
 //! package, or from an explicit development override. This keeps the optional
 //! self-contained .NET runtime out of the main Sunshine package.
+//!
+//! Sunshine installs `tools/ds5-sidecar-package.json` with its main package.
+//! It is separate from the active component's `component.json`: a host update
+//! supplies the new pinned download while the old component remains installed.
+//! A standalone newer GUI waits for a matching host manifest.
 
 #[cfg(any(target_os = "windows", test))]
 mod auto_update;
@@ -65,11 +70,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::Emitter;
 
-pub(crate) const COMPONENT_VERSION: &str = "1.3.0";
+pub(crate) const COMPONENT_VERSION: &str = "1.4.0";
 pub(crate) const PROTOCOL_VERSION: u32 = 1;
-pub(crate) const HIDMAESTRO_VERSION: &str = "v1.7.3";
+pub(crate) const HIDMAESTRO_VERSION: &str = "v1.12.0";
 // Legacy archive digest, used only to identify existing backups.
-pub(crate) const HIDMAESTRO_SHA256: &str =
+pub(crate) const LEGACY_HIDMAESTRO_1_7_3_SHA256: &str =
     "a337ddc70e90ff969deaaaad8c3f3f8b7a0ee5b61a6a9ff6183ca35950bd8503";
 pub(crate) const MAX_ARCHIVE_BYTES: u64 = 160 * 1024 * 1024;
 pub(crate) const MAX_USBIP_INSTALLER_BYTES: u64 = 48 * 1024 * 1024;

@@ -252,6 +252,59 @@ fn sidecar_package_manifest_requires_pinned_release_asset() {
 }
 
 #[test]
+fn host_manifest_refresh_supplies_new_pin_while_previous_component_stays_installed() {
+    let root = std::env::temp_dir().join(format!("sunshine-ds5-upgrade-{}", uuid::Uuid::new_v4()));
+    let tools = root.join("tools");
+    let active = tools.join("sunshine-ds5-component/active");
+    write_valid_component(&active, b"previous-component");
+    let component_path = active.join("component.json");
+    let mut installed: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&component_path).unwrap()).unwrap();
+    installed["component_version"] = "1.3.0".into();
+    installed["hidmaestro_version"] = "v1.7.3".into();
+    let previous_component = serde_json::to_vec(&installed).unwrap();
+    std::fs::write(&component_path, &previous_component).unwrap();
+    let installed: InstalledComponentManifest = serde_json::from_value(installed).unwrap();
+    assert!(component_update_available(Some(&installed)));
+
+    let manifest_path = tools.join(super::SIDECAR_PACKAGE_MANIFEST);
+    let manifest = |version: &str, tag: &str, digest: char| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema": 1,
+            "component_version": version,
+            "protocol": super::PROTOCOL_VERSION,
+            "target": super::SIDECAR_PACKAGE_TARGET,
+            "license": super::SIDECAR_PACKAGE_LICENSE,
+            "asset_name": super::SIDECAR_PACKAGE_ASSET,
+            "download_url": format!(
+                "https://github.com/AlkaidLab/foundation-sunshine/releases/download/{tag}/{}",
+                super::SIDECAR_PACKAGE_ASSET
+            ),
+            "sha256": digest.to_string().repeat(64),
+            "size": 1024,
+        }))
+        .unwrap()
+    };
+    std::fs::write(&manifest_path, manifest("1.3.0", "old-release", 'a')).unwrap();
+    assert!(read_sidecar_package_manifest(&manifest_path).is_err());
+
+    // The Sunshine host installer replaces the package pin on host upgrade.
+    // Reading it again must use the new URL/digest, with the old active runtime
+    // still available for the installer's verified whole-component rollback.
+    std::fs::write(
+        &manifest_path,
+        manifest(super::COMPONENT_VERSION, "new-release", 'b'),
+    )
+    .unwrap();
+    let refreshed = read_sidecar_package_manifest(&manifest_path).unwrap();
+    assert_eq!(refreshed.component_version, super::COMPONENT_VERSION);
+    assert!(refreshed.download_url.contains("/new-release/"));
+    assert_eq!(refreshed.sha256, "b".repeat(64));
+    assert_eq!(std::fs::read(&component_path).unwrap(), previous_component);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn sidecar_package_manifest_read_is_bounded() {
     let root = std::env::temp_dir().join(format!("sunshine-ds5-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();

@@ -61,8 +61,9 @@ pub(crate) fn start_installed_component_update(app: tauri::AppHandle) {
                 return;
             }
             let Ok(package) = sidecar_package_manifest() else {
-                // Wait for a matching Sunshine release rather than installing
-                // from an unpinned source or downgrading a newer component.
+                // The host package, not the optional component installer,
+                // supplies this pin. A newer standalone GUI must wait for a
+                // matching Sunshine update; never reuse an older URL/digest.
                 return;
             };
             if package.download_url.is_empty() && manually_placed_sidecar_package().is_none() {

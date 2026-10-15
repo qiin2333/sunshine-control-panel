@@ -4,6 +4,11 @@
 //! pinned by the installed Sunshine manifest, from a matching user-selected
 //! package, or from an explicit development override. This keeps the optional
 //! self-contained .NET runtime out of the main Sunshine package.
+//!
+//! Sunshine installs `tools/ds5-sidecar-package.json` with its main package.
+//! It is separate from the active component's `component.json`: a host update
+//! supplies the new pinned download while the old component remains installed.
+//! A standalone newer GUI waits for a matching host manifest.
 
 #[cfg(any(target_os = "windows", test))]
 mod auto_update;

@@ -220,6 +220,19 @@
               </button>
             </div>
           </div>
+          <div v-if="nvidiaVsync.visible" class="setting-row">
+            <div class="setting-info">
+              <div id="nvidia-vsync-label" class="setting-label">{{ t.stream.nvidiaVsync.title }}</div>
+              <div id="nvidia-vsync-desc" class="setting-desc">{{ t.stream.nvidiaVsync.description }}</div>
+              <div id="nvidia-vsync-status" class="setting-desc" role="status">{{ t.stream.nvidiaVsync[nvidiaVsync.state] }}</div>
+            </div>
+            <button class="toggle-btn" role="switch" :aria-checked="nvidiaVsync.checked"
+                    aria-labelledby="nvidia-vsync-label" aria-describedby="nvidia-vsync-desc nvidia-vsync-status"
+                    :class="{ on: nvidiaVsync.checked }" :disabled="nvidiaVsync.disabled || saving"
+                    @click="configData.nvenc_vdd_force_vsync = nvidiaVsync.checked ? 'disabled' : 'enabled'">
+              {{ nvidiaVsync.checked ? t.stream.yes : t.stream.no }}
+            </button>
+          </div>
           <div class="setting-row">
             <div class="setting-info">
               <div class="setting-label">{{ t.stream.vddPhysicalHandling }}</div>
@@ -334,6 +347,7 @@ import { vdd as vddApi, vmouse as vmouseApi } from '../../tauri-adapter.js'
 import { installVddWithRecovery } from '../../composables/vddInstallRecovery.js'
 import { useVddStatusLabel } from '../../composables/useVddStatusLabel.js'
 import { useI18n } from '../i18n/index.js'
+import { nvidiaVsyncUi } from '../../composables/nvidiaVsync.js'
 
 const { t } = useI18n()
 
@@ -357,9 +371,18 @@ const configData = ref({
   refresh_rate_change: 1,
   manual_refresh_rate: '',
   vdd_prep: 0,
+  nvenc_vdd_force_vsync: 'disabled',
   vdd_keep_enabled: 'disabled',
   vdd_headless_create_enabled: 'disabled',
 })
+const nvidiaCapability = ref(null)
+const nvidiaManagement = ref('enabled')
+const hostPlatform = ref('')
+const nvidiaVsync = computed(() => nvidiaVsyncUi({
+  nvenc_vdd_force_vsync: configData.value.nvenc_vdd_force_vsync,
+  nvenc_manage_driver_settings: nvidiaManagement.value,
+  nvidia_vsync: nvidiaCapability.value,
+}, hostPlatform.value))
 const trayManagedVddKeys = new Set(['vdd_keep_enabled', 'vdd_headless_create_enabled'])
 
 const bitrateKbps = computed({
@@ -448,6 +471,9 @@ async function loadSettings() {
   loading.value = true
   try {
     const data = await apiFetch('/api/config')
+    hostPlatform.value = data.platform || ''
+    nvidiaCapability.value = data.nvidia_vsync || null
+    nvidiaManagement.value = data.nvenc_manage_driver_settings ?? 'enabled'
     if (data.status?.toString() === 'true') {
       const keys = Object.keys(configData.value)
       for (const key of keys) {
@@ -513,7 +539,7 @@ async function saveSettings() {
     // 基于完整配置合并我们修改的字段
     const payload = {}
     for (const [key, value] of Object.entries(current)) {
-      if (key === 'status') continue
+      if (key === 'status' || key === 'nvidia_vsync') continue
       payload[key] = String(value)
     }
     // 覆盖 StreamView 管理的字段

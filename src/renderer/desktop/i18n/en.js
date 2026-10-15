@@ -136,6 +136,7 @@ export const en = {
       next_launch: "Saved changes apply to the next virtual-display session, before the game starts.",
       active: "Applied for the current session. Changes to this option apply to the next session.",
       error: "Could not apply or restore the driver setting. Check the Sunshine log; streaming can continue.",
+      unknown: "Cannot check NVIDIA support. Refocus this window or reopen the page to retry.",
       unsupported: "No supported NVIDIA adapter on this host. Your saved preference is retained.",
       unmanaged: "Enable driver settings management in Web UI → NVIDIA NVENC → Advanced settings.",
     },

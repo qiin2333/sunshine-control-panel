@@ -136,6 +136,7 @@ export const zh = {
       next_launch: "保存后将在下次虚拟屏会话中、启动游戏前应用。",
       active: "已为当前会话应用。修改此选项将在下次会话生效。",
       error: "无法应用或恢复驱动设置，请查看 Sunshine 日志；串流可继续。",
+      unknown: "无法确认 NVIDIA 支持状态，请重新切回此窗口或打开页面重试。",
       unsupported: "主机没有受支持的 NVIDIA 显卡，已保存的偏好仍会保留。",
       unmanaged: "请在 Web UI → NVIDIA NVENC → 高级设置中允许管理驱动设置。",
     },

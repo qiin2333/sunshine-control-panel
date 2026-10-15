@@ -338,7 +338,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { DataAnalysis, Film, Monitor, Mouse, Promotion, Sunny } from '@element-plus/icons-vue'
 import PillGroup from '../components/PillGroup.vue'
 import FdDropdown from '../components/FdDropdown.vue'
@@ -347,7 +347,7 @@ import { vdd as vddApi, vmouse as vmouseApi } from '../../tauri-adapter.js'
 import { installVddWithRecovery } from '../../composables/vddInstallRecovery.js'
 import { useVddStatusLabel } from '../../composables/useVddStatusLabel.js'
 import { useI18n } from '../i18n/index.js'
-import { nvidiaVsyncUi } from '../../composables/nvidiaVsync.js'
+import { nvidiaVsyncUi, observeNvidiaVsyncStatus } from '../../composables/nvidiaVsync.js'
 
 const { t } = useI18n()
 
@@ -612,9 +612,26 @@ async function saveDesktopLaunchMode() {
   }
 }
 
+let disposed = false
+let stopNvidiaStatus = () => {}
+onBeforeUnmount(() => {
+  disposed = true
+  stopNvidiaStatus()
+})
 onMounted(async () => {
   await initTauri()
   await Promise.all([loadSettings(), loadVddStatus(), loadVmouseStatus()])
+  if (disposed) return
+  stopNvidiaStatus = observeNvidiaVsyncStatus({
+    load: options => apiFetch('/api/config', options),
+    onStatus: data => {
+      // Do not reload configData: it can contain unsaved edits.
+      hostPlatform.value = data.platform || ''
+      nvidiaCapability.value = data.nvidia_vsync || null
+      nvidiaManagement.value = data.nvenc_manage_driver_settings ?? 'enabled'
+    },
+    onError: () => { nvidiaCapability.value = { ...nvidiaCapability.value, detection_known: false } },
+  })
 })
 
 const vddStatus = ref({

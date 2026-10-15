@@ -1361,10 +1361,11 @@ fn should_inject_script(url: &str, content_type: &str) -> bool {
         return false;
     }
 
+    let url = url.split(['?', '#']).next().unwrap_or(url);
     let path = url.rsplit('/').next().unwrap_or("");
     matches!(
         path,
-        "" | "apps" | "config" | "password" | "pin" | "troubleshooting" | "welcome"
+        "" | "apps" | "downloads" | "config" | "password" | "pin" | "troubleshooting" | "welcome"
     ) || url.ends_with(".html")
         || url.ends_with(".htm")
 }

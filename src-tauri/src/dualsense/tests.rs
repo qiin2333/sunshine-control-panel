@@ -73,7 +73,7 @@ fn shipped_legacy_zip_digests_require_the_exact_extracted_core() {
     for (runtime, archive, core) in [
         (
             "v1.7.3",
-            super::HIDMAESTRO_SHA256,
+            super::LEGACY_HIDMAESTRO_1_7_3_SHA256,
             "95c6d3ec0d41cd7b3adda80da3ffbcd19c9466cc50e08a973c7745a16c7e0bde",
         ),
         (
@@ -513,7 +513,7 @@ fn stale_handoff_cleanup_preserves_current_and_unrelated_entries() {
 #[test]
 fn local_component_hashes_are_identified_without_trusting_file_names() {
     assert_eq!(
-        super::local_component_kind(super::HIDMAESTRO_SHA256, None),
+        super::local_component_kind(super::LEGACY_HIDMAESTRO_1_7_3_SHA256, None),
         None
     );
     assert_eq!(

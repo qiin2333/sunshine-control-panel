@@ -12,10 +12,10 @@ use crate::github_download::{
 };
 
 use super::{
-    COMPONENT_DOWNLOAD_OVERALL_TIMEOUT, COMPONENT_VERSION, HIDMAESTRO_SHA256, HIDMAESTRO_VERSION,
-    MAX_SIDECAR_PACKAGE_BYTES, MAX_SIDECAR_PACKAGE_MANIFEST_BYTES, PROTOCOL_VERSION,
-    ProgressReporter, SIDECAR_EXE, SIDECAR_PACKAGE_ASSET, SIDECAR_PACKAGE_LICENSE,
-    SIDECAR_PACKAGE_MANIFEST, SIDECAR_PACKAGE_TARGET, report_progress,
+    COMPONENT_DOWNLOAD_OVERALL_TIMEOUT, COMPONENT_VERSION, HIDMAESTRO_VERSION,
+    LEGACY_HIDMAESTRO_1_7_3_SHA256, MAX_SIDECAR_PACKAGE_BYTES, MAX_SIDECAR_PACKAGE_MANIFEST_BYTES,
+    PROTOCOL_VERSION, ProgressReporter, SIDECAR_EXE, SIDECAR_PACKAGE_ASSET,
+    SIDECAR_PACKAGE_LICENSE, SIDECAR_PACKAGE_MANIFEST, SIDECAR_PACKAGE_TARGET, report_progress,
 };
 use crate::usbip::USBIP_SHA256;
 
@@ -430,7 +430,7 @@ pub(crate) fn legacy_core_digest_matches(
     // from the archives whose digests the old installer pinned.
     let (archive, core) = match manifest.hidmaestro_version.as_str() {
         "v1.7.3" => (
-            HIDMAESTRO_SHA256,
+            LEGACY_HIDMAESTRO_1_7_3_SHA256,
             "95c6d3ec0d41cd7b3adda80da3ffbcd19c9466cc50e08a973c7745a16c7e0bde",
         ),
         "v1.6.2" => (

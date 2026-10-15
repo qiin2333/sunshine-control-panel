@@ -630,7 +630,7 @@ onMounted(async () => {
       nvidiaCapability.value = data.nvidia_vsync || null
       nvidiaManagement.value = data.nvenc_manage_driver_settings ?? 'enabled'
     },
-    onError: () => { nvidiaCapability.value = { ...nvidiaCapability.value, detection_known: false } },
+    onError: () => { nvidiaCapability.value = { ...nvidiaCapability.value, detection_known: false, state: 'unknown' } },
   })
 })
 

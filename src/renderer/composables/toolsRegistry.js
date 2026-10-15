@@ -11,6 +11,7 @@ import {
   House,
   Grid,
   QuestionFilled,
+  Download,
 } from '@element-plus/icons-vue'
 import IconGamepad from '../desktop/icons/IconGamepad.vue'
 import IconTools from '../desktop/icons/IconTools.vue'
@@ -19,6 +20,7 @@ import { WEBUI_PAGES, getWebuiPage } from './webuiNavigation.js'
 
 const WEBUI_ICONS = {
   overview: House,
+  downloads: Download,
   apps: Grid,
   pairing: Connection,
   'stream-settings': Operation,

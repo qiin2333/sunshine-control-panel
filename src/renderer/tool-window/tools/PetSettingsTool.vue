@@ -294,8 +294,8 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from '../../desktop/i18n/index.js'
-import { STORAGE_KEY, DEFAULT_CONFIG } from '../../composables/aiProviders.js'
-import { isApiKeyRequired } from '../../composables/aiClient.js'
+import { applyCodexConnectionStatus, cacheCodexConnected, CODEX_AUTH_CHANGED_KEY, DEFAULT_CONFIG, readCachedCodexConnected, STORAGE_KEY } from '../../composables/aiProviders.js'
+import { hasAiCredentials } from '../../composables/aiClient.js'
 import PetVisionConsentDialog from '../../components/PetVisionConsentDialog.vue'
 import {
   PET_MASTER_KEY,
@@ -404,10 +404,6 @@ async function onToolbarShortcutToggle(event) {
   }
 }
 
-function hasUsableApiKey(key) {
-  return typeof key === 'string' && Boolean(key.trim()) && !key.includes('****')
-}
-
 // AI 配置状态（决定桌面观察是否可用）
 const aiConfigReady = computed(() => {
   const configVersion = aiConfigVersion.value
@@ -415,8 +411,8 @@ const aiConfigReady = computed(() => {
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
     const localConfig = saved ? { ...DEFAULT_CONFIG, ...JSON.parse(saved) } : { ...DEFAULT_CONFIG }
-    const cfg = serverAiConfig.value || localConfig
-    return !!(cfg.enabled && (hasUsableApiKey(cfg.apiKey) || cfg.apiKeyConfigured || !isApiKeyRequired(cfg)))
+    const cfg = serverAiConfig.value || applyCodexConnectionStatus(localConfig, readCachedCodexConnected())
+    return !!(cfg.enabled && hasAiCredentials(cfg))
   } catch {
     return false
   }
@@ -424,16 +420,27 @@ const aiConfigReady = computed(() => {
 
 async function refreshAiConfigStatus() {
   const generation = ++aiConfigRefreshGeneration
+  let proxyUrl = ''
   try {
-    const proxyUrl = await invoke('get_proxy_url_command')
+    proxyUrl = await invoke('get_proxy_url_command')
     const response = await fetch(`${proxyUrl}/api/ai/config`)
     if (!response.ok) throw new Error(`Failed to load AI configuration (${response.status})`)
     const remoteConfig = await response.json()
     if (generation !== aiConfigRefreshGeneration) return false
+    if (typeof remoteConfig.codexConnected === 'boolean') cacheCodexConnected(remoteConfig.codexConnected)
     serverAiConfig.value = { ...DEFAULT_CONFIG, ...remoteConfig, apiKey: '' }
   } catch {
     if (generation !== aiConfigRefreshGeneration) return false
+    if (proxyUrl) {
+      try {
+        const response = await fetch(`${proxyUrl}/api/ai/codex/auth`)
+        const authStatus = response.ok ? await response.json() : null
+        if (typeof authStatus?.connected === 'boolean') cacheCodexConnected(authStatus.connected)
+      } catch { /* use the most recently cached account status */ }
+    }
+    if (generation !== aiConfigRefreshGeneration) return false
     serverAiConfig.value = null
+    aiConfigVersion.value += 1
   }
   return true
 }
@@ -691,7 +698,7 @@ function syncSettingFromStorage(event) {
     return
   }
 
-  if (event.key === STORAGE_KEY) {
+  if (event.key === STORAGE_KEY || event.key === CODEX_AUTH_CHANGED_KEY) {
     aiConfigVersion.value += 1
     void refreshAiConfigStatus().then((applied) => {
       if (applied) correctVisionEnabled()

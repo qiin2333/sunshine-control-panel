@@ -1081,6 +1081,11 @@ fn apply_tray_state<R: Runtime + 'static>(
         return;
     };
 
+    crate::windows::set_streaming_state(
+        app,
+        matches!(state.status.as_str(), "streaming" | "paused"),
+    );
+
     #[cfg(target_os = "windows")]
     crate::text_context::reconcile_streaming_state(should_run_text_observer(state));
 

@@ -11,6 +11,12 @@ use std::{path::PathBuf, sync::OnceLock};
 static WINDOWS_AUMID_REGISTRATION: OnceLock<Result<(), String>> = OnceLock::new();
 #[cfg(target_os = "windows")]
 static WINDOWS_NOTIFICATION_ICON: OnceLock<Result<PathBuf, String>> = OnceLock::new();
+#[cfg(target_os = "windows")]
+type NotificationJob = Box<dyn FnOnce() + Send>;
+#[cfg(target_os = "windows")]
+static CONNECTION_NOTIFICATIONS: OnceLock<
+    Result<std::sync::mpsc::SyncSender<NotificationJob>, String>,
+> = OnceLock::new();
 static LAST_SHOWN_NOTIFICATION: Mutex<Option<(String, u64)>> = Mutex::new(None);
 
 #[cfg(target_os = "windows")]
@@ -263,10 +269,66 @@ pub(super) fn show_connection_change_if_any<R: Runtime>(
     let strings = super::get_tray_strings();
     for change in connection_changes(previous, current) {
         let content = connection_content(strings, change);
-        if let Err(error) = show(app, &content.title, &content.body, None) {
+        #[cfg(target_os = "windows")]
+        let result = queue_connection_notification(app, content);
+        #[cfg(not(target_os = "windows"))]
+        let result = show(app, &content.title, &content.body, None);
+        if let Err(error) = result {
             warn!("{}", error);
         }
     }
+}
+
+#[cfg(target_os = "windows")]
+fn queue_connection_notification<R: Runtime>(
+    app: &AppHandle<R>,
+    content: NotificationContent,
+) -> Result<(), String> {
+    use std::sync::mpsc::{TrySendError, sync_channel};
+    use windows::Win32::System::WinRT::{RO_INIT_MULTITHREADED, RoInitialize, RoUninitialize};
+
+    let sender = CONNECTION_NOTIFICATIONS
+        .get_or_init(|| {
+            let (sender, receiver) = sync_channel::<NotificationJob>(16);
+            std::thread::Builder::new()
+                .name("sunshine-connection-notifications".to_string())
+                .spawn(move || {
+                    if let Err(error) = unsafe { RoInitialize(RO_INIT_MULTITHREADED) } {
+                        warn!("Failed to initialize notification COM apartment: {error}");
+                        return;
+                    }
+                    for job in receiver {
+                        job();
+                    }
+                    unsafe {
+                        RoUninitialize();
+                    }
+                })
+                .map_err(|error| {
+                    format!("Failed to start connection notification worker: {error}")
+                })?;
+            Ok(sender)
+        })
+        .as_ref()
+        .map_err(|error| error.clone())?;
+
+    let app = app.clone();
+    sender
+        .try_send(Box::new(move || {
+            if connection_is_enabled()
+                && let Err(error) = show(&app, &content.title, &content.body, None)
+            {
+                warn!("{error}");
+            }
+        }))
+        .map_err(|error| match error {
+            TrySendError::Full(_) => {
+                "Connection notification queue is full; notification skipped".to_string()
+            }
+            TrySendError::Disconnected(_) => {
+                "Connection notification worker is unavailable".to_string()
+            }
+        })
 }
 
 pub(super) fn show_core_notification_if_new<R: Runtime>(

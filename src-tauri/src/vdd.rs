@@ -333,8 +333,8 @@ async fn update_vdd_xml_extra_fields(settings: &VddSettings) -> Result<(), Strin
     if let Some(ref edid) = settings.edid {
         vdd_settings.edid = Some(edid.clone());
         debug!(
-            "  ✓ 更新 edid 配置: CustomEdid={}, PreventSpoof={}, CeaOverride={}, Vrr={}",
-            edid.custom_edid, edid.prevent_spoof, edid.edid_cea_override, edid.vrr
+            "  ✓ 更新 edid 配置: CustomEdid={}, DolbyVision={}, PreventSpoof={}, CeaOverride={}, Vrr={}",
+            edid.custom_edid, edid.dolby_vision, edid.prevent_spoof, edid.edid_cea_override, edid.vrr
         );
     }
 
@@ -803,11 +803,13 @@ impl Default for Cursor {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct EdidConfig {
-    #[serde(rename = "CustomEdid")]
+    #[serde(rename = "CustomEdid", default)]
     pub custom_edid: bool,
-    #[serde(rename = "PreventSpoof")]
+    #[serde(rename = "DolbyVision", default)]
+    pub dolby_vision: bool,
+    #[serde(rename = "PreventSpoof", default)]
     pub prevent_spoof: bool,
-    #[serde(rename = "EdidCeaOverride")]
+    #[serde(rename = "EdidCeaOverride", default)]
     pub edid_cea_override: bool,
     #[serde(rename = "EdidProfile", default = "default_edid_profile")]
     pub edid_profile: String,
@@ -973,6 +975,7 @@ fn get_default_settings() -> VddSettings {
         cursor: default_cursor(),
         edid: Some(EdidConfig {
             custom_edid: false,
+            dolby_vision: false,
             prevent_spoof: false,
             edid_cea_override: false,
             edid_profile: default_edid_profile(),
@@ -1740,6 +1743,57 @@ mod tests {
         let xml = serialize_vdd_settings(&get_default_settings()).unwrap();
 
         assert!(xml.contains("<EdidProfile>auto</EdidProfile>"));
+    }
+
+    #[test]
+    fn old_edid_settings_default_dolby_vision_to_disabled() {
+        let edid: EdidConfig = from_str(
+            "<edid><CustomEdid>false</CustomEdid><EdidCeaOverride>false</EdidCeaOverride></edid>",
+        ).unwrap();
+        assert!(!edid.dolby_vision);
+        assert!(!edid.prevent_spoof);
+
+        let old_json = r#"{"CustomEdid":false,"EdidCeaOverride":false}"#;
+        let from_frontend: EdidConfig = serde_json::from_str(old_json).unwrap();
+        assert!(!from_frontend.dolby_vision);
+    }
+
+    #[test]
+    fn dolby_vision_survives_xml_and_frontend_round_trips() {
+        for enabled in [false, true] {
+            let mut settings = get_default_settings();
+            settings.resolutions.resolution.push(Resolution { width: 1920, height: 1080 });
+            let edid = settings.edid.as_mut().unwrap();
+            edid.dolby_vision = enabled;
+            edid.edid_profile = "modern".to_string();
+            edid.vrr = true;
+            settings.colour.as_mut().unwrap().hdr_plus = true;
+
+            let xml = serialize_vdd_settings(&settings).unwrap();
+            assert!(xml.contains(&format!("<DolbyVision>{enabled}</DolbyVision>")));
+            let loaded: VddSettings = from_str(&xml).unwrap();
+            let json = serde_json::to_value(&loaded).unwrap();
+            assert_eq!(json["edid"]["DolbyVision"], enabled);
+            let from_frontend: VddSettings = serde_json::from_value(json).unwrap();
+            let saved = serialize_vdd_settings(&from_frontend).unwrap();
+            let reloaded: VddSettings = from_str(&saved).unwrap();
+            let edid = reloaded.edid.unwrap();
+            assert_eq!(edid.dolby_vision, enabled);
+            assert!(!edid.custom_edid);
+            assert_eq!(edid.edid_profile, "modern");
+            assert!(edid.vrr);
+            assert!(reloaded.colour.unwrap().hdr_plus);
+        }
+    }
+
+    #[test]
+    fn minimal_dolby_vision_configuration_loads_without_other_edid_fields() {
+        let edid: EdidConfig = from_str(
+            "<edid><CustomEdid>false</CustomEdid><DolbyVision>true</DolbyVision></edid>",
+        ).unwrap();
+        assert!(edid.dolby_vision);
+        assert!(!edid.custom_edid);
+        assert_eq!(edid.edid_profile, "auto");
     }
 
     #[test]

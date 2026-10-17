@@ -588,6 +588,23 @@
                 <p>{{ t.vddSettings.edidSectionHint }}</p>
               </div>
 
+              <el-form-item :label="t.vddSettings.dolbyVision">
+                <div class="field-stack">
+                  <div class="field-inline-control">
+                    <el-switch
+                      v-model="settings.edid.DolbyVision"
+                      :disabled="settings.edid.CustomEdid && !settings.edid.EdidCeaOverride"
+                      :aria-label="t.vddSettings.dolbyVision"
+                    />
+                  </div>
+                  <span class="form-tip">
+                    {{ settings.edid.CustomEdid && !settings.edid.EdidCeaOverride
+                      ? t.vddSettings.dolbyVisionCustomEdidTip
+                      : t.vddSettings.dolbyVisionTip }}
+                  </span>
+                </div>
+              </el-form-item>
+
               <el-form-item :label="t.vddSettings.customEdid">
                 <div class="field-stack">
                   <div class="field-inline-control">
@@ -734,6 +751,7 @@ const createInitialSettings = () => ({
   },
   edid: {
     CustomEdid: false,
+    DolbyVision: false,
     PreventSpoof: false,
     EdidCeaOverride: false,
     Vrr: false,
@@ -1205,7 +1223,7 @@ const applyLoadedSettings = (data) => {
       // video composition and client rendering without reloading the driver.
       HardwareCursor: true,
     },
-    edid: data?.edid || initialSettings.edid,
+    edid: { ...initialSettings.edid, ...data?.edid },
   }
 
   Object.assign(settings, mergedData)

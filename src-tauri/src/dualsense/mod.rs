@@ -70,7 +70,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::Emitter;
 
-pub(crate) const COMPONENT_VERSION: &str = "1.4.0";
+pub(crate) const COMPONENT_VERSION: &str = "1.4.1";
 pub(crate) const PROTOCOL_VERSION: u32 = 1;
 pub(crate) const HIDMAESTRO_VERSION: &str = "v1.12.0";
 // Legacy archive digest, used only to identify existing backups.

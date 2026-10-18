@@ -102,12 +102,13 @@ mod tests {
             sidecar_file: super::super::SIDECAR_EXE.into(),
             ..Default::default()
         };
-        for installed in ["1.0.0", "1.1.0", "1.2.0", "1.3.0"] {
+        for installed in ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"] {
             manifest.component_version = installed.into();
             assert!(needs_update(Some(&manifest)));
         }
         for installed in [
             COMPONENT_VERSION,
+            "1.4.2",
             "1.5.0",
             "2.0.0",
             "invalid",

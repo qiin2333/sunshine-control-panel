@@ -48,6 +48,9 @@ fn write_valid_component(directory: &std::path::Path, marker: &[u8]) {
             "protocol": super::PROTOCOL_VERSION,
             "sidecar_file": super::SIDECAR_EXE,
             "sidecar_sha256": sha256_file(&directory.join(super::SIDECAR_EXE)).unwrap(),
+            "usbip_policy": crate::usbip::USBIP_POLICY,
+            "usbip_version": crate::usbip::USBIP_VERSION,
+            "compatibility_sha256": sha256_file(&directory.join("component-compatibility.json")).unwrap(),
         })
         .to_string(),
     )
@@ -264,6 +267,7 @@ fn component_status_separates_updates_from_same_version_repairs() {
         protocol: super::PROTOCOL_VERSION,
         sidecar_file: super::SIDECAR_EXE.to_string(),
         sidecar_sha256: "a".repeat(64),
+        ..Default::default()
     };
     assert!(!component_update_available(Some(&current)));
     assert!(component_matches_current_runtime(
@@ -478,6 +482,30 @@ fn current_component_core_digest_covers_replaced_dependencies() {
     let executable = root.join(super::SIDECAR_EXE);
     assert!(validate_sidecar_integrity(&executable, &manifest).is_ok());
     std::fs::write(root.join("HIDMaestro.Core.dll"), b"replaced").unwrap();
+    assert!(validate_sidecar_integrity(&executable, &manifest).is_err());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn installed_component_contract_matches_native_host_requirements() {
+    let root = std::env::temp_dir().join(format!("sunshine-ds5-test-{}", uuid::Uuid::new_v4()));
+    write_valid_component(&root, b"trusted");
+    let mut manifest: InstalledComponentManifest =
+        serde_json::from_slice(&std::fs::read(root.join("component.json")).unwrap()).unwrap();
+    manifest.component_version = super::COMPONENT_VERSION.into();
+    let executable = root.join(super::SIDECAR_EXE);
+    assert!(validate_sidecar_integrity(&executable, &manifest).is_ok());
+    manifest.usbip_policy.clear();
+    assert!(validate_sidecar_integrity(&executable, &manifest).is_err());
+    manifest.usbip_policy = crate::usbip::USBIP_POLICY.into();
+    manifest.usbip_version = "untested".into();
+    assert!(validate_sidecar_integrity(&executable, &manifest).is_err());
+    manifest.usbip_version = crate::usbip::USBIP_VERSION.into();
+    // A formatting-only change still invalidates the digest used by the native host.
+    let contract = root.join("component-compatibility.json");
+    let mut contents = std::fs::read(&contract).unwrap();
+    contents.push(b'\n');
+    std::fs::write(&contract, contents).unwrap();
     assert!(validate_sidecar_integrity(&executable, &manifest).is_err());
     std::fs::remove_dir_all(root).unwrap();
 }

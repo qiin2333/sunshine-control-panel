@@ -40,6 +40,9 @@ pub(crate) struct InstalledComponentManifest {
     pub(crate) protocol: u32,
     pub(crate) sidecar_file: String,
     pub(crate) sidecar_sha256: String,
+    pub(crate) usbip_policy: String,
+    pub(crate) usbip_version: String,
+    pub(crate) compatibility_sha256: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -355,6 +358,8 @@ pub(crate) fn validate_sidecar_integrity(
             .all(|byte| byte.is_ascii_hexdigit());
     if manifest.component_version != COMPONENT_VERSION
         || manifest.sidecar_file != SIDECAR_EXE
+        || manifest.usbip_policy != crate::usbip::USBIP_POLICY
+        || manifest.usbip_version != crate::usbip::USBIP_VERSION
         || !valid_digest
     {
         return Err("DS5-PKG-001: installed sidecar manifest is invalid".to_string());
@@ -362,6 +367,12 @@ pub(crate) fn validate_sidecar_integrity(
     let actual = sha256_file(executable)?;
     if !actual.eq_ignore_ascii_case(&manifest.sidecar_sha256) {
         return Err("DS5-PKG-001: installed sidecar integrity check failed".to_string());
+    }
+    let contract = executable.with_file_name("component-compatibility.json");
+    if !sha256_file(&contract)?.eq_ignore_ascii_case(&manifest.compatibility_sha256) {
+        return Err(
+            "DS5-PKG-001: installed compatibility contract integrity check failed".to_string(),
+        );
     }
     super::install::validate_compatibility_file(executable.parent().unwrap())?;
     validate_core_integrity(&executable.with_file_name("HIDMaestro.Core.dll"), manifest)

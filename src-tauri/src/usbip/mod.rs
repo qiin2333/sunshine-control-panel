@@ -14,7 +14,7 @@ mod status;
 
 use serde::{Deserialize, Serialize};
 
-use manager::MINIMUM_VERSION;
+use manager::REQUIRED_VERSION;
 const DEFAULT_TCP_PORT: u16 = 3240;
 const MAX_OUTPUT_BYTES: usize = 256 * 1024;
 const MAX_ELEVATED_RESPONSE_BYTES: usize = 16 * 1024;
@@ -100,7 +100,7 @@ struct ElevatedResponse {
 pub(crate) use manager::uninstall_entries as usbip_uninstall_entries;
 pub(crate) use manager::{
     INSTALLER_SHA256 as USBIP_SHA256, INSTALLER_URL as USBIP_URL, InstallDisposition,
-    PINNED_VERSION as USBIP_VERSION, install_disposition,
+    PINNED_VERSION as USBIP_VERSION, TRANSPORT_POLICY as USBIP_POLICY, install_disposition,
     installed_version as installed_usbip_version,
     supported_version_installed as supported_usbip_installed,
 };

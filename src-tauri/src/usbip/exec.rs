@@ -1,7 +1,7 @@
 //! Locates the pinned transport and runs `usbip.exe`, parsing its output.
 
 use super::{
-    COMMAND_TIMEOUT, DEFAULT_TCP_PORT, MAX_OUTPUT_BYTES, MINIMUM_VERSION, UsbipAttachedDevice,
+    COMMAND_TIMEOUT, DEFAULT_TCP_PORT, MAX_OUTPUT_BYTES, REQUIRED_VERSION, UsbipAttachedDevice,
     UsbipRemoteDevice, validate_bus_id,
 };
 #[cfg(target_os = "windows")]
@@ -12,10 +12,11 @@ pub(super) async fn run_usbip(arguments: Vec<String>) -> Result<std::process::Ou
     let installation = super::manager::find_installation()?;
     if !super::supported_usbip_installed(Some(&installation.version)) {
         return Err(format!(
-            "USBIP-SETUP-003: USB/IP {} is installed; version {} or newer is required",
-            installation.version, MINIMUM_VERSION
+            "USBIP-SETUP-003: USB/IP {} is installed; the tested version {} is required",
+            installation.version, REQUIRED_VERSION
         ));
     }
+    super::manager::verify_driver_compatibility()?;
     let mut command = tokio::process::Command::new(installation.executable);
     command
         .args(arguments)

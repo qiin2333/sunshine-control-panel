@@ -363,6 +363,7 @@ pub(crate) fn validate_sidecar_integrity(
     if !actual.eq_ignore_ascii_case(&manifest.sidecar_sha256) {
         return Err("DS5-PKG-001: installed sidecar integrity check failed".to_string());
     }
+    super::install::validate_compatibility_file(executable.parent().unwrap())?;
     validate_core_integrity(&executable.with_file_name("HIDMaestro.Core.dll"), manifest)
 }
 

@@ -26,6 +26,9 @@ pub(crate) struct ProbeResult {
     pub(crate) audio_policy_violation: bool,
     pub(crate) driver_installed: bool,
     pub(crate) usbip_available: bool,
+    pub(crate) component_version: String,
+    pub(crate) usbip_policy: String,
+    pub(crate) usbip_version: String,
 }
 
 #[cfg(target_os = "windows")]
@@ -206,6 +209,12 @@ pub(crate) fn run_probe(executable: &Path) -> Result<ProbeResult, String> {
             "DS5-PROTO-001: the sidecar runtime does not support Genshin compatibility mode"
                 .to_string(),
         );
+    }
+    if result.component_version != COMPONENT_VERSION
+        || result.usbip_policy != crate::usbip::USBIP_POLICY
+        || result.usbip_version != crate::usbip::USBIP_VERSION
+    {
+        return Err("DS5-PROTO-001: the component does not implement the shared transport compatibility contract".to_string());
     }
     Ok(result)
 }

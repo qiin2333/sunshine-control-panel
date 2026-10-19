@@ -200,6 +200,11 @@ export function useDualSenseComponent({ busy = ref(false), onStatus, afterInstal
         showError(transport.data.detail || 'USBIP-SETUP-008: shared transport cleanup is required', 'install')
         return
       }
+      if (transport.data.attached_devices?.length) {
+        operation.value = ''
+        showError('USBIP-SETUP-009: release imported devices before component maintenance', 'install')
+        return
+      }
       const confirmation = localPackage
         ? t.value.dualSense.localInstallConfirm
         : upgrading ? t.value.dualSense.updateConfirm : t.value.dualSense.installConfirm

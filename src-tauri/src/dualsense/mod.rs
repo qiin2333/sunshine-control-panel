@@ -53,7 +53,8 @@ pub(crate) use {
     },
     probe::{
         component_is_verified, component_state, component_test_failure, local_uninstalled_status,
-        run_with_timeout, usbip_discovery_status, usbip_transport_status, validate_requested_profile,
+        run_with_timeout, usbip_discovery_status, usbip_transport_status,
+        validate_requested_profile,
     },
 };
 
@@ -70,9 +71,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::Emitter;
 
-pub(crate) const COMPONENT_VERSION: &str = "1.4.1";
+pub(crate) const COMPONENT_VERSION: &str = env!("SUNSHINE_COMPONENT_VERSION");
 pub(crate) const PROTOCOL_VERSION: u32 = 1;
-pub(crate) const HIDMAESTRO_VERSION: &str = "v1.12.0";
+pub(crate) const HIDMAESTRO_VERSION: &str = env!("SUNSHINE_HIDMAESTRO_VERSION");
 // Legacy archive digest, used only to identify existing backups.
 pub(crate) const LEGACY_HIDMAESTRO_1_7_3_SHA256: &str =
     "a337ddc70e90ff969deaaaad8c3f3f8b7a0ee5b61a6a9ff6183ca35950bd8503";

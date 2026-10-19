@@ -74,6 +74,15 @@ pub(crate) fn start_installed_component_update(app: tauri::AppHandle) {
                 tokio::time::sleep(std::time::Duration::from_secs(30)).await;
                 continue;
             }
+            // Updates never repair shared drivers. Check before elevation and
+            // download so an incompatible/busy transport cannot cause a dead end.
+            let transport = crate::usbip::usbip_get_status().await;
+            if !transport.is_ok_and(|status| status.ready && status.attached_devices.is_empty()) {
+                warn!(
+                    "DualSense update requires shared transport maintenance or release of imported devices"
+                );
+                return;
+            }
             info!("Updating the installed DualSense component to {COMPONENT_VERSION}");
             // Reuse the same authorization, verified download, staging and
             // rollback as manual updates. This mode never installs USB/IP.

@@ -14,6 +14,7 @@ pub(crate) const INSTALLER_SHA256: &str = env!("SUNSHINE_USBIP_SHA256");
 pub(crate) const TRANSPORT_POLICY: &str = env!("SUNSHINE_USBIP_POLICY");
 
 #[cfg(target_os = "windows")]
+/// Rejects missing or replaced transport binaries using the contract's SHA-256.
 fn verify_transport_file(path: &std::path::Path, expected: &str) -> Result<(), String> {
     use sha2::{Digest, Sha256};
     use std::io::Read;
@@ -40,6 +41,7 @@ fn verify_transport_file(path: &std::path::Path, expected: &str) -> Result<(), S
 }
 
 #[cfg(target_os = "windows")]
+/// Checks the registered driver path and bytes without changing driver state.
 pub(super) fn verify_driver_compatibility() -> Result<(), String> {
     use winreg::{RegKey, enums::HKEY_LOCAL_MACHINE};
     let service = RegKey::predef(HKEY_LOCAL_MACHINE)
@@ -103,6 +105,7 @@ pub(crate) fn install_disposition(
     }
 }
 
+/// Accepts only the tested four-part version, including neither older nor newer ABIs.
 pub(crate) fn supported_version_installed(installed_version: Option<&str>) -> bool {
     installed_version
         .and_then(parse_version)
@@ -129,6 +132,7 @@ fn parse_version(value: &str) -> Option<[u32; 4]> {
 // Inno Setup's English display name used to include "version". Newer
 // usbip-win2 installers register the same product as "USBip 0.9.8.1".
 // Keep discovery and the missing-DisplayVersion fallback consistent.
+/// Recognizes both usbip-win2 installer names without matching other USB/IP products.
 fn version_from_display_name(display_name: &str) -> Option<&str> {
     display_name.strip_prefix("USBip version ").or_else(|| {
         display_name
@@ -239,6 +243,7 @@ pub(super) struct Installation {
 }
 
 #[cfg(target_os = "windows")]
+/// Resolves the registered CLI and verifies its pinned bytes before execution.
 pub(super) fn find_installation() -> Result<Installation, String> {
     let entries = uninstall_entries()?;
     let version = consistent_version(entries.iter().map(entry_version))?

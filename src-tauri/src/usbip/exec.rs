@@ -5,6 +5,7 @@ use super::{
     UsbipRemoteDevice, validate_bus_id,
 };
 #[cfg(target_os = "windows")]
+/// Verifies the shared tools and driver, then executes a bounded CLI command.
 pub(super) async fn run_usbip(arguments: Vec<String>) -> Result<std::process::Output, String> {
     use std::os::windows::process::CommandExt;
     use std::process::Stdio;
@@ -107,6 +108,7 @@ pub(super) enum CommandScope {
     Local,
 }
 
+/// Preserves both diagnostic streams and distinguishes ABI, local and exporter failures.
 pub(super) fn require_success(
     output: std::process::Output,
     action: &str,
@@ -220,6 +222,7 @@ fn parse_attached_devices(output: &str) -> Vec<UsbipAttachedDevice> {
     devices
 }
 
+/// Enumerates local imports; local failures must not be presented as exporter errors.
 pub(super) async fn list_attached() -> Result<Vec<UsbipAttachedDevice>, String> {
     let output = run_usbip(vec!["port".to_string()]).await?;
     let text = require_success(output, "listing attached devices", CommandScope::Local)?;

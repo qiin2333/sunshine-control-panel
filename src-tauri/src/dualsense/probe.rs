@@ -173,6 +173,7 @@ pub(crate) fn run_with_timeout(
     }
 }
 
+/// Rejects runtimes whose protocol, required capabilities or transport contract differ.
 pub(crate) fn run_probe(executable: &Path) -> Result<ProbeResult, String> {
     if !executable.is_file() {
         return Err("DS5-PKG-003: Sunshine DualSense sidecar is missing".to_string());
@@ -331,6 +332,7 @@ pub(crate) fn usbip_discovery_status(
     }
 }
 
+/// Carries actual transport readiness and its diagnostic into component status.
 pub(crate) fn usbip_transport_status(
     status: Result<crate::usbip::UsbipStatus, String>,
 ) -> (String, bool, bool, String, String) {
@@ -405,6 +407,7 @@ pub(crate) fn validate_requested_profile(
     }
 }
 
+/// Combines component integrity, runtime capabilities, shared transport and Core settings.
 pub(crate) async fn dualsense_get_status_with_config(
     confirmed: Option<CoreDualSenseResponse>,
 ) -> Result<DualSenseStatus, String> {

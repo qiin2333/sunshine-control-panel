@@ -86,6 +86,7 @@ pub(crate) fn copy_runtime_files(source: &Path, destination: &Path) -> Result<()
     Ok(())
 }
 
+/// Requires the runtime payload, matching compatibility contract and package metadata.
 pub(crate) fn validate_complete_runtime(directory: &Path) -> Result<(), String> {
     for name in [
         SIDECAR_EXE,
@@ -101,6 +102,7 @@ pub(crate) fn validate_complete_runtime(directory: &Path) -> Result<(), String> 
     validate_sidecar_runtime_metadata(directory)
 }
 
+/// Compares contract values while allowing harmless JSON formatting differences.
 pub(crate) fn validate_compatibility_file(directory: &Path) -> Result<(), String> {
     let actual = fs::read(directory.join("component-compatibility.json")).map_err(|error| {
         format!("DS5-PROTO-001: component compatibility contract is missing: {error}")
@@ -528,6 +530,7 @@ pub(crate) async fn install_error_after_rollback(
     }
 }
 
+/// Requires two completed rounds, released devices and the expected transport policy.
 pub(crate) fn validate_transport_acceptance(value: &serde_json::Value) -> Result<(), String> {
     if value["rounds"] != 2
         || value["released"] != true
@@ -539,6 +542,8 @@ pub(crate) fn validate_transport_acceptance(value: &serde_json::Value) -> Result
     Ok(())
 }
 
+/// Exercises the staged runtime before activation with no active stream or imports.
+/// Rechecks release after test failure without detaching another application's devices.
 pub(crate) async fn verify_staged_transport(executable: &Path) -> Result<(), String> {
     super::probe::ensure_no_active_session().await?;
     let before = crate::usbip::usbip_get_status().await?;
@@ -584,6 +589,8 @@ pub(crate) async fn verify_staged_transport(executable: &Path) -> Result<(), Str
     outcome
 }
 
+/// Stages and verifies a complete component before activation, preserving the old copy.
+/// Driver installation is restricted to explicit maintenance through `install_transport`.
 pub(crate) async fn dualsense_install_impl(
     progress: &ProgressReporter<'_>,
     local_packages: LocalComponentPackages,

@@ -390,9 +390,7 @@ mod tests {
 
     #[test]
     fn only_the_tested_transport_version_is_accepted() {
-        for version in [PINNED_VERSION] {
-            assert!(supported_version_installed(Some(version)), "{version}");
-        }
+        assert!(supported_version_installed(Some(PINNED_VERSION)));
         for version in [
             "0.9.8.2",
             "0.9.8.10",

@@ -7,9 +7,9 @@ use super::{
     extract_sidecar_package, local_uninstalled_status, read_sidecar_package_manifest,
     recover_interrupted_activation, require_entity_tag, resolve_core_config,
     rollback_activated_component, run_with_timeout, sha256_file, update_config_fields,
-    update_tuning_fields, usbip_discovery_status, validate_core_ds5_response,
-    validate_requested_profile, validate_sidecar_integrity, validate_sidecar_package_manifest,
-    validate_strong_entity_tag,
+    update_tuning_fields, usbip_discovery_status, usbip_transport_status,
+    validate_core_ds5_response, validate_requested_profile, validate_sidecar_integrity,
+    validate_sidecar_package_manifest, validate_strong_entity_tag,
 };
 #[cfg(target_os = "windows")]
 use super::{
@@ -756,6 +756,51 @@ fn usbip_discovery_preserves_errors_without_misreporting_missing_transport() {
     assert!(!valid);
     assert!(error_code.is_empty());
     assert!(detail.is_empty());
+}
+
+#[test]
+fn usbip_transport_probe_rejects_a_broken_driver_with_a_valid_registration() {
+    let status = |ready, detail: &str| crate::usbip::UsbipStatus {
+        supported: true,
+        installed: true,
+        ready,
+        version: "0.9.8.1".to_string(),
+        version_valid: true,
+        reboot_recommended: false,
+        vhci_residual: false,
+        attached_devices: Vec::new(),
+        detail: detail.to_string(),
+    };
+    let diagnosis = "USBIP-EXEC-006: ABI mismatch";
+    let (version, valid, ready, code, detail) = usbip_transport_status(Ok(status(false, diagnosis)));
+    assert_eq!(version, "0.9.8.1");
+    assert!(valid);
+    assert!(!ready);
+    assert_eq!(code, "USBIP-EXEC-006");
+    assert_eq!(detail, diagnosis);
+
+    let (_, valid, ready, code, detail) = usbip_transport_status(Ok(status(true, "")));
+    assert!(valid && ready);
+    assert!(code.is_empty() && detail.is_empty());
+
+    let (_, valid, ready, code, detail) =
+        usbip_transport_status(Err("USBIP-EXEC-002: probe timed out".to_string()));
+    assert!(!valid && !ready);
+    assert_eq!(code, "USBIP-EXEC-002");
+    assert!(detail.contains("probe timed out"));
+}
+
+#[cfg(target_os = "windows")]
+#[tokio::test]
+#[ignore = "requires an installed Sidecar, compatible USB/IP, and a running Sunshine core"]
+async fn installed_dualsense_uses_the_ready_shared_transport() {
+    let transport = crate::usbip::usbip_get_status().await.unwrap();
+    assert!(transport.ready, "{}", transport.detail);
+    let component = crate::dualsense::dualsense_get_status().await.unwrap();
+    assert!(component.verified, "{}", component.detail);
+    assert!(component.usbip_available, "{}", component.detail);
+    assert_eq!(component.usbip_version, transport.version);
+    assert_eq!(component.usbip_version_valid, transport.version_valid);
 }
 
 #[cfg(target_os = "windows")]

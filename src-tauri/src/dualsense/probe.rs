@@ -322,6 +322,29 @@ pub(crate) fn usbip_discovery_status(
     }
 }
 
+pub(crate) fn usbip_transport_status(
+    status: Result<crate::usbip::UsbipStatus, String>,
+) -> (String, bool, bool, String, String) {
+    match status {
+        Ok(status) => {
+            let code = status.detail.split_once(':').map_or("", |(code, _)| code);
+            (
+                status.version,
+                status.version_valid,
+                status.ready,
+                code.to_string(),
+                status.detail,
+            )
+        }
+        Err(detail) => {
+            let code = detail
+                .split_once(':')
+                .map_or("USBIP-SETUP-002", |(code, _)| code);
+            (String::new(), false, false, code.to_string(), detail)
+        }
+    }
+}
+
 pub(crate) fn local_uninstalled_status() -> DualSenseStatus {
     let (usbip_version, usbip_version_valid, error_code, detail) =
         usbip_discovery_status(installed_usbip_version());
@@ -415,9 +438,11 @@ pub(crate) async fn dualsense_get_status_with_config(
             .to_string();
         detail = config_error;
     }
-    let (usbip_version, usbip_version_valid, usbip_error_code, usbip_detail) =
-        usbip_discovery_status(installed_usbip_version());
-    let usbip_available = result.usbip_available && usbip_version_valid;
+    // A valid uninstall registration does not prove that the active driver
+    // accepts the installed tools. Share the transport panel's actual probe.
+    let (usbip_version, usbip_version_valid, usbip_ready, usbip_error_code, usbip_detail) =
+        usbip_transport_status(crate::usbip::usbip_get_status().await);
+    let usbip_available = result.usbip_available && usbip_ready;
     let manifest = installed.then(installed_component_manifest).flatten();
     let update_available = installed && component_update_available(manifest.as_ref());
     let matches_current_runtime = component_matches_current_runtime(

@@ -119,7 +119,7 @@ export function useDualSenseComponent({ busy = ref(false), onStatus, afterInstal
 
   const showError = (message, context = 'generic') => {
     operationError.value = safeDualSenseTechnicalError(message)
-    ElMessage.error(friendlyDualSenseError(message, t.value.dualSense.errors, context))
+    ElMessage.error(friendlyDualSenseError(message, t.value.dualSense.errors, context, t.value.deviceHub.usb.errors))
   }
 
   const invalidateStatusRefresh = () => {
@@ -195,6 +195,11 @@ export function useDualSenseComponent({ busy = ref(false), onStatus, afterInstal
         return
       }
       const plan = usbTransportPlan(transport.data)
+      if (plan === 'cleanup') {
+        operation.value = ''
+        showError(transport.data.detail || 'USBIP-SETUP-008: shared transport cleanup is required', 'install')
+        return
+      }
       const confirmation = localPackage
         ? t.value.dualSense.localInstallConfirm
         : upgrading ? t.value.dualSense.updateConfirm : t.value.dualSense.installConfirm

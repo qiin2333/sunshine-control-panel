@@ -25,6 +25,21 @@ const messages = {
 }
 
 describe('DualSense user-facing errors', () => {
+  it('preserves shared transport guidance in component and configuration operations', () => {
+    const usbipMessages = {
+      'USBIP-EXEC-006': 'Clean the shared transport before reinstalling.',
+      'USBIP-SETUP-003': 'Install the matching USB/IP version.',
+      'USBIP-SETUP-008': 'Open component management to clean the transport.',
+    }
+    for (const [code, guidance] of Object.entries(usbipMessages)) {
+      const raw = `${code}: shared transport failed: private internal details`
+      assert.equal(dualSenseErrorCode(raw), code)
+      assert.equal(friendlyDualSenseError(raw, messages, 'install', usbipMessages), guidance)
+      assert.equal(safeDualSenseTechnicalError(raw), `${code}: shared transport failed`)
+    }
+    assert.equal(friendlyDualSenseError('USBIP-UNKNOWN-999: failed', messages, 'test', usbipMessages), 'The device test failed.')
+  })
+
   it('extracts diagnostic codes without exposing them in the friendly message', () => {
     const raw = 'DS5-PKG-003: component test process failed with exit code 1'
     assert.equal(dualSenseErrorCode(raw), 'DS5-PKG-003')

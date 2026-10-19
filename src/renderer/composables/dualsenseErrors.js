@@ -1,5 +1,5 @@
-const CODE_PATTERN = /^(DS5-[A-Z]+-\d{3}):\s*/
-const TECHNICAL_MESSAGE_PATTERN = /^(DS5-[A-Z]+-\d{3}:\s*[^:\r\n]+)/
+const CODE_PATTERN = /^((?:DS5|USBIP)-[A-Z]+-\d{3}):\s*/
+const TECHNICAL_MESSAGE_PATTERN = /^((?:DS5|USBIP)-[A-Z]+-\d{3}:\s*[^:\r\n]+)/
 
 export const dualSenseErrorCode = (message) => String(message || '').match(CODE_PATTERN)?.[1] || ''
 
@@ -7,11 +7,12 @@ export const safeDualSenseTechnicalError = (message) =>
   String(message || '').match(TECHNICAL_MESSAGE_PATTERN)?.[1]
   || 'DualSense operation failed'
 
-export const friendlyDualSenseError = (message, messages, context = 'generic') => {
+export const friendlyDualSenseError = (message, messages, context = 'generic', usbipMessages) => {
   const code = dualSenseErrorCode(message)
   const contextual = messages?.contexts?.[context]
   return contextual?.[code]
     || messages?.codes?.[code]
+    || usbipMessages?.[code]
     || contextual?.fallback
     || messages?.unknown
     || 'The operation could not be completed. Please try again.'

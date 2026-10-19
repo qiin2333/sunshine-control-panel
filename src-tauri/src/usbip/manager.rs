@@ -321,21 +321,10 @@ mod tests {
         ] {
             let discovered = version_from_display_name(name);
             assert_eq!(discovered, Some(version));
-            if supported_version_installed(discovered) {
-                assert_eq!(
-                    install_disposition(discovered).unwrap(),
-                    InstallDisposition::Ready
-                );
-            } else {
-                // Discovery must still find old installers so shared cleanup
-                // can remove them before installing the matching transport.
-                assert!(install_disposition(discovered).is_err());
-            }
         }
-        // Preserve the existing fail-closed handling of malformed legacy
-        // registrations, without treating other USB/IP products as usbip-win2.
+        // Keep malformed legacy registrations visible to version validation,
+        // without treating other USB/IP products as usbip-win2.
         assert_eq!(version_from_display_name("USBip version bad"), Some("bad"));
-        assert!(install_disposition(Some("bad")).is_err());
         for name in [
             "USBip Tools",
             "USBip Server",

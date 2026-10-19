@@ -8,7 +8,6 @@ import {
   microphoneStatusTone,
   microphoneUsesUsbip,
   usbTransportPlan,
-  usbipTransportNeedsCleanup,
 } from './deviceHubStatus.js'
 
 test('DualSense actions distinguish repair from a compatible update', () => {
@@ -21,15 +20,6 @@ test('DualSense actions distinguish repair from a compatible update', () => {
 test('DualSense settings remain available for verified components with an update', () => {
   assert.equal(dualSenseComponentOperational({ verified: true, update_available: true }), true)
   assert.equal(dualSenseComponentOperational({ verified: false, update_available: true }), false)
-})
-
-test('USB/IP ABI conflicts offer shared cleanup even with a valid registered version', () => {
-  assert.equal(usbipTransportNeedsCleanup({ installed: true, version_valid: true, detail: 'USBIP-EXEC-006: ABI mismatch' }), true)
-  assert.equal(usbipTransportNeedsCleanup({ installed: true, version_valid: false }), true)
-  assert.equal(usbipTransportNeedsCleanup({ vhci_residual: true }), true)
-  assert.equal(usbipTransportNeedsCleanup({ installed: true, version_valid: true, detail: 'USBIP-EXEC-007: access denied' }), false)
-  assert.equal(usbipTransportNeedsCleanup({ installed: true, version_valid: true, ready: true }), false)
-  assert.equal(usbipTransportNeedsCleanup({}), false)
 })
 
 test('microphone status prioritizes faults over an old online flag', () => {
@@ -70,11 +60,12 @@ test('VB-Cable and automatic fallback remain testable without Sidecar', () => {
   assert.equal(canTestMicrophone({ configured_backend: 'vb_cable', state: 'unsupported' }), false)
 })
 
-test('transport installation distinguishes reuse, missing and incompatible drivers', () => {
-  assert.equal(usbTransportPlan({ ready: true, version: '0.9.8.1' }), 'reuse')
-  assert.equal(usbTransportPlan({ installed: false }), 'install')
+test('transport maintenance distinguishes reuse, installation, shared cleanup and repair', () => {
+  assert.equal(usbTransportPlan({ installed: true, version_valid: true, ready: true }), 'reuse')
+  assert.equal(usbTransportPlan({}), 'install')
   assert.equal(usbTransportPlan({ installed: true, version_valid: false }), 'cleanup')
   assert.equal(usbTransportPlan({ vhci_residual: true }), 'cleanup')
   assert.equal(usbTransportPlan({ installed: true, version_valid: true }), 'repair')
   assert.equal(usbTransportPlan({ installed: true, version_valid: true, detail: 'USBIP-EXEC-006: ABI mismatch' }), 'cleanup')
+  assert.equal(usbTransportPlan({ installed: true, version_valid: true, detail: 'USBIP-EXEC-007: access denied' }), 'repair')
 })

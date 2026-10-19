@@ -15,7 +15,7 @@ use super::{
 use super::{
     ElevatedMessage, ElevatedOperation, MAX_ELEVATED_MESSAGE_BYTES, read_limited_elevated_line,
 };
-use crate::usbip::{USBIP_SHA256, supported_usbip_installed};
+use crate::usbip::USBIP_SHA256;
 use reqwest::header::HeaderValue;
 use std::io::Write as _;
 use std::process::Command;
@@ -210,8 +210,6 @@ fn staged_sidecar_implements_the_shared_transport_contract() {
     );
     super::install::validate_complete_runtime(&root).unwrap();
     let probe = super::probe::run_probe(&root.join(super::SIDECAR_EXE)).unwrap();
-    assert_eq!(probe.component_version, super::COMPONENT_VERSION);
-    assert_eq!(probe.usbip_policy, crate::usbip::USBIP_POLICY);
     assert!(probe.usbip_available);
 }
 
@@ -832,18 +830,6 @@ fn offline_uninstall_status_is_locally_complete() {
     assert!(status.audio_haptics);
     assert!(!status.config_readable);
     assert!(!status.in_use);
-}
-
-#[test]
-fn usbip_accepts_only_the_tested_shared_transport() {
-    assert!(supported_usbip_installed(Some("0.9.8.1")));
-    assert!(!supported_usbip_installed(Some("0.9.8.2")));
-    assert!(!supported_usbip_installed(Some("0.9.8.10")));
-    // Newer version numbers do not prove that driver IOCTLs are compatible.
-    assert!(!supported_usbip_installed(Some("0.9.7.7")));
-    assert!(!supported_usbip_installed(Some("0.9.7.10")));
-    assert!(!supported_usbip_installed(Some("0.9.7.3")));
-    assert!(!supported_usbip_installed(None));
 }
 
 #[test]

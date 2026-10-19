@@ -8,6 +8,7 @@ use super::{
 };
 
 #[tauri::command]
+/// Validates the exporter address and port, then lists devices using the verified shared tools.
 pub async fn usbip_list_remote(
     remote: String,
     tcp_port: Option<u16>,

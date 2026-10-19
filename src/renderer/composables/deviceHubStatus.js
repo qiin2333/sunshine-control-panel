@@ -9,6 +9,7 @@ export function dualSenseComponentOperational(status = {}) {
   return Boolean(status.verified)
 }
 
+/** Requires explicit shared cleanup for residual devices, unsupported versions or ABI conflicts. */
 export function usbipTransportNeedsCleanup(status = {}) {
   return Boolean(
     status.vhci_residual
@@ -53,6 +54,7 @@ export function microphoneUsesUsbip(status = {}) {
     : status.configured_backend === 'usbip_experimental'
 }
 
+/** Selects the maintenance step without allowing component installation to replace shared drivers. */
 export function usbTransportPlan(status = {}) {
   if (status.ready) return 'reuse'
   if (usbipTransportNeedsCleanup(status)) return 'cleanup'

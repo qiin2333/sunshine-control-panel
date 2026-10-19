@@ -7,6 +7,7 @@ export const safeDualSenseTechnicalError = (message) =>
   String(message || '').match(TECHNICAL_MESSAGE_PATTERN)?.[1]
   || 'DualSense operation failed'
 
+/** Resolves contextual component errors before shared transport messages and safe fallbacks. */
 export const friendlyDualSenseError = (message, messages, context = 'generic', usbipMessages) => {
   const code = dualSenseErrorCode(message)
   const contextual = messages?.contexts?.[context]

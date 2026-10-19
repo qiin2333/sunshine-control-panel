@@ -5,12 +5,15 @@
 //! and replacement policy here so one feature cannot silently replace the
 //! transport underneath the other.
 
-pub(crate) const PINNED_VERSION: &str = "0.9.7.7";
-pub(super) const MINIMUM_VERSION: &str = "0.9.7.7";
+// HIDMaestro v1.12.0 installs the 0.9.8.1 kernel driver when a USB/IP device
+// starts. Older command-line tools use a different IOCTL ABI and stop working
+// after that first stream, even though their uninstall registration is intact.
+pub(crate) const PINNED_VERSION: &str = "0.9.8.1";
+pub(super) const MINIMUM_VERSION: &str = PINNED_VERSION;
 pub(crate) const INSTALLER_URL: &str =
-    "https://github.com/vadimgrn/usbip-win2/releases/download/v.0.9.7.7/USBip-0.9.7.7-x64.exe";
+    "https://github.com/vadimgrn/usbip-win2/releases/download/v.0.9.8.1/USBip-0.9.8.1-x64.exe";
 pub(crate) const INSTALLER_SHA256: &str =
-    "51620fa5f9f8be5932bc9d786deee557ce06d5407a99cab490dcfac71f185fea";
+    "38cad6d4432b52d5bb9409d9ad03b72fdffc4ada4cd3a48fbeca1a2752a8518a";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum InstallDisposition {
@@ -229,10 +232,16 @@ mod tests {
         ] {
             let discovered = version_from_display_name(name);
             assert_eq!(discovered, Some(version));
-            assert_eq!(
-                install_disposition(discovered).unwrap(),
-                InstallDisposition::Ready
-            );
+            if supported_version_installed(discovered) {
+                assert_eq!(
+                    install_disposition(discovered).unwrap(),
+                    InstallDisposition::Ready
+                );
+            } else {
+                // Discovery must still find old installers so shared cleanup
+                // can remove them before installing the matching transport.
+                assert!(install_disposition(discovered).is_err());
+            }
         }
         // Preserve the existing fail-closed handling of malformed legacy
         // registrations, without treating other USB/IP products as usbip-win2.
@@ -278,21 +287,23 @@ mod tests {
             InstallDisposition::Install
         );
         assert_eq!(
-            install_disposition(Some("0.9.7.8")).unwrap(),
+            install_disposition(Some("0.9.8.2")).unwrap(),
             InstallDisposition::Ready
         );
         assert!(install_disposition(Some("0.9.7.6")).is_err());
+        assert!(install_disposition(Some("0.9.7.7")).is_err());
     }
 
     #[test]
     fn supported_versions_are_compared_numerically() {
-        for version in [
-            "0.9.7.7", "0.9.7.8", "0.9.7.10", "0.9.8.0", "0.9.8.1", "0.10.0.0", "1.0.0.0",
-        ] {
+        for version in ["0.9.8.1", "0.9.8.2", "0.9.8.10", "0.10.0.0", "1.0.0.0"] {
             assert!(supported_version_installed(Some(version)), "{version}");
         }
         for version in [
             "0.9.7.6",
+            "0.9.7.7",
+            "0.9.7.10",
+            "0.9.8.0",
             "0.8.99.99",
             "",
             "0.9.7",

@@ -60,7 +60,7 @@ pub async fn usbip_get_status() -> Result<UsbipStatus, String> {
                 reboot_recommended: false,
                 vhci_residual,
                 attached_devices: Vec::new(),
-                detail: format!("USB/IP {MINIMUM_VERSION} or newer is required"),
+                detail: format!("USBIP-SETUP-003: USB/IP {MINIMUM_VERSION} or newer is required"),
             });
         }
         match super::exec::list_attached().await {

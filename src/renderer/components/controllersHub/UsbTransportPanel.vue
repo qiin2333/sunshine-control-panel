@@ -15,6 +15,10 @@
       </div>
 
       <p v-if="statusProbeFailed || (status.detail && status.installed)" class="chub-status-error">{{ friendlyError(status.detail) }}</p>
+      <details v-if="status.detail" class="chub-diagnostics-details">
+        <summary>{{ t.deviceHub.usb.diagnosticDetails }}</summary>
+        <pre style="white-space: pre-wrap; overflow-wrap: anywhere">{{ status.detail }}</pre>
+      </details>
       <div v-if="statusLoaded && !statusProbeFailed && status.supported && !status.ready && !needsCleanup" class="chub-usb-setup">
         <p>{{ t.deviceHub.usb.setupHint }}</p>
         <el-button type="primary" :loading="installing" :disabled="transportBusy" @click="installTransport">

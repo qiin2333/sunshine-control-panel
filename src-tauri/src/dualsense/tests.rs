@@ -723,9 +723,13 @@ fn offline_uninstall_status_is_locally_complete() {
 
 #[test]
 fn usbip_accepts_user_installed_versions_at_or_above_minimum() {
-    assert!(supported_usbip_installed(Some("0.9.7.7")));
-    assert!(supported_usbip_installed(Some("0.9.7.8")));
-    assert!(supported_usbip_installed(Some("0.9.7.10")));
+    assert!(supported_usbip_installed(Some("0.9.8.1")));
+    assert!(supported_usbip_installed(Some("0.9.8.2")));
+    assert!(supported_usbip_installed(Some("0.9.8.10")));
+    // HIDMaestro v1.12.0 replaces these drivers on the first stream. Keeping
+    // their old command-line tools would leave the shared transport broken.
+    assert!(!supported_usbip_installed(Some("0.9.7.7")));
+    assert!(!supported_usbip_installed(Some("0.9.7.10")));
     assert!(!supported_usbip_installed(Some("0.9.7.3")));
     assert!(!supported_usbip_installed(None));
 }
@@ -741,8 +745,8 @@ fn usbip_discovery_preserves_errors_without_misreporting_missing_transport() {
     assert_eq!(detail, "USBIP-SETUP-008: conflicting USB/IP versions");
 
     let (version, valid, error_code, detail) =
-        usbip_discovery_status(Ok(Some("0.9.7.8".to_string())));
-    assert_eq!(version, "0.9.7.8");
+        usbip_discovery_status(Ok(Some("0.9.8.1".to_string())));
+    assert_eq!(version, "0.9.8.1");
     assert!(valid);
     assert!(error_code.is_empty());
     assert!(detail.is_empty());

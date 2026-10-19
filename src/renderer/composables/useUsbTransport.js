@@ -3,6 +3,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { usbip } from '../tauri-adapter.js'
 import { useI18n } from '../desktop/i18n/index.js'
 import { useDeviceComponentOperation } from './useDeviceComponentOperation.js'
+import { usbipTransportNeedsCleanup } from './deviceHubStatus.js'
 
 export function useUsbTransport() {
   const { t } = useI18n()
@@ -26,9 +27,7 @@ export function useUsbTransport() {
   let statusRefreshPromise = null
 
   const attachedDevices = computed(() => status.attached_devices || [])
-  const needsCleanup = computed(() => Boolean(
-    status.vhci_residual || (status.installed && !status.version_valid),
-  ))
+  const needsCleanup = computed(() => usbipTransportNeedsCleanup(status))
   const transportBusy = computed(() => Boolean(sharedOperation.busyElsewhere.value || installing.value || cleaning.value))
   const statusClass = computed(() => {
     if (status.ready) return 'state-ready'

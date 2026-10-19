@@ -100,21 +100,37 @@ fn command_text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).trim().to_string()
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum CommandScope {
+    Remote,
+    Local,
+}
+
 pub(super) fn require_success(
     output: std::process::Output,
     action: &str,
+    scope: CommandScope,
 ) -> Result<String, String> {
     if output.status.success() {
         return Ok(command_text(&output.stdout));
     }
-    let detail = command_text(&output.stderr);
-    let detail = if detail.is_empty() {
-        command_text(&output.stdout)
+    // Retain both streams: the driver diagnosis may appear on stdout while
+    // stderr contains only a generic command failure (or the reverse).
+    let detail = [command_text(&output.stderr), command_text(&output.stdout)]
+        .into_iter()
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let code = if detail.to_ascii_lowercase().contains("abi mismatch") {
+        "USBIP-EXEC-006"
     } else {
-        detail
+        match scope {
+            CommandScope::Remote => "USBIP-EXEC-004",
+            CommandScope::Local => "USBIP-EXEC-007",
+        }
     };
     Err(format!(
-        "USBIP-EXEC-004: {action} failed{}",
+        "{code}: {action} failed{}",
         if detail.is_empty() {
             String::new()
         } else {
@@ -205,13 +221,68 @@ fn parse_attached_devices(output: &str) -> Vec<UsbipAttachedDevice> {
 
 pub(super) async fn list_attached() -> Result<Vec<UsbipAttachedDevice>, String> {
     let output = run_usbip(vec!["port".to_string()]).await?;
-    let text = require_success(output, "listing attached devices")?;
+    let text = require_success(output, "listing attached devices", CommandScope::Local)?;
     Ok(parse_attached_devices(&text))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn failed_output(stdout: &str, stderr: &str) -> std::process::Output {
+        #[cfg(unix)]
+        use std::os::unix::process::ExitStatusExt;
+        #[cfg(windows)]
+        use std::os::windows::process::ExitStatusExt;
+
+        std::process::Output {
+            status: std::process::ExitStatus::from_raw(1),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: stderr.as_bytes().to_vec(),
+        }
+    }
+
+    #[test]
+    fn reports_driver_abi_mismatch_for_local_and_remote_commands() {
+        for scope in [CommandScope::Local, CommandScope::Remote] {
+            let error = require_success(
+                failed_output(
+                    "",
+                    "error: ABI mismatch, unexpected size of the input structure",
+                ),
+                "listing attached devices",
+                scope,
+            )
+            .unwrap_err();
+            assert!(error.starts_with("USBIP-EXEC-006:"), "{error}");
+            assert!(error.contains("unexpected size of the input structure"));
+        }
+    }
+
+    #[test]
+    fn preserves_driver_diagnosis_on_either_output_stream() {
+        let error = require_success(
+            failed_output("ABI mismatch", "command failed"),
+            "listing attached devices",
+            CommandScope::Local,
+        )
+        .unwrap_err();
+        assert!(error.starts_with("USBIP-EXEC-006:"), "{error}");
+        assert!(error.contains("command failed\nABI mismatch"));
+    }
+
+    #[test]
+    fn local_enumeration_failure_is_not_reported_as_an_exporter_failure() {
+        for (scope, code) in [
+            (CommandScope::Local, "USBIP-EXEC-007:"),
+            (CommandScope::Remote, "USBIP-EXEC-004:"),
+        ] {
+            let error =
+                require_success(failed_output("", "access denied"), "probing", scope).unwrap_err();
+            assert!(error.starts_with(code), "{error}");
+            assert!(error.contains("access denied"));
+        }
+    }
 
     #[test]
     fn parses_exportable_devices() {

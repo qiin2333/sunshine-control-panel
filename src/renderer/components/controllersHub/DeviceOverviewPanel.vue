@@ -28,7 +28,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, onActivated, onMounted } from 'vue'
 import { microphoneOverviewState } from '../../composables/deviceHubStatus.js'
 import { useDeviceRuntime } from '../../composables/useDeviceRuntime.js'
 import { useI18n } from '../../desktop/i18n/index.js'
@@ -37,4 +37,6 @@ const { t } = useI18n()
 const { runtime, loading, loaded, loadError, probeFailed, refresh } = useDeviceRuntime()
 const microphoneState = computed(() => probeFailed.mic ? 'unknown' : microphoneOverviewState(runtime.mic))
 onMounted(() => refresh())
+// KeepAlive 重新显示时静默校准（状态通道会合并/复用近期探测）。
+onActivated(() => refresh())
 </script>

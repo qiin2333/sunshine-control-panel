@@ -1112,12 +1112,6 @@ Output only one short sentence, no explanation. Reply in English.`,
     restartAsAdmin: 'Restart as Admin',
   },
 
-  controllers: {
-    eyebrow: 'MANAGE / CONTROLLERS',
-    title: 'Controllers',
-    intro: 'Manage Sunshine virtual controllers.',
-  },
-
   hdrEnhanced: {
     open: 'Manage image enhancement',
   },
@@ -1315,7 +1309,6 @@ Output only one short sentence, no explanation. Reply in English.`,
 
   dualSense: {
     title: 'DualSense Emulation',
-    experimental: '[Experimental]',
     states: {
       not_installed: 'Not installed',
       repair_required: 'Needs repair',

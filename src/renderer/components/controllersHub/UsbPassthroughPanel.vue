@@ -122,7 +122,7 @@ async function discover() {
   discoveryDone.value = true
   if (!result?.success) {
     remoteDevices.value = []
-    await refreshStatus({ afterCurrent: true })
+    await refreshStatus({ force: true, afterCurrent: true })
     return ElMessage.error(friendlyError(result?.message))
   }
   remoteDevices.value = result.data || []
@@ -144,10 +144,10 @@ async function attachDevice(device) {
   const result = await usbip.attach(remote.value.trim(), device.bus_id, tcpPort.value)
   attachingBusId.value = ''
   if (!result?.success) {
-    await refreshStatus({ afterCurrent: true })
+    await refreshStatus({ force: true, afterCurrent: true })
     return ElMessage.error(friendlyError(result?.message))
   }
-  await refreshStatus({ afterCurrent: true })
+  await refreshStatus({ force: true, afterCurrent: true })
   ElMessage.success(t.value.deviceHub.usb.attachSuccess)
 }
 
@@ -163,10 +163,10 @@ async function detachDevice(device) {
   const result = await usbip.detach(device.port)
   detachingPort.value = 0
   if (!result?.success) {
-    await refreshStatus({ afterCurrent: true })
+    await refreshStatus({ force: true, afterCurrent: true })
     return ElMessage.error(friendlyError(result?.message))
   }
-  await refreshStatus({ afterCurrent: true })
+  await refreshStatus({ force: true, afterCurrent: true })
   ElMessage.success(t.value.deviceHub.usb.detachSuccess)
 }
 

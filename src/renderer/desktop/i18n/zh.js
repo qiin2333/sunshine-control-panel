@@ -1112,12 +1112,6 @@ export const zh = {
     restartAsAdmin: '以管理员重启',
   },
 
-  controllers: {
-    eyebrow: 'MANAGE / CONTROLLERS',
-    title: '控制器',
-    intro: '管理 Sunshine 的虚拟控制器。',
-  },
-
   hdrEnhanced: {
     open: '管理画质增强',
   },
@@ -1315,7 +1309,6 @@ export const zh = {
 
   dualSense: {
     title: 'DualSense 模拟',
-    experimental: '[实验性功能]',
     states: {
       not_installed: '未安装',
       repair_required: '需要修复',

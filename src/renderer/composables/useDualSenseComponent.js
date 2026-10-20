@@ -1,12 +1,13 @@
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { open } from '@tauri-apps/plugin-dialog'
-import { dualsense, usbip } from '../tauri-adapter.js'
+import { dualsense } from '../tauri-adapter.js'
 import { friendlyDualSenseError, safeDualSenseTechnicalError } from './dualsenseErrors.js'
 import { dualSenseConfigReadable, mergeDualSenseStatus } from './dualsenseConfigSync.js'
 import { installSelectedDualSensePackages } from './dualsenseInstallFlow.js'
 import { dualSenseComponentAction, dualSenseComponentOperational, usbTransportPlan } from './deviceHubStatus.js'
 import { useDeviceComponentOperation } from './useDeviceComponentOperation.js'
+import { dualsenseStatusChannel, usbipStatusChannel, STATUS_POLL_INTERVAL_MS } from './deviceStatusStore.js'
 import { useI18n } from '../desktop/i18n/index.js'
 
 const STATUS_REFRESH_WAIT_TIMEOUT_MS = 5000
@@ -125,6 +126,7 @@ export function useDualSenseComponent({ busy = ref(false), onStatus, afterInstal
 
   const invalidateStatusRefresh = () => {
     statusRefreshGeneration += 1
+    dualsenseStatusChannel.invalidate()
   }
 
   const waitForStatusRefresh = async () => {
@@ -144,7 +146,7 @@ export function useDualSenseComponent({ busy = ref(false), onStatus, afterInstal
     }
   }
 
-  const refresh = async (quiet = false, allowBusy = false) => {
+  const refresh = async (quiet = false, allowBusy = false, force = false) => {
     if ((!allowBusy && controlsBusy.value) || refreshing.value || (quiet && statusRefreshPromise)) return false
     if (!quiet && statusRefreshPromise) {
       await waitForStatusRefresh()
@@ -154,7 +156,8 @@ export function useDualSenseComponent({ busy = ref(false), onStatus, afterInstal
     if (!quiet) operationError.value = ''
     if (!quiet) refreshing.value = true
     let refreshed = false
-    const request = dualsense.getStatus()
+    // 显式刷新与非 quiet 读取必须穿透缓存；quiet 读刷新在操作失效后同样回源。
+    const request = dualsenseStatusChannel.fetch({ force: force || !quiet })
     statusRefreshPromise = request
     try {
       const result = await request
@@ -189,7 +192,7 @@ export function useDualSenseComponent({ busy = ref(false), onStatus, afterInstal
     const localPackage = packagePaths.length > 0
     operation.value = 'confirm-install'
     try {
-      const transport = await usbip.getStatus()
+      const transport = await usbipStatusChannel.fetch({ force: true })
       if (!transport?.success) {
         showError(transport?.message, 'install')
         operation.value = ''
@@ -247,6 +250,7 @@ export function useDualSenseComponent({ busy = ref(false), onStatus, afterInstal
     rebootRecommended.value = result.data.reboot_recommended
     const configReadable = dualSenseConfigReadable(result.data)
     status.value = mergeDualSenseStatus(status.value, result.data)
+    dualsenseStatusChannel.prime(result.data)
     statusKnown.value = true
     if (configReadable) {
       onStatus?.(result.data, false)
@@ -316,11 +320,23 @@ export function useDualSenseComponent({ busy = ref(false), onStatus, afterInstal
     }
     rebootRecommended.value = false
     status.value = mergeDualSenseStatus(status.value, result.data)
+    dualsenseStatusChannel.prime(result.data)
     statusKnown.value = true
     ElMessage.success(t.value.dualSense.uninstallSuccess)
   })
 
-  sharedOperation.onOtherChange(() => refresh(true))
+  sharedOperation.onOtherChange(() => refresh(true, false, true))
+  const startPolling = () => {
+    if (pollTimer || disposed) return
+    pollTimer = window.setInterval(() => refresh(true), STATUS_POLL_INTERVAL_MS)
+  }
+  const stopPolling = () => {
+    if (pollTimer) {
+      window.clearInterval(pollTimer)
+      pollTimer = undefined
+    }
+  }
+
   onMounted(async () => {
     try {
       const { listen } = await import('@tauri-apps/api/event')
@@ -336,12 +352,18 @@ export function useDualSenseComponent({ busy = ref(false), onStatus, afterInstal
     if (disposed) return
     await refresh()
     if (disposed) return
-    pollTimer = window.setInterval(() => refresh(true), 30000)
+    startPolling()
   })
+  // KeepAlive 下被隐藏的面板暂停轮询；重新可见时先展示缓存再静默校准。
+  onActivated(() => {
+    startPolling()
+    refresh(true)
+  })
+  onDeactivated(stopPolling)
   onUnmounted(() => {
     disposed = true
     invalidateStatusRefresh()
-    window.clearInterval(pollTimer)
+    stopPolling()
     unlistenProgress?.()
   })
 

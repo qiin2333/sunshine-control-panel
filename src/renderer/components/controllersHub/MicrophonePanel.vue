@@ -53,7 +53,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onActivated, onDeactivated, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { openExternalUrl, sunshine, virtualMicrophone } from '../../tauri-adapter.js'
 import { canTestMicrophone, microphoneOverviewState, microphoneStatusTone, microphoneUsesUsbip } from '../../composables/deviceHubStatus.js'
@@ -115,9 +115,25 @@ async function openAudioSettings() {
     ElMessage.error(text.value.openFailed)
   }
 }
+const startPolling = () => {
+  if (pollTimer || disposed) return
+  pollTimer = window.setInterval(refresh, 3000)
+}
+const stopPolling = () => {
+  if (pollTimer) {
+    window.clearInterval(pollTimer)
+    pollTimer = undefined
+  }
+}
 onMounted(() => {
   refresh()
-  pollTimer = window.setInterval(refresh, 3000)
+  startPolling()
 })
-onUnmounted(() => { disposed = true; window.clearInterval(pollTimer) })
+// KeepAlive 下被隐藏时暂停 3s 轮询，重新显示时立即校准一次。
+onActivated(() => {
+  refresh()
+  startPolling()
+})
+onDeactivated(stopPolling)
+onUnmounted(() => { disposed = true; stopPolling() })
 </script>

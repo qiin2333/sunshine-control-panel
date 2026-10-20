@@ -1,5 +1,6 @@
 import { reactive, ref } from 'vue'
-import { dualsense, usbip, virtualMicrophone } from '../tauri-adapter.js'
+import { virtualMicrophone } from '../tauri-adapter.js'
+import { dualsenseStatusChannel, usbipStatusChannel } from './deviceStatusStore.js'
 
 // Overview status is scoped to its mounted tab; coalesce concurrent refreshes.
 export function useDeviceRuntime() {
@@ -16,9 +17,9 @@ export function useDeviceRuntime() {
 
   async function fetchOnce() {
     const results = await Promise.allSettled([
-      dualsense.getStatus(),
+      dualsenseStatusChannel.fetch(),
       virtualMicrophone.getStatus(),
-      usbip.getStatus(),
+      usbipStatusChannel.fetch(),
     ])
     for (const [index, key] of ['ds', 'mic', 'usb'].entries()) {
       const result = results[index].status === 'fulfilled' ? results[index].value : null

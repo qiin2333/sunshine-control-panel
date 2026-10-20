@@ -252,6 +252,9 @@ pub async fn uninstall_vmouse_driver() -> Result<String, String> {
 /// 设置 sunshine.conf 中的 virtual_mouse 配置
 #[tauri::command]
 pub async fn set_vmouse_config(enabled: bool) -> Result<String, String> {
+    // /api/config 是整表替换语义：读文件与 POST 之间必须与其他全表写者互斥，
+    // 否则并发写者的字段会被旧快照覆盖丢失（见 controller_hub.rs 的锁约定）。
+    let _config_guard = crate::device_config::DEVICE_CONFIG_LOCK.lock().await;
     // 读取当前完整配置
     let mut config_map = crate::vdd::read_full_sunshine_config()
         .await

@@ -22,7 +22,6 @@ pub struct SunshineConfig {
 // 缓存 Sunshine 路径，避免重复查找和记录日志
 static SUNSHINE_PATH_CACHE: Lazy<Mutex<Option<PathBuf>>> = Lazy::new(|| Mutex::new(None));
 static RUNTIME_SUNSHINE_URL: Lazy<RwLock<Option<String>>> = Lazy::new(|| RwLock::new(None));
-static LOCALE_WRITE_LOCK: Lazy<tokio::sync::Mutex<()>> = Lazy::new(|| tokio::sync::Mutex::new(()));
 static HTTPS_CLIENT: Lazy<Result<reqwest::Client, String>> = Lazy::new(|| {
     reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
@@ -1419,7 +1418,9 @@ pub async fn get_sunshine_locale() -> Result<String, String> {
 /// 设置 Sunshine 配置中的 locale
 /// 先读取完整配置，合并 locale 字段后再写回，避免覆盖其他配置项
 async fn serialize_locale_write<T>(operation: impl Future<Output = T>) -> T {
-    let _guard = LOCALE_WRITE_LOCK.lock().await;
+    // /api/config 是整表替换语义：读文件与 POST 之间必须与其他全表写者互斥，
+    // 否则并发写者的字段会被旧快照覆盖丢失（见 controller_hub.rs 的锁约定）。
+    let _guard = crate::device_config::DEVICE_CONFIG_LOCK.lock().await;
     operation.await
 }
 

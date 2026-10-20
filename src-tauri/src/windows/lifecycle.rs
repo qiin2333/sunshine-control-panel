@@ -6,6 +6,7 @@
 //! Close is terminal. Each Panel belongs to one native window lifetime; its
 //! revision cancels pending render operations, never operations on a new window
 //! that happens to use the same label. State locks never cover COM calls.
+//! Streaming services run natively and do not require a hidden panel to stay awake.
 
 use once_cell::sync::Lazy;
 use std::{
@@ -17,10 +18,6 @@ use tauri::{AppHandle, Manager, Runtime, WebviewWindow, WindowEvent};
 
 #[cfg(target_os = "windows")]
 mod display;
-#[cfg(target_os = "windows")]
-use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(target_os = "windows")]
-static STREAMING: AtomicBool = AtomicBool::new(false);
 const DISPLAY_DEBOUNCE: Duration = Duration::from_millis(300);
 const DISPLAY_SETTLE: Duration = Duration::from_secs(1);
 
@@ -115,11 +112,9 @@ impl State {
         Some(self.display_revision)
     }
 
-    fn keep_awake(&self, streaming: bool, now: Instant) -> bool {
-        streaming
-            || self
-                .display_changed
-                .is_some_and(|at| now.duration_since(at) < DISPLAY_SETTLE)
+    fn display_settling(&self, now: Instant) -> bool {
+        self.display_changed
+            .is_some_and(|at| now.duration_since(at) < DISPLAY_SETTLE)
     }
 
     fn pending_refresh(&self, now: Instant) -> Option<u64> {
@@ -320,25 +315,6 @@ pub(super) fn presented<R: Runtime>(window: &WebviewWindow<R>) {
     }
 }
 
-#[cfg(target_os = "windows")]
-pub(crate) fn set_streaming<R: Runtime>(app: &AppHandle<R>, active: bool) {
-    if STREAMING.swap(active, Ordering::AcqRel) == active {
-        return;
-    }
-    let panels: Vec<_> = PANELS
-        .lock()
-        .unwrap()
-        .panels
-        .iter()
-        .map(|(label, panel)| (label.clone(), panel.clone()))
-        .collect();
-    for (label, panel) in panels {
-        if let Some(window) = app.get_webview_window(&label) {
-            reconcile(&window, &panel);
-        }
-    }
-}
-
 fn is_active<R: Runtime>(window: &WebviewWindow<R>) -> bool {
     // An unavailable native query is not permission to hide a renderer.
     window.is_visible().unwrap_or(true) && !window.is_minimized().unwrap_or(false)
@@ -362,12 +338,8 @@ fn reconcile<R: Runtime>(window: &WebviewWindow<R>, panel: &Panel) {
                 state.presented();
             }
             let now = Instant::now();
-            #[cfg(target_os = "windows")]
-            let streaming = STREAMING.load(Ordering::Acquire);
-            #[cfg(not(target_os = "windows"))]
-            let streaming = false;
-            let keep_awake = state.keep_awake(streaming, now);
-            state.reconcile(active || keep_awake, now)
+            let display_settling = state.display_settling(now);
+            state.reconcile(active || display_settling, now)
         };
         notify_visibility(&handle, active);
         match action {
@@ -395,11 +367,7 @@ fn reconcile<R: Runtime>(window: &WebviewWindow<R>, panel: &Panel) {
                         }
                         if is_active(&queued) || {
                             let state = panel.state.lock().unwrap();
-                            #[cfg(target_os = "windows")]
-                            let streaming = STREAMING.load(Ordering::Acquire);
-                            #[cfg(not(target_os = "windows"))]
-                            let streaming = false;
-                            state.keep_awake(streaming, Instant::now())
+                            state.display_settling(Instant::now())
                         } {
                             reconcile(&queued, &panel);
                         } else {
@@ -674,7 +642,7 @@ mod tests {
             Some(timer_revision)
         );
         state.refreshed(timer_revision, true);
-        assert!(!state.keep_awake(false, now + DISPLAY_SETTLE));
+        assert!(!state.display_settling(now + DISPLAY_SETTLE));
         assert!(matches!(
             state.reconcile(false, now + DISPLAY_SETTLE),
             Some(Action::Suspend(_))
@@ -682,20 +650,20 @@ mod tests {
     }
 
     #[test]
-    fn streaming_and_display_settling_invalidate_a_pending_suspend() {
+    fn display_settling_invalidates_a_pending_suspend_and_expires() {
         let now = Instant::now();
         let mut state = State::new(false, now);
         state.loaded();
         let Some(Action::Suspend(old)) = state.reconcile(false, now) else {
             panic!()
         };
-        assert!(state.keep_awake(true, now));
-        state.reconcile(state.keep_awake(true, now), now);
-        assert!(!state.suspend_completed(old));
-        assert!(!state.keep_awake(false, now));
+        assert!(!state.display_settling(now));
         state.display_changed(now);
-        assert!(state.keep_awake(false, now + DISPLAY_DEBOUNCE));
-        assert!(!state.keep_awake(false, now + DISPLAY_SETTLE));
+        assert!(state.display_settling(now));
+        state.reconcile(state.display_settling(now), now);
+        assert!(!state.suspend_completed(old));
+        assert!(state.display_settling(now + DISPLAY_DEBOUNCE));
+        assert!(!state.display_settling(now + DISPLAY_SETTLE));
         assert!(matches!(
             state.reconcile(false, now + DISPLAY_SETTLE),
             Some(Action::Suspend(_))

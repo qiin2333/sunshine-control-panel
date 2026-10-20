@@ -1040,10 +1040,6 @@ fn apply_tray_state<R: Runtime + 'static>(
 
     #[cfg(target_os = "windows")]
     crate::text_context::reconcile_streaming_state(Some(state));
-    #[cfg(target_os = "windows")]
-    crate::windows::lifecycle::set_streaming(
-        app, matches!(state.status.as_str(), "streaming" | "paused"),
-    );
 
     if state.owner != "gui" {
         if app.remove_tray_by_id(TRAY_ID).is_some() {

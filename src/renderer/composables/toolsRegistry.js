@@ -58,8 +58,7 @@ export function createNavigationGroups(ctx) {
           icon: IconGamepad,
           label: labels.deviceHub,
           action: ctx.openControllers,
-          isActive: () =>
-            [ROUTES.CONTROLLERS, ROUTES.DUALSENSE, ROUTES.CONTROLLERS_HUB].some((route) => ctx.router.isRoute(route)),
+          isActive: () => ctx.router.isRoute(ROUTES.CONTROLLERS),
         },
       ],
     },

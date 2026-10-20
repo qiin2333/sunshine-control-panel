@@ -16,7 +16,6 @@
         <GamepadTypePicker @ds5-selection-change="ds5Selected = $event" />
         <DualSenseSettings
           v-if="ds5Selected"
-          embedded
           @open-controller-meta="emit('open-controller-meta')"
           @manage-components="activeTab = 'components'"
         />

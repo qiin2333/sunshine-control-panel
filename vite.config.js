@@ -38,7 +38,6 @@ export default defineConfig(() => ({
     sourcemap: !!process.env.TAURI_DEBUG,
     rollupOptions: {
       input: {
-        index: resolve(rendererSrcPath, 'index.html'),
         sunshineFrame: resolve(rendererSrcPath, 'sunshine-frame.html'),
         console: resolve(rendererSrcPath, 'console/index.html'),
         clock: resolve(rendererSrcPath, 'stop-clock-canvas/index.html'),

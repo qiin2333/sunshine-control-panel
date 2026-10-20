@@ -11,10 +11,6 @@ export const ROUTES = {
   WEB_STREAM: 'web-stream',
   AI_ASSISTANT: 'ai-assistant',
   CONTROLLERS: 'controllers',
-  // Compatibility alias for callers that still navigate to the original page id.
-  DUALSENSE: 'dualsense',
-  // Compatibility alias for the device hub's original page id.
-  CONTROLLERS_HUB: 'controllers-hub',
   HDR_ENHANCED: 'hdr-enhanced',
   TOOLBOX: 'toolbox',
   PANEL_SETTINGS: 'panel-settings',
@@ -52,16 +48,6 @@ const routeConfig = {
   },
   [ROUTES.CONTROLLERS]: {
     name: ROUTES.CONTROLLERS,
-    component: 'ControllersHub',
-    titleKey: 'deviceHub',
-  },
-  [ROUTES.DUALSENSE]: {
-    name: ROUTES.DUALSENSE,
-    component: 'ControllersHub',
-    titleKey: 'deviceHub',
-  },
-  [ROUTES.CONTROLLERS_HUB]: {
-    name: ROUTES.CONTROLLERS_HUB,
     component: 'ControllersHub',
     titleKey: 'deviceHub',
   },

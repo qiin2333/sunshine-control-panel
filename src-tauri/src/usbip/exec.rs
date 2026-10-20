@@ -4,8 +4,8 @@ use super::{
     COMMAND_TIMEOUT, DEFAULT_TCP_PORT, MAX_OUTPUT_BYTES, REQUIRED_VERSION, UsbipAttachedDevice,
     UsbipRemoteDevice, validate_bus_id,
 };
-#[cfg(target_os = "windows")]
 /// Verifies the shared tools and driver, then executes a bounded CLI command.
+#[cfg(target_os = "windows")]
 pub(super) async fn run_usbip(arguments: Vec<String>) -> Result<std::process::Output, String> {
     use std::os::windows::process::CommandExt;
     use std::process::Stdio;

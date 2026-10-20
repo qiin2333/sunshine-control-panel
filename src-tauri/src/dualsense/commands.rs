@@ -102,8 +102,8 @@ pub async fn dualsense_install(
     }
 }
 
-#[tauri::command]
 /// Validates requested haptics against the live transport before atomically saving Core settings.
+#[tauri::command]
 pub async fn dualsense_set_config(
     audio_haptics: bool,
     genshin_compatibility: bool,

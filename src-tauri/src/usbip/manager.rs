@@ -13,8 +13,8 @@ pub(crate) const INSTALLER_URL: &str = env!("SUNSHINE_USBIP_URL");
 pub(crate) const INSTALLER_SHA256: &str = env!("SUNSHINE_USBIP_SHA256");
 pub(crate) const TRANSPORT_POLICY: &str = env!("SUNSHINE_USBIP_POLICY");
 
-#[cfg(target_os = "windows")]
 /// Rejects missing or replaced transport binaries using the contract's SHA-256.
+#[cfg(target_os = "windows")]
 fn verify_transport_file(path: &std::path::Path, expected: &str) -> Result<(), String> {
     use sha2::{Digest, Sha256};
     use std::io::Read;
@@ -40,8 +40,8 @@ fn verify_transport_file(path: &std::path::Path, expected: &str) -> Result<(), S
     Ok(())
 }
 
-#[cfg(target_os = "windows")]
 /// Checks the registered driver path and bytes without changing driver state.
+#[cfg(target_os = "windows")]
 pub(super) fn verify_driver_compatibility() -> Result<(), String> {
     use winreg::{RegKey, enums::HKEY_LOCAL_MACHINE};
     let service = RegKey::predef(HKEY_LOCAL_MACHINE)
@@ -242,8 +242,8 @@ pub(super) struct Installation {
     pub(super) executable: std::path::PathBuf,
 }
 
-#[cfg(target_os = "windows")]
 /// Resolves the registered CLI and verifies its pinned bytes before execution.
+#[cfg(target_os = "windows")]
 pub(super) fn find_installation() -> Result<Installation, String> {
     let entries = uninstall_entries()?;
     let version = consistent_version(entries.iter().map(entry_version))?

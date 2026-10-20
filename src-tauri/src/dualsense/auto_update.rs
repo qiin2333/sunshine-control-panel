@@ -43,9 +43,9 @@ pub(crate) fn installed_update_needed() -> bool {
     needs_update(manifest.as_ref())
 }
 
-#[cfg(target_os = "windows")]
 /// Updates an existing component only while idle and the shared transport is ready.
 /// Automatic updates never deploy or repair the shared driver.
+#[cfg(target_os = "windows")]
 pub(crate) fn start_installed_component_update(app: tauri::AppHandle) {
     use super::COMPONENT_OPERATION;
     use super::elevated::{ElevatedOperation, run_elevated_operation};

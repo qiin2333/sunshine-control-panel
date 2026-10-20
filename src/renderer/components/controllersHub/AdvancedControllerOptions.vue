@@ -73,7 +73,9 @@ const busyKey = ref('')
 
 async function saveKey(key, value) {
   if (busyKey.value !== '' || config.value[key] === value) return
-  const prev = sharedConfig.value?.[key]
+  // 回滚值取生效值（含 DEFAULTS 兜底）：加载完成前改默认开启项且保存失败时，
+  // 写回 undefined 会盖掉默认值使选项错误保持关闭。
+  const prev = config.value[key]
   sharedConfig.value = { ...(sharedConfig.value || {}), [key]: value }
   busyKey.value = key
   try {

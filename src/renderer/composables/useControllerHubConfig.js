@@ -6,14 +6,22 @@ import { controllerHub } from '../tauri-adapter.js'
 const config = ref(null)
 const loading = ref(false)
 const unreachable = ref(false)
-let inflight = null
+let loadInflight = null
+let loadInflightEpoch = 0
+let configEpoch = 0
 
 async function load() {
-  if (inflight) return inflight
-  loading.value = true
-  inflight = (async () => {
+  if (loadInflight && loadInflightEpoch === configEpoch) return loadInflight
+  const requestEpoch = configEpoch
+  loadInflightEpoch = requestEpoch
+  loadInflight = (async () => {
+    loading.value = true
     try {
       const result = await controllerHub.getConfig()
+      if (requestEpoch !== configEpoch) {
+        // 读取期间发生过保存：旧快照不得覆盖已保存的补丁。
+        return
+      }
       if (result?.success) {
         config.value = { ...(config.value || {}), ...result.data }
         unreachable.value = false
@@ -21,19 +29,24 @@ async function load() {
         unreachable.value = true
       }
     } catch {
+      if (requestEpoch !== configEpoch) return
       unreachable.value = true
     } finally {
+      if (loadInflightEpoch === configEpoch && loadInflightEpoch === requestEpoch) {
+        loadInflight = null
+      }
       loading.value = false
-      inflight = null
     }
   })()
-  return inflight
+  return loadInflight
 }
 
-// 乐观更新与失败回滚由调用方负责；保存成功后补丁并入共享副本。
+// 乐观更新与失败回滚由调用方负责；保存成功后补丁并入共享副本，
+// 并推进纪元使读取期间发出的旧快照失效。
 async function save(patch) {
   const result = await controllerHub.saveConfig(patch)
   if (result?.success) {
+    configEpoch += 1
     config.value = { ...(config.value || {}), ...patch }
   }
   return result

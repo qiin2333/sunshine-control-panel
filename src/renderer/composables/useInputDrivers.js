@@ -1,11 +1,9 @@
 import { reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { vigem, vmouse } from '../tauri-adapter.js'
-import { createStatusChannel } from './deviceStatusStore.js'
+import { vigemStatusChannel } from './deviceStatusStore.js'
 import { useVmouse, reloadVmouseAfterOperation } from './useVmouse.js'
 
-// ViGEm 状态走共享通道：探测要 spawn PowerShell（秒级），合并并发并复用近期结果。
-const vigemStatusChannel = createStatusChannel(() => vigem.getStatus(), 10_000)
 
 export function useInputDrivers(t) {
   const { ...mouse } = useVmouse(t)

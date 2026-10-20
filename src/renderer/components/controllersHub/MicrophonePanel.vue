@@ -55,7 +55,7 @@
 <script setup>
 import { computed, onActivated, onDeactivated, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { openExternalUrl, sunshine } from '../../tauri-adapter.js'
+import { openExternalUrl, sunshine, virtualMicrophone } from '../../tauri-adapter.js'
 import { micStatusChannel } from '../../composables/deviceStatusStore.js'
 import { canTestMicrophone, microphoneOverviewState, microphoneStatusTone, microphoneUsesUsbip } from '../../composables/deviceHubStatus.js'
 import { useI18n } from '../../desktop/i18n/index.js'

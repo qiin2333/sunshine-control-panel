@@ -7,16 +7,16 @@ use tauri_plugin_notification::NotificationExt;
 #[cfg(target_os = "windows")]
 use std::{path::PathBuf, sync::OnceLock};
 
+#[cfg(any(target_os = "windows", test))]
+mod worker;
+
+#[cfg(target_os = "windows")]
+static WINDOWS_NOTIFICATION_WORKER: OnceLock<Result<worker::Worker, String>> = OnceLock::new();
+
 #[cfg(target_os = "windows")]
 static WINDOWS_AUMID_REGISTRATION: OnceLock<Result<(), String>> = OnceLock::new();
 #[cfg(target_os = "windows")]
 static WINDOWS_NOTIFICATION_ICON: OnceLock<Result<PathBuf, String>> = OnceLock::new();
-#[cfg(target_os = "windows")]
-type NotificationJob = Box<dyn FnOnce() + Send>;
-#[cfg(target_os = "windows")]
-static CONNECTION_NOTIFICATIONS: OnceLock<
-    Result<std::sync::mpsc::SyncSender<NotificationJob>, String>,
-> = OnceLock::new();
 static LAST_SHOWN_NOTIFICATION: Mutex<Option<(String, u64)>> = Mutex::new(None);
 
 #[cfg(target_os = "windows")]
@@ -269,66 +269,10 @@ pub(super) fn show_connection_change_if_any<R: Runtime>(
     let strings = super::get_tray_strings();
     for change in connection_changes(previous, current) {
         let content = connection_content(strings, change);
-        #[cfg(target_os = "windows")]
-        let result = queue_connection_notification(app, content);
-        #[cfg(not(target_os = "windows"))]
-        let result = show(app, &content.title, &content.body, None);
-        if let Err(error) = result {
+        if let Err(error) = show(app, &content.title, &content.body, None) {
             warn!("{}", error);
         }
     }
-}
-
-#[cfg(target_os = "windows")]
-fn queue_connection_notification<R: Runtime>(
-    app: &AppHandle<R>,
-    content: NotificationContent,
-) -> Result<(), String> {
-    use std::sync::mpsc::{TrySendError, sync_channel};
-    use windows::Win32::System::WinRT::{RO_INIT_MULTITHREADED, RoInitialize, RoUninitialize};
-
-    let sender = CONNECTION_NOTIFICATIONS
-        .get_or_init(|| {
-            let (sender, receiver) = sync_channel::<NotificationJob>(16);
-            std::thread::Builder::new()
-                .name("sunshine-connection-notifications".to_string())
-                .spawn(move || {
-                    if let Err(error) = unsafe { RoInitialize(RO_INIT_MULTITHREADED) } {
-                        warn!("Failed to initialize notification COM apartment: {error}");
-                        return;
-                    }
-                    for job in receiver {
-                        job();
-                    }
-                    unsafe {
-                        RoUninitialize();
-                    }
-                })
-                .map_err(|error| {
-                    format!("Failed to start connection notification worker: {error}")
-                })?;
-            Ok(sender)
-        })
-        .as_ref()
-        .map_err(|error| error.clone())?;
-
-    let app = app.clone();
-    sender
-        .try_send(Box::new(move || {
-            if connection_is_enabled()
-                && let Err(error) = show(&app, &content.title, &content.body, None)
-            {
-                warn!("{error}");
-            }
-        }))
-        .map_err(|error| match error {
-            TrySendError::Full(_) => {
-                "Connection notification queue is full; notification skipped".to_string()
-            }
-            TrySendError::Disconnected(_) => {
-                "Connection notification worker is unavailable".to_string()
-            }
-        })
 }
 
 pub(super) fn show_core_notification_if_new<R: Runtime>(
@@ -373,11 +317,30 @@ pub(super) fn show<R: Runtime>(
         return Ok(());
     }
 
-    // Unpackaged Win32 apps must register the same AUMID used by the toast
-    // backend. Without it, Windows records the notification as delivered but
-    // may never render a banner for the application.
-    ensure_windows_aumid_registered(app)?;
-    show_windows(app, title, body, action)
+    // Tray state changes run on the Tauri event loop. WinRT toast activation
+    // and Show are synchronous calls into the Windows notification service;
+    // waiting there must not block native window and tray event delivery.
+    // Build the COM objects on the worker, never marshal them from the UI.
+    let worker = WINDOWS_NOTIFICATION_WORKER
+        .get_or_init(|| worker::Worker::new("sunshine-notifications", 32))
+        .as_ref()
+        .map_err(Clone::clone)?;
+    let app = app.clone();
+    let title = title.to_string();
+    let body = body.to_string();
+    worker.submit(move || {
+        let started = std::time::Instant::now();
+        debug!("Submitting Windows notification: {title}");
+        if let Err(error) = show_windows(&app, &title, &body, action) {
+            warn!("{error}");
+        }
+        if started.elapsed() >= std::time::Duration::from_secs(2) {
+            warn!(
+                "Windows notification submission took {:?}",
+                started.elapsed()
+            );
+        }
+    })
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -415,6 +378,21 @@ fn show_windows<R: Runtime>(
 ) -> Result<(), String> {
     use std::sync::mpsc;
     use tauri_winrt_notification::{IconCrop, Sound, Toast};
+    use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize};
+
+    struct ComApartment;
+    impl Drop for ComApartment {
+        fn drop(&mut self) {
+            unsafe { CoUninitialize() };
+        }
+    }
+    unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
+        .ok()
+        .map_err(|error| format!("Failed to initialize notification COM apartment: {error}"))?;
+    let _apartment = ComApartment;
+
+    // Unpackaged apps must register the same AUMID used by the toast backend.
+    ensure_windows_aumid_registered(app)?;
 
     let icon_path = ensure_windows_notification_icon()?;
     let mut toast = Toast::new(&app.config().identifier)

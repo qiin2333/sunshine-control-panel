@@ -212,34 +212,6 @@ pub(crate) fn is_tray_session_active() -> bool {
         .unwrap_or(false)
 }
 
-fn should_run_text_observer(state: &sunshine::TrayState) -> bool {
-    if state.status != "streaming" {
-        return false;
-    }
-
-    // New cores expose sessions-v1, which lets us distinguish a real video
-    // stream from a control-only session. Older cores only expose the status;
-    // retain that behavior for compatibility instead of treating an absent
-    // sessions field as proof that no stream exists.
-    !state
-        .capabilities
-        .iter()
-        .any(|capability| capability == "sessions-v1")
-        || !state.sessions.is_empty()
-}
-
-pub(crate) fn is_text_context_streaming() -> bool {
-    TRAY_RUNTIME_STATE
-        .lock()
-        .map(|runtime| {
-            runtime
-                .tray_state
-                .as_ref()
-                .is_some_and(should_run_text_observer)
-        })
-        .unwrap_or(false)
-}
-
 static MAIN_PANEL_BRIDGE: main_panel::Bridge = main_panel::Bridge::new();
 
 pub(crate) fn emit_message<R: Runtime>(app: &AppHandle<R>, msg_type: &str, message: &str) {
@@ -1049,21 +1021,6 @@ mod tests {
                 .1
         );
     }
-
-    #[test]
-    fn text_observer_uses_sessions_when_supported_and_status_as_legacy_fallback() {
-        let mut state = tray_state("streaming");
-        assert!(should_run_text_observer(&state));
-
-        state.capabilities.push("sessions-v1".to_string());
-        assert!(!should_run_text_observer(&state));
-
-        state.sessions.push(sunshine::TrayClientSession::default());
-        assert!(should_run_text_observer(&state));
-
-        state.status = "paused".to_string();
-        assert!(!should_run_text_observer(&state));
-    }
 }
 
 fn apply_tray_state<R: Runtime + 'static>(
@@ -1081,13 +1038,12 @@ fn apply_tray_state<R: Runtime + 'static>(
         return;
     };
 
-    crate::windows::set_streaming_state(
-        app,
-        matches!(state.status.as_str(), "streaming" | "paused"),
-    );
-
     #[cfg(target_os = "windows")]
-    crate::text_context::reconcile_streaming_state(should_run_text_observer(state));
+    crate::text_context::reconcile_streaming_state(Some(state));
+    #[cfg(target_os = "windows")]
+    crate::windows::lifecycle::set_streaming(
+        app, matches!(state.status.as_str(), "streaming" | "paused"),
+    );
 
     if state.owner != "gui" {
         if app.remove_tray_by_id(TRAY_ID).is_some() {
@@ -1125,7 +1081,7 @@ fn apply_tray_state<R: Runtime + 'static>(
 fn apply_core_disconnected<R: Runtime + 'static>(app: &AppHandle<R>) {
     let should_rebuild_menu = TRAY_RUNTIME_STATE.lock().unwrap().mark_disconnected();
     #[cfg(target_os = "windows")]
-    crate::text_context::reconcile_streaming_state(false);
+    crate::text_context::reconcile_streaming_state(None);
     crate::power::refresh_ecoqos_state(app);
 
     if let Err(e) = build_owned_system_tray(app) {

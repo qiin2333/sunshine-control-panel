@@ -165,9 +165,6 @@ fn main() {
     configure_async_runtime();
 
     let builder = tauri::Builder::default()
-        .manage(app::AppState {
-            main_window: std::sync::Mutex::new(None),
-        })
         .plugin(tauri_plugin_global_shortcut::Builder::new().build());
 
     let builder = if std::env::var_os("SUNSHINE_GUI_ALLOW_PARALLEL_INSTANCE").is_some() {
@@ -378,13 +375,13 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    application.run(|_app, event| match event {
+    application.run(|app_handle, event| match event {
         tauri::RunEvent::ExitRequested {
             code: None, api, ..
         } => api.prevent_exit(),
         tauri::RunEvent::Exit => {
             native_tools::shutdown_all();
-            app::shutdown_application();
+            app::shutdown_application(app_handle);
         }
         _ => {}
     });

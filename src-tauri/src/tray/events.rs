@@ -61,12 +61,7 @@ async fn consume_event_stream<R: Runtime + 'static>(
     last_state_key: &mut Option<(String, u64)>,
 ) -> Result<(), String> {
     let endpoint = sunshine::get_tray_events_url().await?;
-    let response = sunshine::create_sse_https_client()?
-        .get(endpoint)
-        .header("Accept", "text/event-stream")
-        .send()
-        .await
-        .map_err(|e| format!("Connect tray event stream failed: {}", e))?;
+    let response = connect_event_stream(&endpoint).await?;
     if !response.status().is_success() {
         return Err(format!(
             "Tray event stream returned status {}",
@@ -100,6 +95,20 @@ async fn consume_event_stream<R: Runtime + 'static>(
             }
         }
     }
+}
+
+async fn connect_event_stream(endpoint: &str) -> Result<reqwest::Response, String> {
+    let request = sunshine::create_sse_https_client()?
+        .get(endpoint)
+        .header("Accept", "text/event-stream")
+        .send();
+    // A TCP connect timeout does not cover a Core that accepts the socket but
+    // never sends HTTP headers. Bound the handshake, not the long-lived SSE
+    // body, so the monitor can reconnect instead of remaining stuck forever.
+    tokio::time::timeout(sunshine::TRAY_STATE_TIMEOUT, request)
+        .await
+        .map_err(|_| "Connect tray event stream timed out after 3 seconds".to_string())?
+        .map_err(|error| format!("Connect tray event stream failed: {error}"))
 }
 
 fn apply_if_new<R: Runtime + 'static>(
@@ -184,6 +193,29 @@ fn parse_tray_state_event(frame: &[u8]) -> Result<Option<sunshine::TrayState>, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn event_stream_handshake_times_out_after_tcp_connect() {
+        use tokio::io::AsyncReadExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/events", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            socket.read(&mut request).await.unwrap();
+            std::future::pending::<()>().await;
+        });
+        let result = tokio::time::timeout(
+            sunshine::TRAY_STATE_TIMEOUT + Duration::from_secs(2),
+            connect_event_stream(&endpoint),
+        )
+        .await;
+        server.abort();
+        let error = result
+            .expect("SSE handshake exceeded its deadline")
+            .unwrap_err();
+        assert!(error.contains("timed out after 3 seconds"), "{error}");
+    }
 
     fn state_json(revision: u64) -> String {
         serde_json::json!({

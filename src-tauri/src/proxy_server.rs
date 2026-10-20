@@ -13,6 +13,7 @@ use once_cell::sync::Lazy;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
+use tauri::{AppHandle, Manager, Runtime};
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
@@ -148,8 +149,8 @@ async fn proxy_health_handler(request: Request) -> Response {
 
 /// Wait until the local proxy listener is ready before loading the main frame.
 #[tauri::command]
-pub async fn wait_for_proxy_ready() -> Result<String, String> {
-    ensure_started();
+pub async fn wait_for_proxy_ready(app: AppHandle) -> Result<String, String> {
+    ensure_started(&app);
     if PROXY_READY.load(Ordering::Acquire) {
         return Ok(get_proxy_url());
     }
@@ -172,12 +173,13 @@ pub async fn wait_for_proxy_ready() -> Result<String, String> {
 
 /// Start the local Web UI proxy on first use. Hidden tray-only startup does
 /// not need the router, listener, or proxy HTTP clients resident in memory.
-pub fn ensure_started() {
+pub fn ensure_started<R: Runtime>(app: &AppHandle<R>) {
     if PROXY_READY.load(Ordering::Acquire) || PROXY_START_REQUESTED.swap(true, Ordering::AcqRel) {
         return;
     }
 
-    tauri::async_runtime::spawn(async {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
         if let Ok(dev_target) = std::env::var("WEBUI_DEV_TARGET") {
             info!("🛠️ [开发模式] 检测到 WEBUI_DEV_TARGET 环境变量");
             info!("🎯 代理目标: {}", dev_target);
@@ -192,7 +194,7 @@ pub fn ensure_started() {
             }
         }
 
-        if let Err(e) = start_proxy_server().await {
+        if let Err(e) = start_proxy_server(&app).await {
             error!("❌ 代理服务器启动失败: {}", e);
         }
         PROXY_START_REQUESTED.store(false, Ordering::Release);
@@ -208,7 +210,7 @@ pub fn set_sunshine_target(url: String) {
 }
 
 /// Dynamic Sunshine target helpers.
-fn get_sunshine_target() -> String {
+pub(crate) fn get_sunshine_target() -> String {
     SUNSHINE_TARGET
         .read()
         .map(|url| url.clone())
@@ -433,7 +435,9 @@ async fn acquire_proxy_permit_with_wait(
 }
 
 /// 启动本地代理服务器
-pub async fn start_proxy_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn start_proxy_server<R: Runtime>(
+    handle: &AppHandle<R>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     PROXY_READY.store(false, Ordering::Release);
 
     let app = Router::new()
@@ -476,6 +480,10 @@ pub async fn start_proxy_server() -> Result<(), Box<dyn std::error::Error + Send
         }
     };
 
+    // Only our bound proxy origin can invoke WebUI commands. Grant before
+    // publishing readiness, including when the default port was occupied.
+    handle.add_capability(webui_capability(bound_port))?;
+
     // 保存实际使用的端口
     PROXY_PORT.store(bound_port, Ordering::Relaxed);
     PROXY_READY.store(true, Ordering::Release);
@@ -492,6 +500,18 @@ pub async fn start_proxy_server() -> Result<(), Box<dyn std::error::Error + Send
     });
     PROXY_READY.store(false, Ordering::Release);
     result
+}
+
+fn webui_capability(port: u16) -> tauri::ipc::CapabilityBuilder {
+    let permissions: Vec<String> = serde_json::from_str(include_str!("../webui-permissions.json"))
+        .expect("build-validated WebUI permissions");
+    permissions.into_iter().fold(
+        tauri::ipc::CapabilityBuilder::new(format!("sunshine-webui-{port}"))
+            .window("main")
+            .local(false)
+            .remote(format!("http://127.0.0.1:{port}/*")),
+        |capability, permission| capability.permission(permission),
+    )
 }
 
 /// 获取当前时间戳（秒）
@@ -1416,6 +1436,58 @@ fn inject_theme_script(html: String) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn webui_ipc_is_limited_to_the_bound_main_frame_origin_and_explicit_commands() {
+        let app = tauri::test::mock_builder()
+            .invoke_handler(|invoke| {
+                invoke.resolver.resolve("ok");
+                true
+            })
+            .build(tauri::generate_context!())
+            .unwrap();
+        app.add_capability(super::webui_capability(48090)).unwrap();
+        let main = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+        let desktop = tauri::WebviewWindowBuilder::new(&app, "desktop", Default::default())
+            .build()
+            .unwrap();
+        let invoke =
+            |window: &tauri::WebviewWindow<tauri::test::MockRuntime>, url: &str, cmd: &str| {
+                tauri::test::get_ipc_response(
+                    window,
+                    tauri::webview::InvokeRequest {
+                        cmd: cmd.into(),
+                        callback: tauri::ipc::CallbackFn(0),
+                        error: tauri::ipc::CallbackFn(1),
+                        url: url.parse().unwrap(),
+                        body: Default::default(),
+                        headers: Default::default(),
+                        invoke_key: tauri::test::INVOKE_KEY.into(),
+                    },
+                )
+            };
+        let origin = "http://127.0.0.1:48090/config";
+        assert!(invoke(&main, origin, "get_vdd_status").is_ok());
+        for wrong in [
+            "http://127.0.0.1:48081/config",
+            "https://github.com/",
+            "http://localhost:48090/config",
+        ] {
+            assert!(invoke(&main, wrong, "get_vdd_status").is_err(), "{wrong}");
+        }
+        for denied in [
+            "launch_game",
+            "install_update",
+            "capture_screenshot",
+            "restart_as_admin",
+        ] {
+            assert!(invoke(&main, origin, denied).is_err(), "{denied}");
+        }
+        assert!(invoke(&desktop, origin, "get_vdd_status").is_err());
+        assert!(invoke(&main, "http://tauri.localhost/", "get_vdd_status").is_ok());
+    }
+
     use super::*;
     use axum::body::Body;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};

@@ -1940,25 +1940,32 @@ pub async fn download_update(
 
 /// 查询更新安装包是否已在 temp 目录中完整下载（未命中返回 `None`）。
 #[tauri::command]
-pub fn check_cached_update(
+pub async fn check_cached_update(
     filename: String,
     expected_size: Option<u64>,
     expected_sha256: Option<String>,
     asset_type: Option<String>,
 ) -> Option<String> {
-    if asset_type.as_deref() != Some("windows-x64-installer") {
-        return None;
-    }
-    if !is_supported_installer_filename(&filename) {
-        return None;
-    }
-    find_cached_installer_verified(
-        &filename,
-        expected_size,
-        expected_sha256.as_deref(),
-        asset_type.as_deref(),
-    )
-    .map(|path| path.to_string_lossy().to_string())
+    tokio::task::spawn_blocking(move || {
+        if asset_type.as_deref() != Some("windows-x64-installer") {
+            return None;
+        }
+        if !is_supported_installer_filename(&filename) {
+            return None;
+        }
+        find_cached_installer_verified(
+            &filename,
+            expected_size,
+            expected_sha256.as_deref(),
+            asset_type.as_deref(),
+        )
+        .map(|path| path.to_string_lossy().to_string())
+    })
+    .await
+    .unwrap_or_else(|error| {
+        warn!("Cached installer verification failed: {error}");
+        None
+    })
 }
 
 #[cfg(test)]

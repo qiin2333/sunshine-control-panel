@@ -16,7 +16,38 @@
   "app": {
     "windows": [],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": "'self' customprotocol: asset:",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' asset: http: https: data: blob:",
+        "font-src": "'self' data:",
+        "media-src": "'self' https: data: blob:",
+        "connect-src": "'self' ipc: http://ipc.localhost https://ipc.localhost https: http://127.0.0.1:* http://localhost:* https://localhost:*",
+        "frame-src": "http://127.0.0.1:* http://localhost:* https://localhost:* about:",
+        "worker-src": "'self' blob:",
+        "object-src": "'none'",
+        "base-uri": "'self'",
+        "form-action": "'self'",
+        "style-src-elem": "'self' 'unsafe-inline'",
+        "style-src-attr": "'unsafe-inline'"
+      },
+      "devCsp": {
+        "default-src": "'self' customprotocol: asset:",
+        "script-src": "'self' 'unsafe-inline'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' asset: http: https: data: blob:",
+        "font-src": "'self' data:",
+        "media-src": "'self' https: data: blob:",
+        "connect-src": "'self' ipc: http://ipc.localhost https://ipc.localhost https: http://127.0.0.1:* http://localhost:* https://localhost:* ws://127.0.0.1:8080 ws://localhost:8080",
+        "frame-src": "http://127.0.0.1:* http://localhost:* https://localhost:* about:",
+        "worker-src": "'self' blob:",
+        "object-src": "'none'",
+        "base-uri": "'self'",
+        "form-action": "'self'",
+        "style-src-elem": "'self' 'unsafe-inline'",
+        "style-src-attr": "'unsafe-inline'"
+      }
     },
     "withGlobalTauri": true
   }

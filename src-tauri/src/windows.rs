@@ -590,7 +590,7 @@ fn create_main_window_internal<R: Runtime>(
     app: &AppHandle<R>,
     visible: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    proxy_server::ensure_started();
+    proxy_server::ensure_started(app);
     if app.get_webview_window(MAIN_WINDOW_ID).is_some() {
         debug!("主窗口已存在，跳过创建");
         return Ok(());
@@ -821,6 +821,39 @@ pub(crate) fn configure_webview_security<R: Runtime>(window: &WebviewWindow<R>) 
                 log::warn!("⚠️ 无法获取 ICoreWebView2 [{}]", label);
                 return;
             };
+            // Main/desktop are configured once, at creation. Accept a self-signed
+            // certificate only for the configured Core, never for external assets.
+            if matches!(label.as_str(), MAIN_WINDOW_ID | DESKTOP_WINDOW_ID) {
+                use webview2_com::Microsoft::Web::WebView2::Win32::{
+                    COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_ALWAYS_ALLOW, ICoreWebView2_14,
+                };
+                use webview2_com::{ServerCertificateErrorDetectedEventHandler, take_pwstr};
+                if let Ok(core14) = core_webview.cast::<ICoreWebView2_14>() {
+                    let handler =
+                        ServerCertificateErrorDetectedEventHandler::create(Box::new(|_, args| {
+                            if let Some(args) = args {
+                                let mut uri = wv2_windows_core::PWSTR::null();
+                                args.RequestUri(&mut uri)?;
+                                let request = take_pwstr(uri);
+                                if sunshine_certificate_allowed(
+                                    &request,
+                                    &proxy_server::get_sunshine_target(),
+                                ) {
+                                    args.SetAction(
+                                        COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_ALWAYS_ALLOW,
+                                    )?;
+                                }
+                            }
+                            Ok(())
+                        }));
+                    let mut token = 0;
+                    if let Err(error) =
+                        core14.add_ServerCertificateErrorDetected(&handler, &mut token)
+                    {
+                        log::warn!("Failed to configure Sunshine certificate handling: {error}");
+                    }
+                }
+            }
             let Ok(settings) = core_webview.Settings() else {
                 log::warn!("⚠️ 无法获取 ICoreWebView2Settings [{}]", label);
                 return;
@@ -845,6 +878,42 @@ pub(crate) fn configure_webview_security<R: Runtime>(window: &WebviewWindow<R>) 
             }
         }
     });
+}
+
+fn sunshine_certificate_allowed(request: &str, target: &str) -> bool {
+    let (Ok(request), Ok(target)) = (url::Url::parse(request), url::Url::parse(target)) else {
+        return false;
+    };
+    request.scheme() == "https" && target.scheme() == "https" && request.origin() == target.origin()
+}
+
+#[cfg(test)]
+mod certificate_tests {
+    #[test]
+    fn self_signed_exception_requires_the_configured_https_origin() {
+        let core = "https://localhost:47990";
+        assert!(super::sunshine_certificate_allowed(
+            "https://localhost:47990/api/config",
+            core
+        ));
+        assert!(super::sunshine_certificate_allowed(
+            "https://192.168.1.10:5000/",
+            "https://192.168.1.10:5000"
+        ));
+        for request in [
+            "https://localhost:47991/",
+            "https://localhost.evil.example:47990/",
+            "https://github.com/",
+            "http://localhost:47990/",
+            "invalid",
+        ] {
+            assert!(!super::sunshine_certificate_allowed(request, core));
+        }
+        assert!(!super::sunshine_certificate_allowed(
+            core,
+            "http://localhost:47990"
+        ));
+    }
 }
 
 /// Re-submit the existing WebView2 bounds after a native window restore.

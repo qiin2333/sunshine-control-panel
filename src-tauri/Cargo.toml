@@ -15,9 +15,10 @@ tauri-build = { version = "2.7.3", features = [] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }
+tauri = { version = "~2.12.4", features = ["test"] }
 
 [dependencies]
-tauri = { version = "2.12.4", features = [ "tray-icon", "native-tls-vendored"] }
+tauri = { version = "~2.12.4", features = [ "tray-icon", "native-tls-vendored"] }
 tauri-plugin-dialog = "2.8.3"
 tauri-plugin-notification = "2.7.0"
 tauri-plugin-fs = "2.7.1"

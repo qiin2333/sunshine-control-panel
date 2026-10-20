@@ -1,8 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default permissions for all windows",
-  "windows": ["*"],
+  "description": "Permissions for bundled GUI pages only",
+  "windows": [
+    "*"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-minimize",
@@ -50,18 +52,5 @@
     "global-shortcut:allow-unregister-all",
     "global-shortcut:default"
   ],
-  "local": true,
-  "remote": {
-    "urls": [
-      "http://localhost:*",
-      "https://localhost:*",
-      "http://127.0.0.1:*",
-      "https://127.0.0.1:*",
-      "https://*.lizardbyte.dev/*",
-      "https://github.com/*",
-      "https://ghfast.top/*",
-      "https://*.qq.com/*",
-      "https://*.alkaidlab.com/*"
-    ]
-  }
+  "local": true
 }

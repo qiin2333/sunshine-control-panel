@@ -216,18 +216,23 @@ pub fn reconcile_streaming_state(state: Option<&crate::sunshine::TrayState>) {
         return;
     };
     agent.stream_active = should_observe(state);
-    agent.reconcile();
+    agent.reconcile(Observer::start);
 }
 
 impl Agent {
-    fn reconcile(&mut self) {
-        let active = self.stream_active && self.shared.snapshot().enabled;
+    fn reconcile(&mut self, start_observer: impl FnOnce(&Arc<Shared>) -> Option<Observer>) {
+        let capability = self.shared.snapshot();
+        let active = self.stream_active && capability.enabled;
+        // Worker exit already revokes its generation, including during COM
+        // initialization. Retire that owner before deciding whether to restart.
+        if let Some(observer) = self
+            .observer
+            .take_if(|observer| !active || observer.generation != capability.generation)
+        {
+            observer.stop(&self.shared);
+        }
         if active && self.observer.is_none() {
-            self.observer = Observer::start(&self.shared);
-        } else if !active {
-            if let Some(observer) = self.observer.take() {
-                observer.stop(&self.shared);
-            }
+            self.observer = start_observer(&self.shared);
         }
     }
 }
@@ -236,7 +241,7 @@ pub fn set_enabled(enabled: bool) {
     let mut owner = AGENT.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(agent) = owner.as_mut() {
         agent.shared.set_enabled(enabled);
-        agent.reconcile();
+        agent.reconcile(Observer::start);
     }
 }
 
@@ -514,6 +519,56 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(shared.snapshot().phase, ObserverPhase::Idle);
         assert!(shared.snapshot().generation > generation);
+    }
+
+    #[tokio::test]
+    async fn reconciliation_replaces_exited_observers_without_restarting_live_initialization() {
+        let shared = Arc::new(Shared::new());
+        let mut agent = Agent {
+            shared: shared.clone(),
+            transport: tauri::async_runtime::spawn(std::future::pending()),
+            observer: None,
+            stream_active: true,
+        };
+        // Exercise ownership without calling real COM providers in the test.
+        let starts = std::cell::Cell::new(0);
+        let start = |shared: &Arc<Shared>| {
+            starts.set(starts.get() + 1);
+            Some(Observer {
+                generation: shared.begin(),
+                stop: Arc::new(AtomicBool::new(false)),
+            })
+        };
+        agent.reconcile(start);
+        let old = agent.observer.as_ref().unwrap().generation;
+        let old_stop = agent.observer.as_ref().unwrap().stop.clone();
+        agent.reconcile(start);
+        assert_eq!(starts.get(), 1); // Idle also covers initialization in progress.
+
+        drop(ObserverLifetime(shared.clone(), old)); // Failed initialization/early exit.
+        agent.reconcile(start);
+        assert_eq!(starts.get(), 2);
+        assert!(old_stop.load(Ordering::Acquire));
+        let new = agent.observer.as_ref().unwrap().generation;
+        assert!(new > old);
+        shared.ready(new, false, true);
+        shared.finished(old); // Late cleanup cannot retire the replacement.
+        agent.reconcile(start);
+        assert_eq!(starts.get(), 2);
+
+        shared.set_enabled(false);
+        let new_stop = agent.observer.as_ref().unwrap().stop.clone();
+        agent.reconcile(start);
+        assert!(agent.observer.is_none());
+        assert!(new_stop.load(Ordering::Acquire));
+        assert_eq!(starts.get(), 2);
+        shared.set_enabled(true);
+        agent.reconcile(start);
+        assert_eq!(starts.get(), 3);
+        agent.stream_active = false;
+        agent.reconcile(start);
+        assert!(agent.observer.is_none());
+        agent.transport.abort();
     }
 
     #[tokio::test]

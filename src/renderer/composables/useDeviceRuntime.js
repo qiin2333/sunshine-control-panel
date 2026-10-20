@@ -14,13 +14,18 @@ export function useDeviceRuntime() {
   const loadError = ref(false)
   const probeFailed = reactive({ ds: false, mic: false, usb: false })
   let inflight = null
+  let refreshGeneration = 0
 
-  async function fetchOnce(force = false) {
+  async function fetchOnce(force, generation) {
     const results = await Promise.allSettled([
       dualsenseStatusChannel.fetch({ force }),
       virtualMicrophone.getStatus(),
       usbipStatusChannel.fetch({ force }),
     ])
+    if (generation !== refreshGeneration) {
+      // 已被强制刷新取代：不得覆盖较新请求的结果或状态。
+      return
+    }
     for (const [index, key] of ['ds', 'mic', 'usb'].entries()) {
       const result = results[index].status === 'fulfilled' ? results[index].value : null
       probeFailed[key] = !result?.success
@@ -32,13 +37,18 @@ export function useDeviceRuntime() {
 
   function refresh(options = {}) {
     const force = options?.force === true
-    if (inflight) return inflight
+    // 普通刷新并入在途请求；强制刷新取代它——旧请求完成后不得
+    // 覆盖结果，也不得重置新请求的 loading/inflight。
+    if (inflight && !force) return inflight
+    const generation = ++refreshGeneration
     loading.value = true
-    inflight = fetchOnce(force).finally(() => {
+    const request = fetchOnce(force, generation).finally(() => {
+      if (generation !== refreshGeneration) return
       loading.value = false
-      inflight = null
+      if (inflight === request) inflight = null
     })
-    return inflight
+    inflight = request
+    return request
   }
   return { runtime, loading, loaded, loadError, probeFailed, refresh }
 }

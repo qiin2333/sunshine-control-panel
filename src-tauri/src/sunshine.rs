@@ -31,15 +31,13 @@ static HTTPS_CLIENT: Lazy<Result<reqwest::Client, String>> = Lazy::new(|| {
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))
 });
-// Bound local status reads so a stalled Core cannot stall the tray monitor.
-// Keep one local-only client instead of creating transports on every poll.
+// Local tray reads bypass environment proxies and have a shorter deadline.
 pub(crate) const TRAY_STATE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 static TRAY_HTTPS_CLIENT: Lazy<Result<reqwest::Client, String>> = Lazy::new(|| {
     reqwest::Client::builder()
         .no_proxy()
         .danger_accept_invalid_certs(true)
         .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(TRAY_STATE_TIMEOUT)
         .timeout(TRAY_STATE_TIMEOUT)
         .build()
         .map_err(|error| format!("Create tray status HTTP client failed: {error}"))

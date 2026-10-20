@@ -48,9 +48,6 @@ const PANE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 // Caret geometry is useful only for an active editor and remains scoped to
 // that editor, so games and ordinary desktop focus do not pay this cost.
 const EDITOR_CARET_POLL: Duration = Duration::from_millis(200);
-// UIA focus/foreground events are the normal trigger. The watchdog is only a
-// compatibility fallback while an editor is known to hold focus.
-const FOCUS_WATCHDOG_POLL: Duration = Duration::from_secs(5);
 // Focus-event bursts (menu traversal, Alt+Tab) collapse into one snapshot.
 const RESCAN_DEBOUNCE: Duration = Duration::from_millis(40);
 mod agent;
@@ -445,10 +442,8 @@ fn observer_loop(generation: u64, stop: Arc<AtomicBool>, shared: Arc<agent::Shar
         Some(request)
     });
 
-    // Focus changes push us; the remaining polling is only a watchdog for
-    // apps that raise no events, plus the caret cadence while an editor is
-    // focused. Idle desktops and full-screen games cost zero cross-process
-    // UIA traffic.
+    // Focus events drive snapshots; only confirmed editors poll caret geometry.
+    // Idle desktops and full-screen games cost zero cross-process UIA traffic.
     let _hook_focus = FocusHook(unsafe {
         SetWinEventHook(
             EVENT_OBJECT_FOCUS,
@@ -527,13 +522,10 @@ fn observer_loop(generation: u64, stop: Arc<AtomicBool>, shared: Arc<agent::Shar
             _ => false,
         });
         let need_snapshot = rescan_due
-            || (editor_focused && now.duration_since(last_snapshot) >= FOCUS_WATCHDOG_POLL)
             || (editor_focused && now.duration_since(last_snapshot) >= EDITOR_CARET_POLL);
 
         if need_snapshot {
-            // Advance unconditionally: with UIA unavailable the watchdog must
-            // not re-fire every iteration, or the loop degenerates to the
-            // clamped 5ms minimum wait.
+            // Reset the polling deadline even when no snapshot is available.
             last_snapshot = now;
             if let (Some(automation), Some(cache)) = (automation.as_ref(), cache.as_ref()) {
                 match inspect_focused_element(automation, cache, generation) {

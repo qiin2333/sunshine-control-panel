@@ -297,8 +297,6 @@ impl Panel {
         } else {
             // A reloaded page has a fresh JS realm even if native visibility
             // hasn't changed. Reapply its state, without requesting focus.
-            let active = is_active(&window);
-            notify_visibility(&window, active);
             reconcile(&window, self);
         }
     }
@@ -425,9 +423,6 @@ fn apply_render<R: Runtime>(window: &WebviewWindow<R>, panel: Panel, revision: u
         Microsoft::Web::WebView2::Win32::ICoreWebView2_3, TrySuspendCompletedHandler,
     };
     use wv2_windows_core::Interface;
-    if !panel.state.lock().unwrap().current(revision) {
-        return;
-    }
     let failed = panel.clone();
     let result = window.with_webview(move |webview| unsafe {
         if !panel.state.lock().unwrap().current(revision) {

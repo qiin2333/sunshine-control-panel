@@ -715,7 +715,6 @@ pub fn open_desktop_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String>
     if let Some(window) = app.get_webview_window(DESKTOP_WINDOW_ID) {
         show_and_activate_window(&window);
         debug!("✅ 桌面 UI 窗口已激活");
-        crate::power::refresh_ecoqos_state(app);
     } else {
         create_desktop_window(app).map_err(|e| e.to_string())?;
     }

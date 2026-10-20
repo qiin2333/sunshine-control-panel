@@ -125,3 +125,21 @@ test('invalidate during an in-flight fetch starts a fresh call; stale result nev
   assert.equal(third.cached, true)
   assert.equal(third.data.tag, 'post')
 })
+
+test('prime advances the epoch so an in-flight probe cannot overwrite the primed result', async () => {
+  let calls = 0
+  let resolveProbe
+  const channel = createStatusChannel(() => {
+    calls += 1
+    if (calls === 1) return new Promise((resolve) => { resolveProbe = resolve })
+    return Promise.resolve({ success: true, data: { n: calls } })
+  }, 50000)
+  const probe = channel.fetch()
+  await sleep(1)
+  channel.prime({ success: true, data: { n: 99, tag: 'primed' } })
+  resolveProbe({ success: true, data: { n: 1, tag: 'stale' } })
+  await probe
+  const next = await channel.fetch()
+  assert.equal(next.cached, true)
+  assert.equal(next.data.tag, 'primed')
+})

@@ -11,22 +11,31 @@ const vmouseNotice = ref('')
 const vmouseConfigSaving = ref(false)
 const vmouseEnabled = computed(() => vmouseStatus.value.config_enabled === true)
 let loadInflight = null
+let loadInflightEpoch = 0
+let statusEpoch = 0
 
 export function useVmouse(t) {
   async function loadVmouseStatus() {
-    if (loadInflight) return loadInflight
+    if (loadInflight && loadInflightEpoch === statusEpoch) return loadInflight
+    const requestEpoch = statusEpoch
+    loadInflightEpoch = requestEpoch
     loadInflight = (async () => {
       try {
         const result = await vmouse.getStatus()
-        if (!result?.success || typeof result.data?.config_enabled !== 'boolean') throw new Error('Invalid status')
+        if (requestEpoch !== statusEpoch) {
+          // 加载期间发生过保存：本次读取已过期，不得覆盖保存后的状态。
+          return
+        }
+        if (!result?.success || typeof result?.data?.config_enabled !== 'boolean') throw new Error('Invalid status')
         vmouseStatus.value = result.data
         vmouseStatusKnown.value = true
         vmouseNotice.value = ''
       } catch {
+        if (requestEpoch !== statusEpoch) return
         vmouseStatusKnown.value = false
         vmouseNotice.value = t.value.stream.vmouseReadFailed
       } finally {
-        loadInflight = null
+        if (loadInflightEpoch === statusEpoch && loadInflightEpoch === requestEpoch) loadInflight = null
       }
     })()
     return loadInflight
@@ -40,6 +49,7 @@ export function useVmouse(t) {
       const result = await vmouse.setConfig(enabled)
       if (!result?.success) throw new Error('Save failed')
       vmouseStatus.value = { ...vmouseStatus.value, config_enabled: enabled }
+      statusEpoch += 1
       vmouseNotice.value = t.value.stream.vmouseSaved
     } catch {
       vmouseNotice.value = t.value.stream.vmouseSaveFailed

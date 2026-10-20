@@ -25,7 +25,7 @@
             class="ds5-action"
             :loading="refreshing"
             :disabled="refreshing || controlsBusy"
-            @click="refresh()"
+            @click="refresh(false, false, true)"
           >
             <el-icon><Refresh /></el-icon>{{ t.dualSense.refresh }}
           </el-button>

@@ -131,7 +131,7 @@ export function useUsbTransport() {
       return ElMessage.error(friendlyError(result?.message))
     }
     applyStatus(result.data)
-    usbipStatusChannel.prime(result.data)
+    usbipStatusChannel.prime(result)
     if (result.data?.ready) ElMessage.success(t.value.deviceHub.usb.installSuccess)
     else ElMessage.warning(t.value.deviceHub.usb.rebootRequired)
   })
@@ -166,7 +166,7 @@ export function useUsbTransport() {
       return ElMessage.error(friendlyError(result?.message))
     }
     applyStatus(result.data)
-    usbipStatusChannel.prime(result.data)
+    usbipStatusChannel.prime(result)
     if (result.data?.vhci_residual) ElMessage.error(friendlyError('USBIP-CLEAN-002'))
     else ElMessage.success(removing ? t.value.deviceHub.components.transportRemoved : t.value.deviceHub.usb.cleanupSuccess)
   })

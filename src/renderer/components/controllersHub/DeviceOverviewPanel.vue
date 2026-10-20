@@ -2,7 +2,7 @@
   <section class="chub-panel">
     <div class="chub-section-head">
       <span class="chub-section-label">{{ t.deviceHub.tabs.overview }}</span><span class="chub-section-rule"></span>
-      <el-button size="small" :loading="loading" @click="refresh()">{{ t.deviceHub.refresh }}</el-button>
+      <el-button size="small" :loading="loading" @click="refresh({ force: true })">{{ t.deviceHub.refresh }}</el-button>
     </div>
     <p v-if="loadError" class="chub-status-error">{{ t.deviceHub.statusUnavailable }}</p>
     <div v-if="!loaded" class="chub-cards"><el-skeleton :rows="4" animated /></div>

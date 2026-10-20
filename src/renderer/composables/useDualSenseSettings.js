@@ -163,7 +163,7 @@ export function useDualSenseSettings() {
       return { success: false, preserveTuning, message: result.message }
     }
     status.value = mergeDualSenseStatus(status.value, result.data)
-    dualsenseStatusChannel.prime(result.data)
+    dualsenseStatusChannel.prime(result)
     statusKnown.value = true
     return { success: true, preserveTuning }
   }
@@ -298,7 +298,7 @@ export function useDualSenseSettings() {
     if (!result.success) return showError(result.message, 'test')
     testCompleted.value = true
     ElMessage.success(t.value.dualSense.testSuccess)
-    await refresh()
+    await refresh(false, false, true)
   })
 
   onMounted(() => dualsense.logPanelOpened().catch(() => {}))

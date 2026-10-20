@@ -59,9 +59,12 @@ export function createStatusChannel(fetcher, ttlMs) {
     epoch += 1
   }
 
-  /** 操作成功后用返回的最新状态直接填充缓存。 */
+  /** 操作成功后用返回的完整 { success, data } 信封直接填充缓存。 */
   function prime(result) {
     if (result?.success && result.data) {
+      // prime 视为一次确认写入：推进纪元，使操作期间发出的在途探测
+      // 完成后不能覆盖已确认的操作结果。
+      epoch += 1
       data.value = result.data
       error.value = null
       fetchedAt = Date.now()

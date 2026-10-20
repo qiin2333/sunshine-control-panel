@@ -94,6 +94,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { usbip } from '../../tauri-adapter.js'
 import { useI18n } from '../../desktop/i18n/index.js'
 import { useUsbTransport } from '../../composables/useUsbTransport.js'
+import { usbipStatusChannel } from '../../composables/deviceStatusStore.js'
 import UsbForwardingSettings from './UsbForwardingSettings.vue'
 import UsbTransportPanel from './UsbTransportPanel.vue'
 
@@ -143,6 +144,8 @@ async function attachDevice(device) {
   attachingBusId.value = device.bus_id
   const result = await usbip.attach(remote.value.trim(), device.bus_id, tcpPort.value)
   attachingBusId.value = ''
+  // 变更落定后先失效通道：随后的强制刷新不得并入变更前发出的在途探测。
+  usbipStatusChannel.invalidate()
   if (!result?.success) {
     await refreshStatus({ force: true, afterCurrent: true })
     return ElMessage.error(friendlyError(result?.message))
@@ -162,6 +165,8 @@ async function detachDevice(device) {
   detachingPort.value = device.port
   const result = await usbip.detach(device.port)
   detachingPort.value = 0
+  // 变更落定后先失效通道：随后的强制刷新不得并入变更前发出的在途探测。
+  usbipStatusChannel.invalidate()
   if (!result?.success) {
     await refreshStatus({ force: true, afterCurrent: true })
     return ElMessage.error(friendlyError(result?.message))

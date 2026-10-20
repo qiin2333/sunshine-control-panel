@@ -38,6 +38,7 @@ export function useDualSenseComponent({ busy = ref(false), onStatus, afterInstal
   })
   let pollTimer
   let unlistenProgress
+  let paneActive = true
   let disposed = false
   let statusRefreshGeneration = 0
   let statusRefreshPromise = null
@@ -156,8 +157,9 @@ export function useDualSenseComponent({ busy = ref(false), onStatus, afterInstal
     if (!quiet) operationError.value = ''
     if (!quiet) refreshing.value = true
     let refreshed = false
-    // 显式刷新与非 quiet 读取必须穿透缓存；quiet 读刷新在操作失效后同样回源。
-    const request = dualsenseStatusChannel.fetch({ force: force || !quiet })
+    // 缓存语义由显式 force 参数决定：初始挂载与激活读取复用近期探测，
+    // 显式刷新按钮与测试后的校准读取必须穿透缓存。
+    const request = dualsenseStatusChannel.fetch({ force })
     statusRefreshPromise = request
     try {
       const result = await request
@@ -250,7 +252,7 @@ export function useDualSenseComponent({ busy = ref(false), onStatus, afterInstal
     rebootRecommended.value = result.data.reboot_recommended
     const configReadable = dualSenseConfigReadable(result.data)
     status.value = mergeDualSenseStatus(status.value, result.data)
-    dualsenseStatusChannel.prime(result.data)
+    dualsenseStatusChannel.prime(result)
     statusKnown.value = true
     if (configReadable) {
       onStatus?.(result.data, false)
@@ -320,14 +322,14 @@ export function useDualSenseComponent({ busy = ref(false), onStatus, afterInstal
     }
     rebootRecommended.value = false
     status.value = mergeDualSenseStatus(status.value, result.data)
-    dualsenseStatusChannel.prime(result.data)
+    dualsenseStatusChannel.prime(result)
     statusKnown.value = true
     ElMessage.success(t.value.dualSense.uninstallSuccess)
   })
 
   sharedOperation.onOtherChange(() => refresh(true, false, true))
   const startPolling = () => {
-    if (pollTimer || disposed) return
+    if (pollTimer || disposed || !paneActive) return
     pollTimer = window.setInterval(() => refresh(true), STATUS_POLL_INTERVAL_MS)
   }
   const stopPolling = () => {
@@ -351,17 +353,22 @@ export function useDualSenseComponent({ busy = ref(false), onStatus, afterInstal
     }
     if (disposed) return
     await refresh()
-    if (disposed) return
+    if (disposed || !paneActive) return
     startPolling()
   })
   // KeepAlive 下被隐藏的面板暂停轮询；重新可见时先展示缓存再静默校准。
   onActivated(() => {
+    paneActive = true
     startPolling()
     refresh(true)
   })
-  onDeactivated(stopPolling)
+  onDeactivated(() => {
+    paneActive = false
+    stopPolling()
+  })
   onUnmounted(() => {
     disposed = true
+    paneActive = false
     invalidateStatusRefresh()
     stopPolling()
     unlistenProgress?.()

@@ -15,11 +15,11 @@ export function useDeviceRuntime() {
   const probeFailed = reactive({ ds: false, mic: false, usb: false })
   let inflight = null
 
-  async function fetchOnce() {
+  async function fetchOnce(force = false) {
     const results = await Promise.allSettled([
-      dualsenseStatusChannel.fetch(),
+      dualsenseStatusChannel.fetch({ force }),
       virtualMicrophone.getStatus(),
-      usbipStatusChannel.fetch(),
+      usbipStatusChannel.fetch({ force }),
     ])
     for (const [index, key] of ['ds', 'mic', 'usb'].entries()) {
       const result = results[index].status === 'fulfilled' ? results[index].value : null
@@ -30,10 +30,11 @@ export function useDeviceRuntime() {
     loaded.value = true
   }
 
-  function refresh() {
+  function refresh(options = {}) {
+    const force = options?.force === true
     if (inflight) return inflight
     loading.value = true
-    inflight = fetchOnce().finally(() => {
+    inflight = fetchOnce(force).finally(() => {
       loading.value = false
       inflight = null
     })

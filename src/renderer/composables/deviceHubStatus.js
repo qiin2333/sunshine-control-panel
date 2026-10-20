@@ -13,7 +13,9 @@ export function dualSenseComponentOperational(status = {}) {
 export function usbipTransportNeedsCleanup(status = {}) {
   return Boolean(
     status.vhci_residual
-    || (status.installed && (!status.version_valid || status.detail?.startsWith('USBIP-EXEC-006:'))),
+    // error_code 是后端下发的结构化码（Rust status::detail_error_code），
+    // 不得回退到解析 detail 文本。
+    || (status.installed && (!status.version_valid || status.error_code === 'USBIP-EXEC-006')),
   )
 }
 

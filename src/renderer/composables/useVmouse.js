@@ -13,32 +13,38 @@ const vmouseEnabled = computed(() => vmouseStatus.value.config_enabled === true)
 let loadInflight = null
 let loadInflightEpoch = 0
 let statusEpoch = 0
+let capturedT = null
+
+async function loadVmouseStatusImpl(t) {
+  if (loadInflight && loadInflightEpoch === statusEpoch) return loadInflight
+  const requestEpoch = statusEpoch
+  loadInflightEpoch = requestEpoch
+  loadInflight = (async () => {
+    try {
+      const result = await vmouse.getStatus()
+      if (requestEpoch !== statusEpoch) {
+        // 加载期间发生过保存：本次读取已过期，不得覆盖保存后的状态。
+        return
+      }
+      if (!result?.success || typeof result?.data?.config_enabled !== 'boolean') throw new Error('Invalid status')
+      vmouseStatus.value = result.data
+      vmouseStatusKnown.value = true
+      vmouseNotice.value = ''
+    } catch {
+      if (requestEpoch !== statusEpoch) return
+      vmouseStatusKnown.value = false
+      vmouseNotice.value = t.value.stream.vmouseReadFailed
+    } finally {
+      if (loadInflightEpoch === statusEpoch && loadInflightEpoch === requestEpoch) loadInflight = null
+    }
+  })()
+  return loadInflight
+}
 
 export function useVmouse(t) {
+  capturedT = t
   async function loadVmouseStatus() {
-    if (loadInflight && loadInflightEpoch === statusEpoch) return loadInflight
-    const requestEpoch = statusEpoch
-    loadInflightEpoch = requestEpoch
-    loadInflight = (async () => {
-      try {
-        const result = await vmouse.getStatus()
-        if (requestEpoch !== statusEpoch) {
-          // 加载期间发生过保存：本次读取已过期，不得覆盖保存后的状态。
-          return
-        }
-        if (!result?.success || typeof result?.data?.config_enabled !== 'boolean') throw new Error('Invalid status')
-        vmouseStatus.value = result.data
-        vmouseStatusKnown.value = true
-        vmouseNotice.value = ''
-      } catch {
-        if (requestEpoch !== statusEpoch) return
-        vmouseStatusKnown.value = false
-        vmouseNotice.value = t.value.stream.vmouseReadFailed
-      } finally {
-        if (loadInflightEpoch === statusEpoch && loadInflightEpoch === requestEpoch) loadInflight = null
-      }
-    })()
-    return loadInflight
+    return loadVmouseStatusImpl(t)
   }
 
   async function toggleVmouse() {
@@ -59,4 +65,12 @@ export function useVmouse(t) {
   }
 
   return { vmouseStatus, vmouseEnabled, vmouseStatusKnown, vmouseNotice, vmouseConfigSaving, loadVmouseStatus, toggleVmouse }
+}
+
+// 驱动安装/卸载完成后调用：作废在途读取并立即重探。
+// （后端 bat 落定后返回，无需前端再猜测等待时长。）
+export async function reloadVmouseAfterOperation() {
+  statusEpoch += 1
+  if (!capturedT) return
+  await loadVmouseStatusImpl(capturedT)
 }

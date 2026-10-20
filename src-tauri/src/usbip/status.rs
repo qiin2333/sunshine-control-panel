@@ -2,6 +2,28 @@
 
 use super::{REQUIRED_VERSION, UsbipStatus};
 
+/// Extracts the structured "USBIP-XXX-NNN" code from a detail string.
+/// Returns an empty string when the prefix is not a well-shaped code, so
+/// consumers can branch on `error_code` instead of parsing detail text.
+pub(super) fn detail_error_code(detail: &str) -> String {
+    let code = detail.split(':').next().unwrap_or_default().trim();
+    let mut segments = code.split('-');
+    let shaped = matches!(
+        (segments.next(), segments.next(), segments.next(), segments.next()),
+        (Some(area), Some(kind), Some(number), None)
+            if area == "USBIP"
+                && (3..=8).contains(&kind.len())
+                && kind.bytes().all(|b| b.is_ascii_uppercase())
+                && number.len() == 3
+                && number.bytes().all(|b| b.is_ascii_digit())
+    );
+    if shaped {
+        code.to_string()
+    } else {
+        String::new()
+    }
+}
+
 /// Spawns a `usbip.exe port` subprocess on every call to enumerate attached
 /// devices. Intended for on-demand refreshes — do not poll at high frequency.
 #[tauri::command]
@@ -15,6 +37,7 @@ pub async fn usbip_get_status() -> Result<UsbipStatus, String> {
         version_valid: false,
         reboot_recommended: false,
         vhci_residual: false,
+        error_code: String::new(),
         attached_devices: Vec::new(),
         detail: "USB/IP passthrough is only supported on Windows".to_string(),
     });
@@ -43,6 +66,7 @@ pub async fn usbip_get_status() -> Result<UsbipStatus, String> {
                     vhci_residual: !interfaces.is_empty()
                         || !devnodes.is_empty()
                         || partially_installed,
+                    error_code: detail_error_code(&detail),
                     attached_devices: Vec::new(),
                     detail,
                 });
@@ -51,6 +75,9 @@ pub async fn usbip_get_status() -> Result<UsbipStatus, String> {
         let version_valid = super::supported_usbip_installed(Some(&installation.version));
         let vhci_residual = super::device::has_vhci_residual(&interfaces, &devnodes);
         if !version_valid {
+            let detail = format!(
+                "USBIP-SETUP-003: the tested USB/IP {REQUIRED_VERSION} tools and driver are required"
+            );
             return Ok(UsbipStatus {
                 supported: true,
                 installed: true,
@@ -59,10 +86,9 @@ pub async fn usbip_get_status() -> Result<UsbipStatus, String> {
                 version_valid,
                 reboot_recommended: false,
                 vhci_residual,
+                error_code: detail_error_code(&detail),
                 attached_devices: Vec::new(),
-                detail: format!(
-                    "USBIP-SETUP-003: the tested USB/IP {REQUIRED_VERSION} tools and driver are required"
-                ),
+                detail,
             });
         }
         match super::exec::list_attached().await {
@@ -76,6 +102,7 @@ pub async fn usbip_get_status() -> Result<UsbipStatus, String> {
                 version_valid,
                 reboot_recommended: false,
                 vhci_residual,
+                error_code: String::new(),
                 attached_devices,
                 detail: String::new(),
             }),
@@ -87,9 +114,27 @@ pub async fn usbip_get_status() -> Result<UsbipStatus, String> {
                 version_valid,
                 reboot_recommended: false,
                 vhci_residual,
+                error_code: detail_error_code(&detail),
                 attached_devices: Vec::new(),
                 detail,
             }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::detail_error_code;
+
+    #[test]
+    fn extracts_only_well_shaped_codes() {
+        assert_eq!(detail_error_code("USBIP-EXEC-006: the shared transport"), "USBIP-EXEC-006");
+        assert_eq!(detail_error_code("USBIP-SETUP-001: not installed"), "USBIP-SETUP-001");
+        assert_eq!(detail_error_code("USBIP-EXEC-006"), "USBIP-EXEC-006");
+        // 非码前缀的 detail 必须得到空串，前端不得据此推断语义
+        assert_eq!(detail_error_code("USB/IP passthrough is only supported"), "");
+        assert_eq!(detail_error_code("usbip-exec-006: lowercase"), "");
+        assert_eq!(detail_error_code("USBIP-EXEC-6: short number"), "");
+        assert_eq!(detail_error_code(""), "");
     }
 }

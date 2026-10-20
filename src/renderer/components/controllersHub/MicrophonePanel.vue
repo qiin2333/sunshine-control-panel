@@ -5,7 +5,7 @@
       <div class="chub-hud-row chub-hud-row--divided">
         <div class="chub-hud-state"><span class="chub-status-dot"></span><strong>{{ text.statusLabels[state] }}</strong></div>
         <div class="chub-hud-actions">
-          <el-button size="small" :loading="loading" :disabled="testing" @click="refresh">{{ t.deviceHub.refresh }}</el-button>
+          <el-button size="small" :loading="loading" :disabled="testing" @click="refresh({ force: true })">{{ t.deviceHub.refresh }}</el-button>
           <el-button size="small" type="primary" :loading="testing" :disabled="!canTest || testing" @click="runTest">{{ text.test }}</el-button>
         </div>
       </div>
@@ -55,7 +55,8 @@
 <script setup>
 import { computed, onActivated, onDeactivated, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { openExternalUrl, sunshine, virtualMicrophone } from '../../tauri-adapter.js'
+import { openExternalUrl, sunshine } from '../../tauri-adapter.js'
+import { micStatusChannel } from '../../composables/deviceStatusStore.js'
 import { canTestMicrophone, microphoneOverviewState, microphoneStatusTone, microphoneUsesUsbip } from '../../composables/deviceHubStatus.js'
 import { useI18n } from '../../desktop/i18n/index.js'
 
@@ -76,12 +77,12 @@ const usesUsbip = computed(() => microphoneUsesUsbip(status))
 const experimentalSelected = computed(() => ['auto', 'usbip_experimental'].includes(status.configured_backend) || usesUsbip.value)
 const backendLabel = backend => text.value.backends[backend] || backend || '—'
 
-async function refresh() {
+async function refresh(options = {}) {
   if (pending || testing.value) return
   pending = true
   loading.value = true
   try {
-    const result = await virtualMicrophone.getStatus()
+    const result = await micStatusChannel.fetch({ force: options?.force === true })
     if (disposed) return
     loadError.value = !result?.success
     if (result?.success) Object.assign(status, result.data)

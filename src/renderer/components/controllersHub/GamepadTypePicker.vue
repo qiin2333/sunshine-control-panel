@@ -85,7 +85,8 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { controllerHub, sunshine } from '../../tauri-adapter.js'
+import { sunshine } from '../../tauri-adapter.js'
+import { useControllerHubConfig } from '../../composables/useControllerHubConfig.js'
 import { useI18n } from '../../desktop/i18n/index.js'
 
 const { t } = useI18n()
@@ -93,9 +94,7 @@ const emit = defineEmits(['ds5-selection-change'])
 
 const APPS_TIMEOUT_MS = 8000
 
-const config = ref({ gamepad: 'auto' })
-const loading = ref(false)
-const unreachable = ref(false)
+const { config, loading, unreachable, load, save } = useControllerHubConfig()
 
 const apps = ref([])
 const appsLoading = ref(false)
@@ -117,7 +116,7 @@ const modeOptions = computed(() => {
 })
 
 const selectedMode = computed({
-  get: () => config.value.gamepad,
+  get: () => config.value?.gamepad ?? 'auto',
   set: (mode) => saveKey('gamepad', mode),
 })
 
@@ -133,42 +132,29 @@ const appModeOptions = computed(() => {
 })
 
 const hasDs5Selection = computed(() =>
-  config.value.gamepad === 'ds5' || apps.value.some((app) => app.gamepad === 'ds5'))
+  (config.value?.gamepad === 'ds5') || apps.value.some((app) => app.gamepad === 'ds5'))
 
 watch(hasDs5Selection, (selected) => emit('ds5-selection-change', selected), { immediate: true })
 
 async function loadConfig() {
-  loading.value = true
-  unreachable.value = false
-  try {
-    const result = await controllerHub.getConfig()
-    if (result?.success) {
-      config.value.gamepad = result.data.gamepad
-    } else {
-      unreachable.value = true
-    }
-  } catch {
-    unreachable.value = true
-  } finally {
-    loading.value = false
-  }
+  await load()
 }
 
 async function saveKey(key, value) {
-  if (busyKey.value !== '' || config.value[key] === value) return
-  const prev = config.value[key]
-  config.value[key] = value
+  if (busyKey.value !== '' || config.value?.[key] === value) return
+  const prev = config.value?.[key]
+  config.value = { ...(config.value || {}), [key]: value }
   busyKey.value = key
   try {
-    const result = await controllerHub.saveConfig({ [key]: value })
+    const result = await save({ [key]: value })
     if (result?.success) {
       ElMessage.success(t.value.controllersHub.emulation.saveSuccess)
     } else {
-      config.value[key] = prev
+      config.value = { ...(config.value || {}), [key]: prev }
       ElMessage.error(result?.message || t.value.controllersHub.emulation.saveFailed)
     }
   } catch (error) {
-    config.value[key] = prev
+    config.value = { ...(config.value || {}), [key]: prev }
     ElMessage.error(String(error))
   } finally {
     busyKey.value = ''

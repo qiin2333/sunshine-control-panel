@@ -24,6 +24,8 @@ export function useDualSenseComponent({ busy = ref(false), onStatus, afterInstal
   const operationError = ref('')
   const expandedSections = ref([])
   const rebootRecommended = ref(false)
+  // 首次渲染前的占位默认值。字段必须与 Rust 侧 dualsense::probe::local_uninstalled_status()
+  // 的 DualSenseStatus 保持一致（两处各一份，改动时同步）。
   const status = ref({
     state: 'loading', installed: false, verified: false,
     audio_haptics: false, genshin_compatibility: false,

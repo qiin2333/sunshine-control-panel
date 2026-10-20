@@ -357,6 +357,8 @@ pub(crate) fn usbip_transport_status(
 }
 
 pub(crate) fn local_uninstalled_status() -> DualSenseStatus {
+    // 前端 useDualSenseComponent 另有一份首次渲染前的占位默认值，
+    // 与此处的 DualSenseStatus 字段一一对应，改动时两处同步。
     let (usbip_version, usbip_version_valid, error_code, detail) =
         usbip_discovery_status(installed_usbip_version());
     DualSenseStatus {
@@ -407,9 +409,20 @@ pub(crate) fn validate_requested_profile(
     }
 }
 
+/// Probe/transport results captured earlier in the same command. The sidecar
+/// binary cannot change between validation and status assembly within one
+/// command, so `dualsense_set_config` reuses them instead of probing twice.
+#[derive(Default)]
+pub(crate) struct StatusProbeReuse {
+    pub(crate) probe: Option<ProbeResult>,
+    /// `usbip_transport_status` output: (version, version_valid, ready, code, detail).
+    pub(crate) transport: Option<(String, bool, bool, String, String)>,
+}
+
 /// Combines component integrity, runtime capabilities, shared transport and Core settings.
 pub(crate) async fn dualsense_get_status_with_config(
     confirmed: Option<CoreDualSenseResponse>,
+    reuse: StatusProbeReuse,
 ) -> Result<DualSenseStatus, String> {
     let (settings, config_revision, config_error) =
         resolve_core_config(confirmed, get_core_ds5_settings).await;
@@ -420,15 +433,15 @@ pub(crate) async fn dualsense_get_status_with_config(
     let executable = sidecar_path();
     let installed = executable.is_file();
     let in_use = has_active_session().await;
-    let probe = if installed {
-        Some(
+    let probe = match reuse.probe {
+        Some(result) => Some(Ok(result)),
+        None if installed => Some(
             tokio::task::spawn_blocking(run_installed_probe)
                 .await
                 .map_err(|error| format!("DS5-PKG-003: sidecar probe task failed: {error}"))
                 .and_then(|result| result),
-        )
-    } else {
-        None
+        ),
+        None => None,
     };
     let (probe_succeeded, result, mut error_code, mut detail) = match probe {
         Some(Ok(result)) => (true, result, String::new(), String::new()),
@@ -453,7 +466,10 @@ pub(crate) async fn dualsense_get_status_with_config(
     // A valid uninstall registration does not prove that the active driver
     // accepts the installed tools. Share the transport panel's actual probe.
     let (usbip_version, usbip_version_valid, usbip_ready, usbip_error_code, usbip_detail) =
-        usbip_transport_status(crate::usbip::usbip_get_status().await);
+        match reuse.transport {
+            Some(transport) => transport,
+            None => usbip_transport_status(crate::usbip::usbip_get_status().await),
+        };
     let usbip_available = result.usbip_available && usbip_ready;
     let manifest = installed.then(installed_component_manifest).flatten();
     let update_available = installed && component_update_available(manifest.as_ref());

@@ -53,6 +53,9 @@ pub struct UsbipStatus {
     pub version_valid: bool,
     pub reboot_recommended: bool,
     pub vhci_residual: bool,
+    /// 结构化错误码（"USBIP-SETUP-003" 等），取自 detail 的码前缀；
+    /// 前端按码判断语义，不得解析 detail 文本。
+    pub error_code: String,
     pub attached_devices: Vec<UsbipAttachedDevice>,
     pub detail: String,
 }

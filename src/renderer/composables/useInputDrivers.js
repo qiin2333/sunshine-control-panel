@@ -1,18 +1,17 @@
 import { reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { useVmouse } from './useVmouse.js'
 import { vigem, vmouse } from '../tauri-adapter.js'
+import { createStatusChannel } from './deviceStatusStore.js'
+import { useVmouse, reloadVmouseAfterOperation } from './useVmouse.js'
+
+// ViGEm 状态走共享通道：探测要 spawn PowerShell（秒级），合并并发并复用近期结果。
+const vigemStatusChannel = createStatusChannel(() => vigem.getStatus(), 10_000)
 
 export function useInputDrivers(t) {
-  const vigemStatus = reactive({
-    installed: false, version: '', status_text: '',
-  })
-  const mouse = useVmouse(t)
+  const { ...mouse } = useVmouse(t)
+  const vigemStatus = reactive({ installed: false, version: '', status_text: '' })
   const probeFailed = reactive({ vigem: false, vmouse: false })
-
-  const ops = reactive({
-    vigem: false, vmouse: false,
-  })
+  const ops = reactive({ vigem: false, vmouse: false })
   const initialized = ref(false)
   const refreshing = ref(false)
 
@@ -21,7 +20,7 @@ export function useInputDrivers(t) {
     refreshing.value = true
     try {
       await Promise.all([
-        vigem.getStatus().then(result => {
+        vigemStatusChannel.fetch().then(result => {
           probeFailed.vigem = !result?.success
           if (result?.success) Object.assign(vigemStatus, result.data)
         }).catch(() => { probeFailed.vigem = true }),
@@ -42,7 +41,9 @@ export function useInputDrivers(t) {
         const result = await action()
         if (result?.success) {
           ElMessage.success(result.data)
-          setTimeout(() => refreshAll(), 2000)
+          if (flag === 'vigem') vigemStatusChannel.invalidate()
+          await reloadVmouseAfterOperation()
+          await refreshAll()
         } else {
           ElMessage.error(result?.message || String(result))
         }

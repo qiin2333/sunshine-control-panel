@@ -342,7 +342,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { DataAnalysis, Film, Monitor, Mouse, Promotion, Sunny } from '@element-plus/icons-vue'
 import PillGroup from '../components/PillGroup.vue'
 import FdDropdown from '../components/FdDropdown.vue'
-import { useVmouse } from '../../composables/useVmouse.js'
+import { useVmouse, reloadVmouseAfterOperation } from '../../composables/useVmouse.js'
 import { vdd as vddApi, vmouse as vmouseApi } from '../../tauri-adapter.js'
 import { installVddWithRecovery } from '../../composables/vddInstallRecovery.js'
 import { useVddStatusLabel } from '../../composables/useVddStatusLabel.js'
@@ -743,7 +743,7 @@ async function installVmouse() {
     const result = await vmouseApi.install()
     if (result?.success) {
       alert(result.data)
-      setTimeout(() => loadVmouseStatus(), 2000)
+      await reloadVmouseAfterOperation()
     } else {
       alert(t.value.stream.msg.vmouseInstallFailed + (result?.message || ''))
     }
@@ -761,7 +761,7 @@ async function uninstallVmouse() {
     const result = await vmouseApi.uninstall()
     if (result?.success) {
       alert(result.data)
-      setTimeout(() => loadVmouseStatus(), 2000)
+      await reloadVmouseAfterOperation()
     } else {
       alert(t.value.stream.msg.vmouseUninstallFailed + (result?.message || ''))
     }

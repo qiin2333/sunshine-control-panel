@@ -18,6 +18,7 @@ use super::packages::classify_local_component_packages;
 use super::probe::{
     dualsense_get_status_with_config, ensure_no_active_session,
     ensure_no_active_session_for_uninstall, run_installed_probe, validate_requested_profile,
+    StatusProbeReuse, usbip_transport_status,
 };
 use super::{
     COMPONENT_OPERATION, DualSenseStatus, DualSenseTuningResult, MAX_LOCAL_COMPONENT_PACKAGES,
@@ -52,7 +53,7 @@ pub async fn dualsense_set_haptics_tuning(
 
 #[tauri::command]
 pub async fn dualsense_get_status() -> Result<DualSenseStatus, String> {
-    dualsense_get_status_with_config(None).await
+    dualsense_get_status_with_config(None, StatusProbeReuse::default()).await
 }
 
 #[tauri::command]
@@ -112,15 +113,20 @@ pub async fn dualsense_set_config(
         "DS5-RUN-002: another DualSense component operation is still running".to_string()
     })?;
     ensure_no_active_session().await?;
+    // Validation probes double as the status-assembly inputs: the sidecar
+    // binary cannot change between validation and the final status within
+    // this command, so reuse them instead of probing twice.
+    let mut reuse = StatusProbeReuse::default();
     if audio_haptics {
         let probe = tokio::task::spawn_blocking(run_installed_probe)
             .await
             .map_err(|error| format!("DS5-PKG-003: sidecar probe task failed: {error}"))??;
-        let transport = crate::usbip::usbip_get_status().await?;
-        if !transport.ready && !transport.detail.is_empty() {
-            return Err(transport.detail);
+        let (usbip_version, usbip_version_valid, usbip_ready, usbip_error_code, usbip_detail) =
+            usbip_transport_status(crate::usbip::usbip_get_status().await);
+        if !usbip_ready && !usbip_detail.is_empty() {
+            return Err(usbip_detail.clone());
         }
-        let usbip_available = probe.usbip_available && transport.ready;
+        let usbip_available = probe.usbip_available && usbip_ready;
         if genshin_compatibility && !probe.genshin_compatibility_identity {
             return Err(
                 "DS5-PROTO-001: the installed sidecar does not support Genshin compatibility mode"
@@ -128,6 +134,16 @@ pub async fn dualsense_set_config(
             );
         }
         validate_requested_profile(audio_haptics, genshin_compatibility, usbip_available)?;
+        reuse = StatusProbeReuse {
+            probe: Some(probe),
+            transport: Some((
+                usbip_version,
+                usbip_version_valid,
+                usbip_ready,
+                usbip_error_code,
+                usbip_detail,
+            )),
+        };
     } else {
         validate_requested_profile(audio_haptics, genshin_compatibility, false)?;
     }
@@ -144,7 +160,7 @@ pub async fn dualsense_set_config(
         "DS5-CFG-004: timed out while applying DualSense configuration; the resulting state is unknown"
             .to_string()
     })??;
-    dualsense_get_status_with_config(Some(applied.response)).await
+    dualsense_get_status_with_config(Some(applied.response), reuse).await
 }
 
 #[tauri::command]

@@ -1,5 +1,5 @@
 import { ref, shallowRef } from 'vue'
-import { dualsense, usbip } from '../tauri-adapter.js'
+import { dualsense, usbip, virtualMicrophone, vigem } from '../tauri-adapter.js'
 
 /**
  * 单窗口共享的设备状态通道：同一窗口内的所有面板（总览/控制器/USB/组件）
@@ -82,3 +82,9 @@ export const STATUS_POLL_INTERVAL_MS = POLL_INTERVAL_MS
 export const dualsenseStatusChannel = createStatusChannel(() => dualsense.getStatus(), STATUS_TTL_MS)
 
 export const usbipStatusChannel = createStatusChannel(() => usbip.getStatus(), STATUS_TTL_MS)
+
+// 驱动/外设探测会 spawn PowerShell（秒级），缓存收益最大。
+export const vigemStatusChannel = createStatusChannel(() => vigem.getStatus(), STATUS_TTL_MS)
+
+// 麦克风是轻量 HTTP 且状态变化较活：TTL 取短，只用于合并并发读取。
+export const micStatusChannel = createStatusChannel(() => virtualMicrophone.getStatus(), 2_000)

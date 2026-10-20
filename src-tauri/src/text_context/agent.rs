@@ -8,16 +8,13 @@ use std::{
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
-        mpsc,
     },
-    thread::JoinHandle,
     time::Duration,
 };
 use tauri::async_runtime::JoinHandle as Task;
 
 const PRESENCE_INTERVAL: Duration = Duration::from_secs(20);
 const RETRY_INTERVAL: Duration = Duration::from_millis(250);
-const STOP_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ObserverPhase {
@@ -131,8 +128,6 @@ impl Shared {
 struct Observer {
     generation: u64,
     stop: Arc<AtomicBool>,
-    thread: JoinHandle<()>,
-    done: mpsc::Receiver<()>,
 }
 
 struct ObserverLifetime(Arc<Shared>, u64);
@@ -147,7 +142,6 @@ impl Observer {
     fn start(shared: &Arc<Shared>) -> Option<Self> {
         let generation = shared.begin();
         let stop = Arc::new(AtomicBool::new(false));
-        let (done_tx, done) = mpsc::sync_channel(1);
         let worker_stop = stop.clone();
         let worker_shared = shared.clone();
         match std::thread::Builder::new()
@@ -155,14 +149,8 @@ impl Observer {
             .spawn(move || {
                 let _lifetime = ObserverLifetime(worker_shared.clone(), generation);
                 observer_loop(generation, worker_stop, worker_shared);
-                let _ = done_tx.send(());
             }) {
-            Ok(thread) => Some(Self {
-                generation,
-                stop,
-                thread,
-                done,
-            }),
+            Ok(_) => Some(Self { generation, stop }),
             Err(error) => {
                 shared.finished(generation);
                 warn!("Failed to start text context observer: {error}");
@@ -174,22 +162,8 @@ impl Observer {
     fn stop(self, shared: &Shared) {
         shared.finished(self.generation);
         self.stop.store(true, Ordering::Release);
-        // COM providers can block indefinitely. Never join one on the UI thread.
-        let _ = std::thread::Builder::new()
-            .name("text-context-observer-joiner".into())
-            .spawn(move || {
-                if matches!(
-                    self.done.recv_timeout(STOP_TIMEOUT),
-                    Err(mpsc::RecvTimeoutError::Timeout)
-                ) {
-                    warn!(
-                        "Text observer stop timed out (generation={}); detaching",
-                        self.generation
-                    );
-                } else {
-                    let _ = self.thread.join();
-                }
-            });
+        // COM providers can block indefinitely. The detached worker releases
+        // its own resources when it returns; generation checks reject late results.
     }
 }
 
@@ -594,7 +568,13 @@ mod tests {
     fn stopped_generation_cannot_reactivate_or_clear_a_new_observer() {
         let shared = Shared::new();
         let old = shared.begin();
-        shared.finished(old);
+        let stop = Arc::new(AtomicBool::new(false));
+        Observer {
+            generation: old,
+            stop: stop.clone(),
+        }
+        .stop(&shared);
+        assert!(stop.load(Ordering::Acquire));
         let idle = shared.snapshot();
         assert!(!shared.ready(old, true, true)); // stopped before initialization completed
         shared.finished(old);

@@ -19,7 +19,6 @@ use tauri::{AppHandle, Manager, Runtime, WebviewWindow, WindowEvent};
 #[cfg(target_os = "windows")]
 mod display;
 const DISPLAY_DEBOUNCE: Duration = Duration::from_millis(300);
-const DISPLAY_SETTLE: Duration = Duration::from_secs(1);
 
 const STARTUP_GRACE: Duration = Duration::from_secs(90);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -49,8 +48,7 @@ struct State {
     last_beat: Option<Instant>,
     recoveries: u8,
     display_revision: u64,
-    display_changed: Option<Instant>,
-    refresh_pending: bool,
+    refresh_after: Option<Instant>,
 }
 
 impl State {
@@ -64,8 +62,7 @@ impl State {
             last_beat: None,
             recoveries: 0,
             display_revision: 0,
-            display_changed: None,
-            refresh_pending: false,
+            refresh_after: None,
         }
     }
 
@@ -107,28 +104,18 @@ impl State {
             return None;
         }
         self.display_revision += 1;
-        self.display_changed = Some(now);
-        self.refresh_pending = true;
+        self.refresh_after = Some(now + DISPLAY_DEBOUNCE);
         Some(self.display_revision)
     }
 
-    fn display_settling(&self, now: Instant) -> bool {
-        self.display_changed
-            .is_some_and(|at| now.duration_since(at) < DISPLAY_SETTLE)
-    }
-
     fn pending_refresh(&self, now: Instant) -> Option<u64> {
-        (self.phase == Phase::Active
-            && self.refresh_pending
-            && self
-                .display_changed
-                .is_none_or(|at| now.duration_since(at) >= DISPLAY_DEBOUNCE))
-        .then_some(self.display_revision)
+        (self.phase == Phase::Active && self.refresh_after.is_some_and(|at| now >= at))
+            .then_some(self.display_revision)
     }
 
     fn refreshed(&mut self, revision: u64, succeeded: bool) {
         if self.phase != Phase::Closed && self.display_revision == revision && succeeded {
-            self.refresh_pending = false;
+            self.refresh_after = None;
         }
     }
 
@@ -173,10 +160,10 @@ impl State {
         true
     }
 
-    fn presented(&mut self) {
+    fn presented(&mut self, now: Instant) {
         self.show_on_load = false;
         self.show_revision += 1;
-        self.refresh_pending = true;
+        self.refresh_after.get_or_insert(now);
     }
 }
 
@@ -309,7 +296,7 @@ pub(super) fn presented<R: Runtime>(window: &WebviewWindow<R>) {
         let _ = window.run_on_main_thread(move || {
             // Async commands can present a panel from a worker thread. Keep
             // this mutation serialized with synchronous native refreshes.
-            panel.state.lock().unwrap().presented();
+            panel.state.lock().unwrap().presented(Instant::now());
             reconcile(&handle, &panel);
         });
     }
@@ -334,12 +321,11 @@ fn reconcile<R: Runtime>(window: &WebviewWindow<R>, panel: &Panel) {
         let minimized = handle.is_minimized().unwrap_or(false);
         let action = {
             let mut state = panel.state.lock().unwrap();
-            if minimized {
-                state.presented();
-            }
             let now = Instant::now();
-            let display_settling = state.display_settling(now);
-            state.reconcile(active || display_settling, now)
+            if minimized {
+                state.presented(now);
+            }
+            state.reconcile(active, now)
         };
         notify_visibility(&handle, active);
         match action {
@@ -365,10 +351,7 @@ fn reconcile<R: Runtime>(window: &WebviewWindow<R>, panel: &Panel) {
                         if !panel.state.lock().unwrap().current(revision) {
                             return;
                         }
-                        if is_active(&queued) || {
-                            let state = panel.state.lock().unwrap();
-                            state.display_settling(Instant::now())
-                        } {
+                        if is_active(&queued) {
                             reconcile(&queued, &panel);
                         } else {
                             apply_render(&queued, panel, revision, true);
@@ -603,33 +586,27 @@ mod tests {
         state.reconcile(true, now);
         assert_eq!(state.pending_refresh(now + DISPLAY_DEBOUNCE), Some(first));
         state.refreshed(first, false);
-        assert_eq!(state.pending_refresh(now + DISPLAY_SETTLE), Some(first));
-        let newer = state.display_changed(now + DISPLAY_SETTLE).unwrap();
+        let later = now + DISPLAY_DEBOUNCE * 2;
+        assert_eq!(state.pending_refresh(later), Some(first));
+        let newer = state.display_changed(later).unwrap();
         state.refreshed(first, true);
-        assert!(state.pending_refresh(now + DISPLAY_SETTLE).is_none());
-        assert_eq!(
-            state.pending_refresh(now + DISPLAY_SETTLE + DISPLAY_DEBOUNCE),
-            Some(newer)
-        );
+        assert!(state.pending_refresh(later).is_none());
+        assert_eq!(state.pending_refresh(later + DISPLAY_DEBOUNCE), Some(newer));
         state.refreshed(newer, true);
-        assert!(
-            state
-                .pending_refresh(now + DISPLAY_SETTLE + DISPLAY_DEBOUNCE)
-                .is_none()
-        );
+        assert!(state.pending_refresh(later + DISPLAY_DEBOUNCE).is_none());
         state.phase = Phase::Closed;
         assert!(state.display_changed(now).is_none());
-        assert!(state.pending_refresh(now + DISPLAY_SETTLE).is_none());
+        assert!(state.pending_refresh(later).is_none());
     }
 
     #[test]
-    fn presenting_during_display_debounce_keeps_the_refresh_and_settle_timer_current() {
+    fn presenting_during_display_debounce_keeps_the_refresh_timer_current() {
         let now = Instant::now();
         let mut state = State::new(false, now);
         state.loaded();
         let timer_revision = state.display_changed(now).unwrap();
-        state.presented(); // Present at 50 ms, followed by WM_SHOWWINDOW at 250 ms.
         for elapsed in [50, 250] {
+            state.presented(now + Duration::from_millis(elapsed));
             assert!(
                 state
                     .pending_refresh(now + Duration::from_millis(elapsed))
@@ -642,32 +619,28 @@ mod tests {
             Some(timer_revision)
         );
         state.refreshed(timer_revision, true);
-        assert!(!state.display_settling(now + DISPLAY_SETTLE));
-        assert!(matches!(
-            state.reconcile(false, now + DISPLAY_SETTLE),
-            Some(Action::Suspend(_))
-        ));
+        assert!(state.pending_refresh(now + DISPLAY_DEBOUNCE).is_none());
     }
 
     #[test]
-    fn display_settling_invalidates_a_pending_suspend_and_expires() {
+    fn display_changes_leave_hidden_panels_asleep_and_refresh_only_after_restore() {
         let now = Instant::now();
         let mut state = State::new(false, now);
         state.loaded();
         let Some(Action::Suspend(old)) = state.reconcile(false, now) else {
             panic!()
         };
-        assert!(!state.display_settling(now));
-        state.display_changed(now);
-        assert!(state.display_settling(now));
-        state.reconcile(state.display_settling(now), now);
-        assert!(!state.suspend_completed(old));
-        assert!(state.display_settling(now + DISPLAY_DEBOUNCE));
-        assert!(!state.display_settling(now + DISPLAY_SETTLE));
+        let refresh = state.display_changed(now).unwrap();
+        assert_eq!(state.reconcile(false, now), None);
+        assert!(state.suspend_completed(old));
+        let later = now + DISPLAY_DEBOUNCE;
+        assert_eq!(state.reconcile(false, later), None);
+        assert!(state.pending_refresh(later).is_none());
         assert!(matches!(
-            state.reconcile(false, now + DISPLAY_SETTLE),
-            Some(Action::Suspend(_))
+            state.reconcile(true, later),
+            Some(Action::Resume(_))
         ));
+        assert_eq!(state.pending_refresh(later), Some(refresh));
     }
 
     #[test]
@@ -693,10 +666,16 @@ mod tests {
 
     #[test]
     fn reload_never_repeats_initial_show_and_explicit_presentation_cancels_it() {
-        let mut state = State::new(true, Instant::now());
+        let now = Instant::now();
+        let mut state = State::new(true, now);
         let revision = state.loaded().unwrap();
         assert_eq!(state.loaded(), None);
-        state.presented();
+        state.presented(now);
         assert_ne!(state.show_revision, revision);
+        assert_eq!(state.pending_refresh(now), Some(0));
+        state.refreshed(0, true);
+        assert!(state.pending_refresh(now).is_none());
+        state.presented(now);
+        assert_eq!(state.pending_refresh(now), Some(0));
     }
 }

@@ -68,18 +68,16 @@ unsafe extern "system" fn callback<R: Runtime>(
         if let Some(revision) = revision {
             let (window, panel) = (context.window.clone(), context.panel.clone());
             tauri::async_runtime::spawn(async move {
-                // Coalesce display bursts by revision, then revisit once the
-                // display settles so a hidden panel can suspend again.
-                for delay in [DISPLAY_DEBOUNCE, DISPLAY_SETTLE - DISPLAY_DEBOUNCE] {
-                    tokio::time::sleep(delay).await;
-                    {
-                        let state = panel.state.lock().unwrap();
-                        if state.phase == Phase::Closed || state.display_revision != revision {
-                            return;
-                        }
+                // Coalesce display bursts; hidden panels retain the pending
+                // refresh until they become visible, without waking up here.
+                tokio::time::sleep(DISPLAY_DEBOUNCE).await;
+                {
+                    let state = panel.state.lock().unwrap();
+                    if state.phase == Phase::Closed || state.display_revision != revision {
+                        return;
                     }
-                    reconcile(&window, &panel);
                 }
+                reconcile(&window, &panel);
             });
         }
     } else if message == WM_SHOWWINDOW {
@@ -109,13 +107,7 @@ pub(super) fn refresh<R: Runtime>(window: &WebviewWindow<R>, panel: &Panel) {
             let mut bounds = Default::default();
             controller
                 .Bounds(&mut bounds)
-                .and_then(|()| {
-                    let mut nudged = bounds;
-                    nudged.right = nudged.right.saturating_add(1);
-                    let nudged_result = controller.SetBounds(nudged);
-                    let restored = controller.SetBounds(bounds);
-                    nudged_result.and(restored)
-                })
+                .and_then(|()| controller.SetBounds(bounds))
                 .and_then(|()| controller.NotifyParentWindowPositionChanged())
         };
         panel

@@ -549,6 +549,11 @@ watch(
       padding-left: 24px;
     }
 
+    :deep(img[src^="https://github.com/"][src*=".png?size=40"]) {
+      width: 40px;
+      height: 40px;
+    }
+
     :deep(li) {
       margin: 4px 0;
     }

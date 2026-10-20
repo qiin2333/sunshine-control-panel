@@ -11,7 +11,8 @@ use std::{path::PathBuf, sync::OnceLock};
 mod worker;
 
 #[cfg(target_os = "windows")]
-static WINDOWS_NOTIFICATION_WORKER: OnceLock<Result<worker::Worker, String>> = OnceLock::new();
+static WINDOWS_NOTIFICATION_WORKER: once_cell::sync::OnceCell<worker::Worker> =
+    once_cell::sync::OnceCell::new();
 
 #[cfg(target_os = "windows")]
 static WINDOWS_AUMID_REGISTRATION: OnceLock<Result<(), String>> = OnceLock::new();
@@ -346,10 +347,9 @@ fn show<R: Runtime>(
     let result = (|| {
         // Build COM objects on the serial worker. A blocked Windows service
         // must not hold up native window or tray event delivery.
+        // Retry transient thread-creation failures on the next notification.
         let worker = WINDOWS_NOTIFICATION_WORKER
-            .get_or_init(|| worker::Worker::new("sunshine-notifications", 32))
-            .as_ref()
-            .map_err(Clone::clone)?;
+            .get_or_try_init(|| worker::Worker::new("sunshine-notifications", 32))?;
         let app = app.clone();
         let key = key.clone();
         worker.submit(move || {

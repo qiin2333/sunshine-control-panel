@@ -36,9 +36,28 @@ export function useDeviceRuntime() {
 
   function refresh(options = {}) {
     const force = options?.force === true
-    // 普通刷新并入在途请求；强制刷新取代它——旧请求完成后不得
-    // 覆盖结果，也不得重置新请求的 loading/inflight。
-    if (inflight && !force) return inflight
+    // 普通刷新并入在途请求，但不复用其结果：在途请求可能启动于某次
+    // 通道失效/prime 之前（设备操作已在后台落定），它的结果已不代表
+    // 当前状态。等它落定后追加一次缓存感知读取——状态未变时命中缓存
+    // 零探测，变更过则触发重探。强制刷新则直接取代在途请求。
+    if (inflight && !force) {
+      const joined = inflight
+      const generation = ++refreshGeneration
+      loading.value = true
+      const request = joined
+        .catch(() => {})
+        .then(() => {
+          if (generation !== refreshGeneration) return undefined
+          return fetchOnce(false, generation)
+        })
+        .finally(() => {
+          if (generation !== refreshGeneration) return
+          loading.value = false
+          if (inflight === request) inflight = null
+        })
+      inflight = request
+      return request
+    }
     const generation = ++refreshGeneration
     loading.value = true
     const request = fetchOnce(force, generation).finally(() => {

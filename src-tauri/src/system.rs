@@ -69,30 +69,34 @@ pub struct SystemInfo {
 pub async fn get_gpus() -> Result<Vec<String>, String> {
     #[cfg(target_os = "windows")]
     {
-        use serde::Deserialize;
-        use wmi::WMIConnection;
+        tokio::task::spawn_blocking(|| {
+            use serde::Deserialize;
+            use wmi::WMIConnection;
 
-        #[derive(Deserialize)]
-        #[serde(rename = "Win32_VideoController")]
-        #[serde(rename_all = "PascalCase")]
-        struct VideoController {
-            name: String,
-            adapter_ram: Option<u64>,
-        }
+            #[derive(Deserialize)]
+            #[serde(rename = "Win32_VideoController")]
+            #[serde(rename_all = "PascalCase")]
+            struct VideoController {
+                name: String,
+                adapter_ram: Option<u64>,
+            }
 
-        let wmi_con = WMIConnection::new().map_err(|e| e.to_string())?;
+            let wmi_con = WMIConnection::new().map_err(|e| e.to_string())?;
 
-        let results: Vec<VideoController> = wmi_con
-            .raw_query("SELECT Name, AdapterRAM FROM Win32_VideoController")
-            .map_err(|e| e.to_string())?;
+            let results: Vec<VideoController> = wmi_con
+                .raw_query("SELECT Name, AdapterRAM FROM Win32_VideoController")
+                .map_err(|e| e.to_string())?;
 
-        let gpu_names: Vec<String> = results
-            .into_iter()
-            .filter(|controller| controller.adapter_ram.unwrap_or(0) > 0)
-            .map(|controller| controller.name)
-            .collect();
+            let gpu_names: Vec<String> = results
+                .into_iter()
+                .filter(|controller| controller.adapter_ram.unwrap_or(0) > 0)
+                .map(|controller| controller.name)
+                .collect();
 
-        Ok(gpu_names)
+            Ok(gpu_names)
+        })
+        .await
+        .map_err(|error| format!("GPU query failed: {error}"))?
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -103,34 +107,38 @@ pub async fn get_gpus() -> Result<Vec<String>, String> {
 
 #[tauri::command]
 pub async fn get_monitors() -> Result<Vec<String>, String> {
-    use xcap::Monitor;
+    tokio::task::spawn_blocking(|| {
+        use xcap::Monitor;
 
-    let monitors = Monitor::all().map_err(|e| e.to_string())?;
-    let mut names = Vec::new();
+        let monitors = Monitor::all().map_err(|e| e.to_string())?;
+        let mut names = Vec::new();
 
-    for monitor in monitors {
-        let name = monitor.name().unwrap_or_default();
-        let id = monitor.id().map(|id| id.to_string()).unwrap_or_default();
-        let width = monitor.width().unwrap_or(0);
-        let height = monitor.height().unwrap_or(0);
-        let label = if !name.trim().is_empty() {
-            name
-        } else if !id.is_empty() {
-            format!("Monitor-{}", id)
-        } else {
-            "Monitor".to_string()
-        };
+        for monitor in monitors {
+            let name = monitor.name().unwrap_or_default();
+            let id = monitor.id().map(|id| id.to_string()).unwrap_or_default();
+            let width = monitor.width().unwrap_or(0);
+            let height = monitor.height().unwrap_or(0);
+            let label = if !name.trim().is_empty() {
+                name
+            } else if !id.is_empty() {
+                format!("Monitor-{}", id)
+            } else {
+                "Monitor".to_string()
+            };
 
-        if width > 0 && height > 0 {
-            names.push(format!("{} ({}x{})", label, width, height));
-        } else {
-            names.push(label);
+            if width > 0 && height > 0 {
+                names.push(format!("{} ({}x{})", label, width, height));
+            } else {
+                names.push(label);
+            }
         }
-    }
 
-    names.sort();
-    names.dedup();
-    Ok(names)
+        names.sort();
+        names.dedup();
+        Ok(names)
+    })
+    .await
+    .map_err(|error| format!("Monitor query failed: {error}"))?
 }
 
 #[tauri::command]
@@ -147,13 +155,18 @@ pub async fn get_system_info() -> Result<SystemInfo, String> {
         let build_time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         // 使用 WMI 获取 Windows 系统信息
-        let (os_version, memory_total, cpu_model) = match get_windows_system_info().await {
-            Ok((os_ver, mem, cpu)) => (os_ver, Some(mem), Some(cpu)),
-            Err(e) => {
-                error!("获取 Windows 系统信息失败: {}", e);
-                (format!("Windows {}", env::consts::OS), None, None)
-            }
-        };
+        let (os_version, memory_total, cpu_model) =
+            match tokio::task::spawn_blocking(get_windows_system_info)
+                .await
+                .map_err(|error| error.to_string())
+                .and_then(|result| result)
+            {
+                Ok((os_ver, mem, cpu)) => (os_ver, Some(mem), Some(cpu)),
+                Err(e) => {
+                    error!("获取 Windows 系统信息失败: {}", e);
+                    (format!("Windows {}", env::consts::OS), None, None)
+                }
+            };
 
         Ok(SystemInfo {
             arch,
@@ -184,7 +197,7 @@ pub async fn get_system_info() -> Result<SystemInfo, String> {
 }
 
 #[cfg(target_os = "windows")]
-async fn get_windows_system_info() -> Result<(String, u64, String), String> {
+fn get_windows_system_info() -> Result<(String, u64, String), String> {
     use wmi::WMIConnection;
 
     #[derive(Deserialize)]

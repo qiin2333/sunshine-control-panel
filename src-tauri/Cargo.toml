@@ -11,15 +11,19 @@ edition = "2024"
 
 [build-dependencies]
 serde_json = "1"
-tauri-build = { version = "2.6.3", features = [] }
+tauri-build = { version = "2.7.3", features = [] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
+tauri = { version = "~2.12.4", features = ["test"] }
 
 [dependencies]
-tauri = { version = "2.11.5", features = [ "tray-icon", "native-tls-vendored"] }
-tauri-plugin-dialog = "2.7.2"
-tauri-plugin-notification = "2.3.3"
-tauri-plugin-fs = "2.5.1"
-tauri-plugin-single-instance = "2.4.3"
-tauri-plugin-global-shortcut = "2.3.2"
+tauri = { version = "~2.12.4", features = [ "tray-icon", "native-tls-vendored"] }
+tauri-plugin-dialog = "2.8.3"
+tauri-plugin-notification = "2.7.0"
+tauri-plugin-fs = "2.7.1"
+tauri-plugin-single-instance = "2.5.4"
+tauri-plugin-global-shortcut = "2.4.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1", features = ["full"] }
@@ -98,8 +102,8 @@ windows = { version = "0.62.2", features = [
     "Win32_Devices_DeviceAndDriverInstallation",
 ] }
 # WebView2 COM 接口，用于访问 ICoreWebView2Settings4 等高级设置
-webview2-com = "0.38"
-# webview2-com 使用 windows-core 0.61，需要此版本的 Interface trait 来调用 .cast()
-wv2-windows-core = { package = "windows-core", version = "0.61" }
+webview2-com = "0.39"
+# Match the WebView2 bindings used by wry 0.57 and their Interface trait.
+wv2-windows-core = { package = "windows-core", version = "0.62" }
 winreg = "0.55"
 image = "0.25.9"

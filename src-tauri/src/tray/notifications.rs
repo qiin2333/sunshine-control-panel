@@ -7,17 +7,21 @@ use tauri_plugin_notification::NotificationExt;
 #[cfg(target_os = "windows")]
 use std::{path::PathBuf, sync::OnceLock};
 
+#[cfg(any(target_os = "windows", test))]
+mod worker;
+
+#[cfg(target_os = "windows")]
+static WINDOWS_NOTIFICATION_WORKER: once_cell::sync::OnceCell<worker::Worker> =
+    once_cell::sync::OnceCell::new();
+
 #[cfg(target_os = "windows")]
 static WINDOWS_AUMID_REGISTRATION: OnceLock<Result<(), String>> = OnceLock::new();
 #[cfg(target_os = "windows")]
 static WINDOWS_NOTIFICATION_ICON: OnceLock<Result<PathBuf, String>> = OnceLock::new();
-#[cfg(target_os = "windows")]
-type NotificationJob = Box<dyn FnOnce() + Send>;
-#[cfg(target_os = "windows")]
-static CONNECTION_NOTIFICATIONS: OnceLock<
-    Result<std::sync::mpsc::SyncSender<NotificationJob>, String>,
-> = OnceLock::new();
-static LAST_SHOWN_NOTIFICATION: Mutex<Option<(String, u64)>> = Mutex::new(None);
+type NotificationKey = (String, u64);
+// One reservation covers both queued and delivered notifications. Failures
+// release only their own key, so an older job cannot clear a newer reservation.
+static LAST_NOTIFICATION: Mutex<Option<NotificationKey>> = Mutex::new(None);
 
 #[cfg(target_os = "windows")]
 const WINDOWS_NOTIFICATION_ICON_BYTES: &[u8] = include_bytes!("../../icons/tray/sunshine.ico");
@@ -269,66 +273,10 @@ pub(super) fn show_connection_change_if_any<R: Runtime>(
     let strings = super::get_tray_strings();
     for change in connection_changes(previous, current) {
         let content = connection_content(strings, change);
-        #[cfg(target_os = "windows")]
-        let result = queue_connection_notification(app, content);
-        #[cfg(not(target_os = "windows"))]
-        let result = show(app, &content.title, &content.body, None);
-        if let Err(error) = result {
+        if let Err(error) = show(app, content, None, connection_is_enabled, None) {
             warn!("{}", error);
         }
     }
-}
-
-#[cfg(target_os = "windows")]
-fn queue_connection_notification<R: Runtime>(
-    app: &AppHandle<R>,
-    content: NotificationContent,
-) -> Result<(), String> {
-    use std::sync::mpsc::{TrySendError, sync_channel};
-    use windows::Win32::System::WinRT::{RO_INIT_MULTITHREADED, RoInitialize, RoUninitialize};
-
-    let sender = CONNECTION_NOTIFICATIONS
-        .get_or_init(|| {
-            let (sender, receiver) = sync_channel::<NotificationJob>(16);
-            std::thread::Builder::new()
-                .name("sunshine-connection-notifications".to_string())
-                .spawn(move || {
-                    if let Err(error) = unsafe { RoInitialize(RO_INIT_MULTITHREADED) } {
-                        warn!("Failed to initialize notification COM apartment: {error}");
-                        return;
-                    }
-                    for job in receiver {
-                        job();
-                    }
-                    unsafe {
-                        RoUninitialize();
-                    }
-                })
-                .map_err(|error| {
-                    format!("Failed to start connection notification worker: {error}")
-                })?;
-            Ok(sender)
-        })
-        .as_ref()
-        .map_err(|error| error.clone())?;
-
-    let app = app.clone();
-    sender
-        .try_send(Box::new(move || {
-            if connection_is_enabled()
-                && let Err(error) = show(&app, &content.title, &content.body, None)
-            {
-                warn!("{error}");
-            }
-        }))
-        .map_err(|error| match error {
-            TrySendError::Full(_) => {
-                "Connection notification queue is full; notification skipped".to_string()
-            }
-            TrySendError::Disconnected(_) => {
-                "Connection notification worker is unavailable".to_string()
-            }
-        })
 }
 
 pub(super) fn show_core_notification_if_new<R: Runtime>(
@@ -342,68 +290,105 @@ pub(super) fn show_core_notification_if_new<R: Runtime>(
 
     let key = (state.instance_id.clone(), notification.id);
     {
-        let last_shown = LAST_SHOWN_NOTIFICATION.lock().unwrap();
-        if last_shown.as_ref() == Some(&key) {
+        let mut last = LAST_NOTIFICATION.lock().unwrap();
+        if last.as_ref() == Some(&key) {
             return;
         }
+        // Reserve before enqueueing: a fast worker failure must be the last
+        // writer, rather than being overwritten by the enqueueing thread.
+        *last = Some(key.clone());
     }
 
     let supports_actions = supports_actions();
     let content = core_notification_content(super::get_tray_strings(), state, supports_actions);
     let action = (notification.action == "open_pin" && supports_actions)
         .then_some(NotificationAction::OpenPin);
-    match show(app, &content.title, &content.body, action) {
+    match show(app, content, action, is_enabled, Some(key)) {
         Ok(()) => {
-            *LAST_SHOWN_NOTIFICATION.lock().unwrap() = Some(key);
             debug!("Queued native tray notification {}", notification.id);
         }
         Err(error) => warn!("{}", error),
     }
 }
 
-#[cfg(target_os = "windows")]
-pub(super) fn show<R: Runtime>(
-    app: &AppHandle<R>,
-    title: &str,
-    body: &str,
-    action: Option<NotificationAction>,
-) -> Result<(), String> {
-    if !is_enabled() {
-        debug!("Native tray notification disabled by desktop settings");
-        return Ok(());
+fn forget_notification(key: &Option<NotificationKey>) {
+    if let Some(key) = key {
+        let mut last = LAST_NOTIFICATION.lock().unwrap();
+        if last.as_ref() == Some(key) {
+            *last = None;
+        }
     }
-
-    // Unpackaged Win32 apps must register the same AUMID used by the toast
-    // backend. Without it, Windows records the notification as delivered but
-    // may never render a banner for the application.
-    ensure_windows_aumid_registered(app)?;
-    show_windows(app, title, body, action)
 }
 
-#[cfg(not(target_os = "windows"))]
-pub(super) fn show<R: Runtime>(
-    app: &AppHandle<R>,
-    title: &str,
-    body: &str,
-    action: Option<NotificationAction>,
+fn deliver_notification(
+    key: &Option<NotificationKey>,
+    enabled: impl FnOnce() -> bool,
+    send: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
-    if !is_enabled() {
-        debug!("Native tray notification disabled by desktop settings");
+    if !enabled() {
+        forget_notification(key);
         return Ok(());
     }
-
-    let mut builder = app.notification().builder().title(title).sound("Default");
-    if !body.trim().is_empty() {
-        builder = builder.body(body);
+    let result = send();
+    if result.is_err() {
+        forget_notification(key);
     }
+    result
+}
 
-    builder
-        .show()
-        .map_err(|error| format!("Failed to show native tray notification: {error}"))?;
+fn show<R: Runtime>(
+    app: &AppHandle<R>,
+    content: NotificationContent,
+    action: Option<NotificationAction>,
+    enabled: fn() -> bool,
+    key: Option<NotificationKey>,
+) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let result = (|| {
+        // Build COM objects on the serial worker. A blocked Windows service
+        // must not hold up native window or tray event delivery.
+        // Retry transient thread-creation failures on the next notification.
+        let worker = WINDOWS_NOTIFICATION_WORKER
+            .get_or_try_init(|| worker::Worker::new("sunshine-notifications", 32))?;
+        let app = app.clone();
+        let key = key.clone();
+        worker.submit(move || {
+            let started = std::time::Instant::now();
+            if let Err(error) = deliver_notification(&key, enabled, || {
+                show_windows(&app, &content.title, &content.body, action)
+            }) {
+                warn!("{error}");
+            }
+            if started.elapsed() >= std::time::Duration::from_secs(2) {
+                warn!(
+                    "Windows notification submission took {:?}",
+                    started.elapsed()
+                );
+            }
+        })
+    })();
 
-    let _ = action;
+    #[cfg(not(target_os = "windows"))]
+    let result = deliver_notification(&key, enabled, || {
+        let mut builder = app
+            .notification()
+            .builder()
+            .title(&content.title)
+            .sound("Default");
+        if !content.body.trim().is_empty() {
+            builder = builder.body(&content.body);
+        }
+        let _ = action;
+        builder
+            .show()
+            .map_err(|error| format!("Failed to show native tray notification: {error}"))
+    });
 
-    Ok(())
+    #[cfg(target_os = "windows")]
+    if result.is_err() {
+        forget_notification(&key); // Worker initialization/queue rejection can fail too.
+    }
+    result
 }
 
 #[cfg(target_os = "windows")]
@@ -415,6 +400,21 @@ fn show_windows<R: Runtime>(
 ) -> Result<(), String> {
     use std::sync::mpsc;
     use tauri_winrt_notification::{IconCrop, Sound, Toast};
+    use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize};
+
+    struct ComApartment;
+    impl Drop for ComApartment {
+        fn drop(&mut self) {
+            unsafe { CoUninitialize() };
+        }
+    }
+    unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
+        .ok()
+        .map_err(|error| format!("Failed to initialize notification COM apartment: {error}"))?;
+    let _apartment = ComApartment;
+
+    // Unpackaged apps must register the same AUMID used by the toast backend.
+    ensure_windows_aumid_registered(app)?;
 
     let icon_path = ensure_windows_notification_icon()?;
     let mut toast = Toast::new(&app.config().identifier)
@@ -467,6 +467,82 @@ fn show_windows<R: Runtime>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn queued_notifications_recheck_preferences_and_release_only_failed_reservations() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+            mpsc,
+        };
+        use std::time::Duration;
+
+        let worker = worker::Worker::new("notification-preferences-test", 2).unwrap();
+        let (started, ready) = mpsc::channel();
+        let (release, blocked) = mpsc::channel();
+        worker
+            .submit(move || {
+                started.send(()).unwrap();
+                blocked.recv().unwrap();
+            })
+            .unwrap();
+        ready.recv_timeout(Duration::from_secs(2)).unwrap();
+
+        let key = Some(("core".into(), 1));
+        *LAST_NOTIFICATION.lock().unwrap() = key.clone();
+        let enabled = Arc::new(AtomicBool::new(true));
+        let preference = enabled.clone();
+        let queued_key = key.clone();
+        let (done, completed) = mpsc::channel();
+        worker
+            .submit(move || {
+                let result = deliver_notification(
+                    &queued_key,
+                    || preference.load(Ordering::Acquire),
+                    || panic!("a notification disabled while queued must not be shown"),
+                );
+                done.send(result).unwrap();
+            })
+            .unwrap();
+        enabled.store(false, Ordering::Release);
+        release.send(()).unwrap();
+        completed
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        assert!(LAST_NOTIFICATION.lock().unwrap().is_none());
+
+        // Reserving before enqueueing lets even a fast worker failure release
+        // the key; no caller assignment may overwrite that failure afterward.
+        *LAST_NOTIFICATION.lock().unwrap() = key.clone();
+        let queued_key = key.clone();
+        let (done, completed) = mpsc::channel();
+        worker
+            .submit(move || {
+                done.send(deliver_notification(
+                    &queued_key,
+                    || true,
+                    || Err("service unavailable".into()),
+                ))
+                .unwrap();
+            })
+            .unwrap();
+        assert!(
+            completed
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .is_err()
+        );
+        assert!(LAST_NOTIFICATION.lock().unwrap().is_none());
+
+        let newer = Some(("core".into(), 2));
+        *LAST_NOTIFICATION.lock().unwrap() = newer.clone();
+        assert!(deliver_notification(&key, || true, || Err("older job failed".into())).is_err());
+        assert_eq!(*LAST_NOTIFICATION.lock().unwrap(), newer);
+        deliver_notification(&newer, || true, || Ok(())).unwrap();
+        assert_eq!(*LAST_NOTIFICATION.lock().unwrap(), newer);
+        *LAST_NOTIFICATION.lock().unwrap() = None;
+    }
 
     fn tray_state(status: &str, instance_id: &str) -> crate::sunshine::TrayState {
         crate::sunshine::TrayState {

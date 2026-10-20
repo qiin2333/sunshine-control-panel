@@ -147,7 +147,7 @@ pub(super) fn open_pairing_window<R: Runtime>(app: &AppHandle<R>) {
         match sunshine::get_local_sunshine_url().await {
             Ok(url) => {
                 proxy_server::set_sunshine_target(url);
-                proxy_server::ensure_started();
+                proxy_server::ensure_started(&app_handle);
                 let pin_handle = app_handle.clone();
                 if let Err(e) = app_handle.run_on_main_thread(move || {
                     if let Err(e) = windows::open_pin_window(&pin_handle) {

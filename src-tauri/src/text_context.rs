@@ -2,19 +2,15 @@
 
 use std::cell::Cell;
 use std::sync::OnceLock;
-use std::sync::atomic::AtomicU64;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
-    mpsc as std_mpsc,
 };
-use std::thread::JoinHandle;
 use std::time::Duration;
 use std::time::Instant;
 
-use log::{debug, info, warn};
+use log::{info, warn};
 use serde::Serialize;
-use tauri::async_runtime::JoinHandle as AsyncJoinHandle;
 use tokio::sync::Notify;
 use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::ClientToScreen;
@@ -52,17 +48,31 @@ const PANE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 // Caret geometry is useful only for an active editor and remains scoped to
 // that editor, so games and ordinary desktop focus do not pay this cost.
 const EDITOR_CARET_POLL: Duration = Duration::from_millis(200);
-// UIA focus/foreground events are the normal trigger. The watchdog is only a
-// compatibility fallback while an editor is known to hold focus.
-const FOCUS_WATCHDOG_POLL: Duration = Duration::from_secs(5);
 // Focus-event bursts (menu traversal, Alt+Tab) collapse into one snapshot.
 const RESCAN_DEBOUNCE: Duration = Duration::from_millis(40);
-// The core expires GUI presence after 30 seconds. This task is deliberately
-// much cheaper than the observer and remains alive so the first RTSP
-// capability negotiation can see a supported GUI without starting UIA.
-const PRESENCE_INTERVAL: Duration = Duration::from_secs(20);
-const OBSERVATION_RETRY_INTERVAL: Duration = Duration::from_millis(250);
-const OBSERVER_STOP_TIMEOUT: Duration = Duration::from_secs(2);
+mod agent;
+pub use agent::{reconcile_streaming_state, set_enabled, start, stop};
+
+fn observer_wait(
+    now: Instant,
+    editor_focused: bool,
+    pane_available: bool,
+    last_snapshot: Instant,
+    last_pane_check: Instant,
+    rescan_at: Option<Instant>,
+) -> Duration {
+    let mut wait = Duration::from_millis(500);
+    if editor_focused {
+        wait = wait.min(EDITOR_CARET_POLL.saturating_sub(now.duration_since(last_snapshot)));
+        if pane_available {
+            wait = wait.min(PANE_POLL_INTERVAL.saturating_sub(now.duration_since(last_pane_check)));
+        }
+    }
+    if let Some(at) = rescan_at {
+        wait = wait.min(RESCAN_DEBOUNCE.saturating_sub(now.duration_since(at)));
+    }
+    wait.clamp(Duration::from_millis(5), Duration::from_millis(500))
+}
 
 fn agent_id() -> &'static str {
     static AGENT_ID: OnceLock<String> = OnceLock::new();
@@ -136,6 +146,10 @@ struct ObservationQueue {
 }
 
 impl ObservationQueue {
+    fn clear(&self) {
+        *self.pending.lock().unwrap_or_else(|e| e.into_inner()) = PendingObservations::default();
+    }
+
     fn publish(&self, observation: Observation) {
         let mut pending = self
             .pending
@@ -271,51 +285,6 @@ fn caret_from_win32() -> Option<WireRect> {
     }
 }
 
-struct CapabilityState {
-    agent_present: AtomicBool,
-    observer_active: AtomicBool,
-    input_pane_available: AtomicBool,
-    uia_available: AtomicBool,
-    generation: AtomicU64,
-    wake: Notify,
-}
-
-struct PresenceState {
-    stop: Arc<AtomicBool>,
-    capability: Arc<CapabilityState>,
-    task: AsyncJoinHandle<()>,
-}
-
-struct ObserverState {
-    generation: u64,
-    stop: Arc<AtomicBool>,
-    observer_thread: Option<JoinHandle<()>>,
-    observer_done: std_mpsc::Receiver<()>,
-    network_task: Option<AsyncJoinHandle<()>>,
-}
-
-static PRESENCE: Mutex<Option<PresenceState>> = Mutex::new(None);
-static OBSERVER: Mutex<Option<ObserverState>> = Mutex::new(None);
-static LIFECYCLE: Mutex<()> = Mutex::new(());
-static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
-static ENABLED: AtomicBool = AtomicBool::new(true);
-
-fn owns_generation(capability: &CapabilityState, generation: u64) -> bool {
-    capability.generation.load(Ordering::Acquire) == generation
-}
-
-fn clear_capability_if_owned(capability: &CapabilityState, generation: u64) {
-    if !owns_generation(capability, generation) {
-        return;
-    }
-    capability
-        .input_pane_available
-        .store(false, Ordering::Release);
-    capability.uia_available.store(false, Ordering::Release);
-    capability.observer_active.store(false, Ordering::Release);
-    capability.wake.notify_one();
-}
-
 fn is_confirmed_editor(is_edit_control: bool, value_read_only: Option<bool>) -> bool {
     // TextEditPattern can exist on a read-only Chromium Document. Missing or
     // failed ValuePattern reads remain unknown, never evidence of editability.
@@ -414,38 +383,42 @@ fn pump_messages() {
     }
 }
 
-fn observer_loop(
-    generation: u64,
-    stop: Arc<AtomicBool>,
-    capability: Arc<CapabilityState>,
-    queue: Arc<ObservationQueue>,
-) {
+struct ComApartment;
+
+impl Drop for ComApartment {
+    fn drop(&mut self) {
+        unsafe { CoUninitialize() };
+    }
+}
+
+struct FocusHook(HWINEVENTHOOK);
+
+impl Drop for FocusHook {
+    fn drop(&mut self) {
+        if !self.0.is_invalid() {
+            let _ = unsafe { UnhookWinEvent(self.0) };
+        }
+    }
+}
+
+fn observer_loop(generation: u64, stop: Arc<AtomicBool>, shared: Arc<agent::Shared>) {
     let initialized = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.is_ok();
     if !initialized {
         warn!("text context observer could not initialize COM");
-        let _lifecycle = LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
-        clear_capability_if_owned(&capability, generation);
         return;
     }
+    // Declared before the COM interfaces and hooks, so it is dropped last on
+    // normal stop, early return or unwinding.
+    let _apartment = ComApartment;
 
     let pane: Option<IFrameworkInputPane> =
         unsafe { CoCreateInstance(&FRAMEWORK_INPUT_PANE, None, CLSCTX_INPROC_SERVER).ok() };
     let automation: Option<IUIAutomation> =
         unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok() };
-    {
-        let _lifecycle = LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
-        if stop.load(Ordering::Acquire) || !owns_generation(&capability, generation) {
-            unsafe { CoUninitialize() };
-            return;
-        }
-        capability
-            .input_pane_available
-            .store(pane.is_some(), Ordering::Release);
-        capability
-            .uia_available
-            .store(automation.is_some(), Ordering::Release);
-        capability.observer_active.store(true, Ordering::Release);
-        capability.wake.notify_one();
+    let cancelled = stop.load(Ordering::Acquire)
+        || !shared.ready(generation, pane.is_some(), automation.is_some());
+    if cancelled {
+        return;
     }
     info!(
         "text context observer started (input_pane={}, uia={})",
@@ -469,11 +442,9 @@ fn observer_loop(
         Some(request)
     });
 
-    // Focus changes push us; the remaining polling is only a watchdog for
-    // apps that raise no events, plus the caret cadence while an editor is
-    // focused. Idle desktops and full-screen games cost zero cross-process
-    // UIA traffic.
-    let hook_focus = unsafe {
+    // Focus events drive snapshots; only confirmed editors poll caret geometry.
+    // Idle desktops and full-screen games cost zero cross-process UIA traffic.
+    let _hook_focus = FocusHook(unsafe {
         SetWinEventHook(
             EVENT_OBJECT_FOCUS,
             EVENT_OBJECT_FOCUS,
@@ -483,8 +454,8 @@ fn observer_loop(
             0,
             WINEVENT_OUTOFCONTEXT,
         )
-    };
-    let hook_foreground = unsafe {
+    });
+    let _hook_foreground = FocusHook(unsafe {
         SetWinEventHook(
             EVENT_SYSTEM_FOREGROUND,
             EVENT_SYSTEM_FOREGROUND,
@@ -494,7 +465,7 @@ fn observer_loop(
             0,
             WINEVENT_OUTOFCONTEXT,
         )
-    };
+    });
 
     let mut previous_pane_visible = false;
     let mut previous_focus: Option<FocusSignature> = None;
@@ -517,7 +488,7 @@ fn observer_loop(
                         let rect = WireRect::from(rect);
                         let visible = rect.visible();
                         if visible && !previous_pane_visible {
-                            queue.publish(Observation {
+                            shared.publish(Observation {
                                 version: 1,
                                 agent_id: agent_id(),
                                 generation,
@@ -551,13 +522,10 @@ fn observer_loop(
             _ => false,
         });
         let need_snapshot = rescan_due
-            || (editor_focused && now.duration_since(last_snapshot) >= FOCUS_WATCHDOG_POLL)
             || (editor_focused && now.duration_since(last_snapshot) >= EDITOR_CARET_POLL);
 
         if need_snapshot {
-            // Advance unconditionally: with UIA unavailable the watchdog must
-            // not re-fire every iteration, or the loop degenerates to the
-            // clamped 5ms minimum wait.
+            // Reset the polling deadline even when no snapshot is available.
             last_snapshot = now;
             if let (Some(automation), Some(cache)) = (automation.as_ref(), cache.as_ref()) {
                 match inspect_focused_element(automation, cache, generation) {
@@ -567,13 +535,13 @@ fn observer_loop(
                             // Publish non-editable focus too. The core caches UIA as
                             // level-triggered state, so explicit negative transitions
                             // prevent a previously focused editor from going stale.
-                            queue.publish(observation);
+                            shared.publish(observation);
                             previous_focus = Some(signature);
                         }
                     }
                     None if previous_focus.take().is_some() => {
                         editor_focused = false;
-                        queue.publish(Observation {
+                        shared.publish(Observation {
                             version: 1,
                             agent_id: agent_id(),
                             generation,
@@ -597,17 +565,14 @@ fn observer_loop(
         // The pending debounce deadline must be included, or a freshly
         // scheduled rescan sleeps behind the 500ms clamp and delays the
         // focus response by that much.
-        let mut wait = FOCUS_WATCHDOG_POLL.saturating_sub(now.duration_since(last_snapshot));
-        if editor_focused {
-            wait = wait.min(EDITOR_CARET_POLL.saturating_sub(now.duration_since(last_snapshot)));
-        }
-        if editor_focused {
-            wait = wait.min(PANE_POLL_INTERVAL.saturating_sub(now.duration_since(last_pane_check)));
-        }
-        if let Some(at) = RESCAN_AT.with(|slot| slot.get()) {
-            wait = wait.min(RESCAN_DEBOUNCE.saturating_sub(now.duration_since(at)));
-        }
-        let wait = wait.clamp(Duration::from_millis(5), Duration::from_millis(500));
+        let wait = observer_wait(
+            Instant::now(),
+            editor_focused,
+            pane.is_some(),
+            last_snapshot,
+            last_pane_check,
+            RESCAN_AT.with(|slot| slot.get()),
+        );
         unsafe {
             MsgWaitForMultipleObjectsEx(
                 None,
@@ -618,20 +583,6 @@ fn observer_loop(
         }
     }
 
-    unsafe {
-        if !hook_focus.is_invalid() {
-            let _ = UnhookWinEvent(hook_focus);
-        }
-        if !hook_foreground.is_invalid() {
-            let _ = UnhookWinEvent(hook_foreground);
-        }
-    }
-    let _lifecycle = LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
-    clear_capability_if_owned(&capability, generation);
-    drop(cache);
-    drop(pane);
-    drop(automation);
-    unsafe { CoUninitialize() };
     info!("text context observer stopped");
 }
 
@@ -651,255 +602,35 @@ async fn post_json(path: &str, body: &impl Serialize) -> Result<(), String> {
     }
 }
 
-async fn presence_loop(stop: Arc<AtomicBool>, capability: Arc<CapabilityState>) {
-    let mut heartbeat = tokio::time::interval(PRESENCE_INTERVAL);
-    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    loop {
-        tokio::select! {
-            _ = heartbeat.tick() => {
-                publish_capability(&capability).await;
-            }
-            _ = capability.wake.notified() => {
-                publish_capability(&capability).await;
-            }
-        }
-        if stop.load(Ordering::Acquire) {
-            break;
-        }
-    }
-}
-
-async fn publish_capability(capability: &CapabilityState) {
-    let body = serde_json::json!({
-        "version": 1,
-        "agent": capability.agent_present.load(Ordering::Acquire),
-        "agent_id": agent_id(),
-        "supports_text_context": true,
-        "observer_active": capability.observer_active.load(Ordering::Acquire),
-        "input_pane": capability.input_pane_available.load(Ordering::Acquire),
-        "uia": capability.uia_available.load(Ordering::Acquire),
-        "generation": capability.generation.load(Ordering::Acquire),
-    });
-    if let Err(error) = post_json("/api/v1/text-context/capability", &body).await {
-        debug!("text context capability update failed: {error}");
-    }
-}
-
-pub fn register_presence() {
-    let mut presence = PRESENCE.lock().unwrap_or_else(|e| e.into_inner());
-    if presence.is_some() {
-        return;
-    }
-
-    let stop = Arc::new(AtomicBool::new(false));
-    let capability = Arc::new(CapabilityState {
-        agent_present: AtomicBool::new(true),
-        observer_active: AtomicBool::new(false),
-        input_pane_available: AtomicBool::new(false),
-        uia_available: AtomicBool::new(false),
-        generation: AtomicU64::new(NEXT_GENERATION.fetch_add(1, Ordering::AcqRel)),
-        wake: Notify::new(),
-    });
-
-    let task_stop = stop.clone();
-    let task_capability = capability.clone();
-    let task = tauri::async_runtime::spawn(async move {
-        presence_loop(task_stop, task_capability).await;
-    });
-    *presence = Some(PresenceState {
-        stop,
-        capability,
-        task,
-    });
-}
-
-pub fn reconcile_streaming_state(active: bool) {
-    let _lifecycle = LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
-    if active && ENABLED.load(Ordering::Acquire) {
-        start_observer();
-    } else {
-        stop_observer();
-    }
-}
-
-pub fn set_enabled(enabled: bool) {
-    let _lifecycle = LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
-    ENABLED.store(enabled, Ordering::Release);
-    if !enabled {
-        stop_observer();
-        let capability = PRESENCE
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .as_ref()
-            .map(|presence| {
-                presence
-                    .capability
-                    .agent_present
-                    .store(false, Ordering::Release);
-                presence.capability.clone()
-            });
-        if let Some(capability) = capability {
-            tauri::async_runtime::spawn(async move {
-                publish_capability(&capability).await;
-            });
-        }
-        stop_presence();
-        return;
-    }
-
-    register_presence();
-    if crate::tray::is_text_context_streaming() {
-        start_observer();
-    }
-}
-
-fn start_observer() {
-    if !ENABLED.load(Ordering::Acquire) {
-        return;
-    }
-    register_presence();
-
-    let Some(capability) = PRESENCE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .as_ref()
-        .map(|presence| presence.capability.clone())
-    else {
-        return;
-    };
-
-    let mut state = OBSERVER.lock().unwrap_or_else(|e| e.into_inner());
-    if state.is_some() {
-        return;
-    }
-
-    let generation = NEXT_GENERATION.fetch_add(1, Ordering::AcqRel);
-    capability.generation.store(generation, Ordering::Release);
-    capability.observer_active.store(false, Ordering::Release);
-    capability
-        .input_pane_available
-        .store(false, Ordering::Release);
-    capability.uia_available.store(false, Ordering::Release);
-    capability.wake.notify_one();
-
-    let stop = Arc::new(AtomicBool::new(false));
-    let queue = Arc::new(ObservationQueue::default());
-    let (observer_done_tx, observer_done) = std_mpsc::sync_channel(1);
-
-    let observer_stop = stop.clone();
-    let observer_capability = capability.clone();
-    let observer_queue = queue.clone();
-    let observer_thread = std::thread::Builder::new()
-        .name("text-context-observer".into())
-        .spawn(move || {
-            observer_loop(
-                generation,
-                observer_stop,
-                observer_capability,
-                observer_queue,
-            );
-            let _ = observer_done_tx.send(());
-        })
-        .ok();
-
-    if observer_thread.is_none() {
-        warn!("failed to create text context observer thread (generation={generation})");
-        capability.observer_active.store(false, Ordering::Release);
-        capability.wake.notify_one();
-        return;
-    }
-
-    let task_stop = stop.clone();
-    let task_queue = queue;
-    let network_task =
-        tauri::async_runtime::spawn(async move { observation_loop(task_stop, task_queue).await });
-    *state = Some(ObserverState {
-        generation,
-        stop,
-        observer_thread,
-        observer_done,
-        network_task: Some(network_task),
-    });
-}
-
-async fn observation_loop(stop: Arc<AtomicBool>, queue: Arc<ObservationQueue>) {
-    loop {
-        tokio::select! {
-            _ = queue.notify.notified() => {
-                for observation in queue.take() {
-                    if let Err(error) = post_json("/api/v1/text-context/observation", &observation).await {
-                        debug!("text context observation failed: {error}");
-                        queue.requeue_if_empty(observation);
-                        tokio::time::sleep(OBSERVATION_RETRY_INTERVAL).await;
-                    }
-                }
-            }
-        }
-        if stop.load(Ordering::Acquire) {
-            break;
-        }
-    }
-}
-
-fn stop_observer() {
-    let Some(mut state) = OBSERVER.lock().unwrap_or_else(|e| e.into_inner()).take() else {
-        return;
-    };
-
-    if let Some(presence) = PRESENCE.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
-        clear_capability_if_owned(&presence.capability, state.generation);
-    }
-
-    state.stop.store(true, Ordering::Release);
-    if let Some(thread) = state.observer_thread.take() {
-        let generation = state.generation;
-        let observer_done = state.observer_done;
-        let joiner = std::thread::Builder::new()
-            .name("text-context-observer-joiner".into())
-            .spawn(move || {
-                if observer_done.recv_timeout(OBSERVER_STOP_TIMEOUT).is_ok() {
-                    let _ = thread.join();
-                } else {
-                    warn!(
-                        "text context observer did not stop within timeout; detaching thread (generation={generation})"
-                    );
-                }
-            });
-        if joiner.is_err() {
-            warn!(
-                "failed to create text context observer joiner; detaching thread (generation={generation})"
-            );
-        }
-    }
-    if let Some(task) = state.network_task.take() {
-        task.abort();
-    }
-    info!(
-        "text context observer stopped (generation={})",
-        state.generation
-    );
-}
-
-pub fn stop() {
-    let _lifecycle = LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
-    stop_observer();
-
-    stop_presence();
-}
-
-fn stop_presence() {
-    let Some(presence) = PRESENCE.lock().unwrap_or_else(|e| e.into_inner()).take() else {
-        return;
-    };
-
-    presence.stop.store(true, Ordering::Release);
-    presence.capability.wake.notify_one();
-    presence.task.abort();
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn idle_or_missing_input_pane_does_not_leave_an_expired_poll_deadline() {
+        let start = Instant::now();
+        let now = start + Duration::from_secs(60);
+        assert_eq!(
+            observer_wait(now, false, true, start, start, None),
+            Duration::from_millis(500)
+        );
+        assert_eq!(
+            observer_wait(now, false, false, start, start, None),
+            Duration::from_millis(500)
+        );
+        assert_eq!(
+            observer_wait(now, true, false, now, start, None),
+            EDITOR_CARET_POLL
+        );
+        assert_eq!(
+            observer_wait(now, true, true, now, start, None),
+            Duration::from_millis(5)
+        );
+        assert_eq!(
+            observer_wait(now, false, false, start, start, Some(now)),
+            RESCAN_DEBOUNCE
+        );
+    }
 
     #[test]
     fn only_explicitly_writable_edit_is_confirmed() {
@@ -915,7 +646,7 @@ mod tests {
         }
     }
 
-    fn observation(source: &'static str, active: bool) -> Observation {
+    pub(super) fn observation(source: &'static str, active: bool) -> Observation {
         Observation {
             version: 1,
             agent_id: "test-agent",

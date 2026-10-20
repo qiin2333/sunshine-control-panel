@@ -81,24 +81,16 @@ fn configure_loopback_proxy_bypass() {
     unsafe {
         // WebView2 uses Chromium's bypass syntax. Keep external requests on the
         // user's configured proxy while forcing every loopback form to direct.
-        std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", [
-            // 安全：忽略自签名证书错误（连接本地 Sunshine）
-            "--ignore-certificate-errors",
-            "--proxy-bypass-list=localhost;*.localhost;127.0.0.0/8;[::1]",
-            // UI 音效：手柄输入不属于「用户手势」，不解锁 AudioContext；
-            // 应用自身的导航反馈音不是网页自动播放媒体
-            "--autoplay-policy=no-user-gesture-required",
-            // 节流：激进的后台/隐藏标签页定时器节流
-            "--enable-features=IntensiveWakeUpThrottling,ThrottleDisplayNoneAndVisibilityHiddenCrossOriginIframes",
-            // GPU 优化：禁用 Edge 特有的 UI 覆盖层（减少不必要的 GPU 合成层）
-            "--disable-features=msWebOOUI",
-            // GPU 优化：禁用 GPU 着色器磁盘缓存，减少 VRAM 占用
-            "--disable-gpu-shader-disk-cache",
-            // GPU 优化：关闭 GPU 光栅化抗锯齿（控制面板 UI 无需 MSAA）
-            "--gpu-rasterization-msaa-sample-count=0",
-            // GPU 优化：限制渲染进程数量，减少 GPU 上下文切换开销
-            "--renderer-process-limit=1",
-        ].join(" "));
+        std::env::set_var(
+            "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+            [
+                "--proxy-bypass-list=localhost;*.localhost;127.0.0.0/8;[::1]",
+                // UI 音效：手柄输入不属于「用户手势」，不解锁 AudioContext；
+                // 应用自身的导航反馈音不是网页自动播放媒体
+                "--autoplay-policy=no-user-gesture-required",
+            ]
+            .join(" "),
+        );
 
         // reqwest follows NO_PROXY/no_proxy. Preserve the user's existing
         // exclusions and add the same loopback scope used by WebView2.
@@ -164,11 +156,7 @@ fn main() {
     // environment variables must be finalized before worker threads start.
     configure_async_runtime();
 
-    let builder = tauri::Builder::default()
-        .manage(app::AppState {
-            main_window: std::sync::Mutex::new(None),
-        })
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build());
+    let builder = tauri::Builder::default();
 
     let builder = if std::env::var_os("SUNSHINE_GUI_ALLOW_PARALLEL_INSTANCE").is_some() {
         builder
@@ -179,6 +167,7 @@ fn main() {
     };
 
     let application = builder
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_fs::init())
@@ -378,13 +367,13 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    application.run(|_app, event| match event {
+    application.run(|app_handle, event| match event {
         tauri::RunEvent::ExitRequested {
             code: None, api, ..
         } => api.prevent_exit(),
         tauri::RunEvent::Exit => {
             native_tools::shutdown_all();
-            app::shutdown_application();
+            app::shutdown_application(app_handle);
         }
         _ => {}
     });

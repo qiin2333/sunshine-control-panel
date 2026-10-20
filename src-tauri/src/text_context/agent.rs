@@ -68,6 +68,13 @@ impl Shared {
         *self.capability.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    fn take_observations(&self, expected: Capability) -> Option<Vec<Observation>> {
+        // Match publish's lock order: replacing/readying an observer must not
+        // slip between capability validation and draining its first result.
+        let capability = self.capability.lock().unwrap_or_else(|e| e.into_inner());
+        (*capability == expected).then(|| self.queue.take())
+    }
+
     fn set_enabled(&self, enabled: bool) {
         let mut capability = self.capability.lock().unwrap_or_else(|e| e.into_inner());
         if capability.enabled != enabled {
@@ -279,6 +286,7 @@ where
     heartbeat.tick().await;
     shared.queue.notify.notify_one(); // initial presence, then one heartbeat per interval
     let mut sent = None;
+    let mut backoff = RETRY_INTERVAL;
     loop {
         let presence_due = tokio::select! {
             _ = heartbeat.tick() => true,
@@ -289,19 +297,36 @@ where
             if let Err(error) = post("/api/v1/text-context/capability", snapshot.body()).await {
                 debug!("Text context capability failed: {error}");
                 sent = None;
+                let retry_at = tokio::time::Instant::now() + backoff;
+                loop {
+                    tokio::select! {
+                        _ = tokio::time::sleep_until(retry_at) => {
+                            backoff = (backoff * 2).min(PRESENCE_INTERVAL);
+                            break;
+                        }
+                        _ = shared.queue.notify.notified() => {
+                            // New lifecycle state should be announced promptly;
+                            // ordinary observations cannot bypass offline backoff.
+                            if shared.snapshot() != snapshot {
+                                backoff = RETRY_INTERVAL;
+                                break;
+                            }
+                        }
+                    }
+                }
                 shared.queue.notify.notify_one();
-                tokio::time::sleep(RETRY_INTERVAL).await;
                 continue;
             }
+            backoff = RETRY_INTERVAL;
             sent = Some(snapshot);
         }
-        if shared.snapshot() != snapshot {
+        let Some(observations) = shared.take_observations(snapshot) else {
             shared.queue.notify.notify_one();
             continue;
-        }
+        };
         // Presence and observations share this task, so the active generation
         // is always acknowledged before its first observation is submitted.
-        for observation in shared.queue.take() {
+        for observation in observations {
             if shared.snapshot() != snapshot
                 || observation.generation != snapshot.generation
                 || !matches!(snapshot.phase, ObserverPhase::Active { .. })
@@ -332,6 +357,76 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn capability_retries_back_off_to_heartbeat_interval_and_reset_after_success() {
+        let shared = Arc::new(Shared::new());
+        let worker_shared = shared.clone();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let worker = tokio::spawn(async move {
+            network_loop(worker_shared, move |path, _| {
+                assert!(path.ends_with("/capability"));
+                let (reply, result) = tokio::sync::oneshot::channel();
+                tx.send((tokio::time::Instant::now(), reply)).unwrap();
+                async move { result.await.unwrap() }
+            })
+            .await;
+        });
+        let (mut previous, mut reply) = rx.recv().await.unwrap();
+        for delay in [
+            RETRY_INTERVAL,
+            RETRY_INTERVAL * 2,
+            Duration::from_secs(1),
+            Duration::from_secs(2),
+            Duration::from_secs(4),
+            Duration::from_secs(8),
+            Duration::from_secs(16),
+            PRESENCE_INTERVAL,
+            PRESENCE_INTERVAL,
+        ] {
+            reply.send(Err("offline".into())).unwrap();
+            let (now, next) = rx.recv().await.unwrap();
+            assert_eq!(now - previous, delay);
+            (previous, reply) = (now, next);
+        }
+        // A preference/lifecycle update interrupts a long offline wait.
+        reply.send(Err("still offline".into())).unwrap();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        shared.set_enabled(false);
+        let (now, reply) = rx.recv().await.unwrap();
+        assert_eq!(now - previous, Duration::from_secs(1));
+        reply.send(Ok(())).unwrap();
+        shared.set_enabled(true); // A new capability after a successful POST.
+        let (previous, reply) = rx.recv().await.unwrap();
+        reply.send(Err("offline again".into())).unwrap();
+        let (now, _reply) = rx.recv().await.unwrap();
+        assert_eq!(now - previous, RETRY_INTERVAL);
+        worker.abort();
+    }
+
+    #[test]
+    fn stale_capability_cannot_drain_the_new_observer_baseline() {
+        let shared = Shared::new();
+        let generation = shared.begin();
+        let initializing = shared.snapshot();
+        shared.ready(generation, false, true);
+        let active = shared.snapshot();
+        let mut baseline = super::super::tests::observation("uia", true);
+        baseline.generation = generation;
+        shared.publish(baseline.clone());
+        assert!(shared.take_observations(initializing).is_none());
+        assert_eq!(shared.take_observations(active).unwrap().len(), 1);
+
+        shared.finished(generation);
+        let next = shared.begin();
+        shared.ready(next, false, true);
+        baseline.generation = next;
+        shared.publish(baseline);
+        assert!(shared.take_observations(active).is_none());
+        let pending = shared.take_observations(shared.snapshot()).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].generation, next);
+    }
 
     #[test]
     fn observer_requires_video_stream_and_stops_on_pause_or_disconnect() {

@@ -181,6 +181,7 @@ impl State {
     fn presented(&mut self) {
         self.show_on_load = false;
         self.show_revision += 1;
+        self.refresh_pending = true;
     }
 }
 
@@ -311,12 +312,7 @@ pub(super) fn heartbeat(label: &str, generation: u64) {
 
 pub(super) fn presented<R: Runtime>(window: &WebviewWindow<R>) {
     if let Some(panel) = get(window.label()) {
-        {
-            let mut state = panel.state.lock().unwrap();
-            state.presented();
-            state.refresh_pending = true;
-            state.display_revision += 1;
-        }
+        panel.state.lock().unwrap().presented();
         reconcile(window, &panel);
     }
 }
@@ -656,6 +652,33 @@ mod tests {
         state.phase = Phase::Closed;
         assert!(state.display_changed(now).is_none());
         assert!(state.pending_refresh(now + DISPLAY_SETTLE).is_none());
+    }
+
+    #[test]
+    fn presenting_during_display_debounce_keeps_the_refresh_and_settle_timer_current() {
+        let now = Instant::now();
+        let mut state = State::new(false, now);
+        state.loaded();
+        let timer_revision = state.display_changed(now).unwrap();
+        state.presented(); // Present at 50 ms, followed by WM_SHOWWINDOW at 250 ms.
+        for elapsed in [50, 250] {
+            assert!(
+                state
+                    .pending_refresh(now + Duration::from_millis(elapsed))
+                    .is_none()
+            );
+        }
+        assert_eq!(state.display_revision, timer_revision);
+        assert_eq!(
+            state.pending_refresh(now + DISPLAY_DEBOUNCE),
+            Some(timer_revision)
+        );
+        state.refreshed(timer_revision, true);
+        assert!(!state.keep_awake(false, now + DISPLAY_SETTLE));
+        assert!(matches!(
+            state.reconcile(false, now + DISPLAY_SETTLE),
+            Some(Action::Suspend(_))
+        ));
     }
 
     #[test]

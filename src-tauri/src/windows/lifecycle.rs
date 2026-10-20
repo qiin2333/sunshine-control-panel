@@ -312,8 +312,13 @@ pub(super) fn heartbeat(label: &str, generation: u64) {
 
 pub(super) fn presented<R: Runtime>(window: &WebviewWindow<R>) {
     if let Some(panel) = get(window.label()) {
-        panel.state.lock().unwrap().presented();
-        reconcile(window, &panel);
+        let handle = window.clone();
+        let _ = window.run_on_main_thread(move || {
+            // Async commands can present a panel from a worker thread. Keep
+            // this mutation serialized with synchronous native refreshes.
+            panel.state.lock().unwrap().presented();
+            reconcile(&handle, &panel);
+        });
     }
 }
 

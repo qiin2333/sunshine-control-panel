@@ -293,6 +293,8 @@ pub(crate) async fn acquire_sidecar_package(
     .await
 }
 
+/// Reuses a healthy pinned transport or stages a verified installer during explicit maintenance.
+/// Existing incompatible installations require shared cleanup before replacement.
 #[cfg(target_os = "windows")]
 pub(crate) async fn ensure_pinned_usbip(
     progress: &ProgressReporter<'_>,

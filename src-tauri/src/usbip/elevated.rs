@@ -73,6 +73,8 @@ pub(super) async fn run_elevated(_request: ElevatedRequest) -> Result<ElevatedRe
     Err("USBIP-SETUP-004: USB/IP passthrough is only supported on Windows".to_string())
 }
 
+/// Runs privileged operations over the invocation's authenticated pipe, revalidating inputs.
+/// Keeps local transport failures distinct from remote exporter errors in the response.
 #[cfg(target_os = "windows")]
 async fn run_elevated_helper(token: uuid::Uuid, request: ElevatedRequest) -> i32 {
     use tokio::io::AsyncWriteExt;

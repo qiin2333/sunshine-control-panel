@@ -11,7 +11,7 @@ import { useI18n } from '../desktop/i18n/index.js'
 
 const STATUS_REFRESH_WAIT_TIMEOUT_MS = 5000
 
-// Component management can run without mounting controller configuration or tests.
+/** Manages component maintenance and progress independently of controller configuration or tests. */
 export function useDualSenseComponent({ busy = ref(false), onStatus, afterInstall } = {}) {
   const { t } = useI18n()
   const sharedOperation = useDeviceComponentOperation()

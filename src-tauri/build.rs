@@ -158,6 +158,7 @@ fn write_capability(commands: &[String]) {
     }
 }
 
+/// Generates Tauri permissions and resources with constants from the shared compatibility contract.
 fn main() {
     println!("cargo:rerun-if-changed=component-compatibility.json");
     let compatibility: serde_json::Value = serde_json::from_str(

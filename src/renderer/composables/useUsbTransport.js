@@ -5,6 +5,7 @@ import { useI18n } from '../desktop/i18n/index.js'
 import { useDeviceComponentOperation } from './useDeviceComponentOperation.js'
 import { usbipTransportNeedsCleanup } from './deviceHubStatus.js'
 
+/** Coordinates shared transport maintenance and refreshes actual state after failed operations. */
 export function useUsbTransport() {
   const { t } = useI18n()
   const sharedOperation = useDeviceComponentOperation()

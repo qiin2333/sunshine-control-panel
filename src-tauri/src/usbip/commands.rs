@@ -1,12 +1,13 @@
 //! Tauri command surface for the Device Hub USB/IP panel.
 
+use super::elevated::run_elevated;
+use super::exec::{CommandScope, parse_remote_devices, require_success, run_usbip};
 use super::{
     ElevatedRequest, OPERATION_LOCK, UsbipRemoteDevice, UsbipStatus, validate_bus_id,
     validate_remote, validate_tcp_port,
 };
-use super::elevated::run_elevated;
-use super::exec::{parse_remote_devices, require_success, run_usbip};
 
+/// Validates the exporter address and port, then lists devices using the verified shared tools.
 #[tauri::command]
 pub async fn usbip_list_remote(
     remote: String,
@@ -22,7 +23,7 @@ pub async fn usbip_list_remote(
         remote,
     ])
     .await?;
-    let text = require_success(output, "discovering remote devices")?;
+    let text = require_success(output, "discovering remote devices", CommandScope::Remote)?;
     Ok(parse_remote_devices(&text))
 }
 

@@ -158,7 +158,34 @@ fn write_capability(commands: &[String]) {
     }
 }
 
+/// Generates Tauri permissions and resources with constants from the shared compatibility contract.
 fn main() {
+    println!("cargo:rerun-if-changed=component-compatibility.json");
+    let compatibility: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string("component-compatibility.json")
+            .expect("component compatibility manifest"),
+    )
+    .expect("valid component compatibility manifest");
+    assert_eq!(compatibility["schema"], 1);
+    for (name, value) in [
+        ("COMPONENT_VERSION", &compatibility["component_version"]),
+        ("HIDMAESTRO_VERSION", &compatibility["hidmaestro_version"]),
+        ("USBIP_POLICY", &compatibility["usbip"]["policy"]),
+        ("USBIP_VERSION", &compatibility["usbip"]["version"]),
+        ("USBIP_URL", &compatibility["usbip"]["installer_url"]),
+        ("USBIP_SHA256", &compatibility["usbip"]["installer_sha256"]),
+        ("USBIP_TOOL_SHA256", &compatibility["usbip"]["tool_sha256"]),
+        (
+            "USBIP_DRIVER_SHA256",
+            &compatibility["usbip"]["driver_sha256"],
+        ),
+    ] {
+        let value = value
+            .as_str()
+            .filter(|value| !value.is_empty() && !value.contains(['\r', '\n']))
+            .expect("non-empty compatibility value");
+        println!("cargo:rustc-env=SUNSHINE_{name}={value}");
+    }
     // 告诉 Cargo 当这些文件变化时需要重新编译
     // 这样 include_str! 宏就能读取到最新版本的文件
     println!("cargo:rerun-if-changed=inject-script.js");

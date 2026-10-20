@@ -11,7 +11,7 @@ import { useI18n } from '../desktop/i18n/index.js'
 
 const STATUS_REFRESH_WAIT_TIMEOUT_MS = 5000
 
-// Component management can run without mounting controller configuration or tests.
+/** Manages component maintenance and progress independently of controller configuration or tests. */
 export function useDualSenseComponent({ busy = ref(false), onStatus, afterInstall } = {}) {
   const { t } = useI18n()
   const sharedOperation = useDeviceComponentOperation()
@@ -117,9 +117,10 @@ export function useDualSenseComponent({ busy = ref(false), onStatus, afterInstal
     },
   ])
 
+  /** Stores a sanitized diagnosis and displays contextual component or shared transport guidance. */
   const showError = (message, context = 'generic') => {
     operationError.value = safeDualSenseTechnicalError(message)
-    ElMessage.error(friendlyDualSenseError(message, t.value.dualSense.errors, context))
+    ElMessage.error(friendlyDualSenseError(message, t.value.dualSense.errors, context, t.value.deviceHub.usb.errors))
   }
 
   const invalidateStatusRefresh = () => {
@@ -195,6 +196,16 @@ export function useDualSenseComponent({ busy = ref(false), onStatus, afterInstal
         return
       }
       const plan = usbTransportPlan(transport.data)
+      if (plan === 'cleanup') {
+        operation.value = ''
+        showError(transport.data.detail || 'USBIP-SETUP-008: shared transport cleanup is required', 'install')
+        return
+      }
+      if (transport.data.attached_devices?.length) {
+        operation.value = ''
+        showError('USBIP-SETUP-009: release imported devices before component maintenance', 'install')
+        return
+      }
       const confirmation = localPackage
         ? t.value.dualSense.localInstallConfirm
         : upgrading ? t.value.dualSense.updateConfirm : t.value.dualSense.installConfirm

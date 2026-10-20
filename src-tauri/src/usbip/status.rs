@@ -1,6 +1,6 @@
 //! Transport status probing.
 
-use super::{MINIMUM_VERSION, UsbipStatus};
+use super::{REQUIRED_VERSION, UsbipStatus};
 
 /// Spawns a `usbip.exe port` subprocess on every call to enumerate attached
 /// devices. Intended for on-demand refreshes — do not poll at high frequency.
@@ -60,7 +60,9 @@ pub async fn usbip_get_status() -> Result<UsbipStatus, String> {
                 reboot_recommended: false,
                 vhci_residual,
                 attached_devices: Vec::new(),
-                detail: format!("USB/IP {MINIMUM_VERSION} or newer is required"),
+                detail: format!(
+                    "USBIP-SETUP-003: the tested USB/IP {REQUIRED_VERSION} tools and driver are required"
+                ),
             });
         }
         match super::exec::list_attached().await {

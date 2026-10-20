@@ -4,8 +4,8 @@
 //! executable, authenticated over a per-invocation named pipe.
 
 use super::{
-    ELEVATED_ARG, ELEVATED_CONNECT_TIMEOUT, MAX_ELEVATED_RESPONSE_BYTES, ElevatedRequest,
-    ElevatedResponse,
+    ELEVATED_ARG, ELEVATED_CONNECT_TIMEOUT, ElevatedRequest, ElevatedResponse,
+    MAX_ELEVATED_RESPONSE_BYTES,
 };
 #[cfg(target_os = "windows")]
 use super::{validate_bus_id, validate_remote, validate_tcp_port};
@@ -73,6 +73,8 @@ pub(super) async fn run_elevated(_request: ElevatedRequest) -> Result<ElevatedRe
     Err("USBIP-SETUP-004: USB/IP passthrough is only supported on Windows".to_string())
 }
 
+/// Runs privileged operations over the invocation's authenticated pipe, revalidating inputs.
+/// Keeps local transport failures distinct from remote exporter errors in the response.
 #[cfg(target_os = "windows")]
 async fn run_elevated_helper(token: uuid::Uuid, request: ElevatedRequest) -> i32 {
     use tokio::io::AsyncWriteExt;
@@ -147,7 +149,11 @@ async fn run_elevated_helper(token: uuid::Uuid, request: ElevatedRequest) -> i32
                     "--once".to_string(),
                 ])
                 .await?;
-                let text = super::exec::require_success(output, "attaching the remote device")?;
+                let text = super::exec::require_success(
+                    output,
+                    "attaching the remote device",
+                    super::exec::CommandScope::Remote,
+                )?;
                 let port = text.parse::<u8>().map_err(|_| {
                     "USBIP-EXEC-005: attach returned an invalid local port".to_string()
                 })?;
@@ -167,7 +173,11 @@ async fn run_elevated_helper(token: uuid::Uuid, request: ElevatedRequest) -> i32
                     port.to_string(),
                 ])
                 .await?;
-                super::exec::require_success(output, "detaching the remote device")?;
+                super::exec::require_success(
+                    output,
+                    "detaching the remote device",
+                    super::exec::CommandScope::Local,
+                )?;
                 Ok(ElevatedResponse {
                     success: true,
                     port: None,

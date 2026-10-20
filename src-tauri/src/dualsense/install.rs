@@ -86,6 +86,7 @@ pub(crate) fn copy_runtime_files(source: &Path, destination: &Path) -> Result<()
     Ok(())
 }
 
+/// Requires the runtime payload, matching compatibility contract and package metadata.
 pub(crate) fn validate_complete_runtime(directory: &Path) -> Result<(), String> {
     for name in [
         SIDECAR_EXE,
@@ -97,7 +98,28 @@ pub(crate) fn validate_complete_runtime(directory: &Path) -> Result<(), String> 
             return Err(format!("DS5-PKG-002: component package is missing {name}"));
         }
     }
+    validate_compatibility_file(directory)?;
     validate_sidecar_runtime_metadata(directory)
+}
+
+/// Compares contract values while allowing harmless JSON formatting differences.
+pub(crate) fn validate_compatibility_file(directory: &Path) -> Result<(), String> {
+    let actual = fs::read(directory.join("component-compatibility.json")).map_err(|error| {
+        format!("DS5-PROTO-001: component compatibility contract is missing: {error}")
+    })?;
+    let actual: serde_json::Value = serde_json::from_slice(&actual).map_err(|error| {
+        format!("DS5-PROTO-001: invalid component compatibility contract: {error}")
+    })?;
+    let expected: serde_json::Value =
+        serde_json::from_slice(include_bytes!("../../component-compatibility.json"))
+            .expect("build-validated component compatibility contract");
+    if actual != expected {
+        return Err(
+            "DS5-PROTO-001: component compatibility contract does not match this Control Panel"
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_sidecar_runtime_metadata(directory: &Path) -> Result<(), String> {
@@ -271,6 +293,8 @@ pub(crate) async fn acquire_sidecar_package(
     .await
 }
 
+/// Reuses a healthy pinned transport or stages a verified installer during explicit maintenance.
+/// Existing incompatible installations require shared cleanup before replacement.
 #[cfg(target_os = "windows")]
 pub(crate) async fn ensure_pinned_usbip(
     progress: &ProgressReporter<'_>,
@@ -508,6 +532,67 @@ pub(crate) async fn install_error_after_rollback(
     }
 }
 
+/// Requires two completed rounds, released devices and the expected transport policy.
+pub(crate) fn validate_transport_acceptance(value: &serde_json::Value) -> Result<(), String> {
+    if value["rounds"] != 2
+        || value["released"] != true
+        || value["usbip_policy"] != crate::usbip::USBIP_POLICY
+        || value["usbip_version"] != USBIP_VERSION
+    {
+        return Err("DS5-PKG-003: shared transport acceptance is incomplete".to_string());
+    }
+    Ok(())
+}
+
+/// Exercises the staged runtime before activation with no active stream or imports.
+/// Rechecks release after test failure without detaching another application's devices.
+pub(crate) async fn verify_staged_transport(executable: &Path) -> Result<(), String> {
+    super::probe::ensure_no_active_session().await?;
+    let before = crate::usbip::usbip_get_status().await?;
+    if !before.ready || !before.attached_devices.is_empty() {
+        return Err("DS5-PKG-003: shared USB/IP must be ready and all imports released before component acceptance; reboot or repair the transport if required".to_string());
+    }
+    let executable = executable.to_path_buf();
+    let result_path = executable.with_file_name("transport-acceptance.json");
+    let result = result_path.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
+        let _ = fs::remove_file(&result);
+        let mut command = Command::new(&executable);
+        command
+            .args(["--self-test", "transport", "--result"])
+            .arg(&result)
+            .current_dir(executable.parent().unwrap());
+        let output = run_with_timeout(
+            &mut command,
+            std::time::Duration::from_secs(120),
+            "DS5-PKG-003: shared transport acceptance timed out",
+            true,
+        )?;
+        if !output.status.success() {
+            return Err(component_test_failure(&output, &result));
+        }
+        let value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&result).map_err(|error| {
+                format!("DS5-PKG-003: missing transport acceptance result: {error}")
+            })?)
+            .map_err(|error| {
+                format!("DS5-PKG-003: invalid transport acceptance result: {error}")
+            })?;
+        validate_transport_acceptance(&value)
+    })
+    .await
+    .map_err(|error| format!("DS5-PKG-003: transport acceptance task failed: {error}"))?;
+    let _ = fs::remove_file(&result_path);
+    // Check release even on failure; never sweep another application's imports.
+    let after = crate::usbip::usbip_get_status().await?;
+    if !after.ready || !after.attached_devices.is_empty() {
+        return Err("DS5-PKG-003: shared transport did not recover after acceptance; component was not activated".to_string());
+    }
+    outcome
+}
+
+/// Stages and verifies a complete component before activation, preserving the old copy.
+/// Driver installation is restricted to explicit maintenance through `install_transport`.
 pub(crate) async fn dualsense_install_impl(
     progress: &ProgressReporter<'_>,
     local_packages: LocalComponentPackages,
@@ -630,11 +715,17 @@ pub(crate) async fn dualsense_install_impl(
                 "sidecar_package_sha256": package_manifest.as_ref().map(|manifest| manifest.sha256.as_str()).unwrap_or_default(),
                 "protocol": PROTOCOL_VERSION,
                 "sidecar_file": SIDECAR_EXE,
-                "sidecar_sha256": sidecar_sha256
+                "sidecar_sha256": sidecar_sha256,
+                "usbip_policy": crate::usbip::USBIP_POLICY,
+                "usbip_version": crate::usbip::USBIP_VERSION,
+                "compatibility_sha256": sha256_file(&staging.join("component-compatibility.json"))?
             }))
             .map_err(|error| error.to_string())?,
         )
         .map_err(|error| error.to_string())?;
+
+        report_progress(progress, "verifying_transport", 90);
+        verify_staged_transport(&probe_executable).await?;
 
         // A stream may have started while the package was downloading.
         super::probe::ensure_no_active_session().await?;

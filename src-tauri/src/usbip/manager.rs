@@ -5,12 +5,83 @@
 //! and replacement policy here so one feature cannot silently replace the
 //! transport underneath the other.
 
-pub(crate) const PINNED_VERSION: &str = "0.9.7.7";
-pub(super) const MINIMUM_VERSION: &str = "0.9.7.7";
-pub(crate) const INSTALLER_URL: &str =
-    "https://github.com/vadimgrn/usbip-win2/releases/download/v.0.9.7.7/USBip-0.9.7.7-x64.exe";
-pub(crate) const INSTALLER_SHA256: &str =
-    "51620fa5f9f8be5932bc9d786deee557ce06d5407a99cab490dcfac71f185fea";
+// This tested combination is shared with the Sidecar build. The runtime may
+// use this driver, but must never install or replace it while creating devices.
+pub(crate) const PINNED_VERSION: &str = env!("SUNSHINE_USBIP_VERSION");
+pub(super) const REQUIRED_VERSION: &str = PINNED_VERSION;
+pub(crate) const INSTALLER_URL: &str = env!("SUNSHINE_USBIP_URL");
+pub(crate) const INSTALLER_SHA256: &str = env!("SUNSHINE_USBIP_SHA256");
+pub(crate) const TRANSPORT_POLICY: &str = env!("SUNSHINE_USBIP_POLICY");
+
+/// Rejects missing or replaced transport binaries using the contract's SHA-256.
+#[cfg(target_os = "windows")]
+fn verify_transport_file(path: &std::path::Path, expected: &str) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)
+        .map_err(|error| format!("USBIP-EXEC-006: cannot inspect the shared transport: {error}"))?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0u8; 65536];
+    loop {
+        let count = file.read(&mut buffer).map_err(|error| {
+            format!("USBIP-EXEC-006: cannot verify the shared transport: {error}")
+        })?;
+        if count == 0 {
+            break;
+        }
+        digest.update(&buffer[..count]);
+    }
+    if format!("{:x}", digest.finalize()) != expected {
+        return Err(
+            "USBIP-EXEC-006: the shared transport does not match the tested component combination"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// Checks the registered driver path and bytes without changing driver state.
+#[cfg(target_os = "windows")]
+pub(super) fn verify_driver_compatibility() -> Result<(), String> {
+    use winreg::{RegKey, enums::HKEY_LOCAL_MACHINE};
+    let service = RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey(r"SYSTEM\CurrentControlSet\Services\usbip2_ude")
+        .map_err(|error| {
+            format!("USBIP-EXEC-006: shared driver registration is unavailable: {error}")
+        })?;
+    let image: String = service
+        .get_value("ImagePath")
+        .map_err(|error| format!("USBIP-EXEC-006: shared driver path is unavailable: {error}"))?;
+    let windows = std::path::PathBuf::from(
+        std::env::var_os("SystemRoot").ok_or("USBIP-EXEC-006: Windows directory is unavailable")?,
+    );
+    let path = if image.to_ascii_lowercase().starts_with(r"\systemroot\") {
+        windows.join(&image[12..])
+    } else if let Some(path) = image.strip_prefix(r"\??\") {
+        std::path::PathBuf::from(path)
+    } else if image.to_ascii_lowercase().starts_with(r"system32\") {
+        windows.join(image)
+    } else {
+        std::path::PathBuf::from(image)
+    };
+    let path = path
+        .canonicalize()
+        .map_err(|error| format!("USBIP-EXEC-006: shared driver is unavailable: {error}"))?;
+    let windows = windows
+        .canonicalize()
+        .map_err(|error| format!("USBIP-EXEC-006: cannot resolve Windows directory: {error}"))?;
+    if !path.starts_with(windows)
+        || path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_none_or(|name| !name.eq_ignore_ascii_case("usbip2_ude.sys"))
+    {
+        return Err(
+            "USBIP-EXEC-006: shared driver path is outside the Windows driver store".to_string(),
+        );
+    }
+    verify_transport_file(&path, env!("SUNSHINE_USBIP_DRIVER_SHA256"))
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum InstallDisposition {
@@ -18,7 +89,7 @@ pub(crate) enum InstallDisposition {
     Install,
 }
 
-/// Automatic downloads remain pinned, but a user's newer installation is reused.
+/// Only the explicitly tested combination is reused; newer is not an ABI guarantee.
 /// Replacing an unsupported installation requires explicit shared cleanup.
 pub(crate) fn install_disposition(
     installed_version: Option<&str>,
@@ -34,14 +105,16 @@ pub(crate) fn install_disposition(
     }
 }
 
+/// Accepts only the tested four-part version, including neither older nor newer ABIs.
 pub(crate) fn supported_version_installed(installed_version: Option<&str>) -> bool {
     installed_version
         .and_then(parse_version)
         .is_some_and(|version| {
-            version >= parse_version(MINIMUM_VERSION).expect("valid minimum USB/IP version")
+            version == parse_version(PINNED_VERSION).expect("valid pinned USB/IP version")
         })
 }
 
+/// Requires four unsigned numeric components; suffixes, signs and overflow are invalid.
 fn parse_version(value: &str) -> Option<[u32; 4]> {
     let components: Vec<_> = value.split('.').collect();
     if components.len() != 4 {
@@ -60,16 +133,16 @@ fn parse_version(value: &str) -> Option<[u32; 4]> {
 // Inno Setup's English display name used to include "version". Newer
 // usbip-win2 installers register the same product as "USBip 0.9.8.1".
 // Keep discovery and the missing-DisplayVersion fallback consistent.
+/// Recognizes both usbip-win2 installer names without matching other USB/IP products.
 fn version_from_display_name(display_name: &str) -> Option<&str> {
-    display_name
-        .strip_prefix("USBip version ")
-        .or_else(|| {
-            display_name
-                .strip_prefix("USBip ")
-                .filter(|version| parse_version(version).is_some())
-        })
+    display_name.strip_prefix("USBip version ").or_else(|| {
+        display_name
+            .strip_prefix("USBip ")
+            .filter(|version| parse_version(version).is_some())
+    })
 }
 
+/// Rejects malformed or conflicting registrations instead of selecting whichever entry appears first.
 fn consistent_version(
     versions: impl IntoIterator<Item = String>,
 ) -> Result<Option<String>, String> {
@@ -171,6 +244,7 @@ pub(super) struct Installation {
     pub(super) executable: std::path::PathBuf,
 }
 
+/// Resolves the registered CLI and verifies its pinned bytes before execution.
 #[cfg(target_os = "windows")]
 pub(super) fn find_installation() -> Result<Installation, String> {
     let entries = uninstall_entries()?;
@@ -202,6 +276,9 @@ pub(super) fn find_installation() -> Result<Installation, String> {
                     "USBIP-SETUP-002: the installed USB/IP executable path is unsafe".to_string(),
                 );
             }
+            if supported_version_installed(Some(&version)) {
+                verify_transport_file(&executable, env!("SUNSHINE_USBIP_TOOL_SHA256"))?;
+            }
             Ok(Installation {
                 version: version.clone(),
                 executable,
@@ -218,6 +295,23 @@ pub(super) fn find_installation() -> Result<Installation, String> {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn shared_binary_verification_rejects_replaced_or_missing_files() {
+        let file = std::env::temp_dir().join(format!("usbip-verify-{}", uuid::Uuid::new_v4()));
+        let expected = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+        std::fs::write(&file, b"hello").unwrap();
+        assert!(verify_transport_file(&file, expected).is_ok());
+        std::fs::write(&file, b"replaced").unwrap();
+        assert!(
+            verify_transport_file(&file, expected)
+                .unwrap_err()
+                .starts_with("USBIP-EXEC-006:")
+        );
+        std::fs::remove_file(&file).unwrap();
+        assert!(verify_transport_file(&file, expected).is_err());
+    }
+
     #[test]
     fn discovers_legacy_and_current_installer_display_names() {
         for (name, version) in [
@@ -229,16 +323,16 @@ mod tests {
         ] {
             let discovered = version_from_display_name(name);
             assert_eq!(discovered, Some(version));
-            assert_eq!(
-                install_disposition(discovered).unwrap(),
-                InstallDisposition::Ready
-            );
         }
-        // Preserve the existing fail-closed handling of malformed legacy
-        // registrations, without treating other USB/IP products as usbip-win2.
+        // Keep malformed legacy registrations visible to version validation,
+        // without treating other USB/IP products as usbip-win2.
         assert_eq!(version_from_display_name("USBip version bad"), Some("bad"));
-        assert!(install_disposition(Some("bad")).is_err());
-        for name in ["USBip Tools", "USBip Server", "Other USBip 0.9.8.1", "USBip"] {
+        for name in [
+            "USBip Tools",
+            "USBip Server",
+            "Other USBip 0.9.8.1",
+            "USBip",
+        ] {
             assert_eq!(version_from_display_name(name), None, "{name}");
         }
     }
@@ -259,8 +353,11 @@ mod tests {
         }
         assert_eq!(
             consistent_version(
-                ["USBip version 0.9.8.1", "USBip 0.9.8.1"]
-                    .map(|name| version_from_display_name(name).unwrap().to_string())
+                ["USBip version 0.9.8.1", "USBip 0.9.8.1"].map(|name| version_from_display_name(
+                    name
+                )
+                .unwrap()
+                .to_string())
             )
             .unwrap(),
             Some("0.9.8.1".to_string())
@@ -277,22 +374,23 @@ mod tests {
             install_disposition(None).unwrap(),
             InstallDisposition::Install
         );
-        assert_eq!(
-            install_disposition(Some("0.9.7.8")).unwrap(),
-            InstallDisposition::Ready
-        );
+        assert!(install_disposition(Some("0.9.8.2")).is_err());
         assert!(install_disposition(Some("0.9.7.6")).is_err());
+        assert!(install_disposition(Some("0.9.7.7")).is_err());
     }
 
     #[test]
-    fn supported_versions_are_compared_numerically() {
+    fn only_the_tested_transport_version_is_accepted() {
+        assert!(supported_version_installed(Some(PINNED_VERSION)));
         for version in [
-            "0.9.7.7", "0.9.7.8", "0.9.7.10", "0.9.8.0", "0.9.8.1", "0.10.0.0", "1.0.0.0",
-        ] {
-            assert!(supported_version_installed(Some(version)), "{version}");
-        }
-        for version in [
+            "0.9.8.2",
+            "0.9.8.10",
+            "0.10.0.0",
+            "1.0.0.0",
             "0.9.7.6",
+            "0.9.7.7",
+            "0.9.7.10",
+            "0.9.8.0",
             "0.8.99.99",
             "",
             "0.9.7",

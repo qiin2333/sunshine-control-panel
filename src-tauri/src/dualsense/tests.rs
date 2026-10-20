@@ -7,15 +7,15 @@ use super::{
     extract_sidecar_package, local_uninstalled_status, read_sidecar_package_manifest,
     recover_interrupted_activation, require_entity_tag, resolve_core_config,
     rollback_activated_component, run_with_timeout, sha256_file, update_config_fields,
-    update_tuning_fields, usbip_discovery_status, validate_core_ds5_response,
-    validate_requested_profile, validate_sidecar_integrity, validate_sidecar_package_manifest,
-    validate_strong_entity_tag,
+    update_tuning_fields, usbip_discovery_status, usbip_transport_status,
+    validate_core_ds5_response, validate_requested_profile, validate_sidecar_integrity,
+    validate_sidecar_package_manifest, validate_strong_entity_tag,
 };
 #[cfg(target_os = "windows")]
 use super::{
     ElevatedMessage, ElevatedOperation, MAX_ELEVATED_MESSAGE_BYTES, read_limited_elevated_line,
 };
-use crate::usbip::{USBIP_SHA256, supported_usbip_installed};
+use crate::usbip::USBIP_SHA256;
 use reqwest::header::HeaderValue;
 use std::io::Write as _;
 use std::process::Command;
@@ -24,6 +24,11 @@ fn write_valid_component(directory: &std::path::Path, marker: &[u8]) {
     std::fs::create_dir_all(directory).unwrap();
     std::fs::write(directory.join(super::SIDECAR_EXE), marker).unwrap();
     std::fs::write(directory.join("HIDMaestro.Core.dll"), marker).unwrap();
+    std::fs::write(
+        directory.join("component-compatibility.json"),
+        include_bytes!("../../component-compatibility.json"),
+    )
+    .unwrap();
     std::fs::write(
         directory.join("runtime.json"),
         serde_json::json!({
@@ -43,6 +48,9 @@ fn write_valid_component(directory: &std::path::Path, marker: &[u8]) {
             "protocol": super::PROTOCOL_VERSION,
             "sidecar_file": super::SIDECAR_EXE,
             "sidecar_sha256": sha256_file(&directory.join(super::SIDECAR_EXE)).unwrap(),
+            "usbip_policy": crate::usbip::USBIP_POLICY,
+            "usbip_version": crate::usbip::USBIP_VERSION,
+            "compatibility_sha256": sha256_file(&directory.join("component-compatibility.json")).unwrap(),
         })
         .to_string(),
     )
@@ -112,7 +120,7 @@ fn genshin_compatibility_requires_composite_profile() {
 }
 
 #[test]
-fn usbip_reboot_exit_code_keeps_component_installation_running() {
+fn usbip_reboot_exit_code_is_reported_before_activation_acceptance() {
     assert_eq!(
         classify_usbip_installer_exit_code(Some(0)).unwrap(),
         UsbipInstallResult::Ready
@@ -144,6 +152,78 @@ fn component_state_prioritizes_stream_ownership_and_recovery() {
         "transport_missing"
     );
     assert_eq!(component_state(true, true, true, false, false), "ready");
+}
+
+#[test]
+fn transport_acceptance_requires_both_rounds_release_and_matching_contract() {
+    let valid = serde_json::json!({
+        "rounds": 2, "released": true,
+        "usbip_policy": crate::usbip::USBIP_POLICY,
+        "usbip_version": crate::usbip::USBIP_VERSION,
+    });
+    assert!(super::install::validate_transport_acceptance(&valid).is_ok());
+    for (field, value) in [
+        ("rounds", serde_json::json!(1)),
+        ("released", serde_json::json!(false)),
+        ("usbip_policy", serde_json::json!("runtime-managed")),
+        ("usbip_version", serde_json::json!("0.9.8.2")),
+    ] {
+        let mut invalid = valid.clone();
+        invalid[field] = value;
+        assert!(
+            super::install::validate_transport_acceptance(&invalid).is_err(),
+            "{field}"
+        );
+    }
+}
+
+#[test]
+fn component_contract_allows_formatting_but_rejects_mixed_payloads() {
+    let root = std::env::temp_dir().join(format!("sunshine-ds5-contract-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&root).unwrap();
+    let mut contract: serde_json::Value =
+        serde_json::from_slice(include_bytes!("../../component-compatibility.json")).unwrap();
+    std::fs::write(
+        root.join("component-compatibility.json"),
+        contract.to_string(),
+    )
+    .unwrap();
+    assert!(super::install::validate_compatibility_file(&root).is_ok());
+    contract["usbip"]["driver_sha256"] = serde_json::json!("a".repeat(64));
+    std::fs::write(
+        root.join("component-compatibility.json"),
+        contract.to_string(),
+    )
+    .unwrap();
+    assert!(super::install::validate_compatibility_file(&root).is_err());
+    std::fs::remove_file(root.join("component-compatibility.json")).unwrap();
+    assert!(super::install::validate_compatibility_file(&root).is_err());
+    std::fs::remove_dir(root).unwrap();
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+#[ignore = "requires SUNSHINE_TEST_SIDECAR_RUNTIME pointing to the newly built component"]
+fn staged_sidecar_implements_the_shared_transport_contract() {
+    let root = std::path::PathBuf::from(
+        std::env::var_os("SUNSHINE_TEST_SIDECAR_RUNTIME").expect("staged runtime path"),
+    );
+    super::install::validate_complete_runtime(&root).unwrap();
+    let probe = super::probe::run_probe(&root.join(super::SIDECAR_EXE)).unwrap();
+    assert!(probe.usbip_available);
+}
+
+#[cfg(target_os = "windows")]
+#[tokio::test]
+#[ignore = "requires administrator permission and SUNSHINE_TEST_SIDECAR_RUNTIME; creates and releases two virtual devices"]
+async fn staged_transport_acceptance_uses_shared_manager() {
+    let root = std::path::PathBuf::from(
+        std::env::var_os("SUNSHINE_TEST_SIDECAR_RUNTIME").expect("staged runtime path"),
+    );
+    super::install::validate_complete_runtime(&root).unwrap();
+    super::install::verify_staged_transport(&root.join(super::SIDECAR_EXE))
+        .await
+        .unwrap();
 }
 
 #[test]
@@ -185,6 +265,7 @@ fn component_status_separates_updates_from_same_version_repairs() {
         protocol: super::PROTOCOL_VERSION,
         sidecar_file: super::SIDECAR_EXE.to_string(),
         sidecar_sha256: "a".repeat(64),
+        ..Default::default()
     };
     assert!(!component_update_available(Some(&current)));
     assert!(component_matches_current_runtime(
@@ -309,6 +390,12 @@ fn sidecar_package_extracts_only_matching_runtime() {
         archive.start_file(name, options).unwrap();
         archive.write_all(b"fixture").unwrap();
     }
+    archive
+        .start_file("component-compatibility.json", options)
+        .unwrap();
+    archive
+        .write_all(include_bytes!("../../component-compatibility.json"))
+        .unwrap();
     archive.start_file("runtime.json", options).unwrap();
     archive
         .write_all(
@@ -393,6 +480,30 @@ fn current_component_core_digest_covers_replaced_dependencies() {
     let executable = root.join(super::SIDECAR_EXE);
     assert!(validate_sidecar_integrity(&executable, &manifest).is_ok());
     std::fs::write(root.join("HIDMaestro.Core.dll"), b"replaced").unwrap();
+    assert!(validate_sidecar_integrity(&executable, &manifest).is_err());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn installed_component_contract_matches_native_host_requirements() {
+    let root = std::env::temp_dir().join(format!("sunshine-ds5-test-{}", uuid::Uuid::new_v4()));
+    write_valid_component(&root, b"trusted");
+    let mut manifest: InstalledComponentManifest =
+        serde_json::from_slice(&std::fs::read(root.join("component.json")).unwrap()).unwrap();
+    manifest.component_version = super::COMPONENT_VERSION.into();
+    let executable = root.join(super::SIDECAR_EXE);
+    assert!(validate_sidecar_integrity(&executable, &manifest).is_ok());
+    manifest.usbip_policy.clear();
+    assert!(validate_sidecar_integrity(&executable, &manifest).is_err());
+    manifest.usbip_policy = crate::usbip::USBIP_POLICY.into();
+    manifest.usbip_version = "untested".into();
+    assert!(validate_sidecar_integrity(&executable, &manifest).is_err());
+    manifest.usbip_version = crate::usbip::USBIP_VERSION.into();
+    // A formatting-only change still invalidates the digest used by the native host.
+    let contract = root.join("component-compatibility.json");
+    let mut contents = std::fs::read(&contract).unwrap();
+    contents.push(b'\n');
+    std::fs::write(&contract, contents).unwrap();
     assert!(validate_sidecar_integrity(&executable, &manifest).is_err());
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -722,15 +833,6 @@ fn offline_uninstall_status_is_locally_complete() {
 }
 
 #[test]
-fn usbip_accepts_user_installed_versions_at_or_above_minimum() {
-    assert!(supported_usbip_installed(Some("0.9.7.7")));
-    assert!(supported_usbip_installed(Some("0.9.7.8")));
-    assert!(supported_usbip_installed(Some("0.9.7.10")));
-    assert!(!supported_usbip_installed(Some("0.9.7.3")));
-    assert!(!supported_usbip_installed(None));
-}
-
-#[test]
 fn usbip_discovery_preserves_errors_without_misreporting_missing_transport() {
     let (version, valid, error_code, detail) = usbip_discovery_status(Err(
         "USBIP-SETUP-008: conflicting USB/IP versions".to_string(),
@@ -741,8 +843,8 @@ fn usbip_discovery_preserves_errors_without_misreporting_missing_transport() {
     assert_eq!(detail, "USBIP-SETUP-008: conflicting USB/IP versions");
 
     let (version, valid, error_code, detail) =
-        usbip_discovery_status(Ok(Some("0.9.7.8".to_string())));
-    assert_eq!(version, "0.9.7.8");
+        usbip_discovery_status(Ok(Some("0.9.8.1".to_string())));
+    assert_eq!(version, "0.9.8.1");
     assert!(valid);
     assert!(error_code.is_empty());
     assert!(detail.is_empty());
@@ -752,6 +854,52 @@ fn usbip_discovery_preserves_errors_without_misreporting_missing_transport() {
     assert!(!valid);
     assert!(error_code.is_empty());
     assert!(detail.is_empty());
+}
+
+#[test]
+fn usbip_transport_probe_rejects_a_broken_driver_with_a_valid_registration() {
+    let status = |ready, detail: &str| crate::usbip::UsbipStatus {
+        supported: true,
+        installed: true,
+        ready,
+        version: "0.9.8.1".to_string(),
+        version_valid: true,
+        reboot_recommended: false,
+        vhci_residual: false,
+        attached_devices: Vec::new(),
+        detail: detail.to_string(),
+    };
+    let diagnosis = "USBIP-EXEC-006: ABI mismatch";
+    let (version, valid, ready, code, detail) =
+        usbip_transport_status(Ok(status(false, diagnosis)));
+    assert_eq!(version, "0.9.8.1");
+    assert!(valid);
+    assert!(!ready);
+    assert_eq!(code, "USBIP-EXEC-006");
+    assert_eq!(detail, diagnosis);
+
+    let (_, valid, ready, code, detail) = usbip_transport_status(Ok(status(true, "")));
+    assert!(valid && ready);
+    assert!(code.is_empty() && detail.is_empty());
+
+    let (_, valid, ready, code, detail) =
+        usbip_transport_status(Err("USBIP-EXEC-002: probe timed out".to_string()));
+    assert!(!valid && !ready);
+    assert_eq!(code, "USBIP-EXEC-002");
+    assert!(detail.contains("probe timed out"));
+}
+
+#[cfg(target_os = "windows")]
+#[tokio::test]
+#[ignore = "requires an installed Sidecar, compatible USB/IP, and a running Sunshine core"]
+async fn installed_dualsense_uses_the_ready_shared_transport() {
+    let transport = crate::usbip::usbip_get_status().await.unwrap();
+    assert!(transport.ready, "{}", transport.detail);
+    let component = crate::dualsense::dualsense_get_status().await.unwrap();
+    assert!(component.verified, "{}", component.detail);
+    assert!(component.usbip_available, "{}", component.detail);
+    assert_eq!(component.usbip_version, transport.version);
+    assert_eq!(component.usbip_version_valid, transport.version_valid);
 }
 
 #[cfg(target_os = "windows")]

@@ -60,10 +60,12 @@ test('VB-Cable and automatic fallback remain testable without Sidecar', () => {
   assert.equal(canTestMicrophone({ configured_backend: 'vb_cable', state: 'unsupported' }), false)
 })
 
-test('transport installation distinguishes reuse, missing and incompatible drivers', () => {
-  assert.equal(usbTransportPlan({ ready: true, version: '0.9.8.0' }), 'reuse')
-  assert.equal(usbTransportPlan({ installed: false }), 'install')
+test('transport maintenance distinguishes reuse, installation, shared cleanup and repair', () => {
+  assert.equal(usbTransportPlan({ installed: true, version_valid: true, ready: true }), 'reuse')
+  assert.equal(usbTransportPlan({}), 'install')
   assert.equal(usbTransportPlan({ installed: true, version_valid: false }), 'cleanup')
   assert.equal(usbTransportPlan({ vhci_residual: true }), 'cleanup')
   assert.equal(usbTransportPlan({ installed: true, version_valid: true }), 'repair')
+  assert.equal(usbTransportPlan({ installed: true, version_valid: true, detail: 'USBIP-EXEC-006: ABI mismatch' }), 'cleanup')
+  assert.equal(usbTransportPlan({ installed: true, version_valid: true, detail: 'USBIP-EXEC-007: access denied' }), 'repair')
 })

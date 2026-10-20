@@ -3,6 +3,7 @@
 use super::COMPONENT_VERSION;
 use super::packages::InstalledComponentManifest;
 
+/// Parses the three numeric release components used for component upgrade ordering.
 fn version(value: &str) -> Option<(u32, u32, u32)> {
     let mut parts = value.split('.');
     let result = (
@@ -13,6 +14,7 @@ fn version(value: &str) -> Option<(u32, u32, u32)> {
     parts.next().is_none().then_some(result)
 }
 
+/// Offers upgrades only for a known sidecar protocol/file with a strictly older component version.
 fn needs_update(manifest: Option<&InstalledComponentManifest>) -> bool {
     manifest.is_some_and(|manifest| {
         manifest.protocol == super::PROTOCOL_VERSION
@@ -43,6 +45,8 @@ pub(crate) fn installed_update_needed() -> bool {
     needs_update(manifest.as_ref())
 }
 
+/// Updates an existing component only while idle and the shared transport is ready.
+/// Automatic updates never deploy or repair the shared driver.
 #[cfg(target_os = "windows")]
 pub(crate) fn start_installed_component_update(app: tauri::AppHandle) {
     use super::COMPONENT_OPERATION;
@@ -73,6 +77,15 @@ pub(crate) fn start_installed_component_update(app: tauri::AppHandle) {
                 drop(operation);
                 tokio::time::sleep(std::time::Duration::from_secs(30)).await;
                 continue;
+            }
+            // Updates never repair shared drivers. Check before elevation and
+            // download so an incompatible/busy transport cannot cause a dead end.
+            let transport = crate::usbip::usbip_get_status().await;
+            if !transport.is_ok_and(|status| status.ready && status.attached_devices.is_empty()) {
+                warn!(
+                    "DualSense update requires shared transport maintenance or release of imported devices"
+                );
+                return;
             }
             info!("Updating the installed DualSense component to {COMPONENT_VERSION}");
             // Reuse the same authorization, verified download, staging and

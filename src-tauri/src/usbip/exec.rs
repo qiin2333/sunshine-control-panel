@@ -1,9 +1,10 @@
 //! Locates the pinned transport and runs `usbip.exe`, parsing its output.
 
 use super::{
-    COMMAND_TIMEOUT, DEFAULT_TCP_PORT, MAX_OUTPUT_BYTES, MINIMUM_VERSION, UsbipAttachedDevice,
+    COMMAND_TIMEOUT, DEFAULT_TCP_PORT, MAX_OUTPUT_BYTES, REQUIRED_VERSION, UsbipAttachedDevice,
     UsbipRemoteDevice, validate_bus_id,
 };
+/// Verifies the shared tools and driver, then executes a bounded CLI command.
 #[cfg(target_os = "windows")]
 pub(super) async fn run_usbip(arguments: Vec<String>) -> Result<std::process::Output, String> {
     use std::os::windows::process::CommandExt;
@@ -12,10 +13,11 @@ pub(super) async fn run_usbip(arguments: Vec<String>) -> Result<std::process::Ou
     let installation = super::manager::find_installation()?;
     if !super::supported_usbip_installed(Some(&installation.version)) {
         return Err(format!(
-            "USBIP-SETUP-003: USB/IP {} is installed; version {} or newer is required",
-            installation.version, MINIMUM_VERSION
+            "USBIP-SETUP-003: USB/IP {} is installed; the tested version {} is required",
+            installation.version, REQUIRED_VERSION
         ));
     }
+    super::manager::verify_driver_compatibility()?;
     let mut command = tokio::process::Command::new(installation.executable);
     command
         .args(arguments)
@@ -100,21 +102,38 @@ fn command_text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).trim().to_string()
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum CommandScope {
+    Remote,
+    Local,
+}
+
+/// Preserves both diagnostic streams and distinguishes ABI, local and exporter failures.
 pub(super) fn require_success(
     output: std::process::Output,
     action: &str,
+    scope: CommandScope,
 ) -> Result<String, String> {
     if output.status.success() {
         return Ok(command_text(&output.stdout));
     }
-    let detail = command_text(&output.stderr);
-    let detail = if detail.is_empty() {
-        command_text(&output.stdout)
+    // Retain both streams: the driver diagnosis may appear on stdout while
+    // stderr contains only a generic command failure (or the reverse).
+    let detail = [command_text(&output.stderr), command_text(&output.stdout)]
+        .into_iter()
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let code = if detail.to_ascii_lowercase().contains("abi mismatch") {
+        "USBIP-EXEC-006"
     } else {
-        detail
+        match scope {
+            CommandScope::Remote => "USBIP-EXEC-004",
+            CommandScope::Local => "USBIP-EXEC-007",
+        }
     };
     Err(format!(
-        "USBIP-EXEC-004: {action} failed{}",
+        "{code}: {action} failed{}",
         if detail.is_empty() {
             String::new()
         } else {
@@ -203,15 +222,71 @@ fn parse_attached_devices(output: &str) -> Vec<UsbipAttachedDevice> {
     devices
 }
 
+/// Enumerates local imports; local failures must not be presented as exporter errors.
 pub(super) async fn list_attached() -> Result<Vec<UsbipAttachedDevice>, String> {
     let output = run_usbip(vec!["port".to_string()]).await?;
-    let text = require_success(output, "listing attached devices")?;
+    let text = require_success(output, "listing attached devices", CommandScope::Local)?;
     Ok(parse_attached_devices(&text))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn failed_output(stdout: &str, stderr: &str) -> std::process::Output {
+        #[cfg(unix)]
+        use std::os::unix::process::ExitStatusExt;
+        #[cfg(windows)]
+        use std::os::windows::process::ExitStatusExt;
+
+        std::process::Output {
+            status: std::process::ExitStatus::from_raw(1),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: stderr.as_bytes().to_vec(),
+        }
+    }
+
+    #[test]
+    fn reports_driver_abi_mismatch_for_local_and_remote_commands() {
+        for scope in [CommandScope::Local, CommandScope::Remote] {
+            let error = require_success(
+                failed_output(
+                    "",
+                    "error: ABI mismatch, unexpected size of the input structure",
+                ),
+                "listing attached devices",
+                scope,
+            )
+            .unwrap_err();
+            assert!(error.starts_with("USBIP-EXEC-006:"), "{error}");
+            assert!(error.contains("unexpected size of the input structure"));
+        }
+    }
+
+    #[test]
+    fn preserves_driver_diagnosis_on_either_output_stream() {
+        let error = require_success(
+            failed_output("ABI mismatch", "command failed"),
+            "listing attached devices",
+            CommandScope::Local,
+        )
+        .unwrap_err();
+        assert!(error.starts_with("USBIP-EXEC-006:"), "{error}");
+        assert!(error.contains("command failed\nABI mismatch"));
+    }
+
+    #[test]
+    fn local_enumeration_failure_is_not_reported_as_an_exporter_failure() {
+        for (scope, code) in [
+            (CommandScope::Local, "USBIP-EXEC-007:"),
+            (CommandScope::Remote, "USBIP-EXEC-004:"),
+        ] {
+            let error =
+                require_success(failed_output("", "access denied"), "probing", scope).unwrap_err();
+            assert!(error.starts_with(code), "{error}");
+            assert!(error.contains("access denied"));
+        }
+    }
 
     #[test]
     fn parses_exportable_devices() {

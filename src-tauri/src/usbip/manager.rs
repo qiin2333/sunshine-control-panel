@@ -114,6 +114,7 @@ pub(crate) fn supported_version_installed(installed_version: Option<&str>) -> bo
         })
 }
 
+/// Requires four unsigned numeric components; suffixes, signs and overflow are invalid.
 fn parse_version(value: &str) -> Option<[u32; 4]> {
     let components: Vec<_> = value.split('.').collect();
     if components.len() != 4 {
@@ -141,6 +142,7 @@ fn version_from_display_name(display_name: &str) -> Option<&str> {
     })
 }
 
+/// Rejects malformed or conflicting registrations instead of selecting whichever entry appears first.
 fn consistent_version(
     versions: impl IntoIterator<Item = String>,
 ) -> Result<Option<String>, String> {

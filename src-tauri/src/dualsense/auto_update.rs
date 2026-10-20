@@ -3,6 +3,7 @@
 use super::COMPONENT_VERSION;
 use super::packages::InstalledComponentManifest;
 
+/// Parses the three numeric release components used for component upgrade ordering.
 fn version(value: &str) -> Option<(u32, u32, u32)> {
     let mut parts = value.split('.');
     let result = (
@@ -13,6 +14,7 @@ fn version(value: &str) -> Option<(u32, u32, u32)> {
     parts.next().is_none().then_some(result)
 }
 
+/// Offers upgrades only for a known sidecar protocol/file with a strictly older component version.
 fn needs_update(manifest: Option<&InstalledComponentManifest>) -> bool {
     manifest.is_some_and(|manifest| {
         manifest.protocol == super::PROTOCOL_VERSION

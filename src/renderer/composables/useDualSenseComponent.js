@@ -117,6 +117,7 @@ export function useDualSenseComponent({ busy = ref(false), onStatus, afterInstal
     },
   ])
 
+  /** Stores a sanitized diagnosis and displays contextual component or shared transport guidance. */
   const showError = (message, context = 'generic') => {
     operationError.value = safeDualSenseTechnicalError(message)
     ElMessage.error(friendlyDualSenseError(message, t.value.dualSense.errors, context, t.value.deviceHub.usb.errors))

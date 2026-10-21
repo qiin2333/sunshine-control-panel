@@ -9,7 +9,7 @@ use axum::{
 use bytes::Bytes;
 use futures_util::StreamExt;
 use log::{debug, error, info, warn};
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
@@ -18,12 +18,12 @@ use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 /// 全局 Sunshine 目标 URL（动态配置）
-static SUNSHINE_TARGET: Lazy<Arc<RwLock<String>>> =
-    Lazy::new(|| Arc::new(RwLock::new(String::from("https://localhost:47990"))));
+static SUNSHINE_TARGET: LazyLock<Arc<RwLock<String>>> =
+    LazyLock::new(|| Arc::new(RwLock::new(String::from("https://localhost:47990"))));
 
 #[cfg(test)]
-static TEST_REFRESH_TARGET: Lazy<std::sync::Mutex<Option<String>>> =
-    Lazy::new(|| std::sync::Mutex::new(None));
+static TEST_REFRESH_TARGET: LazyLock<std::sync::Mutex<Option<String>>> =
+    LazyLock::new(|| std::sync::Mutex::new(None));
 
 /// 快速失败机制：记录 Sunshine 是否可用
 static SUNSHINE_AVAILABLE: AtomicBool = AtomicBool::new(true);
@@ -36,12 +36,12 @@ static PROXY_PORT: AtomicU16 = AtomicU16::new(48081);
 /// On a cold GUI start the main window and the async proxy task otherwise race.
 static PROXY_READY: AtomicBool = AtomicBool::new(false);
 static PROXY_START_REQUESTED: AtomicBool = AtomicBool::new(false);
-static PROXY_READY_NOTIFY: Lazy<Notify> = Lazy::new(Notify::new);
-static PROXY_REQUEST_PERMITS: Lazy<Arc<Semaphore>> =
-    Lazy::new(|| Arc::new(Semaphore::new(MAX_CONCURRENT_PROXY_REQUESTS)));
-static PROXY_PENDING_PERMITS: Lazy<Arc<Semaphore>> =
-    Lazy::new(|| Arc::new(Semaphore::new(MAX_PENDING_PROXY_REQUESTS)));
-static PROXY_HEALTH_TOKEN: Lazy<String> = Lazy::new(|| uuid::Uuid::new_v4().to_string());
+static PROXY_READY_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
+static PROXY_REQUEST_PERMITS: LazyLock<Arc<Semaphore>> =
+    LazyLock::new(|| Arc::new(Semaphore::new(MAX_CONCURRENT_PROXY_REQUESTS)));
+static PROXY_PENDING_PERMITS: LazyLock<Arc<Semaphore>> =
+    LazyLock::new(|| Arc::new(Semaphore::new(MAX_PENDING_PROXY_REQUESTS)));
+static PROXY_HEALTH_TOKEN: LazyLock<String> = LazyLock::new(|| uuid::Uuid::new_v4().to_string());
 
 /// 快速失败冷却时间（秒）- 在此时间内不重试，超过后会重新尝试连接
 const FAST_FAIL_COOLDOWN_SECS: u64 = 3;
@@ -1492,7 +1492,7 @@ mod tests {
     use axum::body::Body;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    static TEST_LOCK: Lazy<tokio::sync::Mutex<()>> = Lazy::new(|| tokio::sync::Mutex::new(()));
+    static TEST_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
 
     async fn unused_local_port() -> u16 {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

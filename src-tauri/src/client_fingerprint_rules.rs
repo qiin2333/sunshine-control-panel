@@ -1,6 +1,6 @@
 use futures_util::StreamExt;
 use log::{debug, info, warn};
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use reqwest::header::{ETAG, IF_NONE_MATCH};
 use std::time::Duration;
 
@@ -13,7 +13,7 @@ const MIN_REFRESH_HOURS: u64 = 1;
 const MAX_REFRESH_HOURS: u64 = 168;
 const CONFIG_RECHECK_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
-static RULE_CLIENT: Lazy<Result<reqwest::Client, String>> = Lazy::new(|| {
+static RULE_CLIENT: LazyLock<Result<reqwest::Client, String>> = LazyLock::new(|| {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(30))

@@ -2,7 +2,7 @@
   <section class="chub-panel">
     <div class="chub-section-head">
       <span class="chub-section-label">{{ t.deviceHub.tabs.overview }}</span><span class="chub-section-rule"></span>
-      <el-button size="small" :loading="loading" @click="refresh()">{{ t.deviceHub.refresh }}</el-button>
+      <el-button size="small" :loading="loading" @click="refresh({ force: true })">{{ t.deviceHub.refresh }}</el-button>
     </div>
     <p v-if="loadError" class="chub-status-error">{{ t.deviceHub.statusUnavailable }}</p>
     <div v-if="!loaded" class="chub-cards"><el-skeleton :rows="4" animated /></div>
@@ -28,7 +28,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, onActivated, onMounted } from 'vue'
 import { microphoneOverviewState } from '../../composables/deviceHubStatus.js'
 import { useDeviceRuntime } from '../../composables/useDeviceRuntime.js'
 import { useI18n } from '../../desktop/i18n/index.js'
@@ -37,4 +37,6 @@ const { t } = useI18n()
 const { runtime, loading, loaded, loadError, probeFailed, refresh } = useDeviceRuntime()
 const microphoneState = computed(() => probeFailed.mic ? 'unknown' : microphoneOverviewState(runtime.mic))
 onMounted(() => refresh())
+// KeepAlive 重新显示时静默校准（状态通道会合并/复用近期探测）。
+onActivated(() => refresh())
 </script>

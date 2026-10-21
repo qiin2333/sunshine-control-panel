@@ -1,14 +1,5 @@
 <template>
   <section class="ds5-page">
-    <header v-if="!embedded" class="ds5-page-header">
-      <p class="ds5-eyebrow">{{ t.controllers.eyebrow }}</p>
-      <div class="ds5-title-row">
-        <h1>{{ t.controllers.title }}</h1>
-        <el-tag class="ds5-tag-exp" effect="plain">{{ t.dualSense.experimental }}</el-tag>
-      </div>
-      <p class="ds5-intro">{{ t.controllers.intro }}</p>
-    </header>
-
     <DualSenseComponentPanel :component="component" :title="t.dualSense.title" />
     <el-alert v-if="status.state === 'not_installed'" class="ds5-notice" type="warning" :title="nextAction" :closable="false" show-icon />
 
@@ -213,7 +204,6 @@ import DualSenseComponentPanel from './controllersHub/DualSenseComponentPanel.vu
 
 const { t } = useI18n()
 const emit = defineEmits(['open-controller-meta', 'manage-components'])
-defineProps({ embedded: { type: Boolean, default: false } })
 const {
   component,
   audioHaptics, genshinCompatibility,

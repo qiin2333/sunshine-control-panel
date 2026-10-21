@@ -1,5 +1,5 @@
 use log::{debug, info, warn};
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -15,10 +15,10 @@ const PROCESS_CHECK_NAME: &str = "web-server.exe";
 // ========== 状态管理 ==========
 
 /// 子进程句柄（由控制面板启动时持有）
-static CHILD_PROCESS: Lazy<Mutex<Option<std::process::Child>>> = Lazy::new(|| Mutex::new(None));
+static CHILD_PROCESS: LazyLock<Mutex<Option<std::process::Child>>> = LazyLock::new(|| Mutex::new(None));
 
 /// 当前配置的绑定端口
-static BIND_PORT: Lazy<Mutex<u16>> = Lazy::new(|| Mutex::new(DEFAULT_BIND_PORT));
+static BIND_PORT: LazyLock<Mutex<u16>> = LazyLock::new(|| Mutex::new(DEFAULT_BIND_PORT));
 
 // ========== 数据结构 ==========
 

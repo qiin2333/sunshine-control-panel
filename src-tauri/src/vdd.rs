@@ -632,6 +632,9 @@ pub async fn read_full_sunshine_config()
 /// 调用 Sunshine Config API 保存 VDD 配置
 /// Sunshine 的 saveVddSettings() 会负责写入 vdd_settings.xml 文件
 async fn sync_vdd_config_to_sunshine(settings: &VddSettings) -> Result<(), String> {
+    // /api/config 是整表替换语义：读文件与 POST 之间必须与其他全表写者互斥，
+    // 否则并发写者的字段会被旧快照覆盖丢失（见 controller_hub.rs 的锁约定）。
+    let _config_guard = crate::device_config::DEVICE_CONFIG_LOCK.lock().await;
     // 读取完整的现有配置，然后更新 VDD 相关的配置项
     // 这样可以避免丢失其他配置
     let mut config_data = read_full_sunshine_config().await?;

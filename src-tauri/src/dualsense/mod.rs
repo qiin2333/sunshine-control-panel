@@ -66,7 +66,7 @@ pub(crate) use elevated::{
 };
 
 use log::info;
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::Emitter;
@@ -98,8 +98,8 @@ pub(crate) const COMPONENT_FS_RETRY_ATTEMPTS: usize = 20;
 pub(crate) const COMPONENT_FS_RETRY_DELAY: std::time::Duration =
     std::time::Duration::from_millis(200);
 
-pub(crate) static COMPONENT_OPERATION: Lazy<tokio::sync::Mutex<()>> =
-    Lazy::new(|| tokio::sync::Mutex::new(()));
+pub(crate) static COMPONENT_OPERATION: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
 pub(crate) static LAST_OBSERVED_CONFIG_REVISION: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn observe_config_revision(revision: u64) {

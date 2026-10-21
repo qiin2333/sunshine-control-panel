@@ -8,7 +8,7 @@
 //! that happens to use the same label. State locks never cover COM calls.
 //! Streaming services run natively and do not require a hidden panel to stay awake.
 
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -204,7 +204,7 @@ impl Registry {
     }
 }
 
-static PANELS: Lazy<Mutex<Registry>> = Lazy::new(|| Mutex::new(Registry::default()));
+static PANELS: LazyLock<Mutex<Registry>> = LazyLock::new(|| Mutex::new(Registry::default()));
 
 pub(super) fn register(label: &str, show_on_load: bool) -> Panel {
     PANELS.lock().unwrap().register(label, show_on_load)

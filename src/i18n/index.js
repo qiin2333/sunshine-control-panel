@@ -1,7 +1,4 @@
-import { watch } from 'vue'
-import { createI18n } from 'vue-i18n'
-
-// 导入所有语言文件
+import { ref, watch } from 'vue'
 import en from './locales/en.js'
 import en_GB from './locales/en_GB.js'
 import en_US from './locales/en_US.js'
@@ -23,7 +20,8 @@ import tr from './locales/tr.js'
 import cs from './locales/cs.js'
 import bg from './locales/bg.js'
 
-// 支持的语言列表
+// 方案乙（去 vue-i18n 依赖、保留 20 语言数据）：welcome 页只用到
+// t(key) 平铺查表 + 语言切换，这里保持原对外行为（en 兜底、ref 响应式）。
 export const supportedLocales = [
   { code: 'en', name: 'English' },
   { code: 'en_GB', name: 'English (UK)' },
@@ -47,40 +45,21 @@ export const supportedLocales = [
   { code: 'bg', name: 'Български' },
 ]
 
-// 创建 i18n 实例
-export const i18n = createI18n({
-  legacy: false, // 使用 Composition API 模式
-  locale: getDefaultLocale(), // 默认跟随已保存设置或系统语言
-  fallbackLocale: 'en', // 回退语言
-  messages: {
-    en,
-    en_GB,
-    en_US,
-    zh,
-    zh_TW,
-    de,
-    fr,
-    es,
-    it,
-    ja,
-    ko,
-    ru,
-    uk,
-    pt,
-    pt_BR,
-    pl,
-    sv,
-    tr,
-    cs,
-    bg,
-  },
-})
-
-function setDocumentLanguage(locale) {
-  document.documentElement.lang = String(locale || '').startsWith('zh') ? 'zh-CN' : 'en'
+const messages = {
+  en, en_GB, en_US, zh, zh_TW, de, fr, es, it, ja,
+  ko, ru, uk, pt, pt_BR, pl, sv, tr, cs, bg,
 }
 
-watch(i18n.global.locale, setDocumentLanguage, { immediate: true })
+const locale = ref(getDefaultLocale())
+
+function setDocumentLanguage(value) {
+  if (typeof document === 'undefined') return
+  // 语言码即 BCP 47 标签（en_GB → en-GB、zh_TW → zh-TW）；zh 特判为
+  // zh-CN 保留屏幕阅读器的变体提示，未知值兜底 en。
+  const tag = String(value || 'en').replace(/_/g, '-')
+  document.documentElement.lang = tag === 'zh' ? 'zh-CN' : tag
+}
+watch(locale, setDocumentLanguage, { immediate: true })
 
 // 获取默认语言
 export function getDefaultLocale() {
@@ -93,9 +72,9 @@ export function getDefaultLocale() {
   // 尝试从浏览器语言获取
   const browserLang = navigator.language || navigator.userLanguage
   const langCode = browserLang.split('-')[0]
-  const locale = supportedLocales.find((l) => l.code === langCode || l.code === browserLang)
-  if (locale) {
-    return locale.code
+  const matched = supportedLocales.find((l) => l.code === langCode || l.code === browserLang)
+  if (matched) {
+    return matched.code
   }
 
   // 默认返回英文，避免英语系统用户首次打开时看到中文界面
@@ -103,15 +82,19 @@ export function getDefaultLocale() {
 }
 
 // 设置语言
-export function setLocale(locale) {
-  if (supportedLocales.find((l) => l.code === locale)) {
-    i18n.global.locale.value = locale
-    setDocumentLanguage(locale)
-    localStorage.setItem('sunshine-locale', locale)
-    return true
-  }
-  return false
+export function setLocale(value) {
+  if (!supportedLocales.find((l) => l.code === value)) return false
+  locale.value = value
+  localStorage.setItem('sunshine-locale', value)
+  return true
 }
 
-export default i18n
+// 平铺查表：当前语言缺失的键回退到 en，再缺失则原样返回键名。
+export function t(key) {
+  const table = messages[locale.value] || {}
+  return table[key] ?? messages.en[key] ?? key
+}
 
+export function useWelcomeI18n() {
+  return { t, locale }
+}

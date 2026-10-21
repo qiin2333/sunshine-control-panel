@@ -48,8 +48,7 @@
     "markdown-it": "^14.3.2",
     "pixi.js": "^8.19.0",
     "qrcode": "^1.5.4",
-    "vue": "^3.5.38",
-    "vue-i18n": "^11.4.6"
+    "vue": "^3.5.38"
   },
   "overrides": {
     "@vueuse/core": "14.4.0"

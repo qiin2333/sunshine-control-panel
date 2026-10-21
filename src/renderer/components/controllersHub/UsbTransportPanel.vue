@@ -10,7 +10,7 @@
         </div>
         <div class="chub-hud-actions">
           <span v-if="status.version" class="chub-hud-version">v{{ status.version }}</span>
-          <el-button size="small" :loading="statusLoading" :disabled="transportBusy" @click="refreshStatus()">{{ t.deviceHub.refresh }}</el-button>
+          <el-button size="small" :loading="statusLoading" :disabled="transportBusy" @click="refreshStatus({ force: true })">{{ t.deviceHub.refresh }}</el-button>
         </div>
       </div>
 

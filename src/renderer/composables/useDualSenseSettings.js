@@ -9,6 +9,7 @@ import {
   dualSenseConfigUiState,
   mergeDualSenseStatus,
 } from './dualsenseConfigSync.js'
+import { dualsenseStatusChannel } from './deviceStatusStore.js'
 import { useDualSenseComponent } from './useDualSenseComponent.js'
 import { useI18n } from '../desktop/i18n/index.js'
 
@@ -162,6 +163,7 @@ export function useDualSenseSettings() {
       return { success: false, preserveTuning, message: result.message }
     }
     status.value = mergeDualSenseStatus(status.value, result.data)
+    dualsenseStatusChannel.prime(result)
     statusKnown.value = true
     return { success: true, preserveTuning }
   }
@@ -257,6 +259,8 @@ export function useDualSenseSettings() {
       status.value.legacy_curve = result.data.legacy_curve
       status.value.legacy_noise_gate = result.data.legacy_noise_gate
       status.value.config_revision = result.data.revision
+      // tuning 结果不是完整状态，无法 prime；让共享缓存失效以回源对齐。
+      dualsenseStatusChannel.invalidate()
       if (!tuningChangedWhileSaving) ElMessage.success(t.value.dualSense.tuningSaved)
     })()
     tuningSavePromise = saveOperation
@@ -294,7 +298,7 @@ export function useDualSenseSettings() {
     if (!result.success) return showError(result.message, 'test')
     testCompleted.value = true
     ElMessage.success(t.value.dualSense.testSuccess)
-    await refresh()
+    await refresh(false, false, true)
   })
 
   onMounted(() => dualsense.logPanelOpened().catch(() => {}))

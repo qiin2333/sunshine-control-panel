@@ -22,8 +22,8 @@ const ELEVATED_ARG: &str = "--elevated-usbip";
 const ELEVATED_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 const COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
-static OPERATION_LOCK: once_cell::sync::Lazy<tokio::sync::Mutex<()>> =
-    once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(()));
+static OPERATION_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct UsbipRemoteDevice {
@@ -53,6 +53,9 @@ pub struct UsbipStatus {
     pub version_valid: bool,
     pub reboot_recommended: bool,
     pub vhci_residual: bool,
+    /// 结构化错误码（"USBIP-SETUP-003" 等），取自 detail 的码前缀；
+    /// 前端按码判断语义，不得解析 detail 文本。
+    pub error_code: String,
     pub attached_devices: Vec<UsbipAttachedDevice>,
     pub detail: String,
 }

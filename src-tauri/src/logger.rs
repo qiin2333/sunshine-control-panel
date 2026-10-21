@@ -135,8 +135,8 @@ impl Log for TauriLogger {
     }
 }
 
-static LOG_COLLECTOR: once_cell::sync::OnceCell<Arc<LogCollector>> =
-    once_cell::sync::OnceCell::new();
+static LOG_COLLECTOR: std::sync::OnceLock<Arc<LogCollector>> =
+    std::sync::OnceLock::new();
 static LOG_LEVEL_FILTER: AtomicU8 = AtomicU8::new(3);
 
 fn level_to_u8(level: LevelFilter) -> u8 {

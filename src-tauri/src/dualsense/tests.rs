@@ -866,6 +866,7 @@ fn usbip_transport_probe_rejects_a_broken_driver_with_a_valid_registration() {
         version_valid: true,
         reboot_recommended: false,
         vhci_residual: false,
+        error_code: "USBIP-EXEC-006".to_string(),
         attached_devices: Vec::new(),
         detail: detail.to_string(),
     };

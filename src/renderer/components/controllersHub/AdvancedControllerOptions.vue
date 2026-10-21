@@ -52,51 +52,47 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { controllerHub } from '../../tauri-adapter.js'
+import { useControllerHubConfig } from '../../composables/useControllerHubConfig.js'
 import { useI18n } from '../../desktop/i18n/index.js'
 
 const { t } = useI18n()
 
-const config = ref({
+// 与 GamepadTypePicker 共享同一份配置副本；字段不相交，任一处保存双方即刻可见。
+const { config: sharedConfig, load, save } = useControllerHubConfig()
+const DEFAULTS = {
   motion_as_ds4: true,
   touchpad_as_ds4: true,
   ds4_back_as_touchpad_click: true,
   enable_dsu_server: false,
   dsu_server_port: 26760,
-})
-const busyKey = ref('')
-
-async function loadConfig() {
-  try {
-    const result = await controllerHub.getConfig()
-    if (result?.success) Object.assign(config.value, result.data)
-  } catch (error) {
-    console.warn('控制器高级配置读取失败:', error)
-  }
 }
+const config = computed(() => ({ ...DEFAULTS, ...(sharedConfig.value || {}) }))
+const busyKey = ref('')
 
 async function saveKey(key, value) {
   if (busyKey.value !== '' || config.value[key] === value) return
+  // 回滚值取生效值（含 DEFAULTS 兜底）：加载完成前改默认开启项且保存失败时，
+  // 写回 undefined 会盖掉默认值使选项错误保持关闭。
   const prev = config.value[key]
-  config.value[key] = value
+  sharedConfig.value = { ...(sharedConfig.value || {}), [key]: value }
   busyKey.value = key
   try {
-    const result = await controllerHub.saveConfig({ [key]: value })
+    const result = await save({ [key]: value })
     if (result?.success) {
       ElMessage.success(t.value.controllersHub.emulation.advancedSaveSuccess)
     } else {
-      config.value[key] = prev
+      sharedConfig.value = { ...(sharedConfig.value || {}), [key]: prev }
       ElMessage.error(result?.message || t.value.controllersHub.emulation.saveFailed)
     }
   } catch (error) {
-    config.value[key] = prev
+    sharedConfig.value = { ...(sharedConfig.value || {}), [key]: prev }
     ElMessage.error(String(error))
   } finally {
     busyKey.value = ''
   }
 }
 
-onMounted(loadConfig)
+onMounted(load)
 </script>

@@ -1,6 +1,6 @@
 use crate::proxy_server;
 use log::{debug, error, info, warn};
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use std::sync::Mutex;
 use tauri::{
     AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewWindow,
@@ -15,8 +15,8 @@ struct ToolWindowMoveSave {
     position: Option<PhysicalPosition<i32>>,
 }
 
-static TOOL_WINDOW_MOVE_SAVE: Lazy<Mutex<ToolWindowMoveSave>> =
-    Lazy::new(|| Mutex::new(ToolWindowMoveSave::default()));
+static TOOL_WINDOW_MOVE_SAVE: LazyLock<Mutex<ToolWindowMoveSave>> =
+    LazyLock::new(|| Mutex::new(ToolWindowMoveSave::default()));
 
 const MAIN_WINDOW_ID: &str = "main";
 const ABOUT_WINDOW_ID: &str = "about";

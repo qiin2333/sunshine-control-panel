@@ -175,6 +175,8 @@ static HELPER_JOB: once_cell::sync::OnceCell<std::os::windows::io::OwnedHandle> 
 /// Bind the elevated helper and every process it launches to one lifetime
 /// job. Windows kills the whole tree when this process's handles close, so
 /// grandchildren (installers, downloaders) can never outlive the helper.
+/// once_cell 的 get_or_try_init 在这里是库级保证的可失败惰性初始化：
+/// 失败不缓存、下次调用重试——不手写双检样板。
 pub(crate) fn bind_lifetime_job(error_code: &str) -> Result<(), String> {
     use std::os::windows::io::{AsRawHandle, FromRawHandle};
     use windows::Win32::Foundation::HANDLE;

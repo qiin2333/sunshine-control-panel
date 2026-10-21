@@ -83,13 +83,12 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { supportedLocales, setLocale as setI18nLocale, getDefaultLocale } from '../../i18n/index.js'
+import { supportedLocales, setLocale as setI18nLocale, getDefaultLocale, useWelcomeI18n } from '../../i18n/index.js'
 import { sunshine } from '../tauri-adapter.js'
 
 const REDIRECT_DELAY = 2000
 
-const { t, locale } = useI18n()
+const { t, locale } = useWelcomeI18n()
 
 const currentLocale = ref(locale.value)
 const formData = ref({ username: 'sunshine', password: '', confirmPassword: '' })

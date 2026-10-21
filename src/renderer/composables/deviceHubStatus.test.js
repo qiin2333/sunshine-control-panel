@@ -66,6 +66,6 @@ test('transport maintenance distinguishes reuse, installation, shared cleanup an
   assert.equal(usbTransportPlan({ installed: true, version_valid: false }), 'cleanup')
   assert.equal(usbTransportPlan({ vhci_residual: true }), 'cleanup')
   assert.equal(usbTransportPlan({ installed: true, version_valid: true }), 'repair')
-  assert.equal(usbTransportPlan({ installed: true, version_valid: true, detail: 'USBIP-EXEC-006: ABI mismatch' }), 'cleanup')
+  assert.equal(usbTransportPlan({ installed: true, version_valid: true, error_code: 'USBIP-EXEC-006' }), 'cleanup')
   assert.equal(usbTransportPlan({ installed: true, version_valid: true, detail: 'USBIP-EXEC-007: access denied' }), 'repair')
 })

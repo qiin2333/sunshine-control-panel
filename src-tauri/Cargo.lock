@@ -4898,6 +4898,7 @@ dependencies = [
  "futures-util",
  "image",
  "log",
+ "once_cell",
  "quick-xml 0.37.5",
  "raw-window-handle",
  "rcgen",

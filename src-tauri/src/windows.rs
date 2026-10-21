@@ -1,6 +1,6 @@
 use crate::proxy_server;
 use log::{debug, error, info, warn};
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::{
@@ -28,8 +28,8 @@ impl HeartbeatState {
 /// WebView heartbeat state is scoped to one window lifetime. Reusing a stale
 /// timestamp for a newly-created window with the same label can make the
 /// recovery monitor reload that window while its first page is still loading.
-static HEARTBEAT_MAP: Lazy<Mutex<HashMap<String, HeartbeatState>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static HEARTBEAT_MAP: LazyLock<Mutex<HashMap<String, HeartbeatState>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Default)]
 struct ToolWindowMoveSave {
@@ -37,8 +37,8 @@ struct ToolWindowMoveSave {
     position: Option<PhysicalPosition<i32>>,
 }
 
-static TOOL_WINDOW_MOVE_SAVE: Lazy<Mutex<ToolWindowMoveSave>> =
-    Lazy::new(|| Mutex::new(ToolWindowMoveSave::default()));
+static TOOL_WINDOW_MOVE_SAVE: LazyLock<Mutex<ToolWindowMoveSave>> =
+    LazyLock::new(|| Mutex::new(ToolWindowMoveSave::default()));
 
 /// 心跳超时阈值（秒）：超过此时间未收到心跳则认为渲染进程可能崩溃
 const HEARTBEAT_STALE_SECS: u64 = 30;

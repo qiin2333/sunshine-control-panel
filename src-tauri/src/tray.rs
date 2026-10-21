@@ -1,5 +1,5 @@
 use log::{debug, error, info, warn};
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use serde::Serialize;
 use std::{
     sync::{
@@ -49,8 +49,8 @@ static SUNSHINE_USER_MODE_STATE: Mutex<bool> = Mutex::new(false);
 // 当前语言状态管理 ("zh" 或 "en")
 static CURRENT_LOCALE: Mutex<Option<String>> = Mutex::new(None);
 static LOCALE_CHANGE_REVISION: AtomicU64 = AtomicU64::new(0);
-static LOCALE_PERSIST_LOCK: Lazy<tokio::sync::Mutex<()>> =
-    Lazy::new(|| tokio::sync::Mutex::new(()));
+static LOCALE_PERSIST_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

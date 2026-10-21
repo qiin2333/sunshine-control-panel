@@ -9,7 +9,7 @@ import './styles/element-theme.less'  // Element Plus 深色 token，需早于�
 import './styles/dialog.less'  // 导入对话框样式
 // 导入 Tauri polyfill
 import './tauri-polyfill.js'
-import { i18n, getDefaultLocale, setLocale } from '../i18n/index.js'
+import { getDefaultLocale, setLocale } from '../i18n/index.js'
 import { getInitialSimpleLocale } from './shared/simple-i18n.js'
 
 const bootMessage = document.querySelector('.boot-loading p')
@@ -19,5 +19,4 @@ if (bootMessage && getInitialSimpleLocale() === 'zh') bootMessage.textContent = 
 setLocale(getDefaultLocale())
 
 const app = createApp(SunshineFrame)
-app.use(i18n)
 app.mount('#app')

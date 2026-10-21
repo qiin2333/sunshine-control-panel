@@ -169,12 +169,16 @@ pub(crate) async fn connect_helper_pipe(
     Err(format!("{error_code}: administrator operation pipe was unavailable"))
 }
 
-static HELPER_JOB: once_cell::sync::OnceCell<std::os::windows::io::OwnedHandle> =
-    once_cell::sync::OnceCell::new();
+static HELPER_JOB: std::sync::OnceLock<std::os::windows::io::OwnedHandle> =
+    std::sync::OnceLock::new();
+static HELPER_JOB_INIT: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Bind the elevated helper and every process it launches to one lifetime
 /// job. Windows kills the whole tree when this process's handles close, so
 /// grandchildren (installers, downloaders) can never outlive the helper.
+/// The stable OnceLock lacks get_or_try_init: init runs under a mutex with a
+/// double check, and a failed init leaves the cell empty so the next caller
+/// retries instead of caching the error.
 pub(crate) fn bind_lifetime_job(error_code: &str) -> Result<(), String> {
     use std::os::windows::io::{AsRawHandle, FromRawHandle};
     use windows::Win32::Foundation::HANDLE;
@@ -186,30 +190,40 @@ pub(crate) fn bind_lifetime_job(error_code: &str) -> Result<(), String> {
     use windows::Win32::System::Threading::GetCurrentProcess;
     use windows::core::PCWSTR;
 
-    HELPER_JOB
-        .get_or_try_init(|| unsafe {
-            let raw_job = CreateJobObjectW(None, PCWSTR::null()).map_err(|error| {
-                format!("{error_code}: unable to create the elevated helper job: {error}")
-            })?;
-            let job = std::os::windows::io::OwnedHandle::from_raw_handle(raw_job.0);
-            let job_handle = HANDLE(job.as_raw_handle());
-            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            SetInformationJobObject(
-                job_handle,
-                JobObjectExtendedLimitInformation,
-                std::ptr::from_ref(&limits).cast(),
-                std::mem::size_of_val(&limits) as u32,
-            )
-            .map_err(|error| {
-                format!("{error_code}: unable to configure the elevated helper job: {error}")
-            })?;
-            AssignProcessToJobObject(job_handle, GetCurrentProcess()).map_err(|error| {
-                format!("{error_code}: unable to bind the elevated helper lifetime: {error}")
-            })?;
-            Ok(job)
-        })
-        .map(|_| ())
+    if HELPER_JOB.get().is_some() {
+        return Ok(());
+    }
+    // 双检 + 互斥：并发调用方都创建 Job 时，落选方的句柄在关闭时会按
+    // KILL_ON_JOB_CLOSE 连带杀掉整个进程树，必须保证只初始化一次。
+    let init_guard = HELPER_JOB_INIT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if HELPER_JOB.get().is_some() {
+        return Ok(());
+    }
+    let job = unsafe {
+        let raw_job = CreateJobObjectW(None, PCWSTR::null()).map_err(|error| {
+            format!("{error_code}: unable to create the elevated helper job: {error}")
+        })?;
+        let job = std::os::windows::io::OwnedHandle::from_raw_handle(raw_job.0);
+        let job_handle = HANDLE(job.as_raw_handle());
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(
+            job_handle,
+            JobObjectExtendedLimitInformation,
+            std::ptr::from_ref(&limits).cast(),
+            std::mem::size_of_val(&limits) as u32,
+        )
+        .map_err(|error| {
+            format!("{error_code}: unable to configure the elevated helper job: {error}")
+        })?;
+        AssignProcessToJobObject(job_handle, GetCurrentProcess()).map_err(|error| {
+            format!("{error_code}: unable to bind the elevated helper lifetime: {error}")
+        })?;
+        job
+    };
+    let _ = HELPER_JOB.set(job);
+    drop(init_guard);
+    Ok(())
 }
 
 /// Native elevation probe: reads the current process token instead of

@@ -1,5 +1,5 @@
 use log::{debug, warn};
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use std::{
     collections::HashMap,
     sync::{
@@ -20,8 +20,8 @@ const DEBOUNCE: Duration = Duration::from_millis(200);
 const DISPLAY_DEBOUNCE: Duration = Duration::from_millis(300);
 const DISPLAY_SETTLE: Duration = Duration::from_secs(1);
 static STREAMING: AtomicBool = AtomicBool::new(false);
-static STATES: Lazy<Mutex<HashMap<String, Arc<Mutex<State>>>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static STATES: LazyLock<Mutex<HashMap<String, Arc<Mutex<State>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 struct State {
     wake: Arc<Notify>,

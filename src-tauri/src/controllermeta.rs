@@ -8,7 +8,7 @@
 //   4. 启动 EXE（GUI 进程，不捕获窗口）
 
 use log::{debug, info, warn};
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -32,7 +32,7 @@ const DOWNLOAD_PROXY_PREFIXES: &[&str] = &[
 ];
 
 /// 已启动的子进程句柄（仅用于判断是否由我们拉起）
-static CHILD_PROCESS: Lazy<Mutex<Option<std::process::Child>>> = Lazy::new(|| Mutex::new(None));
+static CHILD_PROCESS: LazyLock<Mutex<Option<std::process::Child>>> = LazyLock::new(|| Mutex::new(None));
 
 // ========== 数据结构 ==========
 

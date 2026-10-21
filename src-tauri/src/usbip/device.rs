@@ -157,64 +157,46 @@ pub(super) fn has_vhci_residual(interfaces: &[String], devnodes: &[String]) -> b
 }
 
 /// Splits a registry command line such as `"C:\dir\unins000.exe" /flag` into
-/// the executable and its arguments, applying the quoting rules of
-/// CommandLineToArgvW: double quotes group whitespace, a quote toggles
-/// quoting (an unclosed quote quotes to the end), and backslashes immediately
-/// before a quote are half-escaped. Bare paths without arguments are valid
-/// and yield an empty argument list.
+/// the executable and its arguments. The quoting rules (double quotes group
+/// whitespace, a quote toggles quoting, backslashes immediately before a
+/// quote are half-escaped) come from the OS `CommandLineToArgvW`, matching
+/// what Inno Setup and Windows itself assume when parsing the same string.
+#[cfg(target_os = "windows")]
 fn split_executable_command(command: &str) -> Option<(String, Vec<String>)> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::UI::Shell::CommandLineToArgvW;
+
     let command = command.trim();
     if command.is_empty() {
         return None;
     }
-    let mut arguments = Vec::new();
-    let mut current = String::new();
-    let mut in_quotes = false;
-    let mut chars = command.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            let mut slashes = 1;
-            while chars.peek() == Some(&'\\') {
-                chars.next();
-                slashes += 1;
-            }
-            if chars.peek() == Some(&'"') {
-                // Runs before a quote are half-escaped: 2n backslashes keep n
-                // and leave the quote as a toggle; 2n+1 keep n plus a literal
-                // quote.
-                for _ in 0..(slashes / 2) {
-                    current.push('\\');
-                }
-                if slashes % 2 == 1 {
-                    chars.next();
-                    current.push('"');
-                }
-            } else {
-                for _ in 0..slashes {
-                    current.push('\\');
-                }
-            }
-            continue;
-        }
-        match ch {
-            '"' => in_quotes = !in_quotes,
-            ' ' | '\t' if !in_quotes => {
-                if !current.is_empty() {
-                    arguments.push(std::mem::take(&mut current));
-                }
-            }
-            _ => current.push(ch),
-        }
-    }
-    if !current.is_empty() {
-        arguments.push(current);
-    }
-    if arguments.is_empty() {
+    let mut wide: Vec<u16> = command.encode_utf16().collect();
+    wide.push(0);
+    let mut argument_count = 0;
+    let arguments_ptr = unsafe {
+        CommandLineToArgvW(PCWSTR::from_raw(wide.as_ptr()), &mut argument_count)
+    };
+    if arguments_ptr.is_null() || argument_count <= 0 {
         return None;
     }
-    let mut arguments = arguments;
-    let executable = arguments.remove(0);
-    Some((executable, arguments))
+    let arguments: Vec<String> = unsafe {
+        std::slice::from_raw_parts(arguments_ptr, argument_count as usize)
+            .iter()
+            .map(|argument| {
+                let mut length = 0usize;
+                while *argument.0.add(length) != 0 {
+                    length += 1;
+                }
+                String::from_utf16_lossy(std::slice::from_raw_parts(argument.0, length))
+            })
+            .collect()
+    };
+    unsafe {
+        let _ = LocalFree(Some(HLOCAL(arguments_ptr.cast())));
+    }
+    let executable = arguments.first()?.clone();
+    Some((executable, arguments[1..].to_vec()))
 }
 
 #[cfg(target_os = "windows")]
@@ -477,6 +459,7 @@ mod tests {
         assert!(!is_vhci_hardware_id(r"ROOT\HIDMAESTRO_UDE"));
     }
 
+    #[cfg(target_os = "windows")]
     #[test]
     fn splits_quoted_and_bare_uninstaller_commands() {
         assert_eq!(

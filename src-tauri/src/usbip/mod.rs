@@ -22,8 +22,8 @@ const ELEVATED_ARG: &str = "--elevated-usbip";
 const ELEVATED_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 const COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
-static OPERATION_LOCK: once_cell::sync::Lazy<tokio::sync::Mutex<()>> =
-    once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(()));
+static OPERATION_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct UsbipRemoteDevice {

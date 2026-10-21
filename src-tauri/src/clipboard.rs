@@ -271,8 +271,8 @@ struct State {
     next_token: u32,
 }
 
-static AGENT: once_cell::sync::Lazy<Mutex<State>> =
-    once_cell::sync::Lazy::new(|| Mutex::new(State::default()));
+static AGENT: std::sync::LazyLock<Mutex<State>> =
+    std::sync::LazyLock::new(|| Mutex::new(State::default()));
 
 #[derive(Serialize, Clone)]
 pub struct ClipboardStatus {
@@ -689,8 +689,8 @@ async fn fetch_blob(id: &str) -> Result<(Vec<u8>, String), String> {
 /// Retained text payloads of in-flight compound bursts (frames sharing a
 /// non-zero token). Text applies on arrival; the image later upgrades the
 /// clipboard to one compound write using the retained bytes.
-static BURSTS: once_cell::sync::Lazy<Mutex<HashMap<u32, (Vec<u8>, Instant)>>> =
-    once_cell::sync::Lazy::new(|| Mutex::new(HashMap::new()));
+static BURSTS: std::sync::LazyLock<Mutex<HashMap<u32, (Vec<u8>, Instant)>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn prune_bursts(map: &mut HashMap<u32, (Vec<u8>, Instant)>) {
     map.retain(|_, (_, ts)| ts.elapsed() < BURST_RETENTION);

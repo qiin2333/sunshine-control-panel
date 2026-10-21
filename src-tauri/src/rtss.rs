@@ -2,7 +2,7 @@
 // 提供帧率限制控制、OSD 文字显示和实时监控功能
 
 use log::{debug, info, warn};
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use serde::{Deserialize, Serialize};
 use std::ffi::CString;
 use std::sync::Arc;
@@ -139,7 +139,7 @@ struct MonitoringTask {
     handle: tokio::task::JoinHandle<()>,
 }
 
-static MONITORING_TASK: Lazy<Mutex<Option<MonitoringTask>>> = Lazy::new(|| Mutex::new(None));
+static MONITORING_TASK: LazyLock<Mutex<Option<MonitoringTask>>> = LazyLock::new(|| Mutex::new(None));
 
 async fn finish_monitoring_task(task: &mut Option<MonitoringTask>) {
     if let Some(task) = task.take() {
@@ -168,11 +168,11 @@ where
 
 /// CPU 采样历史 (prev_cpu_time, prev_sys_time)，用于计算瞬时 CPU 使用率
 #[cfg(target_os = "windows")]
-static PREV_CPU_SAMPLE: Lazy<std::sync::Mutex<std::collections::HashMap<u32, (u64, u64)>>> =
-    Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+static PREV_CPU_SAMPLE: LazyLock<std::sync::Mutex<std::collections::HashMap<u32, (u64, u64)>>> =
+    LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
-static MONITORING_SNAPSHOT: Lazy<Arc<Mutex<MonitoringSnapshot>>> =
-    Lazy::new(|| Arc::new(Mutex::new(MonitoringSnapshot::default())));
+static MONITORING_SNAPSHOT: LazyLock<Arc<Mutex<MonitoringSnapshot>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(MonitoringSnapshot::default())));
 
 // ─── Windows 平台：共享内存 RAII 封装 ────────────────────────
 
@@ -1516,8 +1516,8 @@ fn find_sunshine_pid_toolhelp() -> Option<u32> {
 /// PDH 句柄，用于持续查询 GPU Engine 计数器（编码器/3D/解码等）
 /// 需要在两次 PdhCollectQueryData 之间保留句柄才能拿到瞬时值
 #[cfg(target_os = "windows")]
-static GPU_PDH_QUERY: Lazy<std::sync::Mutex<Option<GpuPdhQuery>>> =
-    Lazy::new(|| std::sync::Mutex::new(None));
+static GPU_PDH_QUERY: LazyLock<std::sync::Mutex<Option<GpuPdhQuery>>> =
+    LazyLock::new(|| std::sync::Mutex::new(None));
 
 #[cfg(target_os = "windows")]
 struct GpuPdhQuery {
@@ -1884,7 +1884,7 @@ fn insert_host_perf_defaults(map: &mut std::collections::HashMap<String, String>
     }
 }
 
-static HOST_PERF_CLIENT: Lazy<Option<reqwest::Client>> = Lazy::new(|| {
+static HOST_PERF_CLIENT: LazyLock<Option<reqwest::Client>> = LazyLock::new(|| {
     reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .timeout(std::time::Duration::from_secs(2))

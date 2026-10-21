@@ -1,5 +1,5 @@
 use log::{debug, error, info, warn};
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -20,9 +20,9 @@ pub struct SunshineConfig {
 }
 
 // 缓存 Sunshine 路径，避免重复查找和记录日志
-static SUNSHINE_PATH_CACHE: Lazy<Mutex<Option<PathBuf>>> = Lazy::new(|| Mutex::new(None));
-static RUNTIME_SUNSHINE_URL: Lazy<RwLock<Option<String>>> = Lazy::new(|| RwLock::new(None));
-static HTTPS_CLIENT: Lazy<Result<reqwest::Client, String>> = Lazy::new(|| {
+static SUNSHINE_PATH_CACHE: LazyLock<Mutex<Option<PathBuf>>> = LazyLock::new(|| Mutex::new(None));
+static RUNTIME_SUNSHINE_URL: LazyLock<RwLock<Option<String>>> = LazyLock::new(|| RwLock::new(None));
+static HTTPS_CLIENT: LazyLock<Result<reqwest::Client, String>> = LazyLock::new(|| {
     reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .redirect(reqwest::redirect::Policy::none())
@@ -31,7 +31,7 @@ static HTTPS_CLIENT: Lazy<Result<reqwest::Client, String>> = Lazy::new(|| {
         .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))
 });
 const MAX_CONFIG_SAVE_RESPONSE_BYTES: usize = 64 * 1024;
-static SSE_HTTPS_CLIENT: Lazy<Result<reqwest::Client, String>> = Lazy::new(|| {
+static SSE_HTTPS_CLIENT: LazyLock<Result<reqwest::Client, String>> = LazyLock::new(|| {
     reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .connect_timeout(std::time::Duration::from_secs(10))

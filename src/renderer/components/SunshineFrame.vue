@@ -466,8 +466,7 @@ onMounted(async () => {
   window.addEventListener('locale-changed', handleLocaleChanged)
 
   try {
-    await invoke('wait_for_proxy_ready')
-    const proxyBaseUrl = await sunshine.getProxyUrl()
+    const proxyBaseUrl = await invoke('wait_for_proxy_ready')
     proxyBase = proxyBaseUrl
 
     if (!await verifyLocalProxy()) {
@@ -533,11 +532,7 @@ onMounted(async () => {
       await invoke('main_panel_ready').catch(() => {})
       return
     }
-    try {
-      sunshineUrl.value = (await sunshine.getProxyUrl()) + '/'
-    } catch {
-      sunshineUrl.value = 'http://localhost:48081/'
-    }
+    sunshineUrl.value = proxyBase + '/'
   }
 })
 

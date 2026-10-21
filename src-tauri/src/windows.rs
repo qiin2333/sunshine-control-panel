@@ -1,35 +1,13 @@
 use crate::proxy_server;
 use log::{debug, error, info, warn};
 use std::sync::LazyLock;
-use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::{
     AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewWindow,
     webview::PageLoadEvent,
 };
 
-#[cfg(target_os = "windows")]
-mod webview_lifecycle;
-
-struct HeartbeatState {
-    created_at: std::time::Instant,
-    last_beat: Option<std::time::Instant>,
-}
-
-impl HeartbeatState {
-    fn new() -> Self {
-        Self {
-            created_at: std::time::Instant::now(),
-            last_beat: None,
-        }
-    }
-}
-
-/// WebView heartbeat state is scoped to one window lifetime. Reusing a stale
-/// timestamp for a newly-created window with the same label can make the
-/// recovery monitor reload that window while its first page is still loading.
-static HEARTBEAT_MAP: LazyLock<Mutex<HashMap<String, HeartbeatState>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+pub(crate) mod lifecycle;
 
 #[derive(Default)]
 struct ToolWindowMoveSave {
@@ -39,12 +17,6 @@ struct ToolWindowMoveSave {
 
 static TOOL_WINDOW_MOVE_SAVE: LazyLock<Mutex<ToolWindowMoveSave>> =
     LazyLock::new(|| Mutex::new(ToolWindowMoveSave::default()));
-
-/// 心跳超时阈值（秒）：超过此时间未收到心跳则认为渲染进程可能崩溃
-const HEARTBEAT_STALE_SECS: u64 = 30;
-/// Cold WebView2 startup and the first local-proxy navigation can be slower
-/// than a normal heartbeat interval. Recovery must not disrupt that startup.
-const HEARTBEAT_STARTUP_GRACE_SECS: u64 = 90;
 
 const MAIN_WINDOW_ID: &str = "main";
 const ABOUT_WINDOW_ID: &str = "about";
@@ -183,75 +155,6 @@ fn constrain_tool_window_to_visible_area(
     Ok(())
 }
 
-/// WebView 可见性控制初始化脚本
-/// 窗口最小化或隐藏到托盘时，模拟 Page Visibility API 状态变化，触发 Chromium 内置节流：
-/// - hidden 页面的 setTimeout/setInterval 最小间隔从 4ms 变为 1000ms
-/// - requestAnimationFrame 停止执行
-/// - CSS 动画暂停
-/// 同时通过注入 CSS 暂停所有 CSS 动画/过渡，进一步降低 GPU 合成开销
-const WEBVIEW_VISIBILITY_INIT_SCRIPT: &str = r#"
-(function() {
-    let _hidden = false;
-    let _pauseStyleEl = null;
-
-    Object.defineProperty(document, 'hidden', {
-        get: function() { return _hidden; },
-        configurable: true,
-    });
-    Object.defineProperty(document, 'visibilityState', {
-        get: function() { return _hidden ? 'hidden' : 'visible'; },
-        configurable: true,
-    });
-
-    function pauseAnimations() {
-        if (!_pauseStyleEl) {
-            _pauseStyleEl = document.createElement('style');
-            _pauseStyleEl.id = '__gpu_pause_animations';
-            _pauseStyleEl.textContent = '*, *::before, *::after { animation-play-state: paused !important; transition: none !important; }';
-        }
-        if (!_pauseStyleEl.parentNode) {
-            (document.head || document.documentElement).appendChild(_pauseStyleEl);
-        }
-    }
-
-    function resumeAnimations() {
-        if (_pauseStyleEl && _pauseStyleEl.parentNode) {
-            _pauseStyleEl.parentNode.removeChild(_pauseStyleEl);
-        }
-    }
-
-    window.__setWebviewVisibility = function(visible) {
-        var wasHidden = _hidden;
-        _hidden = !visible;
-        if (wasHidden !== _hidden) {
-            console.log('[WebView Visibility] ' + (_hidden ? '进入休眠' : '恢复活跃'));
-            if (_hidden) {
-                pauseAnimations();
-            } else {
-                resumeAnimations();
-            }
-            document.dispatchEvent(new Event('visibilitychange'));
-        }
-    };
-
-    // WebView 心跳：每 10 秒向 Rust 后端发送心跳信号
-    // 若渲染进程崩溃，心跳停止，后端检测到后可触发自动恢复
-    setInterval(function() {
-        try {
-            if (window.__TAURI_INTERNALS__) {
-                window.__TAURI_INTERNALS__.invoke('webview_heartbeat');
-            }
-        } catch(e) {}
-    }, 10000);
-    // 立即发送首次心跳
-    try {
-        if (window.__TAURI_INTERNALS__) {
-            window.__TAURI_INTERNALS__.invoke('webview_heartbeat');
-        }
-    } catch(e) {}
-})();
-"#;
-
 /// 禁用窗口的右键菜单（仅在生产环境）
 #[cfg(not(debug_assertions))]
 pub fn disable_context_menu<R: Runtime>(window: &WebviewWindow<R>) {
@@ -285,37 +188,8 @@ pub fn disable_context_menu<R: Runtime>(_window: &WebviewWindow<R>) {}
 
 /// WebView 心跳命令：由前端 JS 定期调用，表明渲染进程仍然存活
 #[tauri::command]
-pub fn webview_heartbeat(webview: tauri::Webview) {
-    let label = webview.label().to_string();
-    let mut map = HEARTBEAT_MAP.lock().unwrap();
-    let state = map.entry(label).or_insert_with(HeartbeatState::new);
-    state.last_beat = Some(std::time::Instant::now());
-}
-
-fn begin_webview_heartbeat(window_id: &str) {
-    HEARTBEAT_MAP
-        .lock()
-        .unwrap()
-        .insert(window_id.to_string(), HeartbeatState::new());
-}
-
-fn end_webview_heartbeat(window_id: &str) {
-    HEARTBEAT_MAP.lock().unwrap().remove(window_id);
-    #[cfg(target_os = "windows")]
-    webview_lifecycle::forget(window_id);
-}
-
-#[cfg(target_os = "windows")]
-fn webview_resumed(window_id: &str) {
-    if let Some(state) = HEARTBEAT_MAP.lock().unwrap().get_mut(window_id) {
-        // An intentionally suspended page needs time to send its next heartbeat.
-        state.last_beat = Some(std::time::Instant::now());
-    }
-}
-
-pub(crate) fn set_streaming_state<R: Runtime>(_app: &AppHandle<R>, _active: bool) {
-    #[cfg(target_os = "windows")]
-    webview_lifecycle::set_streaming(_app, _active);
+pub fn webview_heartbeat(webview: tauri::Webview, generation: u64) {
+    lifecycle::heartbeat(webview.label(), generation);
 }
 
 /// Resize the About window to match its web content height.
@@ -440,110 +314,26 @@ pub fn resize_tool_window(window: tauri::Window, width: f64, height: f64) -> Res
     Ok(true)
 }
 
-/// 通过 WebView2 COM API 强制重新加载页面（在渲染进程崩溃后仍可工作）
-#[cfg(target_os = "windows")]
-fn reload_webview_via_com<R: Runtime>(window: &WebviewWindow<R>) {
-    let label = window.label().to_string();
-    let _ = window.with_webview(move |webview| {
-        let controller = webview.controller();
-        unsafe {
-            if let Ok(core_webview) = controller.CoreWebView2() {
-                match core_webview.Reload() {
-                    Ok(_) => log::info!("🔄 WebView 渲染进程恢复：已触发重新加载 [{}]", label),
-                    Err(e) => log::warn!("⚠️ WebView 重新加载失败 [{}]: {:?}", label, e),
-                }
-            }
-        }
-    });
-}
-
-/// 检查指定窗口的心跳是否已超时，若超时则触发 COM 级重新加载
-#[cfg(target_os = "windows")]
-fn check_and_recover_webview<R: Runtime>(window: &WebviewWindow<R>) {
-    let label = window.label().to_string();
-    if webview_lifecycle::is_suspended(&label) {
-        return;
-    }
-    let is_stale = {
-        let map = HEARTBEAT_MAP.lock().unwrap();
-        match map.get(&label) {
-            Some(state) if state.created_at.elapsed().as_secs() >= HEARTBEAT_STARTUP_GRACE_SECS => {
-                state
-                    .last_beat
-                    .is_some_and(|last_beat| last_beat.elapsed().as_secs() > HEARTBEAT_STALE_SECS)
-            }
-            Some(_) | None => false,
-        }
-    };
-
-    if is_stale {
-        warn!(
-            "💀 WebView 心跳超时 [{}]，渲染进程可能已崩溃，尝试恢复...",
-            label
-        );
-        reload_webview_via_com(window);
-        // 重置心跳时间，给恢复留出时间
-        HEARTBEAT_MAP
-            .lock()
-            .unwrap()
-            .insert(label, HeartbeatState::new());
-    }
-}
-
-/// 启动 WebView 心跳监控后台任务
-/// 定期检查可见窗口的心跳状态，若检测到崩溃则自动恢复
-pub fn start_heartbeat_monitor(app: AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        // 等待应用完全启动后再开始监控
-        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-
-            // 只检查可见的主要窗口（main / desktop）
-            for label in &[MAIN_WINDOW_ID, DESKTOP_WINDOW_ID] {
-                if let Some(win) = app.get_webview_window(label) {
-                    #[cfg(target_os = "windows")]
-                    if webview_lifecycle::needs_reconcile(label) {
-                        // Recheck native visibility too, so a missed focus event
-                        // cannot leave a restored controller asleep indefinitely.
-                        webview_lifecycle::request(&win, false);
-                    }
-                    #[cfg(target_os = "windows")]
-                    if webview_lifecycle::is_suspended(label) {
-                        continue;
-                    }
-                    let is_visible = win.is_visible().unwrap_or(false);
-                    let is_minimized = win.is_minimized().unwrap_or(true);
-
-                    // 仅当窗口可见且未最小化时检查心跳
-                    if is_visible && !is_minimized {
-                        #[cfg(target_os = "windows")]
-                        check_and_recover_webview(&win);
-                    }
-                }
-            }
-        }
-    });
-}
-
 /// 显示并激活窗口（解决权限隔离问题）
 pub fn show_and_activate_window<R: Runtime>(window: &WebviewWindow<R>) {
     let _ = window.unminimize();
     let _ = window.show();
     let _ = window.set_focus();
 
-    request_webview_activation(window);
+    // 恢复 WebView 活跃状态（引擎级 + JS 级）
+    lifecycle::presented(window);
 
     // 重置代理快速失败状态，确保恢复后首次请求不被拦截
     proxy_server::reset_fast_fail();
 
-    // 检查 WebView 心跳，若渲染进程已崩溃则自动恢复
-    #[cfg(target_os = "windows")]
-    check_and_recover_webview(window);
-
     #[cfg(target_os = "windows")]
     force_activate_window_win32(window);
+
+    #[cfg(target_os = "windows")]
+    if !matches!(window.label(), MAIN_WINDOW_ID | DESKTOP_WINDOW_ID) {
+        refresh_webview_surface(window);
+    }
+    crate::power::refresh_ecoqos_state(window.app_handle());
 }
 
 /// 使用 Windows API 强制激活窗口
@@ -800,7 +590,7 @@ fn create_main_window_internal<R: Runtime>(
     app: &AppHandle<R>,
     visible: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    proxy_server::ensure_started();
+    proxy_server::ensure_started(app);
     if app.get_webview_window(MAIN_WINDOW_ID).is_some() {
         debug!("主窗口已存在，跳过创建");
         return Ok(());
@@ -810,8 +600,8 @@ fn create_main_window_internal<R: Runtime>(
     info!("🪟 创建{}主窗口...", visibility_desc);
 
     crate::tray::mark_main_panel_loading();
-    begin_webview_heartbeat(MAIN_WINDOW_ID);
-
+    let panel = lifecycle::register(MAIN_WINDOW_ID, visible);
+    let page_panel = panel.clone();
     let window = tauri::WebviewWindowBuilder::new(
         app,
         MAIN_WINDOW_ID,
@@ -828,26 +618,19 @@ fn create_main_window_internal<R: Runtime>(
     .shadow(false)
     .visible(false)
     .disable_drag_drop_handler()
-    .initialization_script(WEBVIEW_VISIBILITY_INIT_SCRIPT)
+    .initialization_script(panel.initialization_script())
     .on_page_load(move |window, payload| {
-        if visible && payload.event() == PageLoadEvent::Finished {
-            tauri::async_runtime::spawn(async move {
-                // WebView2 can report a completed DOM before its compositor
-                // has submitted the first frame. Avoid exposing that black
-                // frame, then present the built-in loading shell or panel.
-                tokio::time::sleep(std::time::Duration::from_millis(120)).await;
-                show_and_activate_window(&window);
-            });
+        if payload.event() == PageLoadEvent::Finished {
+            page_panel.page_loaded(window);
         }
     })
     .build()
     .map_err(|e| {
-        end_webview_heartbeat(MAIN_WINDOW_ID);
+        lifecycle::unregister(MAIN_WINDOW_ID, &panel);
         format!("创建{}主窗口失败: {}", visibility_desc, e)
     })?;
 
-    #[cfg(target_os = "windows")]
-    webview_lifecycle::register(&window, !visible);
+    panel.attach(&window);
 
     // 设置 DWM 圆角，让系统级合成器裁剪窗口圆角
     #[cfg(target_os = "windows")]
@@ -882,7 +665,8 @@ fn create_desktop_window_internal<R: Runtime>(
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!("🖥️ 创建桌面 UI 窗口...");
 
-    begin_webview_heartbeat(DESKTOP_WINDOW_ID);
+    let panel = lifecycle::register(DESKTOP_WINDOW_ID, false);
+    let page_panel = panel.clone();
 
     let window = tauri::WebviewWindowBuilder::new(
         app,
@@ -899,15 +683,19 @@ fn create_desktop_window_internal<R: Runtime>(
     .visible(visible)
     .fullscreen(true)
     .disable_drag_drop_handler()
-    .initialization_script(WEBVIEW_VISIBILITY_INIT_SCRIPT)
+    .initialization_script(panel.initialization_script())
+    .on_page_load(move |window, payload| {
+        if payload.event() == PageLoadEvent::Finished {
+            page_panel.page_loaded(window);
+        }
+    })
     .build()
     .map_err(|e| {
-        end_webview_heartbeat(DESKTOP_WINDOW_ID);
+        lifecycle::unregister(DESKTOP_WINDOW_ID, &panel);
         format!("创建桌面窗口失败: {}", e)
     })?;
 
-    #[cfg(target_os = "windows")]
-    webview_lifecycle::register(&window, !visible);
+    panel.attach(&window);
 
     #[cfg(target_os = "windows")]
     apply_dwm_rounded_corners(&window);
@@ -925,12 +713,8 @@ fn create_desktop_window_internal<R: Runtime>(
 /// 打开桌面 UI 窗口（单例模式）
 pub fn open_desktop_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(DESKTOP_WINDOW_ID) {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-        request_webview_activation(&window);
+        show_and_activate_window(&window);
         debug!("✅ 桌面 UI 窗口已激活");
-        crate::power::refresh_ecoqos_state(app);
     } else {
         create_desktop_window(app).map_err(|e| e.to_string())?;
     }
@@ -968,25 +752,7 @@ pub fn activate_main_window(app: &tauri::AppHandle, target_url: Option<String>) 
 
     debug!("📱 正在激活主窗口...");
 
-    let is_visible = window.is_visible().unwrap_or(false);
-    let is_minimized = window.is_minimized().unwrap_or(false);
-
-    if is_minimized {
-        let _ = window.unminimize();
-    }
-    if !is_visible {
-        let _ = window.show();
-    }
-    let _ = window.set_focus();
-
-    request_webview_activation(&window);
-    crate::power::refresh_ecoqos_state(app);
-
-    // 重置代理快速失败状态
-    proxy_server::reset_fast_fail();
-
-    #[cfg(target_os = "windows")]
-    force_activate_window_win32(&window);
+    show_and_activate_window(&window);
 
     if let Some(url) = target_url {
         navigate_to_url(&window, &url);
@@ -1046,7 +812,7 @@ pub(crate) fn configure_webview_security<R: Runtime>(window: &WebviewWindow<R>) 
     let _ = window.with_webview(move |webview| {
         // 引入 webview2-com 的 COM 接口类型
         use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings4;
-        // 引入 windows-core 0.61 的 Interface trait（与 webview2-com 版本一致）
+        // Interface trait must match the webview2-com bindings used by wry.
         use wv2_windows_core::Interface;
 
         let controller = webview.controller();
@@ -1055,6 +821,39 @@ pub(crate) fn configure_webview_security<R: Runtime>(window: &WebviewWindow<R>) 
                 log::warn!("⚠️ 无法获取 ICoreWebView2 [{}]", label);
                 return;
             };
+            // Main/desktop are configured once, at creation. Accept a self-signed
+            // certificate only for the configured Core, never for external assets.
+            if matches!(label.as_str(), MAIN_WINDOW_ID | DESKTOP_WINDOW_ID) {
+                use webview2_com::Microsoft::Web::WebView2::Win32::{
+                    COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_ALWAYS_ALLOW, ICoreWebView2_14,
+                };
+                use webview2_com::{ServerCertificateErrorDetectedEventHandler, take_pwstr};
+                if let Ok(core14) = core_webview.cast::<ICoreWebView2_14>() {
+                    let handler =
+                        ServerCertificateErrorDetectedEventHandler::create(Box::new(|_, args| {
+                            if let Some(args) = args {
+                                let mut uri = wv2_windows_core::PWSTR::null();
+                                args.RequestUri(&mut uri)?;
+                                let request = take_pwstr(uri);
+                                if sunshine_certificate_allowed(
+                                    &request,
+                                    &proxy_server::get_sunshine_target(),
+                                ) {
+                                    args.SetAction(
+                                        COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_ALWAYS_ALLOW,
+                                    )?;
+                                }
+                            }
+                            Ok(())
+                        }));
+                    let mut token = 0;
+                    if let Err(error) =
+                        core14.add_ServerCertificateErrorDetected(&handler, &mut token)
+                    {
+                        log::warn!("Failed to configure Sunshine certificate handling: {error}");
+                    }
+                }
+            }
             let Ok(settings) = core_webview.Settings() else {
                 log::warn!("⚠️ 无法获取 ICoreWebView2Settings [{}]", label);
                 return;
@@ -1081,24 +880,40 @@ pub(crate) fn configure_webview_security<R: Runtime>(window: &WebviewWindow<R>) 
     });
 }
 
-/// 设置 WebView 前端的可见性状态。
-#[cfg(not(target_os = "windows"))]
-fn set_webview_visibility(window: &tauri::Window, visible: bool) {
-    let label = window.label().to_string();
-    if let Some(webview_window) = window.app_handle().get_webview_window(&label) {
-        set_webview_window_visibility(&webview_window, visible);
-    }
+fn sunshine_certificate_allowed(request: &str, target: &str) -> bool {
+    let (Ok(request), Ok(target)) = (url::Url::parse(request), url::Url::parse(target)) else {
+        return false;
+    };
+    request.scheme() == "https" && target.scheme() == "https" && request.origin() == target.origin()
 }
 
-fn request_webview_activation<R: Runtime>(window: &WebviewWindow<R>) {
-    #[cfg(target_os = "windows")]
-    if matches!(window.label(), MAIN_WINDOW_ID | DESKTOP_WINDOW_ID) {
-        webview_lifecycle::request(window, true);
-        return;
+#[cfg(test)]
+mod certificate_tests {
+    #[test]
+    fn self_signed_exception_requires_the_configured_https_origin() {
+        let core = "https://localhost:47990";
+        assert!(super::sunshine_certificate_allowed(
+            "https://localhost:47990/api/config",
+            core
+        ));
+        assert!(super::sunshine_certificate_allowed(
+            "https://192.168.1.10:5000/",
+            "https://192.168.1.10:5000"
+        ));
+        for request in [
+            "https://localhost:47991/",
+            "https://localhost.evil.example:47990/",
+            "https://github.com/",
+            "http://localhost:47990/",
+            "invalid",
+        ] {
+            assert!(!super::sunshine_certificate_allowed(request, core));
+        }
+        assert!(!super::sunshine_certificate_allowed(
+            core,
+            "http://localhost:47990"
+        ));
     }
-    set_webview_window_visibility(window, true);
-    #[cfg(target_os = "windows")]
-    refresh_webview_surface(window);
 }
 
 /// Re-submit the existing WebView2 bounds after a native window restore.
@@ -1121,21 +936,6 @@ fn refresh_webview_surface<R: Runtime>(window: &WebviewWindow<R>) {
     });
 }
 
-/// Notify the page so it can pause animations and suspend expensive content.
-/// The native window already controls WebView2 composition. Toggling the
-/// controller's IsVisible property separately can leave transparent WebViews
-/// with a stale surface after restore.
-fn set_webview_window_visibility<R: Runtime>(ww: &WebviewWindow<R>, visible: bool) {
-    let label = ww.label();
-    let js = format!(
-        "if(window.__setWebviewVisibility)window.__setWebviewVisibility({})",
-        visible
-    );
-    if let Err(e) = ww.eval(&js) {
-        debug!("⚠️ 设置 WebView 可见性失败 [{}]: {}", label, e);
-    }
-}
-
 /// 处理窗口事件
 pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     match event {
@@ -1145,14 +945,11 @@ pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
             }
         }
         tauri::WindowEvent::CloseRequested { .. } => {
-            end_webview_heartbeat(window.label());
             match window.label() {
                 "main" => {
                     // Let the WebView close so the user agent returns to its
                     // headless baseline. The tray and session services keep
                     // the application event loop alive.
-                    #[cfg(not(target_os = "windows"))]
-                    set_webview_visibility(window, false);
                     crate::tray::mark_main_panel_loading();
                 }
                 "toolbar" => {
@@ -1176,47 +973,7 @@ pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
                 _ => {}
             }
         }
-        tauri::WindowEvent::Focused(focused) => {
-            // 仅对有 visibility init script 的窗口处理（main 和 desktop）
-            let label = window.label();
-            if label != MAIN_WINDOW_ID && label != DESKTOP_WINDOW_ID {
-                return;
-            }
-
-            #[cfg(target_os = "windows")]
-            if let Some(ww) = window.app_handle().get_webview_window(label) {
-                webview_lifecycle::request(&ww, false);
-            }
-            #[cfg(not(target_os = "windows"))]
-            if *focused {
-                set_webview_visibility(window, true);
-            } else {
-                let app = window.app_handle().clone();
-                let label = label.to_owned();
-                tauri::async_runtime::spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                    if let Some(window) = app.get_webview_window(&label)
-                        && (window.is_minimized().unwrap_or(false)
-                            || !window.is_visible().unwrap_or(true))
-                    {
-                        set_webview_window_visibility(&window, false);
-                    }
-                });
-            }
-            if *focused {
-                proxy_server::reset_fast_fail();
-            }
-        }
-        tauri::WindowEvent::Resized(_) => {
-            #[cfg(target_os = "windows")]
-            if matches!(window.label(), MAIN_WINDOW_ID | DESKTOP_WINDOW_ID)
-                && let Some(ww) = window.app_handle().get_webview_window(window.label())
-            {
-                webview_lifecycle::request(&ww, false);
-            }
-        }
         tauri::WindowEvent::Destroyed => {
-            end_webview_heartbeat(window.label());
             // 延迟重估，等窗口从 Tauri 注册表移除后再判断是否回到托盘常驻态。
             let app_handle = window.app_handle().clone();
             tauri::async_runtime::spawn(async move {

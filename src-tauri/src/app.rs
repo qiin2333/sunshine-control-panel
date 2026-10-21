@@ -9,10 +9,22 @@ use tauri::{App, AppHandle, Manager};
 
 pub(crate) const TOOLBAR_SHORTCUT: &str = "CmdOrCtrl+Shift+Alt+T";
 
-/// 应用程序状态
-pub struct AppState {
-    #[allow(dead_code)]
-    pub main_window: std::sync::Mutex<Option<tauri::Window>>,
+// Tauri owns these handles for this application instance. Drop also cancels
+// tasks if setup returns early, before ownership is transferred to app state.
+struct BackgroundTasks(Vec<tauri::async_runtime::JoinHandle<()>>);
+
+impl BackgroundTasks {
+    fn abort(&self) {
+        for task in &self.0 {
+            task.abort();
+        }
+    }
+}
+
+impl Drop for BackgroundTasks {
+    fn drop(&mut self) {
+        self.abort();
+    }
 }
 
 /// 应用程序初始化设置
@@ -38,6 +50,10 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
     // 更新偏好属于应用级状态，必须在 `--hidden` 的纯托盘代理模式下也立即注册。
     // 自动联网检查仍在后面按窗口启动模式决定，避免把状态初始化和网络行为耦合。
     update::init_update_preferences(&app_handle)?;
+    crate::clipboard::auto_start();
+    #[cfg(target_os = "windows")]
+    crate::text_context::start(desktop_settings.text_context_enabled);
+    let mut tasks = BackgroundTasks(vec![windows::lifecycle::start_monitor(app_handle.clone())]);
     #[cfg(target_os = "windows")]
     crate::vdd::start_hardware_cursor_migration();
     #[cfg(target_os = "windows")]
@@ -80,9 +96,6 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
     crate::nr_overlay::initialize(&app_handle);
     setup_menu_event_handler(app);
 
-    // 剪贴板同步：用户会话 agent 默认随面板启动；服务端如果禁用了则 SSE 自然失败，
-    // 不需要额外开关。
-    crate::clipboard::auto_start();
     if is_send_to_client {
         crate::file_transfer::dispatch_cli_send(send_to_client_paths);
     }
@@ -90,11 +103,8 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
         crate::file_mapping::dispatch_cli_quick_share(quick_share_folder_paths);
     }
 
-    // 启动 WebView 心跳监控（检测渲染进程崩溃并自动恢复）
-    windows::start_heartbeat_monitor(app.handle().clone());
-
     // 延迟任务
-    tauri::async_runtime::spawn(async move {
+    tasks.0.push(tauri::async_runtime::spawn(async move {
         update::emit_update_result_if_requested(&app_handle);
 
         // PIN 配对窗口
@@ -114,19 +124,59 @@ pub fn setup_application(app: &mut App) -> Result<(), Box<dyn std::error::Error>
                 error!("❌ 创建工具栏失败: {}", e);
             }
         }
-    });
+    }));
+    app.manage(tasks);
 
     Ok(())
 }
 
-pub fn shutdown_application() {
-    crate::clipboard::stop();
+pub fn shutdown_application(app: &AppHandle) {
+    if let Some(tasks) = app.try_state::<BackgroundTasks>() {
+        tasks.abort();
+    }
+    windows::lifecycle::shutdown();
     #[cfg(target_os = "windows")]
     crate::text_context::stop();
+    crate::clipboard::stop();
     #[cfg(target_os = "windows")]
     crate::tray::cleanup_prevent_sleep();
     crate::moonlight_web::cleanup();
     crate::windows::unregister_agent_restart();
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn explicit_exit_and_failed_setup_both_cancel_background_tasks() {
+        for explicit in [true, false] {
+            let (mut jobs, mut cancellations) = (Vec::new(), Vec::new());
+            for _ in 0..2 {
+                let (done, cancelled) = tokio::sync::oneshot::channel::<()>();
+                jobs.push(tauri::async_runtime::JoinHandle::Tokio(tokio::spawn(
+                    async move {
+                        std::future::pending::<()>().await;
+                        drop(done);
+                    },
+                )));
+                cancellations.push(cancelled);
+            }
+            let owner = BackgroundTasks(jobs);
+            if explicit {
+                owner.abort();
+            } else {
+                drop(owner);
+            }
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                for cancelled in cancellations {
+                    assert!(cancelled.await.is_err());
+                }
+            })
+            .await
+            .unwrap();
+        }
+    }
 }
 
 /// 注册全局快捷键
@@ -141,7 +191,9 @@ fn register_global_shortcuts(
 
     let registered = sync_toolbar_shortcut(app.handle(), true).map_err(std::io::Error::other)?;
     if !registered {
-        warn!("Desktop pet shortcut is currently unavailable; the application will continue normally");
+        warn!(
+            "Desktop pet shortcut is currently unavailable; the application will continue normally"
+        );
     }
 
     Ok(())

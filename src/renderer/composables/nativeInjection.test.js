@@ -5,6 +5,16 @@ import { runInNewContext } from 'node:vm'
 
 const script = readFileSync(new URL('../../../src-tauri/inject-script.js', import.meta.url), 'utf8')
 
+test('remote grants cover the injected WebUI integration without unrelated host commands', () => {
+  const permissions = JSON.parse(readFileSync(new URL('../../../src-tauri/webui-permissions.json', import.meta.url), 'utf8'))
+  for (const [, command] of script.matchAll(/\binvoke\('([^']+)'/g)) {
+    assert.ok(permissions.includes(`allow-${command.replaceAll('_', '-')}`), command)
+  }
+  for (const command of ['launch-game', 'capture-screenshot', 'install-update', 'restart-as-admin']) {
+    assert.ok(!permissions.includes(`allow-${command}`), command)
+  }
+})
+
 function createHarness({ pathname = '/config', hash = '', embedded = true } = {}) {
   const messages = []
   const listeners = {}

@@ -54,7 +54,10 @@ const locale = ref(getDefaultLocale())
 
 function setDocumentLanguage(value) {
   if (typeof document === 'undefined') return
-  document.documentElement.lang = String(value || '').startsWith('zh') ? 'zh-CN' : 'en'
+  // 语言码即 BCP 47 标签（en_GB → en-GB、zh_TW → zh-TW）；zh 特判为
+  // zh-CN 保留屏幕阅读器的变体提示，未知值兜底 en。
+  const tag = String(value || 'en').replace(/_/g, '-')
+  document.documentElement.lang = tag === 'zh' ? 'zh-CN' : tag
 }
 watch(locale, setDocumentLanguage, { immediate: true })
 

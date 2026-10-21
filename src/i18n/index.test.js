@@ -46,3 +46,19 @@ test('all locales expose the welcome keys', async () => {
   }
   assert.ok(supportedLocales.length >= 20)
 })
+
+test('document.lang maps locale codes to BCP 47 tags', async () => {
+  const tags = []
+  Object.defineProperty(globalThis, 'document', {
+    value: { documentElement: { set lang(value) { tags.push(value) } } },
+    configurable: true,
+  })
+  const mod = await import('./index.js')
+  for (const code of ['zh_TW', 'ja', 'de', 'zh', 'en_GB']) {
+    mod.setLocale(code)
+    // Vue watch 异步冲刷且同步去重，逐个等微任务才能记录每次语言变化
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+  // Vue watch 默认异步冲刷，等微任务后再断言
+  assert.deepEqual(tags, ['zh-TW', 'ja', 'de', 'zh-CN', 'en-GB'])
+})

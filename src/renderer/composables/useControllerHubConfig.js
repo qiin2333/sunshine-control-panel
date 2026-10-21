@@ -20,6 +20,9 @@ async function load() {
       const result = await controllerHub.getConfig()
       if (requestEpoch !== configEpoch) {
         // 读取期间发生过保存：旧快照不得覆盖已保存的补丁。
+        // 丢弃后重新拉取完整配置——重试读取会重新校验纪元，
+        // 不会覆盖保存写入的内容；保存补丁之外的字段因此不会停留在默认值。
+        await load()
         return
       }
       if (result?.success) {

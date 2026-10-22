@@ -334,7 +334,7 @@ pub fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &s
     // 如果窗口已存在，先关闭它
     if let Some(window) = app.get_webview_window(tool_window_id) {
         if is_nr {
-            return window.show().map_err(|e| e.to_string());
+            return crate::nr_overlay::show_window(&window);
         }
         let _ = window.close();
     }
@@ -353,6 +353,7 @@ pub fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &s
             .always_on_top(true)
             .skip_taskbar(true)
             .focused(!is_nr)
+            .focusable(!is_nr)
             .visible(false);
 
     if is_performance_monitor {
@@ -415,7 +416,13 @@ pub fn create_tool_window_internal<R: Runtime>(app: &AppHandle<R>, tool_type: &s
                         let _ = window.set_position(position);
                     }
                 }
-                if !is_nr || crate::nr_overlay::visibility_requested() { let _ = window.show(); }
+                if is_nr {
+                    if crate::nr_overlay::visibility_requested() {
+                        let _ = crate::nr_overlay::show_window(&window);
+                    }
+                } else {
+                    let _ = window.show();
+                }
             });
         }
         Err(e) => {

@@ -426,6 +426,36 @@ pub async fn nr_overlay_select_session(app: AppHandle, id: u64) {
 pub fn visibility_requested() -> bool {
     VISIBLE.load(Ordering::Acquire)
 }
+pub(crate) fn show_window<R: Runtime>(window: &tauri::WebviewWindow<R>) -> Result<(), String> {
+    // The NR window is non-focusable so showing it keeps the game's keyboard focus.
+    window.show().map_err(|e| e.to_string())?;
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::{
+            Foundation::HWND,
+            UI::WindowsAndMessaging::{
+                HWND_TOPMOST, IsWindowVisible, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
+            },
+        };
+        let address = window.hwnd().map_err(|e| e.to_string())?.0 as usize;
+        window
+            .run_on_main_thread(move || {
+                let hwnd = HWND(address as _);
+                let flags = SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE;
+                // Restack without activating or unhiding the window.
+                unsafe {
+                    if IsWindowVisible(hwnd).as_bool()
+                        && let Err(error) = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, flags)
+                    {
+                        log::warn!("Failed to raise NR overlay: {error}");
+                    }
+                }
+            })
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 pub fn request_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
     VISIBLE.store(visible, Ordering::Release);
     let _ = app.emit("nr-overlay-visibility", visible);

@@ -12,8 +12,7 @@
     <div class="nr-reveal" :inert="!expanded" :aria-hidden="!expanded">
       <div class="nr-clip">
         <div class="nr-body">
-          <button v-if="selectionExpired && pipelines.length === 1" class="stream-select" :disabled="busy" @click="selectedId = pipelines[0].id">{{ text.reselect }}</button>
-          <select v-else-if="pipelines.length > 1" v-model="selectedId" :aria-label="text.session" :disabled="busy">
+          <select v-if="pipelines.length > 1" v-model="selectedId" :aria-label="text.session" :disabled="busy">
             <option :value="null" disabled>{{ text.choose }}</option>
             <option v-for="(item, index) in pipelines" :key="item.id" :value="item.id">{{ streamLabel(item, index) }}</option>
           </select>
@@ -115,12 +114,11 @@ function applyPreferences(status) {
   if (!status?.settings || disposed) return
   opacity.value = overlayOpacity(status.settings.opacity)
   shortcut.value = nrShortcutLabel(status)
-  if (status.target !== null && status.target !== undefined && status.target !== selectedId.value) { selectedId.value = status.target; selectionExpired.value = false }
+  if (status.target !== null && status.target !== undefined && status.target !== selectedId.value) { selectedId.value = status.target }
 }
 const surface = ref(null)
 const pipelines = ref([])
 const selectedId = ref(null)
-const selectionExpired = ref(false)
 const online = ref(false)
 const busy = ref(false)
 const errorCode = ref('')
@@ -130,12 +128,10 @@ const saveState = ref('')
 const shortcut = ref('')
 watch(selectedId, id => {
   if (id === null || disposed) return
-  selectionExpired.value = false
   void invoke('nr_overlay_select_session', { id }).catch(error => {
     if (disposed) return
     if (selectedId.value === id) {
       selectedId.value = null
-      selectionExpired.value = true
     }
     actionError.value = enhancementError(enhancementControlsText(locale.value), error)
   })
@@ -199,11 +195,10 @@ async function refresh() {
     const next = nrPipelines(result?.pipelines)
     if (selectedId.value !== null && !next.some(item => item.id === selectedId.value)) {
       selectedId.value = null
-      selectionExpired.value = true
     }
     pipelines.value = next
-    // Multiple streams require explicit selection; do not target another user silently.
-    if (!selectionExpired.value && selectedId.value === null && next.length === 1) selectedId.value = next[0].id
+    // Select the sole live stream; multiple streams require an explicit choice.
+    if (selectedId.value === null && next.length === 1) selectedId.value = next[0].id
     online.value = true
     if (errorCode.value === 'disconnected') errorCode.value = ''
   } catch {
@@ -334,7 +329,6 @@ kbd { border: 1px solid #d2dbc6; background: #d2dbc6; color: #101508; padding: 2
 .notice { font-size: 12px; color: #f3c74c; margin: 8px 0 12px; overflow-wrap: anywhere; }
 .notice button { border: 0; background: none; text-decoration: underline; }
 select { width: 100%; margin-top: 10px; background: #151b10; color: #f4f5ef; border: 1px solid #83916f; border-radius: 0; }
-.stream-select { width: 100%; margin-top: 10px; padding: 3px 6px; background: #151b10; border: 1px solid #83916f; text-align: left; }
 .nr-overlay:not(.expanded) { border-color: #ffffff1c; box-shadow: none; }
 .nr-overlay:not(.expanded) .nr-head { height: 26px; background: transparent; color: #d4dace; padding: 0 7px; }
 .nr-overlay:not(.expanded) .pill { font-size: 11px; font-weight: 600; letter-spacing: .15px; }

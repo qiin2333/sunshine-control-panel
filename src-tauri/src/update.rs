@@ -1327,45 +1327,6 @@ pub fn check_for_updates_on_startup<R: Runtime + 'static>(app: AppHandle<R>) {
 
 // ========== 进程管理 ==========
 
-/// 停止 Windows 服务
-#[cfg(target_os = "windows")]
-fn stop_service_with_command(service_name: &str, command: &str, args: &[&str]) -> bool {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-    match std::process::Command::new(command)
-        .args(args)
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-    {
-        Ok(result) if result.status.success() => {
-            info!("✅ 成功停止服务: {}", service_name);
-            true
-        }
-        Ok(result) => {
-            let error_msg = String::from_utf8_lossy(&result.stderr);
-            warn!("⚠️ 停止服务失败 {}: {}", service_name, error_msg.trim());
-            false
-        }
-        Err(e) => {
-            warn!("⚠️ 执行命令失败 {}: {}", service_name, e);
-            false
-        }
-    }
-}
-
-/// 停止 Windows 服务
-#[cfg(target_os = "windows")]
-fn stop_windows_service(service_name: &str) {
-    // 尝试使用 net stop
-    if stop_service_with_command(service_name, "net", &["stop", service_name]) {
-        return;
-    }
-
-    // 尝试使用 sc stop 作为备选
-    stop_service_with_command(service_name, "sc", &["stop", service_name]);
-}
-
 /// 强制结束进程
 #[cfg(target_os = "windows")]
 fn kill_process(process_name: &str) {
@@ -1412,9 +1373,9 @@ async fn stop_sunshine_via_api() -> Result<(), String> {
 /// 停止 Sunshine 服务（使用服务管理器）
 #[cfg(target_os = "windows")]
 fn stop_sunshine_service() {
-    stop_windows_service("SunshineService");
-    stop_windows_service("sunshineservice");
-    std::thread::sleep(Duration::from_secs(2));
+    if let Err(error) = crate::sunshine_service::stop_for_update() {
+        warn!("停止 Sunshine 服务失败: {error}");
+    }
 }
 
 /// 强制关闭所有 Sunshine 进程

@@ -35,6 +35,8 @@ mod nr_overlay;
 #[cfg(target_os = "windows")]
 mod shell_context_menu;
 mod sunshine;
+#[cfg(target_os = "windows")]
+mod sunshine_service;
 mod system;
 #[cfg(target_os = "windows")]
 mod text_context;
@@ -110,6 +112,11 @@ fn configure_loopback_proxy_bypass() {
 }
 
 fn main() {
+    #[cfg(target_os = "windows")]
+    if let Some(exit_code) = sunshine_service::try_handle_command() {
+        std::process::exit(exit_code);
+    }
+
     #[cfg(target_os = "windows")]
     configure_loopback_proxy_bypass();
 

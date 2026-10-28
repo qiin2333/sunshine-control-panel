@@ -433,7 +433,7 @@ fn sidecar_package_extracts_only_matching_runtime() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-fn local_package_manifest(path: &std::path::Path) -> SidecarPackageManifest {
+fn local_package_manifest(path: &std::path::Path, download_url: &str) -> SidecarPackageManifest {
     SidecarPackageManifest {
         schema: 1,
         component_version: super::COMPONENT_VERSION.to_string(),
@@ -441,8 +441,7 @@ fn local_package_manifest(path: &std::path::Path) -> SidecarPackageManifest {
         target: super::SIDECAR_PACKAGE_TARGET.to_string(),
         license: super::SIDECAR_PACKAGE_LICENSE.to_string(),
         asset_name: super::SIDECAR_PACKAGE_ASSET.to_string(),
-        // Reaching the download path returns DS5-PKG-001 without using the network.
-        download_url: String::new(),
+        download_url: download_url.to_string(),
         sha256: sha256_file(path).unwrap(),
         size: std::fs::metadata(path).unwrap().len(),
     }
@@ -450,37 +449,61 @@ fn local_package_manifest(path: &std::path::Path) -> SidecarPackageManifest {
 
 #[tokio::test]
 async fn discovered_sidecar_package_failure_falls_back_to_download() {
+    use axum::{Router, routing::get};
+
+    let app = Router::new().route(
+        "/sidecar.zip",
+        get(|| async { ([("content-type", "application/octet-stream")], "trusted") }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let download_url = format!("http://{}/sidecar.zip", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap();
     let root = std::env::temp_dir().join(format!("sunshine-ds5-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     let package = root.join(super::SIDECAR_PACKAGE_ASSET);
     let destination = root.join("staged.zip");
     std::fs::write(&package, b"trusted").unwrap();
-    let manifest = local_package_manifest(&package);
-    for stale_contents in [b"old".as_slice(), b"changed".as_slice()] {
-        // Cover both a different size and a same-size SHA-256 mismatch.
-        std::fs::write(&package, stale_contents).unwrap();
-        let error = super::install::acquire_sidecar_package_from_sources(
+    let manifest = local_package_manifest(&package, &download_url);
+    // Cover different size, same-size SHA-256 mismatch, and a disappeared file.
+    for stale_contents in [Some(b"old".as_slice()), Some(b"changed".as_slice()), None] {
+        std::fs::write(&destination, b"incomplete").unwrap();
+        match stale_contents {
+            Some(contents) => std::fs::write(&package, contents).unwrap(),
+            None => std::fs::remove_file(&package).unwrap(),
+        }
+        let discovered = super::install::acquire_sidecar_package_with_fallback(
             &manifest,
             None,
             Some(&package),
             &destination,
             &|_, _| {},
+            async {
+                let bytes = client
+                    .get(&manifest.download_url)
+                    .send()
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .error_for_status()
+                    .map_err(|error| error.to_string())?
+                    .bytes()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                tokio::fs::write(&destination, bytes)
+                    .await
+                    .map_err(|error| error.to_string())
+            },
         )
         .await
-        .unwrap_err();
-        assert!(error.starts_with("DS5-PKG-001:"), "{error}");
+        .unwrap();
+        assert!(!discovered);
+        assert_eq!(std::fs::read(&destination).unwrap(), b"trusted");
     }
-    std::fs::remove_file(&package).unwrap();
-    let error = super::install::acquire_sidecar_package_from_sources(
-        &manifest,
-        None,
-        Some(&package),
-        &destination,
-        &|_, _| {},
-    )
-    .await
-    .unwrap_err();
-    assert!(error.starts_with("DS5-PKG-001:"), "{error}");
+    server.abort();
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -491,7 +514,7 @@ async fn matching_discovered_sidecar_package_is_used_without_download() {
     let package = root.join(super::SIDECAR_PACKAGE_ASSET);
     let destination = root.join("staged.zip");
     std::fs::write(&package, b"trusted").unwrap();
-    let manifest = local_package_manifest(&package);
+    let manifest = local_package_manifest(&package, "");
     let discovered = super::install::acquire_sidecar_package_from_sources(
         &manifest,
         None,
@@ -515,7 +538,7 @@ async fn selected_sidecar_package_is_authoritative_and_never_falls_back() {
     let destination = root.join("staged.zip");
     std::fs::write(&selected, b"trusted").unwrap();
     std::fs::write(&discovered, b"ignored").unwrap();
-    let manifest = local_package_manifest(&selected);
+    let manifest = local_package_manifest(&selected, "");
     assert!(
         !super::install::acquire_sidecar_package_from_sources(
             &manifest,

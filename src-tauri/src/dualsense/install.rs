@@ -303,6 +303,26 @@ pub(crate) async fn acquire_sidecar_package_from_sources(
     destination: &Path,
     progress: &ProgressReporter<'_>,
 ) -> Result<bool, String> {
+    acquire_sidecar_package_with_fallback(
+        manifest,
+        selected_package,
+        discovered_package,
+        destination,
+        progress,
+        acquire_sidecar_package(manifest, selected_package, destination, progress),
+    )
+    .await
+}
+
+// Keep final acquisition lazy so tests can supply a local download fixture.
+pub(super) async fn acquire_sidecar_package_with_fallback(
+    manifest: &SidecarPackageManifest,
+    selected_package: Option<&Path>,
+    discovered_package: Option<&Path>,
+    destination: &Path,
+    progress: &ProgressReporter<'_>,
+    fallback: impl std::future::Future<Output = Result<(), String>>,
+) -> Result<bool, String> {
     if selected_package.is_none()
         && let Some(source) = discovered_package
     {
@@ -315,7 +335,7 @@ pub(crate) async fn acquire_sidecar_package_from_sources(
             ),
         }
     }
-    acquire_sidecar_package(manifest, selected_package, destination, progress).await?;
+    fallback.await?;
     Ok(false)
 }
 

@@ -628,6 +628,36 @@ fn stale_handoff_cleanup_preserves_current_and_unrelated_entries() {
 }
 
 #[test]
+fn temporary_staging_ownership_preserves_activation_and_rollback() {
+    let root = tempfile::tempdir().unwrap();
+    let active = root.path().join("active");
+    let backup = root.path().join("previous");
+    write_valid_component(&active, b"previous");
+    let staging = tempfile::Builder::new()
+        .prefix("staging-")
+        .tempdir_in(root.path())
+        .unwrap();
+    write_valid_component(staging.path(), b"replacement");
+
+    super::install::activate_staged_component(staging.path(), &active, &backup).unwrap();
+    drop(staging);
+
+    assert_eq!(
+        std::fs::read(active.join(super::SIDECAR_EXE)).unwrap(),
+        b"replacement"
+    );
+    assert_eq!(
+        std::fs::read(backup.join(super::SIDECAR_EXE)).unwrap(),
+        b"previous"
+    );
+    rollback_activated_component(&active, &backup, true).unwrap();
+    assert_eq!(
+        std::fs::read(active.join(super::SIDECAR_EXE)).unwrap(),
+        b"previous"
+    );
+}
+
+#[test]
 fn local_component_hashes_are_identified_without_trusting_file_names() {
     assert_eq!(
         super::local_component_kind(super::LEGACY_HIDMAESTRO_1_7_3_SHA256, None),
@@ -968,15 +998,38 @@ async fn elevated_ipc_receives_multiple_local_packages_with_bounded_framing() {
 
     assert_eq!(packages.len(), contents.len());
     for (package, expected) in packages.iter().zip(contents) {
-        assert_eq!(std::fs::read(package.path()).unwrap(), expected);
+        assert_eq!(std::fs::read(package).unwrap(), expected);
+        assert_eq!(package.parent(), Some(root.as_path()));
     }
     let paths = packages
         .iter()
-        .map(|package| package.path().to_path_buf())
+        .map(|package| package.to_path_buf())
         .collect::<Vec<_>>();
     drop(packages);
     assert!(paths.iter().all(|path| !path.exists()));
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(target_os = "windows")]
+#[tokio::test]
+async fn elevated_ipc_cleans_completed_and_partial_packages_on_transfer_failure() {
+    let root = tempfile::tempdir().unwrap();
+    let mut encoded = vec![2u8];
+    encoded.extend_from_slice(&3u64.to_le_bytes());
+    encoded.extend_from_slice(b"one");
+    encoded.extend_from_slice(&10u64.to_le_bytes());
+    encoded.extend_from_slice(b"truncated");
+
+    let error = super::receive_local_component_packages_into(
+        &mut encoded.as_slice(),
+        uuid::Uuid::new_v4(),
+        root.path(),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(error.contains("transfer ended early"), "{error}");
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
 }
 
 #[cfg(target_os = "windows")]

@@ -297,15 +297,6 @@ pub(crate) fn local_component_kind(
     }
 }
 
-#[cfg(target_os = "windows")]
-pub(crate) fn local_component_package_handoff_path(
-    root: &Path,
-    token: uuid::Uuid,
-    index: usize,
-) -> PathBuf {
-    root.join(format!("handoff-{token}-{index}.partial"))
-}
-
 pub(crate) fn purge_stale_handoff_packages(root: &Path, current_packages: &[&Path]) {
     let Ok(entries) = fs::read_dir(root) else {
         return;

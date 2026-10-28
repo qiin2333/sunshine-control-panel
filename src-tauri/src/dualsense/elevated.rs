@@ -5,10 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::install::{dualsense_install_impl, dualsense_self_test_impl, dualsense_uninstall_impl};
-use super::packages::{
-    LocalComponentPackages, classify_local_component_packages, component_root,
-    local_component_package_handoff_path,
-};
+use super::packages::{LocalComponentPackages, classify_local_component_packages, component_root};
 use super::probe::ensure_no_active_session;
 use super::{
     MAX_LOCAL_COMPONENT_PACKAGE_BYTES, MAX_LOCAL_COMPONENT_PACKAGES,
@@ -73,23 +70,6 @@ impl ElevatedOperation {
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) struct TemporaryPackageFile(PathBuf);
-
-#[cfg(target_os = "windows")]
-impl TemporaryPackageFile {
-    pub(crate) fn path(&self) -> &Path {
-        &self.0
-    }
-}
-
-#[cfg(target_os = "windows")]
-impl Drop for TemporaryPackageFile {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
-    }
-}
-
-#[cfg(target_os = "windows")]
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum ElevatedMessage {
@@ -102,7 +82,7 @@ pub(crate) enum ElevatedMessage {
 async fn receive_local_component_packages<R>(
     reader: &mut R,
     token: uuid::Uuid,
-) -> Result<Vec<TemporaryPackageFile>, String>
+) -> Result<Vec<tempfile::TempPath>, String>
 where
     R: tokio::io::AsyncRead + Unpin,
 {
@@ -115,7 +95,7 @@ pub(crate) async fn receive_local_component_packages_into<R>(
     reader: &mut R,
     token: uuid::Uuid,
     root: &Path,
-) -> Result<Vec<TemporaryPackageFile>, String>
+) -> Result<Vec<tempfile::TempPath>, String>
 where
     R: tokio::io::AsyncRead + Unpin,
 {
@@ -157,16 +137,15 @@ where
             return Err("DS5-PKG-002: a selected local package is invalid".to_string());
         }
 
-        let package =
-            TemporaryPackageFile(local_component_package_handoff_path(root, token, index));
-        let mut output = tokio::fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(package.path())
-            .await
+        let temporary = tempfile::Builder::new()
+            .prefix(&format!("handoff-{token}-{index}-"))
+            .suffix(".partial")
+            .tempfile_in(root)
             .map_err(|error| {
                 format!("DS5-PKG-002: unable to create a component handoff file: {error}")
             })?;
+        let (file, package) = temporary.into_parts();
+        let mut output = tokio::fs::File::from_std(file);
         let mut limited = reader.take(size);
         let copied = tokio::io::copy(&mut limited, &mut output)
             .await
@@ -181,6 +160,7 @@ where
         output.flush().await.map_err(|error| {
             format!("DS5-PKG-002: unable to finish local package {index} transfer: {error}")
         })?;
+        drop(output);
         packages.push(package);
     }
     Ok(packages)
@@ -259,7 +239,7 @@ async fn run_elevated_helper(operation: ElevatedOperation, token: uuid::Uuid) ->
                 } else {
                     let package_paths = local_packages
                         .iter()
-                        .map(|package| package.path().to_path_buf())
+                        .map(|package| package.to_path_buf())
                         .collect::<Vec<_>>();
                     tokio::task::spawn_blocking(move || {
                         classify_local_component_packages(package_paths)

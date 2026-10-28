@@ -1114,44 +1114,39 @@ fn is_pid_running(pid: u32) -> bool {
 }
 
 #[cfg(target_os = "windows")]
-fn stage_installer_for_elevated_run(state: &UpdaterHelperState) -> Result<PathBuf, String> {
+fn stage_installer_for_elevated_run(
+    state: &UpdaterHelperState,
+) -> Result<tempfile::TempPath, String> {
     let staging_dir = crate::sunshine::install_dir().join("updates");
     fs::create_dir_all(&staging_dir)
-        .map_err(|e| format!("create protected updater directory failed: {}", e))?;
+        .map_err(|error| format!("create protected updater directory failed: {error}"))?;
+    stage_installer_in_directory(state, &staging_dir)
+}
 
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| format!("get updater staging time failed: {}", e))?
-        .as_nanos();
-    for attempt in 0..10u32 {
-        let staged_path = staging_dir.join(format!(
-            "sunshine-update-{}-{}-{}.exe",
-            std::process::id(),
-            nonce,
-            attempt
-        ));
-        if staged_path.exists() {
-            continue;
-        }
-
-        fs::copy(&state.installer_path, &staged_path)
-            .map_err(|e| format!("stage installer in protected directory failed: {}", e))?;
-        if let Err(error) = validate_download_file_identity(
-            &staged_path,
-            state.expected_size,
-            Some(&state.expected_sha256),
-            Some("windows-x64-installer"),
-        ) {
-            let _ = fs::remove_file(&staged_path);
-            return Err(format!(
-                "protected installer verification failed: {}",
-                error
-            ));
-        }
-        return Ok(staged_path);
-    }
-
-    Err("create unique protected installer path failed".to_string())
+#[cfg(target_os = "windows")]
+fn stage_installer_in_directory(
+    state: &UpdaterHelperState,
+    directory: &Path,
+) -> Result<tempfile::TempPath, String> {
+    let temporary = tempfile::Builder::new()
+        .prefix("sunshine-update-")
+        .suffix(".exe")
+        .tempfile_in(directory)
+        .map_err(|error| format!("create protected installer failed: {error}"))?;
+    let (mut output, path) = temporary.into_parts();
+    let mut input = fs::File::open(&state.installer_path)
+        .map_err(|error| format!("open update installer failed: {error}"))?;
+    std::io::copy(&mut input, &mut output)
+        .map_err(|error| format!("stage installer in protected directory failed: {error}"))?;
+    drop(output);
+    validate_download_file_identity(
+        &path,
+        state.expected_size,
+        Some(&state.expected_sha256),
+        Some("windows-x64-installer"),
+    )
+    .map_err(|error| format!("protected installer verification failed: {error}"))?;
+    Ok(path)
 }
 
 #[cfg(target_os = "windows")]
@@ -1164,14 +1159,12 @@ fn run_installer_and_wait(state: &UpdaterHelperState) -> Result<i32, String> {
         return Err("Only Windows Installer .exe files are supported".to_string());
     }
     let installer_path = stage_installer_for_elevated_run(state)?;
-    let installer = installer_path.to_string_lossy().to_string();
 
-    let status = Command::new(&installer)
+    let status = Command::new(installer_path.as_os_str())
         .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"])
         .creation_flags(CREATE_NO_WINDOW)
         .status()
         .map_err(|e| format!("start installer failed: {}", e));
-    let _ = fs::remove_file(&installer_path);
     let status = status?;
 
     Ok(status.code().unwrap_or(-1))
@@ -2236,27 +2229,68 @@ mod update_cache_tests {
 // ========== 安装相关 ==========
 
 #[cfg(target_os = "windows")]
-fn create_updater_work_dir() -> Result<PathBuf, String> {
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
-    let temp_dir = std::env::temp_dir();
-    for attempt in 0..100 {
-        let work_dir = temp_dir.join(format!(
-            "sunshine-updater-{}-{}-{}",
-            now_ms,
-            std::process::id(),
-            attempt
-        ));
-        match fs::create_dir(&work_dir) {
-            Ok(()) => return Ok(work_dir),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(format!("create updater dir failed: {}", e)),
-        }
+fn create_updater_work_dir() -> Result<tempfile::TempDir, String> {
+    tempfile::Builder::new()
+        .prefix("sunshine-updater-")
+        .tempdir()
+        .map_err(|error| format!("create updater directory failed: {error}"))
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod updater_staging_tests {
+    use super::*;
+
+    #[test]
+    fn unlaunched_handoff_is_cleaned_but_launched_handoff_survives() {
+        let (_, state_path, _, guard) =
+            prepare_updater_helper("unused.exe", "exe", None, &"a".repeat(64), None).unwrap();
+        let directory = guard.path().to_path_buf();
+        assert!(state_path.is_file());
+        drop(guard);
+        assert!(!directory.exists());
+
+        let (_, state_path, _, guard) =
+            prepare_updater_helper("unused.exe", "exe", None, &"a".repeat(64), None).unwrap();
+        let directory = guard.keep();
+        assert!(state_path.is_file());
+        assert_eq!(
+            updater_cleanup_dir_for_result(&directory.join("result.json")),
+            Some(directory.canonicalize().unwrap())
+        );
+        fs::remove_dir_all(directory).unwrap();
     }
 
-    Err("create updater dir failed: too many name collisions".to_string())
+    #[test]
+    fn staged_executable_is_owned_until_exit_and_failed_verification_cleans_up() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("安装包 ' with spaces.exe");
+        let destination = root.path().join("目标目录 ' with spaces");
+        fs::create_dir(&destination).unwrap();
+        fs::write(&source, b"MZtest").unwrap();
+        let state = UpdaterHelperState {
+            installer_path: source.to_string_lossy().into_owned(),
+            extension: "exe".into(),
+            expected_size: Some(6),
+            expected_sha256: format!("{:x}", sha2::Sha256::digest(b"MZtest")),
+            target_version: None,
+            gui_exe_path: String::new(),
+            result_path: String::new(),
+            parent_pid: std::process::id(),
+        };
+        let staged = stage_installer_in_directory(&state, &destination).unwrap();
+        assert_eq!(staged.extension().unwrap(), "exe");
+        assert_eq!(fs::read(&staged).unwrap(), b"MZtest");
+        let path = staged.to_path_buf();
+        drop(staged);
+        assert!(!path.exists());
+
+        fs::write(&source, b"MZevil").unwrap();
+        assert!(stage_installer_in_directory(&state, &destination).is_err());
+        assert_eq!(fs::read_dir(&destination).unwrap().count(), 0);
+        fs::remove_file(&source).unwrap();
+        assert!(stage_installer_in_directory(&state, &destination).is_err());
+        assert_eq!(fs::read_dir(&destination).unwrap().count(), 0);
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -2266,7 +2300,7 @@ fn prepare_updater_helper(
     expected_size: Option<u64>,
     expected_sha256: &str,
     target_version: Option<String>,
-) -> Result<(PathBuf, PathBuf, UpdaterHelperState), String> {
+) -> Result<(PathBuf, PathBuf, UpdaterHelperState, tempfile::TempDir), String> {
     let current_exe =
         std::env::current_exe().map_err(|e| format!("get current exe failed: {}", e))?;
     let work_dir = create_updater_work_dir()?;
@@ -2276,8 +2310,8 @@ fn prepare_updater_helper(
     // integrity process from replacing the helper before UAC approval.
     let helper_exe = current_exe.clone();
 
-    let state_path = work_dir.join("state.json");
-    let result_path = work_dir.join("result.json");
+    let state_path = work_dir.path().join("state.json");
+    let result_path = work_dir.path().join("result.json");
     let state = UpdaterHelperState {
         installer_path: file_path.to_string(),
         extension: extension.to_string(),
@@ -2294,7 +2328,7 @@ fn prepare_updater_helper(
     fs::write(&state_path, state_content)
         .map_err(|e| format!("write updater state failed: {}", e))?;
 
-    Ok((helper_exe, state_path, state))
+    Ok((helper_exe, state_path, state, work_dir))
 }
 
 #[cfg(target_os = "windows")]
@@ -2312,46 +2346,26 @@ fn launch_updater_helper_elevated(
     state_path: &Path,
     state: &UpdaterHelperState,
 ) -> Result<(), String> {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::Shell::{SHELLEXECUTEINFOW, ShellExecuteExW};
-    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-    use windows::core::PCWSTR;
-
-    let verb = to_wide_null("runas");
-    let file = to_wide_null(&helper_exe.to_string_lossy());
     let expected_size = state
         .expected_size
         .map(|value| value.to_string())
         .unwrap_or_else(|| "-".to_string());
-    let params = to_wide_null(&format!(
-        "{} \"{}\" \"{}\" \"{}\" \"{}\" \"{}\" \"{}\"",
-        UPDATER_HELPER_ARG,
-        state_path.to_string_lossy(),
-        state.installer_path,
-        expected_size,
-        state.expected_sha256,
-        state.gui_exe_path,
-        state.result_path,
-    ));
-    let directory = helper_exe
-        .parent()
-        .map(|path| to_wide_null(&path.to_string_lossy()))
-        .unwrap_or_else(|| to_wide_null(""));
-
-    let mut info = SHELLEXECUTEINFOW {
-        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
-        hwnd: HWND(std::ptr::null_mut()),
-        lpVerb: PCWSTR(verb.as_ptr()),
-        lpFile: PCWSTR(file.as_ptr()),
-        lpParameters: PCWSTR(params.as_ptr()),
-        lpDirectory: PCWSTR(directory.as_ptr()),
-        // Keep the pixel progress helper visible after UAC approval.
-        nShow: SW_SHOWNORMAL.0,
-        ..Default::default()
-    };
-
-    unsafe { ShellExecuteExW(&mut info) }
-        .map_err(|e| format!("launch updater helper elevated failed: {}", e))
+    crate::elevation::launch_elevated(
+        helper_exe.as_os_str(),
+        &[
+            UPDATER_HELPER_ARG,
+            &state_path.to_string_lossy(),
+            &state.installer_path,
+            &expected_size,
+            &state.expected_sha256,
+            &state.gui_exe_path,
+            &state.result_path,
+        ],
+        // Keep the progress helper visible after UAC approval.
+        windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL.0,
+    )
+    .map(|_| ())
+    .map_err(|error| format!("launch updater helper elevated failed: {error}"))
 }
 
 /// 安装更新文件
@@ -2395,7 +2409,7 @@ pub async fn install_update(
             .to_lowercase();
 
         emit_install_progress(&app_handle, "building-command", None, false);
-        let (helper_exe, state_path, state) = match prepare_updater_helper(
+        let (helper_exe, state_path, state, work_dir) = match prepare_updater_helper(
             &path.to_string_lossy(),
             &extension,
             expected_size,
@@ -2414,6 +2428,9 @@ pub async fn install_update(
             emit_install_progress(&app_handle, "failed", Some(&e), true);
             return Err(e);
         }
+        // The helper and restarted GUI now own cleanup. A failed launch above
+        // drops the guard and removes the unpublished state automatically.
+        let _ = work_dir.keep();
         emit_install_progress(&app_handle, "installer-started", None, false);
 
         info!("✅ 安装程序已静默启动，正在安装...");

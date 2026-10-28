@@ -1302,32 +1302,91 @@ pub fn check_for_updates_on_startup<R: Runtime + 'static>(app: AppHandle<R>) {
 
 // ========== 进程管理 ==========
 
-/// Stop the service, then clean up leftover Sunshine processes for the installer.
+/// 停止 Windows 服务
 #[cfg(target_os = "windows")]
-fn stop_sunshine_for_update() {
+fn stop_service_with_command(service_name: &str, command: &str, args: &[&str]) -> bool {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-    info!("正在关闭 Sunshine 以安装更新...");
-    if let Err(error) = crate::sunshine_service::stop_for_update() {
-        warn!("停止 Sunshine 服务失败: {error}");
+    match std::process::Command::new(command)
+        .args(args)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
+        Ok(result) if result.status.success() => {
+            info!("✅ 成功停止服务: {}", service_name);
+            true
+        }
+        Ok(result) => {
+            let error_msg = String::from_utf8_lossy(&result.stderr);
+            warn!("⚠️ 停止服务失败 {}: {}", service_name, error_msg.trim());
+            false
+        }
+        Err(e) => {
+            warn!("⚠️ 执行命令失败 {}: {}", service_name, e);
+            false
+        }
     }
+}
+
+/// 停止 Windows 服务
+#[cfg(target_os = "windows")]
+fn stop_windows_service(service_name: &str) {
+    // 尝试使用 net stop
+    if stop_service_with_command(service_name, "net", &["stop", service_name]) {
+        return;
+    }
+
+    // 尝试使用 sc stop 作为备选
+    stop_service_with_command(service_name, "sc", &["stop", service_name]);
+}
+
+/// 强制结束进程
+#[cfg(target_os = "windows")]
+fn kill_process(process_name: &str) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
     let _ = std::process::Command::new("taskkill")
-        .args(["/IM", "sunshine.exe", "/F", "/T"])
+        .args(&["/IM", process_name, "/F", "/T"])
         .creation_flags(CREATE_NO_WINDOW)
         .output();
+}
+
+/// 停止 Sunshine 服务（使用服务管理器）
+#[cfg(target_os = "windows")]
+fn stop_sunshine_service() {
+    stop_windows_service("SunshineService");
+    stop_windows_service("sunshineservice");
+    std::thread::sleep(Duration::from_secs(2));
+}
+
+/// 强制关闭所有 Sunshine 进程
+#[cfg(target_os = "windows")]
+fn force_kill_sunshine_processes() {
+    kill_process("sunshine.exe");
 
     let current_pid = std::process::id();
     let ps_script = format!(
         "Get-Process -Name '*sunshine*' -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -ne {} }} | Stop-Process -Force",
         current_pid
     );
+
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
     let _ = std::process::Command::new("powershell")
-        .args(["-NoProfile", "-Command", &ps_script])
+        .args(&["-NoProfile", "-Command", &ps_script])
         .creation_flags(CREATE_NO_WINDOW)
         .output();
 
     std::thread::sleep(Duration::from_secs(2));
+}
+
+/// 关闭 Sunshine 服务和残留进程
+#[cfg(target_os = "windows")]
+fn stop_sunshine_for_update() {
+    info!("正在关闭 Sunshine 以安装更新...");
+    stop_sunshine_service();
+    force_kill_sunshine_processes();
     info!("Sunshine 服务和相关进程已为更新关闭。");
 }
 

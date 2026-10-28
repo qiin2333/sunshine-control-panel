@@ -433,6 +433,118 @@ fn sidecar_package_extracts_only_matching_runtime() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+fn local_package_manifest(path: &std::path::Path) -> SidecarPackageManifest {
+    SidecarPackageManifest {
+        schema: 1,
+        component_version: super::COMPONENT_VERSION.to_string(),
+        protocol: super::PROTOCOL_VERSION,
+        target: super::SIDECAR_PACKAGE_TARGET.to_string(),
+        license: super::SIDECAR_PACKAGE_LICENSE.to_string(),
+        asset_name: super::SIDECAR_PACKAGE_ASSET.to_string(),
+        // Reaching the download path returns DS5-PKG-001 without using the network.
+        download_url: String::new(),
+        sha256: sha256_file(path).unwrap(),
+        size: std::fs::metadata(path).unwrap().len(),
+    }
+}
+
+#[tokio::test]
+async fn discovered_sidecar_package_failure_falls_back_to_download() {
+    let root = std::env::temp_dir().join(format!("sunshine-ds5-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let package = root.join(super::SIDECAR_PACKAGE_ASSET);
+    let destination = root.join("staged.zip");
+    std::fs::write(&package, b"trusted").unwrap();
+    let manifest = local_package_manifest(&package);
+    for stale_contents in [b"old".as_slice(), b"changed".as_slice()] {
+        // Cover both a different size and a same-size SHA-256 mismatch.
+        std::fs::write(&package, stale_contents).unwrap();
+        let error = super::install::acquire_sidecar_package_from_sources(
+            &manifest,
+            None,
+            Some(&package),
+            &destination,
+            &|_, _| {},
+        )
+        .await
+        .unwrap_err();
+        assert!(error.starts_with("DS5-PKG-001:"), "{error}");
+    }
+    std::fs::remove_file(&package).unwrap();
+    let error = super::install::acquire_sidecar_package_from_sources(
+        &manifest,
+        None,
+        Some(&package),
+        &destination,
+        &|_, _| {},
+    )
+    .await
+    .unwrap_err();
+    assert!(error.starts_with("DS5-PKG-001:"), "{error}");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn matching_discovered_sidecar_package_is_used_without_download() {
+    let root = std::env::temp_dir().join(format!("sunshine-ds5-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let package = root.join(super::SIDECAR_PACKAGE_ASSET);
+    let destination = root.join("staged.zip");
+    std::fs::write(&package, b"trusted").unwrap();
+    let manifest = local_package_manifest(&package);
+    let discovered = super::install::acquire_sidecar_package_from_sources(
+        &manifest,
+        None,
+        Some(&package),
+        &destination,
+        &|_, _| {},
+    )
+    .await
+    .unwrap();
+    assert!(discovered);
+    assert_eq!(std::fs::read(&destination).unwrap(), b"trusted");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn selected_sidecar_package_is_authoritative_and_never_falls_back() {
+    let root = std::env::temp_dir().join(format!("sunshine-ds5-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let selected = root.join("selected.zip");
+    let discovered = root.join(super::SIDECAR_PACKAGE_ASSET);
+    let destination = root.join("staged.zip");
+    std::fs::write(&selected, b"trusted").unwrap();
+    std::fs::write(&discovered, b"ignored").unwrap();
+    let manifest = local_package_manifest(&selected);
+    assert!(
+        !super::install::acquire_sidecar_package_from_sources(
+            &manifest,
+            Some(&selected),
+            Some(&discovered),
+            &destination,
+            &|_, _| {},
+        )
+        .await
+        .unwrap()
+    );
+    assert_eq!(std::fs::read(&destination).unwrap(), b"trusted");
+    std::fs::write(&discovered, b"trusted").unwrap();
+    for stale_contents in [b"old".as_slice(), b"changed".as_slice()] {
+        std::fs::write(&selected, stale_contents).unwrap();
+        let error = super::install::acquire_sidecar_package_from_sources(
+            &manifest,
+            Some(&selected),
+            Some(&discovered),
+            &destination,
+            &|_, _| {},
+        )
+        .await
+        .unwrap_err();
+        assert!(error.starts_with("DS5-PKG-005:"), "{error}");
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn bundled_runtime_rejects_stale_component_metadata() {
     let root = std::env::temp_dir().join(format!("sunshine-ds5-test-{}", uuid::Uuid::new_v4()));

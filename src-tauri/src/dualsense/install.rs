@@ -293,6 +293,32 @@ pub(crate) async fn acquire_sidecar_package(
     .await
 }
 
+/// Auto-discovered archives are an optional download shortcut, never a sticky source choice.
+/// Explicitly selected archives must still fail if they do not match the pinned release.
+/// Returns whether the auto-discovered archive was used, for the installed source metadata.
+pub(crate) async fn acquire_sidecar_package_from_sources(
+    manifest: &SidecarPackageManifest,
+    selected_package: Option<&Path>,
+    discovered_package: Option<&Path>,
+    destination: &Path,
+    progress: &ProgressReporter<'_>,
+) -> Result<bool, String> {
+    if selected_package.is_none()
+        && let Some(source) = discovered_package
+    {
+        report_progress(progress, "sidecar_local", 12);
+        match acquire_sidecar_package(manifest, Some(source), destination, progress).await {
+            Ok(()) => return Ok(true),
+            Err(error) => warn!(
+                "Ignoring auto-discovered DualSense package {}: {error}; falling back to download",
+                source.display()
+            ),
+        }
+    }
+    acquire_sidecar_package(manifest, selected_package, destination, progress).await?;
+    Ok(false)
+}
+
 /// Reuses a healthy pinned transport or stages a verified installer during explicit maintenance.
 /// Existing incompatible installations require shared cleanup before replacement.
 #[cfg(target_os = "windows")]
@@ -604,7 +630,7 @@ pub(crate) async fn dualsense_install_impl(
         .is_none()
         .then(manually_placed_sidecar_package)
         .flatten();
-    let using_discovered_package = discovered_package.is_some();
+    let mut using_discovered_package = false;
     let using_selected_package = selected_sidecar_package.is_some();
     let local_sidecar_package = selected_sidecar_package.or(discovered_package.as_deref());
     let manifest_available = sidecar_package_manifest_path()
@@ -666,12 +692,10 @@ pub(crate) async fn dualsense_install_impl(
             UsbipInstallResult::Ready
         };
         if let Some(manifest) = package_manifest.as_ref() {
-            if using_discovered_package {
-                report_progress(progress, "sidecar_local", 12);
-            }
-            acquire_sidecar_package(
+            using_discovered_package = acquire_sidecar_package_from_sources(
                 manifest,
-                local_sidecar_package,
+                selected_sidecar_package,
+                discovered_package.as_deref(),
                 &sidecar_archive_path,
                 progress,
             )

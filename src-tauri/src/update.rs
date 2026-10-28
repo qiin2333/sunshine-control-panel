@@ -15,6 +15,8 @@ use crate::github_download::{
 mod metadata;
 mod preferences;
 
+pub(crate) use preferences::{include_prerelease as get_include_prerelease, save_last_check_time};
+
 pub(crate) use metadata::resolve_component_download_candidates;
 
 use metadata::{
@@ -180,7 +182,7 @@ fn is_supported_installer_filename(filename: &str) -> bool {
         .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
 }
 
-fn selected_asset<'a>(candidate: &'a ReleaseCandidate) -> Option<&'a ReleaseAsset> {
+fn selected_asset(candidate: &ReleaseCandidate) -> Option<&ReleaseAsset> {
     candidate.assets.iter().find(|asset| {
         asset.asset_type == preferred_asset_type() && is_supported_installer_filename(&asset.name)
     })
@@ -431,13 +433,14 @@ fn run_updater_worker(state: UpdaterHelperState, hwnd: isize) {
     update_updater_panel(hwnd, 0, "准备更新", "正在等待控制面板关闭...");
     wait_for_parent_exit(state.parent_pid);
 
-    if is_gui_component_installer(Path::new(&state.installer_path)) {
+    let prepare_result = if is_gui_component_installer(Path::new(&state.installer_path)) {
         update_updater_panel(
             hwnd,
             1,
             "正在更新 GUI",
             "Sunshine 核心和当前串流将保持运行。",
         );
+        Ok(())
     } else {
         update_updater_panel(
             hwnd,
@@ -445,16 +448,18 @@ fn run_updater_worker(state: UpdaterHelperState, hwnd: isize) {
             "正在关闭 Sunshine",
             "正在关闭 Sunshine 服务，随后安装更新...",
         );
-        stop_sunshine_for_update();
-    }
+        stop_sunshine_for_update()
+    };
 
-    update_updater_panel(
-        hwnd,
-        2,
-        "正在安装更新",
-        "这可能需要一两分钟，请不要重复启动。",
-    );
-    let install_result = run_installer_and_wait(&state);
+    let install_result = prepare_result.and_then(|()| {
+        update_updater_panel(
+            hwnd,
+            2,
+            "正在安装更新",
+            "这可能需要一两分钟，请不要重复启动。",
+        );
+        run_installer_and_wait(&state)
+    });
 
     update_updater_panel(
         hwnd,
@@ -1114,44 +1119,39 @@ fn is_pid_running(pid: u32) -> bool {
 }
 
 #[cfg(target_os = "windows")]
-fn stage_installer_for_elevated_run(state: &UpdaterHelperState) -> Result<PathBuf, String> {
+fn stage_installer_for_elevated_run(
+    state: &UpdaterHelperState,
+) -> Result<tempfile::TempPath, String> {
     let staging_dir = crate::sunshine::install_dir().join("updates");
     fs::create_dir_all(&staging_dir)
-        .map_err(|e| format!("create protected updater directory failed: {}", e))?;
+        .map_err(|error| format!("create protected updater directory failed: {error}"))?;
+    stage_installer_in_directory(state, &staging_dir)
+}
 
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| format!("get updater staging time failed: {}", e))?
-        .as_nanos();
-    for attempt in 0..10u32 {
-        let staged_path = staging_dir.join(format!(
-            "sunshine-update-{}-{}-{}.exe",
-            std::process::id(),
-            nonce,
-            attempt
-        ));
-        if staged_path.exists() {
-            continue;
-        }
-
-        fs::copy(&state.installer_path, &staged_path)
-            .map_err(|e| format!("stage installer in protected directory failed: {}", e))?;
-        if let Err(error) = validate_download_file_identity(
-            &staged_path,
-            state.expected_size,
-            Some(&state.expected_sha256),
-            Some("windows-x64-installer"),
-        ) {
-            let _ = fs::remove_file(&staged_path);
-            return Err(format!(
-                "protected installer verification failed: {}",
-                error
-            ));
-        }
-        return Ok(staged_path);
-    }
-
-    Err("create unique protected installer path failed".to_string())
+#[cfg(target_os = "windows")]
+fn stage_installer_in_directory(
+    state: &UpdaterHelperState,
+    directory: &Path,
+) -> Result<tempfile::TempPath, String> {
+    let temporary = tempfile::Builder::new()
+        .prefix("sunshine-update-")
+        .suffix(".exe")
+        .tempfile_in(directory)
+        .map_err(|error| format!("create protected installer failed: {error}"))?;
+    let (mut output, path) = temporary.into_parts();
+    let mut input = fs::File::open(&state.installer_path)
+        .map_err(|error| format!("open update installer failed: {error}"))?;
+    std::io::copy(&mut input, &mut output)
+        .map_err(|error| format!("stage installer in protected directory failed: {error}"))?;
+    drop(output);
+    validate_download_file_identity(
+        &path,
+        state.expected_size,
+        Some(&state.expected_sha256),
+        Some("windows-x64-installer"),
+    )
+    .map_err(|error| format!("protected installer verification failed: {error}"))?;
+    Ok(path)
 }
 
 #[cfg(target_os = "windows")]
@@ -1164,14 +1164,12 @@ fn run_installer_and_wait(state: &UpdaterHelperState) -> Result<i32, String> {
         return Err("Only Windows Installer .exe files are supported".to_string());
     }
     let installer_path = stage_installer_for_elevated_run(state)?;
-    let installer = installer_path.to_string_lossy().to_string();
 
-    let status = Command::new(&installer)
+    let status = Command::new(installer_path.as_os_str())
         .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"])
         .creation_flags(CREATE_NO_WINDOW)
         .status()
         .map_err(|e| format!("start installer failed: {}", e));
-    let _ = fs::remove_file(&installer_path);
     let status = status?;
 
     Ok(status.code().unwrap_or(-1))
@@ -1204,26 +1202,6 @@ fn restart_gui_with_update_result(gui_exe_path: &str, result_path: &str) -> Resu
     Ok(())
 }
 
-/// 获取上次检查时间
-fn get_last_check_time<R: Runtime>(app: &AppHandle<R>) -> u64 {
-    preferences::last_check_time(app)
-}
-
-/// 保存上次检查时间
-pub(crate) fn save_last_check_time<R: Runtime>(app: &AppHandle<R>) {
-    preferences::save_last_check_time(app);
-}
-
-/// 获取是否包含预发布版本的偏好
-pub(crate) fn get_include_prerelease<R: Runtime>(app: &AppHandle<R>) -> bool {
-    preferences::include_prerelease(app)
-}
-
-/// 设置是否包含预发布版本的偏好
-fn set_include_prerelease<R: Runtime>(app: &AppHandle<R>, include: bool) {
-    preferences::set_include_prerelease(app, include);
-}
-
 /// Tauri命令：获取是否包含预发布版本的偏好
 #[tauri::command]
 pub fn get_include_prerelease_preference(app: AppHandle) -> bool {
@@ -1233,7 +1211,7 @@ pub fn get_include_prerelease_preference(app: AppHandle) -> bool {
 /// Tauri命令：设置是否包含预发布版本的偏好
 #[tauri::command]
 pub fn set_include_prerelease_preference(app: AppHandle, include: bool) {
-    set_include_prerelease(&app, include);
+    preferences::set_include_prerelease(&app, include);
 }
 
 /// Tauri 命令：手动检查更新
@@ -1309,7 +1287,7 @@ fn handle_auto_check_result<R: Runtime>(
 
 /// 启动时自动检查更新（如果距离上次检查超过4小时）
 pub fn check_for_updates_on_startup<R: Runtime + 'static>(app: AppHandle<R>) {
-    let last_check_time = get_last_check_time(&app);
+    let last_check_time = preferences::last_check_time(&app);
 
     if !should_auto_check(last_check_time) {
         debug!("⏰ 距离上次检查时间未超过4小时，跳过自动检查");
@@ -1327,153 +1305,140 @@ pub fn check_for_updates_on_startup<R: Runtime + 'static>(app: AppHandle<R>) {
 
 // ========== 进程管理 ==========
 
-/// 停止 Windows 服务
 #[cfg(target_os = "windows")]
-fn stop_service_with_command(service_name: &str, command: &str, args: &[&str]) -> bool {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-    match std::process::Command::new(command)
-        .args(args)
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-    {
-        Ok(result) if result.status.success() => {
-            info!("✅ 成功停止服务: {}", service_name);
-            true
-        }
-        Ok(result) => {
-            let error_msg = String::from_utf8_lossy(&result.stderr);
-            warn!("⚠️ 停止服务失败 {}: {}", service_name, error_msg.trim());
-            false
-        }
-        Err(e) => {
-            warn!("⚠️ 执行命令失败 {}: {}", service_name, e);
-            false
-        }
+fn validate_update_service_image(image: &Path, install_dir: &Path) -> Result<(), String> {
+    let root = install_dir
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let image = image.canonicalize().map_err(|error| error.to_string())?;
+    if !image.starts_with(&root) {
+        return Err("refusing to stop a service process outside the target installation".into());
     }
-}
-
-/// 停止 Windows 服务
-#[cfg(target_os = "windows")]
-fn stop_windows_service(service_name: &str) {
-    // 尝试使用 net stop
-    if stop_service_with_command(service_name, "net", &["stop", service_name]) {
-        return;
-    }
-
-    // 尝试使用 sc stop 作为备选
-    stop_service_with_command(service_name, "sc", &["stop", service_name]);
-}
-
-/// 强制结束进程
-#[cfg(target_os = "windows")]
-fn kill_process(process_name: &str) {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-    let _ = std::process::Command::new("taskkill")
-        .args(&["/IM", process_name, "/F", "/T"])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output();
-}
-
-/// 通过 HTTP API 关闭 Sunshine（不需要管理员权限）
-#[allow(dead_code)]
-async fn stop_sunshine_via_api() -> Result<(), String> {
-    use crate::sunshine;
-
-    let sunshine_url = sunshine::get_sunshine_url().await?;
-    let boom_url = format!("{}/api/boom", sunshine_url.trim_end_matches('/'));
-
-    info!("🌐 尝试通过 HTTP API 关闭 Sunshine: {}", boom_url);
-
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .timeout(Duration::from_secs(5))
-        .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
-
-    match client.get(&boom_url).send().await {
-        Ok(response) => {
-            let status = response.status();
-            if status.is_success() || status.as_u16() == 200 {
-                info!("✅ 已通过 HTTP API 请求关闭 Sunshine");
-                Ok(())
-            } else if status.as_u16() == 401 {
-                Err("需要身份验证（401）".to_string())
-            } else {
-                Err(format!("HTTP API 返回错误状态码: {}", status))
-            }
-        }
-        Err(e) => Err(format!("通过 HTTP API 关闭失败: {}", e)),
-    }
-}
-
-/// 停止 Sunshine 服务（使用服务管理器）
-#[cfg(target_os = "windows")]
-fn stop_sunshine_service() {
-    stop_windows_service("SunshineService");
-    stop_windows_service("sunshineservice");
-    std::thread::sleep(Duration::from_secs(2));
-}
-
-/// 强制关闭所有 Sunshine 进程
-#[cfg(target_os = "windows")]
-fn force_kill_sunshine_processes() {
-    kill_process("sunshine.exe");
-
-    let current_pid = std::process::id();
-    let ps_script = format!(
-        "Get-Process -Name '*sunshine*' -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -ne {} }} | Stop-Process -Force",
-        current_pid
-    );
-
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-    let _ = std::process::Command::new("powershell")
-        .args(&["-NoProfile", "-Command", &ps_script])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output();
-
-    std::thread::sleep(Duration::from_secs(2));
-}
-
-/// 关闭 Sunshine 服务和残留进程
-#[cfg(target_os = "windows")]
-fn stop_sunshine_for_update() {
-    info!("正在关闭 Sunshine 以安装更新...");
-    stop_sunshine_service();
-    force_kill_sunshine_processes();
-    info!("Sunshine 服务和相关进程已为更新关闭。");
-}
-
-#[cfg(target_os = "windows")]
-#[allow(dead_code)]
-async fn stop_sunshine_and_gui() -> Result<(), String> {
-    info!("🛑 正在关闭Sunshine和GUI进程...");
-
-    // 首先尝试通过 HTTP API 关闭
-    match stop_sunshine_via_api().await {
-        Ok(_) => {
-            std::thread::sleep(Duration::from_secs(3));
-        }
-        Err(e) => {
-            warn!("⚠️ {}", e);
-            info!("🔄 回退到使用服务管理器关闭...");
-            stop_sunshine_service();
-        }
-    }
-
-    // 强制结束所有进程
-    force_kill_sunshine_processes();
-
-    info!("✅ Sunshine和GUI进程已关闭");
     Ok(())
 }
 
-#[cfg(not(target_os = "windows"))]
-async fn stop_sunshine_and_gui() -> Result<(), String> {
-    Err("此功能仅支持Windows".to_string())
+/// Stop only this installation's service. Its existing shutdown handler owns Core cleanup.
+#[cfg(target_os = "windows")]
+fn stop_sunshine_for_update() -> Result<(), String> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
+    use windows::Win32::System::Services::*;
+    use windows::Win32::System::Threading::*;
+    use windows::core::{Owned, PCWSTR, PWSTR, w};
+
+    fn query_status(service: SC_HANDLE) -> Result<SERVICE_STATUS_PROCESS, String> {
+        let mut status = SERVICE_STATUS_PROCESS::default();
+        let mut needed = 0;
+        // The initialized structure supplies an aligned, exactly sized output buffer.
+        unsafe {
+            let buffer = std::slice::from_raw_parts_mut(
+                std::ptr::from_mut(&mut status).cast::<u8>(),
+                std::mem::size_of::<SERVICE_STATUS_PROCESS>(),
+            );
+            QueryServiceStatusEx(service, SC_STATUS_PROCESS_INFO, Some(buffer), &mut needed)
+                .map_err(|error| format!("query update service failed: {error}"))?;
+        }
+        Ok(status)
+    }
+
+    let root = crate::sunshine::install_dir();
+    if !crate::desktop_settings::sunshine_service_matches_install(&root)? {
+        info!("No service belongs to this installation; leaving other services running");
+        return Ok(());
+    }
+    unsafe {
+        let manager = Owned::new(
+            OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), SC_MANAGER_CONNECT)
+                .map_err(|error| format!("open service manager failed: {error}"))?,
+        );
+        let service = Owned::new(
+            OpenServiceW(
+                *manager,
+                w!("SunshineService"),
+                SERVICE_QUERY_STATUS | SERVICE_STOP,
+            )
+            .map_err(|error| format!("open update service failed: {error}"))?,
+        );
+        let status = query_status(*service)?;
+        if status.dwCurrentState == SERVICE_STOPPED {
+            return Ok(());
+        }
+        // SCM's PID is only meaningful in stable running/paused states.
+        if !matches!(status.dwCurrentState, SERVICE_RUNNING | SERVICE_PAUSED)
+            || status.dwProcessId == 0
+            || status.dwProcessId == std::process::id()
+        {
+            return Err(
+                "update service is changing state; retry the update when it settles".into(),
+            );
+        }
+        let process = Owned::new(
+            OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+                false,
+                status.dwProcessId,
+            )
+            .map_err(|error| format!("open update service process failed: {error}"))?,
+        );
+        let mut image = vec![0u16; 32768];
+        let mut length = image.len() as u32;
+        QueryFullProcessImageNameW(
+            *process,
+            PROCESS_NAME_WIN32,
+            PWSTR(image.as_mut_ptr()),
+            &mut length,
+        )
+        .map_err(|error| format!("identify update service process failed: {error}"))?;
+        validate_update_service_image(
+            &PathBuf::from(std::ffi::OsString::from_wide(&image[..length as usize])),
+            &root,
+        )?;
+        let confirmed = query_status(*service)?;
+        if confirmed.dwProcessId != status.dwProcessId
+            || confirmed.dwCurrentState != status.dwCurrentState
+        {
+            return Err("update service changed during verification; retry the update".into());
+        }
+        let mut stopped = SERVICE_STATUS::default();
+        ControlService(*service, SERVICE_CONTROL_STOP, &mut stopped)
+            .map_err(|error| format!("stop update service failed: {error}"))?;
+        match WaitForSingleObject(*process, 45_000) {
+            WAIT_OBJECT_0 => Ok(()),
+            WAIT_TIMEOUT => Err("update service did not exit; installation was cancelled".into()),
+            _ => Err(format!(
+                "wait for update service failed: {}",
+                std::io::Error::last_os_error()
+            )),
+        }
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod update_service_scope_tests {
+    use super::*;
+
+    #[test]
+    fn service_image_must_resolve_inside_the_target_installation() {
+        let temporary = tempfile::tempdir().unwrap();
+        let target = temporary.path().join("目标 Sunshine ' with spaces");
+        let other = temporary.path().join("目标 Sunshine ' with spaces-other");
+        fs::create_dir_all(target.join("tools")).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        let image = target.join("tools/sunshinesvc.exe");
+        fs::write(&image, b"fixture").unwrap();
+        assert!(validate_update_service_image(&image, &target).is_ok());
+        let foreign = other.join("sunshinesvc.exe");
+        fs::write(&foreign, b"fixture").unwrap();
+        assert!(validate_update_service_image(&foreign, &target).is_err());
+        assert!(
+            validate_update_service_image(
+                &target.join("../目标 Sunshine ' with spaces-other/sunshinesvc.exe"),
+                &target
+            )
+            .is_err()
+        );
+        assert!(validate_update_service_image(&target.join("missing.exe"), &target).is_err());
+    }
 }
 
 // ========== 下载相关 ==========
@@ -2274,28 +2239,61 @@ mod update_cache_tests {
 
 // ========== 安装相关 ==========
 
-#[cfg(target_os = "windows")]
-fn create_updater_work_dir() -> Result<PathBuf, String> {
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
-    let temp_dir = std::env::temp_dir();
-    for attempt in 0..100 {
-        let work_dir = temp_dir.join(format!(
-            "sunshine-updater-{}-{}-{}",
-            now_ms,
-            std::process::id(),
-            attempt
-        ));
-        match fs::create_dir(&work_dir) {
-            Ok(()) => return Ok(work_dir),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(format!("create updater dir failed: {}", e)),
-        }
+#[cfg(all(test, target_os = "windows"))]
+mod updater_staging_tests {
+    use super::*;
+
+    #[test]
+    fn unlaunched_handoff_is_cleaned_but_launched_handoff_survives() {
+        let (_, state_path, _, guard) =
+            prepare_updater_helper("unused.exe", "exe", None, &"a".repeat(64), None).unwrap();
+        let directory = guard.path().to_path_buf();
+        assert!(state_path.is_file());
+        drop(guard);
+        assert!(!directory.exists());
+
+        let (_, state_path, _, guard) =
+            prepare_updater_helper("unused.exe", "exe", None, &"a".repeat(64), None).unwrap();
+        let directory = guard.keep();
+        assert!(state_path.is_file());
+        assert_eq!(
+            updater_cleanup_dir_for_result(&directory.join("result.json")),
+            Some(directory.canonicalize().unwrap())
+        );
+        fs::remove_dir_all(directory).unwrap();
     }
 
-    Err("create updater dir failed: too many name collisions".to_string())
+    #[test]
+    fn staged_executable_is_owned_until_exit_and_failed_verification_cleans_up() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("安装包 ' with spaces.exe");
+        let destination = root.path().join("目标目录 ' with spaces");
+        fs::create_dir(&destination).unwrap();
+        fs::write(&source, b"MZtest").unwrap();
+        let state = UpdaterHelperState {
+            installer_path: source.to_string_lossy().into_owned(),
+            extension: "exe".into(),
+            expected_size: Some(6),
+            expected_sha256: format!("{:x}", sha2::Sha256::digest(b"MZtest")),
+            target_version: None,
+            gui_exe_path: String::new(),
+            result_path: String::new(),
+            parent_pid: std::process::id(),
+        };
+        let staged = stage_installer_in_directory(&state, &destination).unwrap();
+        assert_eq!(staged.extension().unwrap(), "exe");
+        assert_eq!(fs::read(&staged).unwrap(), b"MZtest");
+        let path = staged.to_path_buf();
+        drop(staged);
+        assert!(!path.exists());
+
+        fs::write(&source, b"MZevil").unwrap();
+        assert!(stage_installer_in_directory(&state, &destination).is_err());
+        assert_eq!(fs::read_dir(&destination).unwrap().count(), 0);
+        fs::remove_file(&source).unwrap();
+        assert!(stage_installer_in_directory(&state, &destination).is_err());
+        assert_eq!(fs::read_dir(&destination).unwrap().count(), 0);
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -2305,18 +2303,21 @@ fn prepare_updater_helper(
     expected_size: Option<u64>,
     expected_sha256: &str,
     target_version: Option<String>,
-) -> Result<(PathBuf, PathBuf, UpdaterHelperState), String> {
+) -> Result<(PathBuf, PathBuf, UpdaterHelperState, tempfile::TempDir), String> {
     let current_exe =
         std::env::current_exe().map_err(|e| format!("get current exe failed: {}", e))?;
-    let work_dir = create_updater_work_dir()?;
+    let work_dir = tempfile::Builder::new()
+        .prefix("sunshine-updater-")
+        .tempdir()
+        .map_err(|error| format!("create updater directory failed: {error}"))?;
 
     // The helper is the installed GUI executable itself. Keeping the elevated
     // entry point outside the user-writable temp directory prevents a medium
     // integrity process from replacing the helper before UAC approval.
     let helper_exe = current_exe.clone();
 
-    let state_path = work_dir.join("state.json");
-    let result_path = work_dir.join("result.json");
+    let state_path = work_dir.path().join("state.json");
+    let result_path = work_dir.path().join("result.json");
     let state = UpdaterHelperState {
         installer_path: file_path.to_string(),
         extension: extension.to_string(),
@@ -2333,7 +2334,7 @@ fn prepare_updater_helper(
     fs::write(&state_path, state_content)
         .map_err(|e| format!("write updater state failed: {}", e))?;
 
-    Ok((helper_exe, state_path, state))
+    Ok((helper_exe, state_path, state, work_dir))
 }
 
 #[cfg(target_os = "windows")]
@@ -2342,55 +2343,26 @@ fn launch_updater_helper(
     state_path: &Path,
     state: &UpdaterHelperState,
 ) -> Result<(), String> {
-    launch_updater_helper_elevated(helper_exe, state_path, state)
-}
-
-#[cfg(target_os = "windows")]
-fn launch_updater_helper_elevated(
-    helper_exe: &Path,
-    state_path: &Path,
-    state: &UpdaterHelperState,
-) -> Result<(), String> {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::Shell::{SHELLEXECUTEINFOW, ShellExecuteExW};
-    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-    use windows::core::PCWSTR;
-
-    let verb = to_wide_null("runas");
-    let file = to_wide_null(&helper_exe.to_string_lossy());
     let expected_size = state
         .expected_size
         .map(|value| value.to_string())
         .unwrap_or_else(|| "-".to_string());
-    let params = to_wide_null(&format!(
-        "{} \"{}\" \"{}\" \"{}\" \"{}\" \"{}\" \"{}\"",
-        UPDATER_HELPER_ARG,
-        state_path.to_string_lossy(),
-        state.installer_path,
-        expected_size,
-        state.expected_sha256,
-        state.gui_exe_path,
-        state.result_path,
-    ));
-    let directory = helper_exe
-        .parent()
-        .map(|path| to_wide_null(&path.to_string_lossy()))
-        .unwrap_or_else(|| to_wide_null(""));
-
-    let mut info = SHELLEXECUTEINFOW {
-        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
-        hwnd: HWND(std::ptr::null_mut()),
-        lpVerb: PCWSTR(verb.as_ptr()),
-        lpFile: PCWSTR(file.as_ptr()),
-        lpParameters: PCWSTR(params.as_ptr()),
-        lpDirectory: PCWSTR(directory.as_ptr()),
-        // Keep the pixel progress helper visible after UAC approval.
-        nShow: SW_SHOWNORMAL.0,
-        ..Default::default()
-    };
-
-    unsafe { ShellExecuteExW(&mut info) }
-        .map_err(|e| format!("launch updater helper elevated failed: {}", e))
+    crate::elevation::launch_elevated(
+        helper_exe.as_os_str(),
+        &[
+            UPDATER_HELPER_ARG,
+            &state_path.to_string_lossy(),
+            &state.installer_path,
+            &expected_size,
+            &state.expected_sha256,
+            &state.gui_exe_path,
+            &state.result_path,
+        ],
+        // Keep the progress helper visible after UAC approval.
+        windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL.0,
+    )
+    .map(|_| ())
+    .map_err(|error| format!("launch updater helper elevated failed: {error}"))
 }
 
 /// 安装更新文件
@@ -2434,7 +2406,7 @@ pub async fn install_update(
             .to_lowercase();
 
         emit_install_progress(&app_handle, "building-command", None, false);
-        let (helper_exe, state_path, state) = match prepare_updater_helper(
+        let (helper_exe, state_path, state, work_dir) = match prepare_updater_helper(
             &path.to_string_lossy(),
             &extension,
             expected_size,
@@ -2453,6 +2425,9 @@ pub async fn install_update(
             emit_install_progress(&app_handle, "failed", Some(&e), true);
             return Err(e);
         }
+        // The helper and restarted GUI now own cleanup. A failed launch above
+        // drops the guard and removes the unpublished state automatically.
+        let _ = work_dir.keep();
         emit_install_progress(&app_handle, "installer-started", None, false);
 
         info!("✅ 安装程序已静默启动，正在安装...");
@@ -2519,7 +2494,7 @@ fn protected_installer_for_cleanup(temp_dir: &Path) -> Option<String> {
     // 时钟回拨（downloaded_at 晚于当前时间）按过期处理，不无限期保护
     let expired = get_current_timestamp()
         .checked_sub(marker.downloaded_at)
-        .map_or(true, |age| age > UPDATE_CACHE_MAX_AGE_SECS);
+        .is_none_or(|age| age > UPDATE_CACHE_MAX_AGE_SECS);
     if expired || !cached_path.exists() {
         let _ = fs::remove_file(&cached_path);
         let _ = fs::remove_file(update_cache_marker_path());

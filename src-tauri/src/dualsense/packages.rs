@@ -142,7 +142,7 @@ async fn download_component_asset_internal(
 }
 
 pub(crate) fn component_root() -> PathBuf {
-    PathBuf::from(crate::sunshine::get_sunshine_install_path())
+    crate::sunshine::install_dir()
         .join("tools")
         .join("sunshine-ds5-component")
 }
@@ -156,13 +156,13 @@ pub(crate) fn sidecar_path() -> PathBuf {
 }
 
 pub(crate) fn sidecar_package_manifest_path() -> PathBuf {
-    PathBuf::from(crate::sunshine::get_sunshine_install_path())
+    crate::sunshine::install_dir()
         .join("tools")
         .join(SIDECAR_PACKAGE_MANIFEST)
 }
 
 pub(crate) fn manually_placed_sidecar_package() -> Option<PathBuf> {
-    let sunshine_root = PathBuf::from(crate::sunshine::get_sunshine_install_path());
+    let sunshine_root = crate::sunshine::install_dir();
     [
         sunshine_root.join(SIDECAR_PACKAGE_ASSET),
         sunshine_root.join("tools").join(SIDECAR_PACKAGE_ASSET),
@@ -295,15 +295,6 @@ pub(crate) fn local_component_kind(
     } else {
         None
     }
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn local_component_package_handoff_path(
-    root: &Path,
-    token: uuid::Uuid,
-    index: usize,
-) -> PathBuf {
-    root.join(format!("handoff-{token}-{index}.partial"))
 }
 
 pub(crate) fn purge_stale_handoff_packages(root: &Path, current_packages: &[&Path]) {

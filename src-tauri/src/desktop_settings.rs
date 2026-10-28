@@ -237,7 +237,7 @@ fn service_image_path_matches_install(image_path: &str, install_dir: &Path) -> b
 }
 
 #[cfg(target_os = "windows")]
-fn sunshine_service_matches_install(install_dir: &Path) -> Result<bool, String> {
+pub(crate) fn sunshine_service_matches_install(install_dir: &Path) -> Result<bool, String> {
     use winreg::RegKey;
     use winreg::enums::*;
 

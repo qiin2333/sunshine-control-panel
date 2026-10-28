@@ -1,9 +1,9 @@
 use log::{debug, error, info, warn};
-use std::sync::LazyLock;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::LazyLock;
 use std::sync::{Mutex, RwLock};
 use url::Url;
 
@@ -590,7 +590,7 @@ mod tray_protocol_tests {
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut request = [0; 4096];
-            socket.read(&mut request).await.unwrap();
+            assert!(socket.read(&mut request).await.unwrap() > 0);
             if send_headers {
                 // Successful headers must not exempt a stalled response body
                 // from the same three-second request deadline.
@@ -1074,7 +1074,6 @@ async fn post_sunshine_config_to(
     }
     validate_config_save_response(&response_body)
 }
-
 
 #[tauri::command]
 pub async fn get_active_sessions() -> Result<Vec<SessionInfo>, String> {

@@ -1,8 +1,14 @@
 //! Static validation shared by native component installers.
 
+use object::endian::LittleEndian as LE;
+use object::pe;
+use object::read::{
+    ReadCache,
+    pe::{ImageNtHeaders, ImageOptionalHeader},
+};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
-use std::io::{Read, Seek, SeekFrom};
+use std::io::Read;
 use std::path::Path;
 
 const MAX_PE_OFFSET: u64 = 16 * 1024 * 1024;
@@ -42,86 +48,52 @@ pub(crate) fn validate_named_dll(
 }
 
 pub(crate) fn validate_pe_x64(path: &Path) -> Result<(), String> {
-    let mut file = File::open(path).map_err(|error| error.to_string())?;
+    let file = File::open(path).map_err(|error| error.to_string())?;
     let file_size = file.metadata().map_err(|error| error.to_string())?.len();
-    let mut dos = [0u8; 64];
-    file.read_exact(&mut dos)
-        .map_err(|error| error.to_string())?;
-    if &dos[..2] != b"MZ" {
-        return Err("missing MZ header".to_string());
-    }
-    let pe_offset = u32::from_le_bytes(dos[0x3c..0x40].try_into().unwrap()) as u64;
-    if !(64..=MAX_PE_OFFSET).contains(&pe_offset) || pe_offset + 24 > file_size {
+    // Read only the headers and section table; do not load the DLL or its symbols.
+    let data = ReadCache::new(file);
+    let dos = pe::ImageDosHeader::parse(&data).map_err(|error| error.to_string())?;
+    let mut offset = u64::from(dos.nt_headers_offset());
+    if !(64..=MAX_PE_OFFSET).contains(&offset) {
         return Err("invalid PE header offset".to_string());
     }
-
-    file.seek(SeekFrom::Start(pe_offset))
-        .map_err(|error| error.to_string())?;
-    let mut coff = [0u8; 24];
-    file.read_exact(&mut coff)
-        .map_err(|error| error.to_string())?;
-    if &coff[..4] != b"PE\0\0" {
-        return Err("missing PE signature".to_string());
-    }
-    if u16::from_le_bytes([coff[4], coff[5]]) != 0x8664 {
+    let (headers, _) =
+        pe::ImageNtHeaders64::parse(&data, &mut offset).map_err(|error| error.to_string())?;
+    let coff = headers.file_header();
+    if coff.machine.get(LE) != pe::IMAGE_FILE_MACHINE_AMD64 {
         return Err("machine is not AMD64".to_string());
     }
-    let section_count = u16::from_le_bytes([coff[6], coff[7]]) as u64;
+    let section_count = u64::from(coff.number_of_sections.get(LE));
     if section_count == 0 || section_count > MAX_PE_SECTIONS {
         return Err("invalid PE section count".to_string());
     }
-    let optional_size = u16::from_le_bytes([coff[20], coff[21]]) as u64;
-    if optional_size < 0x70 {
-        return Err("missing PE optional header".to_string());
-    }
-    if u16::from_le_bytes([coff[22], coff[23]]) & 0x2000 == 0 {
+    if coff.characteristics.get(LE) & pe::IMAGE_FILE_DLL == pe::FileFlags(0) {
         return Err("image is not marked as a DLL".to_string());
     }
-    let section_table_end = pe_offset
-        .checked_add(24)
-        .and_then(|value| value.checked_add(optional_size))
-        .and_then(|value| value.checked_add(section_count * 40))
-        .ok_or_else(|| "PE layout overflow".to_string())?;
-    if section_table_end > file_size {
-        return Err("PE headers extend beyond the file".to_string());
-    }
-
-    let mut optional = vec![0u8; optional_size as usize];
-    file.read_exact(&mut optional)
-        .map_err(|error| error.to_string())?;
-    if u16::from_le_bytes([optional[0], optional[1]]) != 0x20b {
-        return Err("optional header is not PE32+".to_string());
-    }
-    let size_of_image = u32::from_le_bytes(optional[56..60].try_into().unwrap()) as u64;
-    let size_of_headers = u32::from_le_bytes(optional[60..64].try_into().unwrap()) as u64;
+    let optional = headers.optional_header();
+    let size_of_image = u64::from(optional.size_of_image());
+    let size_of_headers = u64::from(optional.size_of_headers());
     if size_of_headers == 0 || size_of_headers > file_size || size_of_image < size_of_headers {
         return Err("invalid PE image or header size".to_string());
     }
-
+    let sections = headers
+        .sections(&data, offset)
+        .map_err(|error| error.to_string())?;
     let mut has_nonempty_section = false;
-    for _ in 0..section_count {
-        let mut section = [0u8; 40];
-        file.read_exact(&mut section)
-            .map_err(|error| error.to_string())?;
-        let virtual_size = u32::from_le_bytes(section[8..12].try_into().unwrap()) as u64;
-        let virtual_address = u32::from_le_bytes(section[12..16].try_into().unwrap()) as u64;
-        let raw_size = u32::from_le_bytes(section[16..20].try_into().unwrap()) as u64;
-        let raw_offset = u32::from_le_bytes(section[20..24].try_into().unwrap()) as u64;
+    for section in sections.iter() {
+        let virtual_size = u64::from(section.virtual_size.get(LE));
+        let virtual_address = u64::from(section.virtual_address.get(LE));
+        let raw_size = u64::from(section.size_of_raw_data.get(LE));
+        let raw_offset = u64::from(section.pointer_to_raw_data.get(LE));
         if virtual_size == 0 && raw_size == 0 {
             continue;
         }
         has_nonempty_section = true;
-        if raw_size > 0
-            && raw_offset
-                .checked_add(raw_size)
-                .is_none_or(|end| raw_offset < size_of_headers || end > file_size)
-        {
+        if raw_size > 0 && (raw_offset < size_of_headers || raw_offset + raw_size > file_size) {
             return Err("PE section raw data is outside the file".to_string());
         }
-        if virtual_address
-            .checked_add(virtual_size.max(raw_size))
-            .is_none_or(|end| end > size_of_image)
-        {
+        // These values originate as u32, so their sums cannot overflow u64.
+        if virtual_address + virtual_size.max(raw_size) > size_of_image {
             return Err("PE section virtual range is outside the image".to_string());
         }
     }

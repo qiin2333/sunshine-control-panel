@@ -13,9 +13,7 @@ pub(crate) struct ElevatedProcess {
 
 #[cfg(target_os = "windows")]
 impl ElevatedProcess {
-    pub(crate) fn from_owned_handle(
-        handle: std::os::windows::io::OwnedHandle,
-    ) -> Self {
+    pub(crate) fn from_owned_handle(handle: std::os::windows::io::OwnedHandle) -> Self {
         Self { handle }
     }
 
@@ -28,28 +26,9 @@ impl ElevatedProcess {
     }
 
     pub(crate) fn exit_code(&self) -> Result<Option<i32>, String> {
-        use std::os::windows::io::AsRawHandle;
-        use windows::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
-        use windows::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject};
-
-        unsafe {
-            let handle = windows::Win32::Foundation::HANDLE(self.handle.as_raw_handle());
-            match WaitForSingleObject(handle, 0) {
-                WAIT_TIMEOUT => return Ok(None),
-                WAIT_OBJECT_0 => {}
-                status => {
-                    return Err(format!(
-                        "could not wait for elevated process exit: {:?}",
-                        status
-                    ));
-                }
-            }
-            let mut exit_code = 0;
-            GetExitCodeProcess(handle, &mut exit_code)
-                .map_err(|error| format!("could not read elevated process exit code: {error}"))?;
-            Ok(Some(exit_code as i32))
-        }
+        self.wait_for_exit_blocking(std::time::Duration::ZERO)
     }
+
     /// Blocking wait for the process to exit, bounded by `timeout`. Returns
     /// `None` when it is still running when the timeout elapses.
     pub(crate) fn wait_for_exit_blocking(
@@ -137,7 +116,7 @@ pub async fn restart_graphics_driver() -> Result<String, String> {
         use std::os::windows::process::CommandExt;
 
         // Resolve Sunshine install path from the registry-backed helper.
-        let sunshine_path = std::path::PathBuf::from(sunshine::get_sunshine_install_path());
+        let sunshine_path = sunshine::install_dir();
         let restart_exe = sunshine_path.join("tools").join("restart64.exe");
 
         if !restart_exe.exists() {

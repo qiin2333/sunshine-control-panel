@@ -1201,6 +1201,34 @@ mod tests {
     }
 
     #[test]
+    fn rejects_sections_outside_file_or_image_and_invalid_directory_count() {
+        let root = std::env::temp_dir().join(format!("hdr-pe-bounds-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("component.dll");
+        const OPTIONAL: usize = 0x80 + 24;
+        const SECTION: usize = OPTIONAL + 0xf0;
+        for (field, value) in [
+            (SECTION + 20, 0x200u32), // raw data overlaps the headers
+            (SECTION + 20, 0x800),    // raw data begins beyond EOF
+            (SECTION + 16, u32::MAX), // raw data extends beyond EOF
+            (SECTION + 12, 0x2000),   // virtual data begins beyond SizeOfImage
+            (SECTION + 8, u32::MAX),  // virtual extent cannot wrap into the image
+            (OPTIONAL + 108, 17),     // directory table exceeds the optional header
+            (0x3c, u32::MAX),         // NT header offset is outside the allowed range
+        ] {
+            write_test_pe(&path, 0x8664, true, 0x20b, 1);
+            let mut bytes = fs::read(&path).unwrap();
+            bytes[field..field + 4].copy_from_slice(&value.to_le_bytes());
+            fs::write(&path, bytes).unwrap();
+            assert!(
+                validate_pe_x64(&path).is_err(),
+                "field {field:#x}, value {value:#x}"
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn rejects_misnamed_component_files() {
         let root = std::env::temp_dir().join(format!("rtx-hdr-name-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();

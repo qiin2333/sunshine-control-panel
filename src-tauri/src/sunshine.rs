@@ -590,7 +590,7 @@ mod tray_protocol_tests {
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut request = [0; 4096];
-            socket.read(&mut request).await.unwrap();
+            assert!(socket.read(&mut request).await.unwrap() > 0);
             if send_headers {
                 // Successful headers must not exempt a stalled response body
                 // from the same three-second request deadline.

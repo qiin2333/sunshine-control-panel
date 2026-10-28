@@ -1,13 +1,6 @@
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
-#[allow(dead_code)]
-pub struct GpuInfo {
-    pub model: String,
-    pub vram: u64,
-}
-
 /// Sunshine 进程内存使用信息
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ProcessMemoryInfo {

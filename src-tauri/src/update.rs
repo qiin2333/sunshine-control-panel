@@ -15,6 +15,8 @@ use crate::github_download::{
 mod metadata;
 mod preferences;
 
+pub(crate) use preferences::{include_prerelease as get_include_prerelease, save_last_check_time};
+
 pub(crate) use metadata::resolve_component_download_candidates;
 
 use metadata::{
@@ -180,7 +182,7 @@ fn is_supported_installer_filename(filename: &str) -> bool {
         .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
 }
 
-fn selected_asset<'a>(candidate: &'a ReleaseCandidate) -> Option<&'a ReleaseAsset> {
+fn selected_asset(candidate: &ReleaseCandidate) -> Option<&ReleaseAsset> {
     candidate.assets.iter().find(|asset| {
         asset.asset_type == preferred_asset_type() && is_supported_installer_filename(&asset.name)
     })
@@ -1197,26 +1199,6 @@ fn restart_gui_with_update_result(gui_exe_path: &str, result_path: &str) -> Resu
     Ok(())
 }
 
-/// 获取上次检查时间
-fn get_last_check_time<R: Runtime>(app: &AppHandle<R>) -> u64 {
-    preferences::last_check_time(app)
-}
-
-/// 保存上次检查时间
-pub(crate) fn save_last_check_time<R: Runtime>(app: &AppHandle<R>) {
-    preferences::save_last_check_time(app);
-}
-
-/// 获取是否包含预发布版本的偏好
-pub(crate) fn get_include_prerelease<R: Runtime>(app: &AppHandle<R>) -> bool {
-    preferences::include_prerelease(app)
-}
-
-/// 设置是否包含预发布版本的偏好
-fn set_include_prerelease<R: Runtime>(app: &AppHandle<R>, include: bool) {
-    preferences::set_include_prerelease(app, include);
-}
-
 /// Tauri命令：获取是否包含预发布版本的偏好
 #[tauri::command]
 pub fn get_include_prerelease_preference(app: AppHandle) -> bool {
@@ -1226,7 +1208,7 @@ pub fn get_include_prerelease_preference(app: AppHandle) -> bool {
 /// Tauri命令：设置是否包含预发布版本的偏好
 #[tauri::command]
 pub fn set_include_prerelease_preference(app: AppHandle, include: bool) {
-    set_include_prerelease(&app, include);
+    preferences::set_include_prerelease(&app, include);
 }
 
 /// Tauri 命令：手动检查更新
@@ -1302,7 +1284,7 @@ fn handle_auto_check_result<R: Runtime>(
 
 /// 启动时自动检查更新（如果距离上次检查超过4小时）
 pub fn check_for_updates_on_startup<R: Runtime + 'static>(app: AppHandle<R>) {
-    let last_check_time = get_last_check_time(&app);
+    let last_check_time = preferences::last_check_time(&app);
 
     if !should_auto_check(last_check_time) {
         debug!("⏰ 距离上次检查时间未超过4小时，跳过自动检查");
@@ -1320,114 +1302,33 @@ pub fn check_for_updates_on_startup<R: Runtime + 'static>(app: AppHandle<R>) {
 
 // ========== 进程管理 ==========
 
-/// 强制结束进程
+/// Stop the service, then clean up leftover Sunshine processes for the installer.
 #[cfg(target_os = "windows")]
-fn kill_process(process_name: &str) {
+fn stop_sunshine_for_update() {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
-    let _ = std::process::Command::new("taskkill")
-        .args(&["/IM", process_name, "/F", "/T"])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output();
-}
 
-/// 通过 HTTP API 关闭 Sunshine（不需要管理员权限）
-#[allow(dead_code)]
-async fn stop_sunshine_via_api() -> Result<(), String> {
-    use crate::sunshine;
-
-    let sunshine_url = sunshine::get_sunshine_url().await?;
-    let boom_url = format!("{}/api/boom", sunshine_url.trim_end_matches('/'));
-
-    info!("🌐 尝试通过 HTTP API 关闭 Sunshine: {}", boom_url);
-
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .timeout(Duration::from_secs(5))
-        .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
-
-    match client.get(&boom_url).send().await {
-        Ok(response) => {
-            let status = response.status();
-            if status.is_success() || status.as_u16() == 200 {
-                info!("✅ 已通过 HTTP API 请求关闭 Sunshine");
-                Ok(())
-            } else if status.as_u16() == 401 {
-                Err("需要身份验证（401）".to_string())
-            } else {
-                Err(format!("HTTP API 返回错误状态码: {}", status))
-            }
-        }
-        Err(e) => Err(format!("通过 HTTP API 关闭失败: {}", e)),
-    }
-}
-
-/// 停止 Sunshine 服务（使用服务管理器）
-#[cfg(target_os = "windows")]
-fn stop_sunshine_service() {
+    info!("正在关闭 Sunshine 以安装更新...");
     if let Err(error) = crate::sunshine_service::stop_for_update() {
         warn!("停止 Sunshine 服务失败: {error}");
     }
-}
-
-/// 强制关闭所有 Sunshine 进程
-#[cfg(target_os = "windows")]
-fn force_kill_sunshine_processes() {
-    kill_process("sunshine.exe");
+    let _ = std::process::Command::new("taskkill")
+        .args(["/IM", "sunshine.exe", "/F", "/T"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
 
     let current_pid = std::process::id();
     let ps_script = format!(
         "Get-Process -Name '*sunshine*' -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -ne {} }} | Stop-Process -Force",
         current_pid
     );
-
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
     let _ = std::process::Command::new("powershell")
-        .args(&["-NoProfile", "-Command", &ps_script])
+        .args(["-NoProfile", "-Command", &ps_script])
         .creation_flags(CREATE_NO_WINDOW)
         .output();
 
     std::thread::sleep(Duration::from_secs(2));
-}
-
-/// 关闭 Sunshine 服务和残留进程
-#[cfg(target_os = "windows")]
-fn stop_sunshine_for_update() {
-    info!("正在关闭 Sunshine 以安装更新...");
-    stop_sunshine_service();
-    force_kill_sunshine_processes();
     info!("Sunshine 服务和相关进程已为更新关闭。");
-}
-
-#[cfg(target_os = "windows")]
-#[allow(dead_code)]
-async fn stop_sunshine_and_gui() -> Result<(), String> {
-    info!("🛑 正在关闭Sunshine和GUI进程...");
-
-    // 首先尝试通过 HTTP API 关闭
-    match stop_sunshine_via_api().await {
-        Ok(_) => {
-            std::thread::sleep(Duration::from_secs(3));
-        }
-        Err(e) => {
-            warn!("⚠️ {}", e);
-            info!("🔄 回退到使用服务管理器关闭...");
-            stop_sunshine_service();
-        }
-    }
-
-    // 强制结束所有进程
-    force_kill_sunshine_processes();
-
-    info!("✅ Sunshine和GUI进程已关闭");
-    Ok(())
-}
-
-#[cfg(not(target_os = "windows"))]
-async fn stop_sunshine_and_gui() -> Result<(), String> {
-    Err("此功能仅支持Windows".to_string())
 }
 
 // ========== 下载相关 ==========
@@ -2228,14 +2129,6 @@ mod update_cache_tests {
 
 // ========== 安装相关 ==========
 
-#[cfg(target_os = "windows")]
-fn create_updater_work_dir() -> Result<tempfile::TempDir, String> {
-    tempfile::Builder::new()
-        .prefix("sunshine-updater-")
-        .tempdir()
-        .map_err(|error| format!("create updater directory failed: {error}"))
-}
-
 #[cfg(all(test, target_os = "windows"))]
 mod updater_staging_tests {
     use super::*;
@@ -2303,7 +2196,10 @@ fn prepare_updater_helper(
 ) -> Result<(PathBuf, PathBuf, UpdaterHelperState, tempfile::TempDir), String> {
     let current_exe =
         std::env::current_exe().map_err(|e| format!("get current exe failed: {}", e))?;
-    let work_dir = create_updater_work_dir()?;
+    let work_dir = tempfile::Builder::new()
+        .prefix("sunshine-updater-")
+        .tempdir()
+        .map_err(|error| format!("create updater directory failed: {error}"))?;
 
     // The helper is the installed GUI executable itself. Keeping the elevated
     // entry point outside the user-writable temp directory prevents a medium
@@ -2333,15 +2229,6 @@ fn prepare_updater_helper(
 
 #[cfg(target_os = "windows")]
 fn launch_updater_helper(
-    helper_exe: &Path,
-    state_path: &Path,
-    state: &UpdaterHelperState,
-) -> Result<(), String> {
-    launch_updater_helper_elevated(helper_exe, state_path, state)
-}
-
-#[cfg(target_os = "windows")]
-fn launch_updater_helper_elevated(
     helper_exe: &Path,
     state_path: &Path,
     state: &UpdaterHelperState,
@@ -2497,7 +2384,7 @@ fn protected_installer_for_cleanup(temp_dir: &Path) -> Option<String> {
     // 时钟回拨（downloaded_at 晚于当前时间）按过期处理，不无限期保护
     let expired = get_current_timestamp()
         .checked_sub(marker.downloaded_at)
-        .map_or(true, |age| age > UPDATE_CACHE_MAX_AGE_SECS);
+        .is_none_or(|age| age > UPDATE_CACHE_MAX_AGE_SECS);
     if expired || !cached_path.exists() {
         let _ = fs::remove_file(&cached_path);
         let _ = fs::remove_file(update_cache_marker_path());

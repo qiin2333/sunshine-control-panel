@@ -50,7 +50,7 @@ pub(crate) fn sidecar_source_dir() -> Result<PathBuf, String> {
         }
     }
 
-    let sunshine_root = PathBuf::from(crate::sunshine::get_sunshine_install_path());
+    let sunshine_root = crate::sunshine::install_dir();
     let candidates = [
         sunshine_root.join("tools").join("sunshine-ds5-sidecar"),
         sunshine_root

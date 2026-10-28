@@ -1435,7 +1435,6 @@ pub fn start() -> Result<(), String> {
     Ok(())
 }
 
-#[allow(dead_code)]
 pub fn stop() {
     let (stop_tx, sse, hb, sup, watcher_shutdown, watcher_thread) = {
         let mut st = lock_agent();

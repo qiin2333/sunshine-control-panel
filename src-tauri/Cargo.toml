@@ -51,6 +51,7 @@ sha2 = "0.10"
 zip = { version = "4", default-features = false, features = ["deflate"] }
 uuid = { version = "1", features = ["v4"] }
 alkaidlab-native-tool-plugin-api = { path = "../native-plugins/plugin-api" }
+object = { version = "0.40", default-features = false, features = ["read_core", "pe", "std"] }
 
 [features]
 # by default Tauri runs in production mode

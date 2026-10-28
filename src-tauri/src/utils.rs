@@ -13,9 +13,7 @@ pub(crate) struct ElevatedProcess {
 
 #[cfg(target_os = "windows")]
 impl ElevatedProcess {
-    pub(crate) fn from_owned_handle(
-        handle: std::os::windows::io::OwnedHandle,
-    ) -> Self {
+    pub(crate) fn from_owned_handle(handle: std::os::windows::io::OwnedHandle) -> Self {
         Self { handle }
     }
 
@@ -401,26 +399,4 @@ pub fn open_local_path(path: String, app_name: String) -> Result<bool, String> {
             .map_err(|error| error.to_string())?;
     }
     Ok(true)
-}
-
-/// Execute an elevated PowerShell command.
-#[cfg(target_os = "windows")]
-pub fn execute_powershell_command(command: &str, error_context: &str) -> Result<(), String> {
-    // 直接以 runas 启动 PowerShell（fire-and-forget：在后台线程等待 UAC，
-    // 不阻塞 async 调用方）。命令原样传递——调用方已自行用 PowerShell
-    // 单引号包好值。
-    let command = command.to_string();
-    let context = error_context.to_string();
-    std::thread::spawn(move || {
-        let program = crate::elevation::system_binary(r"WindowsPowerShell\v1.0\powershell.exe");
-        if let Err(error) = crate::elevation::launch_elevated(
-            program.as_os_str(),
-            &["-NoProfile", "-Command", &command],
-            windows::Win32::UI::WindowsAndMessaging::SW_HIDE.0,
-        ) {
-            error!("{}: {}", context, error);
-        }
-    });
-
-    Ok(())
 }

@@ -433,13 +433,14 @@ fn run_updater_worker(state: UpdaterHelperState, hwnd: isize) {
     update_updater_panel(hwnd, 0, "准备更新", "正在等待控制面板关闭...");
     wait_for_parent_exit(state.parent_pid);
 
-    if is_gui_component_installer(Path::new(&state.installer_path)) {
+    let prepare_result = if is_gui_component_installer(Path::new(&state.installer_path)) {
         update_updater_panel(
             hwnd,
             1,
             "正在更新 GUI",
             "Sunshine 核心和当前串流将保持运行。",
         );
+        Ok(())
     } else {
         update_updater_panel(
             hwnd,
@@ -447,16 +448,18 @@ fn run_updater_worker(state: UpdaterHelperState, hwnd: isize) {
             "正在关闭 Sunshine",
             "正在关闭 Sunshine 服务，随后安装更新...",
         );
-        stop_sunshine_for_update();
-    }
+        stop_sunshine_for_update()
+    };
 
-    update_updater_panel(
-        hwnd,
-        2,
-        "正在安装更新",
-        "这可能需要一两分钟，请不要重复启动。",
-    );
-    let install_result = run_installer_and_wait(&state);
+    let install_result = prepare_result.and_then(|()| {
+        update_updater_panel(
+            hwnd,
+            2,
+            "正在安装更新",
+            "这可能需要一两分钟，请不要重复启动。",
+        );
+        run_installer_and_wait(&state)
+    });
 
     update_updater_panel(
         hwnd,
@@ -1302,92 +1305,140 @@ pub fn check_for_updates_on_startup<R: Runtime + 'static>(app: AppHandle<R>) {
 
 // ========== 进程管理 ==========
 
-/// 停止 Windows 服务
 #[cfg(target_os = "windows")]
-fn stop_service_with_command(service_name: &str, command: &str, args: &[&str]) -> bool {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
+fn validate_update_service_image(image: &Path, install_dir: &Path) -> Result<(), String> {
+    let root = install_dir
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let image = image.canonicalize().map_err(|error| error.to_string())?;
+    if !image.starts_with(&root) {
+        return Err("refusing to stop a service process outside the target installation".into());
+    }
+    Ok(())
+}
 
-    match std::process::Command::new(command)
-        .args(args)
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-    {
-        Ok(result) if result.status.success() => {
-            info!("✅ 成功停止服务: {}", service_name);
-            true
+/// Stop only this installation's service. Its existing shutdown handler owns Core cleanup.
+#[cfg(target_os = "windows")]
+fn stop_sunshine_for_update() -> Result<(), String> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
+    use windows::Win32::System::Services::*;
+    use windows::Win32::System::Threading::*;
+    use windows::core::{Owned, PCWSTR, PWSTR, w};
+
+    fn query_status(service: SC_HANDLE) -> Result<SERVICE_STATUS_PROCESS, String> {
+        let mut status = SERVICE_STATUS_PROCESS::default();
+        let mut needed = 0;
+        // The initialized structure supplies an aligned, exactly sized output buffer.
+        unsafe {
+            let buffer = std::slice::from_raw_parts_mut(
+                std::ptr::from_mut(&mut status).cast::<u8>(),
+                std::mem::size_of::<SERVICE_STATUS_PROCESS>(),
+            );
+            QueryServiceStatusEx(service, SC_STATUS_PROCESS_INFO, Some(buffer), &mut needed)
+                .map_err(|error| format!("query update service failed: {error}"))?;
         }
-        Ok(result) => {
-            let error_msg = String::from_utf8_lossy(&result.stderr);
-            warn!("⚠️ 停止服务失败 {}: {}", service_name, error_msg.trim());
-            false
+        Ok(status)
+    }
+
+    let root = crate::sunshine::install_dir();
+    if !crate::desktop_settings::sunshine_service_matches_install(&root)? {
+        info!("No service belongs to this installation; leaving other services running");
+        return Ok(());
+    }
+    unsafe {
+        let manager = Owned::new(
+            OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), SC_MANAGER_CONNECT)
+                .map_err(|error| format!("open service manager failed: {error}"))?,
+        );
+        let service = Owned::new(
+            OpenServiceW(
+                *manager,
+                w!("SunshineService"),
+                SERVICE_QUERY_STATUS | SERVICE_STOP,
+            )
+            .map_err(|error| format!("open update service failed: {error}"))?,
+        );
+        let status = query_status(*service)?;
+        if status.dwCurrentState == SERVICE_STOPPED {
+            return Ok(());
         }
-        Err(e) => {
-            warn!("⚠️ 执行命令失败 {}: {}", service_name, e);
-            false
+        // SCM's PID is only meaningful in stable running/paused states.
+        if !matches!(status.dwCurrentState, SERVICE_RUNNING | SERVICE_PAUSED)
+            || status.dwProcessId == 0
+            || status.dwProcessId == std::process::id()
+        {
+            return Err(
+                "update service is changing state; retry the update when it settles".into(),
+            );
+        }
+        let process = Owned::new(
+            OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+                false,
+                status.dwProcessId,
+            )
+            .map_err(|error| format!("open update service process failed: {error}"))?,
+        );
+        let mut image = vec![0u16; 32768];
+        let mut length = image.len() as u32;
+        QueryFullProcessImageNameW(
+            *process,
+            PROCESS_NAME_WIN32,
+            PWSTR(image.as_mut_ptr()),
+            &mut length,
+        )
+        .map_err(|error| format!("identify update service process failed: {error}"))?;
+        validate_update_service_image(
+            &PathBuf::from(std::ffi::OsString::from_wide(&image[..length as usize])),
+            &root,
+        )?;
+        let confirmed = query_status(*service)?;
+        if confirmed.dwProcessId != status.dwProcessId
+            || confirmed.dwCurrentState != status.dwCurrentState
+        {
+            return Err("update service changed during verification; retry the update".into());
+        }
+        let mut stopped = SERVICE_STATUS::default();
+        ControlService(*service, SERVICE_CONTROL_STOP, &mut stopped)
+            .map_err(|error| format!("stop update service failed: {error}"))?;
+        match WaitForSingleObject(*process, 45_000) {
+            WAIT_OBJECT_0 => Ok(()),
+            WAIT_TIMEOUT => Err("update service did not exit; installation was cancelled".into()),
+            _ => Err(format!(
+                "wait for update service failed: {}",
+                std::io::Error::last_os_error()
+            )),
         }
     }
 }
 
-/// 停止 Windows 服务
-#[cfg(target_os = "windows")]
-fn stop_windows_service(service_name: &str) {
-    // 尝试使用 net stop
-    if stop_service_with_command(service_name, "net", &["stop", service_name]) {
-        return;
+#[cfg(all(test, target_os = "windows"))]
+mod update_service_scope_tests {
+    use super::*;
+
+    #[test]
+    fn service_image_must_resolve_inside_the_target_installation() {
+        let temporary = tempfile::tempdir().unwrap();
+        let target = temporary.path().join("目标 Sunshine ' with spaces");
+        let other = temporary.path().join("目标 Sunshine ' with spaces-other");
+        fs::create_dir_all(target.join("tools")).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        let image = target.join("tools/sunshinesvc.exe");
+        fs::write(&image, b"fixture").unwrap();
+        assert!(validate_update_service_image(&image, &target).is_ok());
+        let foreign = other.join("sunshinesvc.exe");
+        fs::write(&foreign, b"fixture").unwrap();
+        assert!(validate_update_service_image(&foreign, &target).is_err());
+        assert!(
+            validate_update_service_image(
+                &target.join("../目标 Sunshine ' with spaces-other/sunshinesvc.exe"),
+                &target
+            )
+            .is_err()
+        );
+        assert!(validate_update_service_image(&target.join("missing.exe"), &target).is_err());
     }
-
-    // 尝试使用 sc stop 作为备选
-    stop_service_with_command(service_name, "sc", &["stop", service_name]);
-}
-
-/// 强制结束进程
-#[cfg(target_os = "windows")]
-fn kill_process(process_name: &str) {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-    let _ = std::process::Command::new("taskkill")
-        .args(&["/IM", process_name, "/F", "/T"])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output();
-}
-
-/// 停止 Sunshine 服务（使用服务管理器）
-#[cfg(target_os = "windows")]
-fn stop_sunshine_service() {
-    stop_windows_service("SunshineService");
-    stop_windows_service("sunshineservice");
-    std::thread::sleep(Duration::from_secs(2));
-}
-
-/// 强制关闭所有 Sunshine 进程
-#[cfg(target_os = "windows")]
-fn force_kill_sunshine_processes() {
-    kill_process("sunshine.exe");
-
-    let current_pid = std::process::id();
-    let ps_script = format!(
-        "Get-Process -Name '*sunshine*' -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -ne {} }} | Stop-Process -Force",
-        current_pid
-    );
-
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-    let _ = std::process::Command::new("powershell")
-        .args(&["-NoProfile", "-Command", &ps_script])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output();
-
-    std::thread::sleep(Duration::from_secs(2));
-}
-
-/// 关闭 Sunshine 服务和残留进程
-#[cfg(target_os = "windows")]
-fn stop_sunshine_for_update() {
-    info!("正在关闭 Sunshine 以安装更新...");
-    stop_sunshine_service();
-    force_kill_sunshine_processes();
-    info!("Sunshine 服务和相关进程已为更新关闭。");
 }
 
 // ========== 下载相关 ==========

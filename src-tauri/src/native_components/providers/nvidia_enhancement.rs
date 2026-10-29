@@ -257,9 +257,15 @@ fn build_status(
         .get("pending_removal")
         .and_then(serde_json::Value::as_str)
         .filter(|id| !id.is_empty());
+    let maintenance_component = runtime_status
+        .get("maintenance_component")
+        .and_then(serde_json::Value::as_str)
+        .filter(|id| !id.is_empty());
     let state = if pending_removal == Some(COMPONENT_ID) {
         "pending_removal"
-    } else if pending_removal.is_some() {
+    } else if pending_removal.is_some()
+        || maintenance_component.is_some_and(|id| id != COMPONENT_ID)
+    {
         "maintenance_other"
     } else if degraded {
         "degraded"
@@ -1058,6 +1064,28 @@ mod tests {
             &config,
             &serde_json::json!({"pending_removal": other, "maintenance": true}),
         );
+        assert_eq!(blocked.state, "maintenance_other");
+    }
+
+    #[test]
+    fn ordinary_maintenance_can_only_be_recovered_from_its_own_component() {
+        let config = uninstall_config(1);
+        let own = build_status(
+            &config,
+            &serde_json::json!({"maintenance_component": COMPONENT_ID, "maintenance": true}),
+        );
+        assert!(own.maintenance);
+        assert_ne!(own.state, "maintenance_other");
+        let other = if IS_NR {
+            "alkaidlab.nvidia_rtx_video"
+        } else {
+            "alkaidlab.nvidia_dlssnr"
+        };
+        let blocked = build_status(
+            &config,
+            &serde_json::json!({"maintenance_component": other, "maintenance": true}),
+        );
+        assert!(blocked.maintenance);
         assert_eq!(blocked.state, "maintenance_other");
     }
 

@@ -712,6 +712,15 @@ pub async fn component_install(runtime_path: String) -> Result<EnhancementCompon
     component_get_status().await
 }
 
+fn require_recovery_owner(runtime_status: &serde_json::Value) -> Result<(), String> {
+    match runtime_status["maintenance_component"].as_str() {
+        Some(id) if id == COMPONENT_ID => Ok(()),
+        Some("") => Err("HDR-OP-002: maintenance owner is unknown; recovery was refused".into()),
+        Some(_) => Err("HDR-OP-002: recover maintenance from the component that owns it".into()),
+        None => Err("HDR-CFG-007: update Sunshine before recovering enhancement components".into()),
+    }
+}
+
 pub async fn component_recover() -> Result<EnhancementComponentStatus, String> {
     let _operation = COMPONENT_OPERATION
         .try_lock()
@@ -720,6 +729,7 @@ pub async fn component_recover() -> Result<EnhancementComponentStatus, String> {
     {
         ensure_helper_finished().await?;
         let runtime_status = crate::hdr_enhanced::get_status().await?;
+        require_recovery_owner(&runtime_status)?;
         if runtime_status["pending_removal"].as_str() == Some(COMPONENT_ID) {
             let operation = crate::hdr_enhanced::inspect_maintenance(COMPONENT_ID).await?;
             remove_component_with_elevation(&operation).await?;
@@ -1076,6 +1086,42 @@ mod tests {
         );
         assert!(blocked.maintenance);
         assert_eq!(blocked.state, "maintenance_other");
+    }
+
+    #[test]
+    fn recovery_requires_confirmed_owner_before_touching_runtime_files() {
+        assert!(
+            require_recovery_owner(
+                &serde_json::json!({"maintenance_component": COMPONENT_ID, "maintenance": true}),
+            )
+            .is_ok()
+        );
+        for (status, code) in [
+            (serde_json::json!({"maintenance": true}), "HDR-CFG-007:"),
+            // A legacy pending-removal field is not a substitute for the owner check.
+            (
+                serde_json::json!({"maintenance": true, "pending_removal": COMPONENT_ID}),
+                "HDR-CFG-007:",
+            ),
+            (
+                serde_json::json!({"maintenance_component": null}),
+                "HDR-CFG-007:",
+            ),
+            (
+                serde_json::json!({"maintenance_component": ""}),
+                "HDR-OP-002:",
+            ),
+            (
+                serde_json::json!({"maintenance_component": "another-component"}),
+                "HDR-OP-002:",
+            ),
+        ] {
+            assert!(
+                require_recovery_owner(&status)
+                    .unwrap_err()
+                    .starts_with(code)
+            );
+        }
     }
 
     #[test]

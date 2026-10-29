@@ -1201,7 +1201,7 @@ static WATCHER_SNAPSHOT_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic:
 static LAST_WATCHER_HEARTBEAT_MS: AtomicI64 = AtomicI64::new(0);
 
 #[cfg(windows)]
-extern "system" {
+unsafe extern "system" {
     /// Plain Win32 import: does not require opening the clipboard and works
     /// even when the watcher's listener registration is dead.
     fn GetClipboardSequenceNumber() -> u32;

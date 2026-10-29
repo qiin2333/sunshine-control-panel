@@ -43,15 +43,15 @@
 
 use std::collections::HashMap;
 use std::sync::{
-    Arc, Mutex,
     atomic::{AtomicBool, AtomicI64, AtomicU8, Ordering},
+    Arc, Mutex,
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use clipboard_rs::{
-    Clipboard, ClipboardContext, ClipboardHandler, ClipboardWatcher, ClipboardWatcherContext,
-    RustImageData, WatcherShutdown, common::RustImage as _,
+    common::RustImage as _, Clipboard, ClipboardContext, ClipboardHandler, ClipboardWatcher,
+    ClipboardWatcherContext, RustImageData, WatcherShutdown,
 };
 use log::{debug, info, warn};
 use serde::Serialize;
@@ -340,6 +340,8 @@ impl ClipboardHandler for WatcherCallbacks {
         {
             return;
         }
+        WATCHER_LAST_EVENT_MS.store(now_ms(), Ordering::Release);
+        WATCHER_SNAPSHOT_COUNT.fetch_add(1, Ordering::Relaxed);
         let echo = self.echo.clone();
         let busy = self.busy.clone();
         // Do the (potentially blocking) clipboard read off the watcher thread
@@ -405,7 +407,11 @@ fn snapshot_and_post(echo: &Arc<Mutex<EchoState>>) {
     let png_bytes = img.as_ref().and_then(|i| match i.to_png() {
         Ok(p) => {
             let bytes = p.get_bytes().to_vec();
-            if bytes.is_empty() { None } else { Some(bytes) }
+            if bytes.is_empty() {
+                None
+            } else {
+                Some(bytes)
+            }
         }
         Err(e) => {
             debug!("clipboard image to_png failed: {e}");
@@ -528,7 +534,24 @@ fn post_burst(text: Vec<u8>, png: Vec<u8>) {
 }
 
 /// Decide inline vs out-of-band based on payload size, then dispatch.
+fn kind_name(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Text => "text",
+        Kind::Png => "image",
+        Kind::Ref => "ref",
+        Kind::FileOffer => "file-offer",
+    }
+}
+
 fn post_outbound(kind: Kind, payload: Vec<u8>, mime: &'static str) {
+    // One INFO line per posted change: user-driven copies are sparse, and
+    // this is the only way to see the watcher working in the 30-entry
+    // in-memory log buffer.
+    info!(
+        "clipboard watcher: posted {} ({}B)",
+        kind_name(kind),
+        payload.len()
+    );
     if payload.len() <= INLINE_THRESHOLD {
         post_inline(kind, payload);
     } else {
@@ -1169,6 +1192,20 @@ async fn heartbeat_pump(stop: Arc<Notify>) {
 static LAST_SSE_RESPAWN_MS: AtomicI64 = AtomicI64::new(0);
 static LAST_HEARTBEAT_RESPAWN_MS: AtomicI64 = AtomicI64::new(0);
 static LAST_WATCHER_RESPAWN_MS: AtomicI64 = AtomicI64::new(0);
+/// Liveness evidence for the watcher: the OS clipboard sequence number at
+/// the last supervisor pass, the epoch-ms of the last delivered
+/// on_clipboard_change, and snapshots posted since the last heartbeat.
+static WATCHER_LAST_SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static WATCHER_LAST_EVENT_MS: AtomicI64 = AtomicI64::new(0);
+static WATCHER_SNAPSHOT_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static LAST_WATCHER_HEARTBEAT_MS: AtomicI64 = AtomicI64::new(0);
+
+#[cfg(windows)]
+unsafe extern "system" {
+    /// Plain Win32 import: does not require opening the clipboard and works
+    /// even when the watcher's listener registration is dead.
+    fn GetClipboardSequenceNumber() -> u32;
+}
 
 fn lock_agent() -> std::sync::MutexGuard<'static, State> {
     AGENT.lock().unwrap_or_else(|e| e.into_inner())
@@ -1250,6 +1287,19 @@ fn supervise_once() {
         return;
     }
 
+    // Watcher heartbeat: one INFO line every 5 minutes proving the watcher
+    // is cycling, so a silent watcher outage is visible in the 30-entry log
+    // buffer at export time.
+    let last_hb = LAST_WATCHER_HEARTBEAT_MS.load(Ordering::Acquire);
+    if last_hb == 0 || now.saturating_sub(last_hb) > 300_000 {
+        let snapshots = WATCHER_SNAPSHOT_COUNT.swap(0, Ordering::Relaxed);
+        info!(
+            "clipboard supervisor: watcher heartbeat ({} snapshots in the last 5m)",
+            snapshots
+        );
+        LAST_WATCHER_HEARTBEAT_MS.store(now, Ordering::Release);
+    }
+
     // Transport wedged in DISCONNECTED while enabled: the sse task is alive
     // but its retry loop keeps failing. Recycle it for a fresh client stack.
     let since = DISCONNECTED_SINCE_MS.load(Ordering::Acquire);
@@ -1262,6 +1312,37 @@ fn supervise_once() {
             respawn_sse(now);
             DISCONNECTED_SINCE_MS.store(now_ms(), Ordering::Release);
         }
+    }
+
+    // Watcher liveness (Windows): the OS clipboard sequence number moves on
+    // every clipboard write — including our own inbound applies — but a dead
+    // listener never delivers on_clipboard_change, which none of the checks
+    // above can see (the thread is alive and busy is 0). If the sequence
+    // number moved and nothing arrived within 15 s, rebuild the watcher.
+    #[cfg(windows)]
+    {
+        let seq = unsafe { GetClipboardSequenceNumber() };
+        let last_seq = WATCHER_LAST_SEQ.load(Ordering::Acquire);
+        let last_event = WATCHER_LAST_EVENT_MS.load(Ordering::Acquire);
+        let busy = lock_agent()
+            .busy
+            .as_ref()
+            .map(|b| b.load(Ordering::Acquire))
+            .unwrap_or(0);
+        let seeded = last_seq != 0;
+        if seeded
+            && seq != last_seq
+            && busy == 0
+            && (last_event == 0 || now.saturating_sub(last_event) > 15_000)
+            && respawn_allowed(now, &LAST_WATCHER_RESPAWN_MS)
+        {
+            warn!(
+                "clipboard supervisor: os clipboard seq moved {}->{} but no watcher event in {}ms; rebuilding watcher",
+                last_seq, seq, now.saturating_sub(last_event.max(since.max(0)))
+            );
+            respawn_watcher(now);
+        }
+        WATCHER_LAST_SEQ.store(seq, Ordering::Release);
     }
 }
 

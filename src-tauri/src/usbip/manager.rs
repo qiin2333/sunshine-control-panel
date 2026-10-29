@@ -16,22 +16,9 @@ pub(crate) const TRANSPORT_POLICY: &str = env!("SUNSHINE_USBIP_POLICY");
 /// Rejects missing or replaced transport binaries using the contract's SHA-256.
 #[cfg(target_os = "windows")]
 fn verify_transport_file(path: &std::path::Path, expected: &str) -> Result<(), String> {
-    use sha2::{Digest, Sha256};
-    use std::io::Read;
-    let mut file = std::fs::File::open(path)
-        .map_err(|error| format!("USBIP-EXEC-006: cannot inspect the shared transport: {error}"))?;
-    let mut digest = Sha256::new();
-    let mut buffer = [0u8; 65536];
-    loop {
-        let count = file.read(&mut buffer).map_err(|error| {
-            format!("USBIP-EXEC-006: cannot verify the shared transport: {error}")
-        })?;
-        if count == 0 {
-            break;
-        }
-        digest.update(&buffer[..count]);
-    }
-    if format!("{:x}", digest.finalize()) != expected {
+    let actual = crate::native_components::install::sha256_file(path, u64::MAX)
+        .map_err(|error| format!("USBIP-EXEC-006: cannot verify the shared transport: {error}"))?;
+    if actual != expected {
         return Err(
             "USBIP-EXEC-006: the shared transport does not match the tested component combination"
                 .to_string(),

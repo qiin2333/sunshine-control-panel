@@ -128,7 +128,7 @@ pub(crate) fn sha256_file(path: &Path, maximum: u64) -> Result<String, String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::io::Write;
 
@@ -140,5 +140,94 @@ mod tests {
         assert!(sha256_file(file.path(), 2).is_err());
         assert_eq!(sha256_file(file.path(), 3).unwrap(), expected);
         assert_eq!(sha256_file(file.path(), u64::MAX).unwrap(), expected);
+    }
+
+    pub(crate) fn write_test_pe(path: &Path, machine: u16, dll: bool, magic: u16, sections: u16) {
+        const PE_OFFSET: usize = 0x80;
+        const OPTIONAL_SIZE: usize = 0xf0;
+        const RAW_OFFSET: usize = 0x400;
+        const RAW_SIZE: usize = 0x200;
+        let size = (PE_OFFSET + 24 + OPTIONAL_SIZE + usize::from(sections) * 40)
+            .max(RAW_OFFSET + RAW_SIZE);
+        let mut bytes = vec![0u8; size];
+        bytes[..2].copy_from_slice(b"MZ");
+        bytes[0x3c..0x40].copy_from_slice(&(PE_OFFSET as u32).to_le_bytes());
+        bytes[PE_OFFSET..PE_OFFSET + 4].copy_from_slice(b"PE\0\0");
+        bytes[PE_OFFSET + 4..PE_OFFSET + 6].copy_from_slice(&machine.to_le_bytes());
+        bytes[PE_OFFSET + 6..PE_OFFSET + 8].copy_from_slice(&sections.to_le_bytes());
+        bytes[PE_OFFSET + 20..PE_OFFSET + 22]
+            .copy_from_slice(&(OPTIONAL_SIZE as u16).to_le_bytes());
+        let characteristics: u16 = if dll { 0x2000 } else { 0 };
+        bytes[PE_OFFSET + 22..PE_OFFSET + 24].copy_from_slice(&characteristics.to_le_bytes());
+        bytes[PE_OFFSET + 24..PE_OFFSET + 26].copy_from_slice(&magic.to_le_bytes());
+        bytes[PE_OFFSET + 24 + 56..PE_OFFSET + 24 + 60].copy_from_slice(&(0x2000u32).to_le_bytes());
+        bytes[PE_OFFSET + 24 + 60..PE_OFFSET + 24 + 64]
+            .copy_from_slice(&(RAW_OFFSET as u32).to_le_bytes());
+        if sections > 0 {
+            let section = PE_OFFSET + 24 + OPTIONAL_SIZE;
+            bytes[section + 8..section + 12].copy_from_slice(&(RAW_SIZE as u32).to_le_bytes());
+            bytes[section + 12..section + 16].copy_from_slice(&(0x1000u32).to_le_bytes());
+            bytes[section + 16..section + 20].copy_from_slice(&(RAW_SIZE as u32).to_le_bytes());
+            bytes[section + 20..section + 24].copy_from_slice(&(RAW_OFFSET as u32).to_le_bytes());
+        }
+        fs::write(path, bytes).unwrap();
+    }
+
+    #[test]
+    fn accepts_x64_pe32_plus_dll() {
+        let root = std::env::temp_dir().join(format!("rtx-hdr-pe-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("component.dll");
+        write_test_pe(&path, 0x8664, true, 0x20b, 1);
+        assert!(validate_named_dll(&path, "component.dll", u64::MAX).is_ok());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rejects_wrong_machine_kind_or_truncated_headers() {
+        let root = std::env::temp_dir().join(format!("rtx-hdr-bad-pe-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        for (name, machine, dll, magic, sections) in [
+            ("x86", 0x014c, true, 0x10b, 1),
+            ("exe", 0x8664, false, 0x20b, 1),
+            ("pe32", 0x8664, true, 0x10b, 1),
+            ("nosections", 0x8664, true, 0x20b, 0),
+        ] {
+            let path = root.join(format!("{name}.dll"));
+            write_test_pe(&path, machine, dll, magic, sections);
+            assert!(validate_pe_x64(&path).is_err(), "{name} should be rejected");
+        }
+        let truncated = root.join("truncated.dll");
+        fs::write(&truncated, b"MZ").unwrap();
+        assert!(validate_pe_x64(&truncated).is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rejects_sections_outside_file_or_image_and_invalid_directory_count() {
+        let root = std::env::temp_dir().join(format!("hdr-pe-bounds-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("component.dll");
+        const OPTIONAL: usize = 0x80 + 24;
+        const SECTION: usize = OPTIONAL + 0xf0;
+        for (field, value) in [
+            (SECTION + 20, 0x200u32), // raw data overlaps the headers
+            (SECTION + 20, 0x800),    // raw data begins beyond EOF
+            (SECTION + 16, u32::MAX), // raw data extends beyond EOF
+            (SECTION + 12, 0x2000),   // virtual data begins beyond SizeOfImage
+            (SECTION + 8, u32::MAX),  // virtual extent cannot wrap into the image
+            (OPTIONAL + 108, 17),     // directory table exceeds the optional header
+            (0x3c, u32::MAX),         // NT header offset is outside the allowed range
+        ] {
+            write_test_pe(&path, 0x8664, true, 0x20b, 1);
+            let mut bytes = fs::read(&path).unwrap();
+            bytes[field..field + 4].copy_from_slice(&value.to_le_bytes());
+            fs::write(&path, bytes).unwrap();
+            assert!(
+                validate_pe_x64(&path).is_err(),
+                "field {field:#x}, value {value:#x}"
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 }

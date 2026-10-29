@@ -7,16 +7,12 @@ const emptyStatus = () => ({
   state: 'loading',
   installed: false,
   enabled: false,
-  ready: false,
   in_use: false,
   maintenance: false,
   host_supported: false,
   adapter_present: false,
   vc_runtime_present: false,
   runtime_present: false,
-  configured: false,
-  managed_path: '',
-  runtime_sha256: '',
 })
 
 export function useEnhancementManager({ api, messages: text, runtimeName }) {
@@ -200,7 +196,6 @@ export function useEnhancementManager({ api, messages: text, runtimeName }) {
     operationError,
     controlsBusy,
     stateLabel,
-    actionLabel,
     healthRows,
     refresh,
     install,

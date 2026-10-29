@@ -10,14 +10,14 @@ test('HDR management is vendor-neutral while the backend keeps its identity', ()
     assert.ok(messages.sidebar.hdrEnhanced.length > 0)
     assert.ok(!messages.sidebar.hdrEnhanced.includes('RTX'))
     assert.equal(messages.hdrEnhanced.description, undefined)
-    assert.equal(rtxHdrMessages[locale].title, 'NVIDIA RTX HDR')
+    assert.ok(rtxHdrMessages[locale].runtime.includes('NVIDIA RTX HDR'))
   }
 })
 
 test('RTX HDR component copy explains how to resolve missing files', () => {
   for (const locale of ['en', 'zh']) {
     const text = rtxHdrMessages[locale]
-    assert.ok(text.title.includes('RTX HDR'))
+    assert.ok(text.runtime.includes('RTX HDR'))
     assert.match(text.acquisitionDescription, /nvngx_truehdr\.dll/)
     assert.match(text.bridgeMissingNotice, /重新安装|reinstall/i)
     assert.match(text.runtimeMissingNotice, /nvngx_truehdr\.dll/)

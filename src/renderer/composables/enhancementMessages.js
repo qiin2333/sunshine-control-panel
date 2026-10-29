@@ -1,7 +1,6 @@
 export const enhancementMessages = {
   "en": {
     "acquisitionTitle": "How to install",
-    "health": "Component status",
     "inUseNotice": "End all Sunshine streams before installing, repairing, or removing this component.",
     "install": "Choose component",
     "maintenanceNotice": "The previous component operation did not finish. Restore the component controls to continue.",
@@ -14,7 +13,6 @@ export const enhancementMessages = {
     "recover": "Restore component controls",
     "refresh": "Refresh",
     "repair": "Choose again",
-    "saveSuccess": "Saved. Reconnect the stream to use the new setting.",
     "states": {
       "active": "In use",
       "configured": "Installed · disabled",
@@ -39,7 +37,6 @@ export const enhancementMessages = {
   },
   "zh": {
     "acquisitionTitle": "如何安装",
-    "health": "组件状态",
     "inUseNotice": "安装、修复或删除组件前，请结束所有 Sunshine 串流。",
     "install": "选择组件",
     "maintenanceNotice": "上次组件操作没有完成，请先恢复组件操作。",
@@ -52,7 +49,6 @@ export const enhancementMessages = {
     "recover": "恢复组件操作",
     "refresh": "刷新",
     "repair": "重新选择",
-    "saveSuccess": "已保存，重新连接串流后生效。",
     "states": {
       "active": "正在使用",
       "configured": "已安装，未启用",

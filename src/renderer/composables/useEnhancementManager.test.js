@@ -16,7 +16,7 @@ mockIPC(() => undefined, { shouldMockEvents: true })
 const { useEnhancementManager } = await import('./useEnhancementManager.js')
 
 for (const text of [rtxHdrMessages.en, dlssNrText('zh')]) {
-  test(`${text.title}: failed initial check stays unknown and a retry restores status`, async () => {
+  test(`${text.runtime}: failed initial check stays unknown and a retry restores status`, async () => {
     let resolveStatus
     const api = { getStatus: () => new Promise(resolve => { resolveStatus = resolve }) }
     let manager

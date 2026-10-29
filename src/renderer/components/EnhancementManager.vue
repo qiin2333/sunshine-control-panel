@@ -266,7 +266,7 @@ const {
 })
 const maintenanceMessage = computed(() => {
   if (status.value.state === 'pending_removal') return text.value.pendingRemovalNotice
-  if (status.value.state === 'maintenance_other') return text.value.otherRemovalNotice
+  if (status.value.state === 'maintenance_other') return text.value.otherMaintenanceNotice
   return text.value.maintenanceNotice
 })
 const componentState = computed(() => {

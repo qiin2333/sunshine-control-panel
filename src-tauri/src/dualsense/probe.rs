@@ -35,37 +35,10 @@ pub(crate) struct ProbeResult {
 fn bind_child_process_tree(
     child: &std::process::Child,
 ) -> Result<std::os::windows::io::OwnedHandle, String> {
-    use std::os::windows::io::{AsRawHandle, FromRawHandle};
+    use std::os::windows::io::AsRawHandle;
     use windows::Win32::Foundation::HANDLE;
-    use windows::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-        SetInformationJobObject,
-    };
-    use windows::core::PCWSTR;
 
-    unsafe {
-        let raw_job = CreateJobObjectW(None, PCWSTR::null()).map_err(|error| {
-            format!("DS5-PKG-003: unable to create sidecar process job: {error}")
-        })?;
-        let job = std::os::windows::io::OwnedHandle::from_raw_handle(raw_job.0);
-        let job_handle = HANDLE(job.as_raw_handle());
-        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        SetInformationJobObject(
-            job_handle,
-            JobObjectExtendedLimitInformation,
-            std::ptr::from_ref(&limits).cast(),
-            std::mem::size_of_val(&limits) as u32,
-        )
-        .map_err(|error| {
-            format!("DS5-PKG-003: unable to configure sidecar process job: {error}")
-        })?;
-        AssignProcessToJobObject(job_handle, HANDLE(child.as_raw_handle())).map_err(|error| {
-            format!("DS5-PKG-003: unable to bind sidecar process tree: {error}")
-        })?;
-        Ok(job)
-    }
+    crate::elevation::bind_process_tree(HANDLE(child.as_raw_handle()), "DS5-PKG-003")
 }
 
 pub(crate) fn run_with_timeout(

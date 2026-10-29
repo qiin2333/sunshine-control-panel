@@ -15,8 +15,6 @@ use windows::core::PCWSTR;
 #[path = "runtime_transaction.rs"]
 mod runtime_transaction;
 
-#[cfg(test)]
-use crate::native_components::install::validate_pe_x64;
 use crate::native_components::install::{permission_error, sha256_file, validate_named_dll};
 use crate::native_components::operation::COMPONENT_OPERATION;
 #[cfg(target_os = "windows")]
@@ -257,9 +255,15 @@ fn build_status(
         .get("pending_removal")
         .and_then(serde_json::Value::as_str)
         .filter(|id| !id.is_empty());
+    let maintenance_component = runtime_status
+        .get("maintenance_component")
+        .and_then(serde_json::Value::as_str)
+        .filter(|id| !id.is_empty());
     let state = if pending_removal == Some(COMPONENT_ID) {
         "pending_removal"
-    } else if pending_removal.is_some() {
+    } else if pending_removal.is_some()
+        || maintenance_component.is_some_and(|id| id != COMPONENT_ID)
+    {
         "maintenance_other"
     } else if degraded {
         "degraded"
@@ -377,42 +381,46 @@ fn install_runtime(
     runtime_source: &Path,
     manifest: &ComponentManifest,
     commit_config: impl FnOnce() -> Result<(), String>,
-) -> Result<PathBuf, String> {
+) -> Result<(), String> {
     validate_named_dll(runtime_source, RUNTIME_FILE, MAX_RUNTIME_BYTES)?;
     let root = validate_component_root()?;
-    if validate_version(&root, manifest) {
-        commit_config()?;
-        return Ok(root);
+    install_runtime_files(runtime_source, manifest, &root, commit_config)
+}
+
+fn install_runtime_files(
+    runtime_source: &Path,
+    manifest: &ComponentManifest,
+    root: &Path,
+    commit_config: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    if validate_version(root, manifest) {
+        return commit_config();
     }
 
-    let staging = root.join(format!("staging-{}", uuid::Uuid::new_v4()));
-    fs::create_dir(&staging)
+    let staging_directory = tempfile::Builder::new()
+        .prefix("staging-")
+        .tempdir_in(root)
         .map_err(|error| permission_error("create staging directory", error))?;
-    let prepared = (|| -> Result<(), String> {
-        runtime_transaction::copy_bounded(
-            runtime_source,
-            &staging.join(RUNTIME_FILE),
-            MAX_RUNTIME_BYTES,
-        )?;
-        fs::write(
-            staging.join("component.json"),
-            serde_json::to_vec_pretty(manifest)
-                .map_err(|_| "HDR-PKG-004: invalid component manifest".to_string())?,
-        )
-        .map_err(|error| permission_error("write component manifest", error))?;
-        if sha256_file(&staging.join(RUNTIME_FILE), MAX_RUNTIME_BYTES)
-            .ok()
-            .as_deref()
-            != Some(manifest.runtime_sha256.as_str())
-        {
-            return Err("HDR-PKG-006: staged component failed integrity validation".to_string());
-        }
-        runtime_transaction::prepare(&root, manifest)
-    })();
-    if let Err(error) = prepared {
-        let _ = fs::remove_dir_all(&staging);
-        return Err(error);
+    let staging = staging_directory.path();
+    runtime_transaction::copy_bounded(
+        runtime_source,
+        &staging.join(RUNTIME_FILE),
+        MAX_RUNTIME_BYTES,
+    )?;
+    fs::write(
+        staging.join("component.json"),
+        serde_json::to_vec_pretty(manifest)
+            .map_err(|_| "HDR-PKG-004: invalid component manifest".to_string())?,
+    )
+    .map_err(|error| permission_error("write component manifest", error))?;
+    if sha256_file(&staging.join(RUNTIME_FILE), MAX_RUNTIME_BYTES)
+        .ok()
+        .as_deref()
+        != Some(manifest.runtime_sha256.as_str())
+    {
+        return Err("HDR-PKG-006: staged component failed integrity validation".to_string());
     }
+    runtime_transaction::prepare(root, manifest)?;
     let activated = (|| -> Result<(), String> {
         for name in [RUNTIME_FILE, "component.json"] {
             let target = root.join(name);
@@ -423,20 +431,19 @@ fn install_runtime(
             fs::rename(staging.join(name), target)
                 .map_err(|error| permission_error("activate runtime file", error))?;
         }
-        if !validate_version(&root, manifest) {
+        if !validate_version(root, manifest) {
             return Err("HDR-PKG-006: installed component failed integrity validation".to_string());
         }
         Ok(())
     })();
-    let _ = fs::remove_dir_all(&staging);
     if let Err(error) = activated {
-        runtime_transaction::settle(&root, None)?;
+        runtime_transaction::settle(root, None)?;
         return Err(error);
     }
     // 响应丢失不能假定保存失败；保留备份，由恢复流程读取 Core 的实际版本。
     commit_config()?;
-    runtime_transaction::settle(&root, Some(&manifest.component_id))?;
-    Ok(root)
+    runtime_transaction::settle(root, Some(&manifest.component_id))?;
+    Ok(())
 }
 
 async fn publish_installed_version(
@@ -546,8 +553,7 @@ pub(crate) fn try_handle_elevated_command() -> Option<i32> {
                 verify_source_trust(&status["trusted_components"], &manifest)?;
                 install_runtime(&runtime, &manifest, || {
                     executor.block_on(publish_installed_version(&manifest, &id))
-                })?;
-                Ok(())
+                })
             } else if command == ELEVATED_REMOVE_ARG {
                 remove_managed_runtime()
             } else {
@@ -577,7 +583,7 @@ async fn install_runtime_with_elevation(
     runtime_source: &Path,
     manifest: &ComponentManifest,
     operation: &crate::hdr_enhanced::Maintenance,
-) -> Result<PathBuf, String> {
+) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         let runtime = runtime_source.to_owned();
@@ -598,25 +604,20 @@ async fn install_runtime_with_elevation(
             .map_err(|_| "HDR-PKG-004: installation task failed".to_string())?;
         }
         let runtime = runtime.to_string_lossy().into_owned();
-        let id = operation.id.clone();
-        let process = tokio::task::spawn_blocking(move || {
-            crate::utils::launch_current_executable_elevated(
-                &[ELEVATED_INSTALL_ARG, &runtime, &id],
-                windows::Win32::UI::WindowsAndMessaging::SW_HIDE.0,
-            )
-        })
-        .await
-        .map_err(|_| "HDR-OP-002: unable to start installation".to_string())??;
+        let process = crate::elevation::spawn_helper(
+            vec![ELEVATED_INSTALL_ARG.into(), runtime, operation.id.clone()],
+            "HDR-OP-002",
+        )
+        .await?;
         let code = wait_for_component_helper(process).await?;
         if code != 0 {
             return Err("HDR-PKG-004: component helper rejected installation".to_string());
         }
         tokio::task::spawn_blocking(move || {
-            let root = component_root();
-            if !validate_version(&root, &manifest) {
+            if !validate_version(&component_root(), &manifest) {
                 return Err("HDR-PKG-006: installed version failed validation".to_string());
             }
-            Ok(root)
+            Ok(())
         })
         .await
         .map_err(|_| "HDR-PKG-004: installation verification failed".to_string())?
@@ -645,15 +646,11 @@ async fn remove_component_with_elevation(
             .await
             .map_err(|_| "HDR-PKG-004: removal task failed".to_string())?;
         }
-        let id = operation.id.clone();
-        let process = tokio::task::spawn_blocking(move || {
-            crate::utils::launch_current_executable_elevated(
-                &[ELEVATED_REMOVE_ARG, &id],
-                windows::Win32::UI::WindowsAndMessaging::SW_HIDE.0,
-            )
-        })
-        .await
-        .map_err(|_| "HDR-OP-002: unable to start removal".to_string())??;
+        let process = crate::elevation::spawn_helper(
+            vec![ELEVATED_REMOVE_ARG.into(), operation.id.clone()],
+            "HDR-OP-002",
+        )
+        .await?;
         let code = wait_for_component_helper(process).await?;
         if code != 0 {
             if code == 2 {
@@ -713,6 +710,15 @@ pub async fn component_install(runtime_path: String) -> Result<EnhancementCompon
     component_get_status().await
 }
 
+fn require_recovery_owner(runtime_status: &serde_json::Value) -> Result<(), String> {
+    match runtime_status["maintenance_component"].as_str() {
+        Some(id) if id == COMPONENT_ID => Ok(()),
+        Some("") => Err("HDR-OP-002: maintenance owner is unknown; recovery was refused".into()),
+        Some(_) => Err("HDR-OP-002: recover maintenance from the component that owns it".into()),
+        None => Err("HDR-CFG-007: update Sunshine before recovering enhancement components".into()),
+    }
+}
+
 pub async fn component_recover() -> Result<EnhancementComponentStatus, String> {
     let _operation = COMPONENT_OPERATION
         .try_lock()
@@ -721,6 +727,7 @@ pub async fn component_recover() -> Result<EnhancementComponentStatus, String> {
     {
         ensure_helper_finished().await?;
         let runtime_status = crate::hdr_enhanced::get_status().await?;
+        require_recovery_owner(&runtime_status)?;
         if runtime_status["pending_removal"].as_str() == Some(COMPONENT_ID) {
             let operation = crate::hdr_enhanced::inspect_maintenance(COMPONENT_ID).await?;
             remove_component_with_elevation(&operation).await?;
@@ -740,15 +747,11 @@ pub async fn component_recover() -> Result<EnhancementComponentStatus, String> {
                 .await
                 .map_err(|_| "HDR-PKG-004: component recovery failed".to_string())??;
             } else {
-                let id = operation.id.clone();
-                let process = tokio::task::spawn_blocking(move || {
-                    crate::utils::launch_current_executable_elevated(
-                        &[ELEVATED_RECOVER_ARG, &id],
-                        windows::Win32::UI::WindowsAndMessaging::SW_HIDE.0,
-                    )
-                })
-                .await
-                .map_err(|_| "HDR-OP-002: unable to start recovery".to_string())??;
+                let process = crate::elevation::spawn_helper(
+                    vec![ELEVATED_RECOVER_ARG.into(), operation.id.clone()],
+                    "HDR-OP-002",
+                )
+                .await?;
                 let code = wait_for_component_helper(process).await?;
                 if code != 0 {
                     return Err("HDR-PKG-004: component recovery failed".to_string());
@@ -847,6 +850,7 @@ pub async fn component_uninstall() -> Result<EnhancementComponentStatus, String>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::native_components::install::tests::write_test_pe;
 
     #[cfg(target_os = "windows")]
     #[test]
@@ -1062,6 +1066,64 @@ mod tests {
     }
 
     #[test]
+    fn ordinary_maintenance_can_only_be_recovered_from_its_own_component() {
+        let config = uninstall_config(1);
+        let own = build_status(
+            &config,
+            &serde_json::json!({"maintenance_component": COMPONENT_ID, "maintenance": true}),
+        );
+        assert!(own.maintenance);
+        assert_ne!(own.state, "maintenance_other");
+        let other = if IS_NR {
+            "alkaidlab.nvidia_rtx_video"
+        } else {
+            "alkaidlab.nvidia_dlssnr"
+        };
+        let blocked = build_status(
+            &config,
+            &serde_json::json!({"maintenance_component": other, "maintenance": true}),
+        );
+        assert!(blocked.maintenance);
+        assert_eq!(blocked.state, "maintenance_other");
+    }
+
+    #[test]
+    fn recovery_requires_confirmed_owner_before_touching_runtime_files() {
+        assert!(
+            require_recovery_owner(
+                &serde_json::json!({"maintenance_component": COMPONENT_ID, "maintenance": true}),
+            )
+            .is_ok()
+        );
+        for (status, code) in [
+            (serde_json::json!({"maintenance": true}), "HDR-CFG-007:"),
+            // A legacy pending-removal field is not a substitute for the owner check.
+            (
+                serde_json::json!({"maintenance": true, "pending_removal": COMPONENT_ID}),
+                "HDR-CFG-007:",
+            ),
+            (
+                serde_json::json!({"maintenance_component": null}),
+                "HDR-CFG-007:",
+            ),
+            (
+                serde_json::json!({"maintenance_component": ""}),
+                "HDR-OP-002:",
+            ),
+            (
+                serde_json::json!({"maintenance_component": "another-component"}),
+                "HDR-OP-002:",
+            ),
+        ] {
+            assert!(
+                require_recovery_owner(&status)
+                    .unwrap_err()
+                    .starts_with(code)
+            );
+        }
+    }
+
+    #[test]
     fn degraded_pipeline_is_not_hidden_by_an_active_pipeline() {
         let config = crate::hdr_enhanced::ConfigState {
             settings: crate::hdr_enhanced::Settings {
@@ -1082,15 +1144,51 @@ mod tests {
     }
 
     #[test]
-    fn component_hashing_is_bounded() {
-        let path = std::env::temp_dir().join(format!("hdr-hash-{}", uuid::Uuid::new_v4()));
-        fs::write(&path, b"abc").unwrap();
-        assert!(sha256_file(&path, 2).is_err());
+    fn runtime_staging_cleanup_preserves_pending_recovery() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let runtime = root.join(RUNTIME_FILE);
+        write_test_pe(&runtime, 0x8664, true, 0x20b, 1);
+        let previous = manifest_for_runtime(&runtime).unwrap();
+        fs::write(
+            root.join("component.json"),
+            serde_json::to_vec(&previous).unwrap(),
+        )
+        .unwrap();
+
+        let source = tempfile::tempdir().unwrap();
+        let selected = source.path().join(RUNTIME_FILE);
+        write_test_pe(&selected, 0x8664, true, 0x20b, 1);
+        let mut bytes = fs::read(&selected).unwrap();
+        *bytes.last_mut().unwrap() = 1;
+        fs::write(&selected, bytes).unwrap();
+        let next = manifest_for_runtime(&selected).unwrap();
+
+        let error = "HDR-CFG-001: install response was lost";
         assert_eq!(
-            sha256_file(&path, 3).unwrap(),
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+            install_runtime_files(&selected, &next, &root, || Err(error.into())).unwrap_err(),
+            error
         );
-        fs::remove_file(path).unwrap();
+        assert!(validate_version(&root, &next));
+        assert!(runtime_transaction::pending(&root));
+        let has_staging = || {
+            fs::read_dir(&root).unwrap().any(|entry| {
+                entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("staging-")
+            })
+        };
+        assert!(!has_staging());
+        // Temporary staging is gone, but the durable backup can still restore Core's old version.
+        runtime_transaction::settle(&root, Some(&previous.component_id)).unwrap();
+        assert!(validate_version(&root, &previous));
+
+        install_runtime_files(&selected, &next, &root, || Ok(())).unwrap();
+        assert!(validate_version(&root, &next));
+        assert!(!runtime_transaction::pending(&root));
+        assert!(!has_staging());
     }
 
     #[test]
@@ -1136,95 +1234,6 @@ mod tests {
         runtime_transaction::settle(&root, Some(&manifest.component_id)).unwrap();
         assert!(validate_version(&root, &manifest));
         assert!(!runtime_transaction::pending(&root));
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    fn write_test_pe(path: &Path, machine: u16, dll: bool, magic: u16, sections: u16) {
-        const PE_OFFSET: usize = 0x80;
-        const OPTIONAL_SIZE: usize = 0xf0;
-        const RAW_OFFSET: usize = 0x400;
-        const RAW_SIZE: usize = 0x200;
-        let size = (PE_OFFSET + 24 + OPTIONAL_SIZE + usize::from(sections) * 40)
-            .max(RAW_OFFSET + RAW_SIZE);
-        let mut bytes = vec![0u8; size];
-        bytes[..2].copy_from_slice(b"MZ");
-        bytes[0x3c..0x40].copy_from_slice(&(PE_OFFSET as u32).to_le_bytes());
-        bytes[PE_OFFSET..PE_OFFSET + 4].copy_from_slice(b"PE\0\0");
-        bytes[PE_OFFSET + 4..PE_OFFSET + 6].copy_from_slice(&machine.to_le_bytes());
-        bytes[PE_OFFSET + 6..PE_OFFSET + 8].copy_from_slice(&sections.to_le_bytes());
-        bytes[PE_OFFSET + 20..PE_OFFSET + 22]
-            .copy_from_slice(&(OPTIONAL_SIZE as u16).to_le_bytes());
-        let characteristics: u16 = if dll { 0x2000 } else { 0 };
-        bytes[PE_OFFSET + 22..PE_OFFSET + 24].copy_from_slice(&characteristics.to_le_bytes());
-        bytes[PE_OFFSET + 24..PE_OFFSET + 26].copy_from_slice(&magic.to_le_bytes());
-        bytes[PE_OFFSET + 24 + 56..PE_OFFSET + 24 + 60].copy_from_slice(&(0x2000u32).to_le_bytes());
-        bytes[PE_OFFSET + 24 + 60..PE_OFFSET + 24 + 64]
-            .copy_from_slice(&(RAW_OFFSET as u32).to_le_bytes());
-        if sections > 0 {
-            let section = PE_OFFSET + 24 + OPTIONAL_SIZE;
-            bytes[section + 8..section + 12].copy_from_slice(&(RAW_SIZE as u32).to_le_bytes());
-            bytes[section + 12..section + 16].copy_from_slice(&(0x1000u32).to_le_bytes());
-            bytes[section + 16..section + 20].copy_from_slice(&(RAW_SIZE as u32).to_le_bytes());
-            bytes[section + 20..section + 24].copy_from_slice(&(RAW_OFFSET as u32).to_le_bytes());
-        }
-        fs::write(path, bytes).unwrap();
-    }
-
-    #[test]
-    fn accepts_x64_pe32_plus_dll() {
-        let root = std::env::temp_dir().join(format!("rtx-hdr-pe-test-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&root).unwrap();
-        let path = root.join(RUNTIME_FILE);
-        write_test_pe(&path, 0x8664, true, 0x20b, 1);
-        assert!(validate_named_dll(&path, RUNTIME_FILE, MAX_RUNTIME_BYTES).is_ok());
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn rejects_wrong_machine_kind_or_truncated_headers() {
-        let root = std::env::temp_dir().join(format!("rtx-hdr-bad-pe-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&root).unwrap();
-        for (name, machine, dll, magic, sections) in [
-            ("x86", 0x014c, true, 0x10b, 1),
-            ("exe", 0x8664, false, 0x20b, 1),
-            ("pe32", 0x8664, true, 0x10b, 1),
-            ("nosections", 0x8664, true, 0x20b, 0),
-        ] {
-            let path = root.join(format!("{name}.dll"));
-            write_test_pe(&path, machine, dll, magic, sections);
-            assert!(validate_pe_x64(&path).is_err(), "{name} should be rejected");
-        }
-        let truncated = root.join("truncated.dll");
-        fs::write(&truncated, b"MZ").unwrap();
-        assert!(validate_pe_x64(&truncated).is_err());
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn rejects_sections_outside_file_or_image_and_invalid_directory_count() {
-        let root = std::env::temp_dir().join(format!("hdr-pe-bounds-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&root).unwrap();
-        let path = root.join("component.dll");
-        const OPTIONAL: usize = 0x80 + 24;
-        const SECTION: usize = OPTIONAL + 0xf0;
-        for (field, value) in [
-            (SECTION + 20, 0x200u32), // raw data overlaps the headers
-            (SECTION + 20, 0x800),    // raw data begins beyond EOF
-            (SECTION + 16, u32::MAX), // raw data extends beyond EOF
-            (SECTION + 12, 0x2000),   // virtual data begins beyond SizeOfImage
-            (SECTION + 8, u32::MAX),  // virtual extent cannot wrap into the image
-            (OPTIONAL + 108, 17),     // directory table exceeds the optional header
-            (0x3c, u32::MAX),         // NT header offset is outside the allowed range
-        ] {
-            write_test_pe(&path, 0x8664, true, 0x20b, 1);
-            let mut bytes = fs::read(&path).unwrap();
-            bytes[field..field + 4].copy_from_slice(&value.to_le_bytes());
-            fs::write(&path, bytes).unwrap();
-            assert!(
-                validate_pe_x64(&path).is_err(),
-                "field {field:#x}, value {value:#x}"
-            );
-        }
         fs::remove_dir_all(root).unwrap();
     }
 

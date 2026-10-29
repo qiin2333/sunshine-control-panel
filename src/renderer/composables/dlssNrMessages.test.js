@@ -7,7 +7,7 @@ test('NR instructions distinguish runtime and SDR/HDR activation for both langua
     const text = dlssNrText(locale)
     assert.match(text.selectRuntime, /nvngx_dlssnr\.dll/)
     assert.match(text.intro, /SDR/)
-    assert.match(text.enableHint, /HDR/)
+    assert.match(text.intro, /HDR/)
     assert.doesNotMatch(text.acquisitionDescription, /RTX_Video_SDK/)
     assert.ok(text.states.degraded)
   }

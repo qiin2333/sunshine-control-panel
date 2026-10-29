@@ -166,7 +166,9 @@ pub(crate) async fn connect_helper_pipe(
             }
         }
     }
-    Err(format!("{error_code}: administrator operation pipe was unavailable"))
+    Err(format!(
+        "{error_code}: administrator operation pipe was unavailable"
+    ))
 }
 
 static HELPER_JOB: once_cell::sync::OnceCell<std::os::windows::io::OwnedHandle> =
@@ -178,6 +180,18 @@ static HELPER_JOB: once_cell::sync::OnceCell<std::os::windows::io::OwnedHandle> 
 /// once_cell 的 get_or_try_init 在这里是库级保证的可失败惰性初始化：
 /// 失败不缓存、下次调用重试——不手写双检样板。
 pub(crate) fn bind_lifetime_job(error_code: &str) -> Result<(), String> {
+    use windows::Win32::System::Threading::GetCurrentProcess;
+
+    HELPER_JOB
+        .get_or_try_init(|| bind_process_tree(unsafe { GetCurrentProcess() }, error_code))
+        .map(|_| ())
+}
+
+/// Return the job handle to its caller, who decides when the process tree ends.
+pub(crate) fn bind_process_tree(
+    process: windows::Win32::Foundation::HANDLE,
+    error_code: &str,
+) -> Result<std::os::windows::io::OwnedHandle, String> {
     use std::os::windows::io::{AsRawHandle, FromRawHandle};
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::System::JobObjects::{
@@ -185,33 +199,26 @@ pub(crate) fn bind_lifetime_job(error_code: &str) -> Result<(), String> {
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
         SetInformationJobObject,
     };
-    use windows::Win32::System::Threading::GetCurrentProcess;
     use windows::core::PCWSTR;
 
-    HELPER_JOB
-        .get_or_try_init(|| unsafe {
-            let raw_job = CreateJobObjectW(None, PCWSTR::null()).map_err(|error| {
-                format!("{error_code}: unable to create the elevated helper job: {error}")
-            })?;
-            let job = std::os::windows::io::OwnedHandle::from_raw_handle(raw_job.0);
-            let job_handle = HANDLE(job.as_raw_handle());
-            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            SetInformationJobObject(
-                job_handle,
-                JobObjectExtendedLimitInformation,
-                std::ptr::from_ref(&limits).cast(),
-                std::mem::size_of_val(&limits) as u32,
-            )
-            .map_err(|error| {
-                format!("{error_code}: unable to configure the elevated helper job: {error}")
-            })?;
-            AssignProcessToJobObject(job_handle, GetCurrentProcess()).map_err(|error| {
-                format!("{error_code}: unable to bind the elevated helper lifetime: {error}")
-            })?;
-            Ok(job)
-        })
-        .map(|_| ())
+    unsafe {
+        let raw_job = CreateJobObjectW(None, PCWSTR::null())
+            .map_err(|error| format!("{error_code}: unable to create process job: {error}"))?;
+        let job = std::os::windows::io::OwnedHandle::from_raw_handle(raw_job.0);
+        let job_handle = HANDLE(job.as_raw_handle());
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(
+            job_handle,
+            JobObjectExtendedLimitInformation,
+            std::ptr::from_ref(&limits).cast(),
+            std::mem::size_of_val(&limits) as u32,
+        )
+        .map_err(|error| format!("{error_code}: unable to configure process job: {error}"))?;
+        AssignProcessToJobObject(job_handle, process)
+            .map_err(|error| format!("{error_code}: unable to bind process tree: {error}"))?;
+        Ok(job)
+    }
 }
 
 /// Native elevation probe: reads the current process token instead of
@@ -319,9 +326,10 @@ pub(crate) fn launch_elevated_raw(
 
 /// Resolve a system binary as an absolute path, independent of PATH.
 pub(crate) fn system_binary(name: &str) -> std::path::PathBuf {
-    let system_root =
-        std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
-    std::path::Path::new(&system_root).join("System32").join(name)
+    let system_root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+    std::path::Path::new(&system_root)
+        .join("System32")
+        .join(name)
 }
 
 /// Run one cmd.exe command line elevated (hidden window) and wait for its exit
@@ -400,7 +408,10 @@ mod tests {
         assert_eq!(quote_windows_argument("a\"b").unwrap(), "\"a\\\"b\"");
         assert_eq!(quote_windows_argument("a\\b").unwrap(), "\"a\\b\"");
         assert_eq!(quote_windows_argument("a\\").unwrap(), "\"a\\\\\"");
-        assert_eq!(quote_windows_argument("a\\\\\"b").unwrap(), "\"a\\\\\\\\\\\"b\"");
+        assert_eq!(
+            quote_windows_argument("a\\\\\"b").unwrap(),
+            "\"a\\\\\\\\\\\"b\""
+        );
         assert!(quote_windows_argument("a\0b").is_err());
     }
 }

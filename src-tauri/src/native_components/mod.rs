@@ -121,9 +121,8 @@ pub async fn native_component_recover(
     component_id: String,
 ) -> Result<providers::EnhancementComponentStatus, String> {
     require_hdr_component(&component_id)?;
-    let _operation = operation::COMPONENT_OPERATION
-        .try_lock()
-        .map_err(|_| "HDR-OP-001: another operation is running".to_string())?;
+    // Providers serialize recovery just like import/remove. Taking the same
+    // non-reentrant lock here would make every recovery reject itself as busy.
     if component_id == NVIDIA_DLSSNR_ID {
         providers::nvidia_dlssnr::component_recover().await
     } else {

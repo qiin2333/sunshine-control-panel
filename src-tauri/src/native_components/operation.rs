@@ -70,17 +70,50 @@ pub(crate) async fn ensure_helper_finished() -> Result<(), String> {
 pub(crate) async fn wait_for_component_helper(
     process: crate::utils::ElevatedProcess,
 ) -> Result<i32, String> {
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(120);
-    loop {
-        match process.exit_code() {
-            Ok(Some(code)) => return Ok(code),
-            Ok(None) if tokio::time::Instant::now() < deadline => {}
-            _ => {
-                // 超时只结束本次等待，不意味着进程已退出；保留句柄阻止重叠操作。
-                *PENDING_HELPER.lock().await = Some(process);
-                return Err("RTXHDR-UAC-004: component helper did not finish in time".to_string());
-            }
+    match crate::elevation::wait_for_exit(&process, std::time::Duration::from_secs(120)).await {
+        Ok(Some(code)) => Ok(code),
+        _ => {
+            // 超时或查询失败不意味着进程已退出；保留句柄阻止重叠操作。
+            *PENDING_HELPER.lock().await = Some(process);
+            Err("RTXHDR-UAC-004: component helper did not finish in time".to_string())
         }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod tests {
+    use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn timed_out_helper_still_blocks_component_operations() {
+        use std::os::windows::io::{FromRawHandle, OwnedHandle};
+        use windows::Win32::System::Threading::{
+            GetCurrentProcessId, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+            PROCESS_SYNCHRONIZE,
+        };
+
+        // A real handle to this test process stays alive past the virtual timeout.
+        let handle = unsafe {
+            OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+                false,
+                GetCurrentProcessId(),
+            )
+            .unwrap()
+        };
+        let process = crate::utils::ElevatedProcess::from_owned_handle(unsafe {
+            OwnedHandle::from_raw_handle(handle.0)
+        });
+        assert!(PENDING_HELPER.lock().await.is_none());
+        let error = wait_for_component_helper(process).await.unwrap_err();
+        assert!(error.starts_with("RTXHDR-UAC-004:"));
+        assert!(
+            ensure_helper_finished()
+                .await
+                .unwrap_err()
+                .starts_with("RTXHDR-BUSY-001:")
+        );
+        assert!(PENDING_HELPER.lock().await.take().is_some());
+        ensure_helper_finished().await.unwrap();
     }
 }

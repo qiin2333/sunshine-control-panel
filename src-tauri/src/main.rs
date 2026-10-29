@@ -28,7 +28,6 @@ mod proxy_server;
 mod rtss;
 mod rtss_frame_rates;
 mod perf;
-use native_components::providers::nvidia_rtx_hdr as rtx_hdr;
 mod hdr_enhanced;
 mod native_components;
 mod nr_overlay;
@@ -119,7 +118,9 @@ fn main() {
     {
         std::process::exit(exit_code);
     }
-    if let Some(exit_code) = rtx_hdr::try_handle_elevated_command() {
+    if let Some(exit_code) =
+        native_components::providers::nvidia_rtx_hdr::try_handle_elevated_command()
+    {
         std::process::exit(exit_code);
     }
 

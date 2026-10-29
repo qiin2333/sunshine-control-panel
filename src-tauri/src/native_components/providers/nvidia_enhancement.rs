@@ -386,15 +386,26 @@ fn install_runtime(
 ) -> Result<PathBuf, String> {
     validate_named_dll(runtime_source, RUNTIME_FILE, MAX_RUNTIME_BYTES)?;
     let root = validate_component_root()?;
-    if validate_version(&root, manifest) {
-        commit_config()?;
-        return Ok(root);
+    install_runtime_files(runtime_source, manifest, &root, commit_config)?;
+    Ok(root)
+}
+
+fn install_runtime_files(
+    runtime_source: &Path,
+    manifest: &ComponentManifest,
+    root: &Path,
+    commit_config: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    if validate_version(root, manifest) {
+        return commit_config();
     }
 
-    let staging = root.join(format!("staging-{}", uuid::Uuid::new_v4()));
-    fs::create_dir(&staging)
+    let staging_directory = tempfile::Builder::new()
+        .prefix("staging-")
+        .tempdir_in(root)
         .map_err(|error| permission_error("create staging directory", error))?;
-    let prepared = (|| -> Result<(), String> {
+    let staging = staging_directory.path();
+    (|| -> Result<(), String> {
         runtime_transaction::copy_bounded(
             runtime_source,
             &staging.join(RUNTIME_FILE),
@@ -413,12 +424,8 @@ fn install_runtime(
         {
             return Err("HDR-PKG-006: staged component failed integrity validation".to_string());
         }
-        runtime_transaction::prepare(&root, manifest)
-    })();
-    if let Err(error) = prepared {
-        let _ = fs::remove_dir_all(&staging);
-        return Err(error);
-    }
+        runtime_transaction::prepare(root, manifest)
+    })()?;
     let activated = (|| -> Result<(), String> {
         for name in [RUNTIME_FILE, "component.json"] {
             let target = root.join(name);
@@ -429,20 +436,19 @@ fn install_runtime(
             fs::rename(staging.join(name), target)
                 .map_err(|error| permission_error("activate runtime file", error))?;
         }
-        if !validate_version(&root, manifest) {
+        if !validate_version(root, manifest) {
             return Err("HDR-PKG-006: installed component failed integrity validation".to_string());
         }
         Ok(())
     })();
-    let _ = fs::remove_dir_all(&staging);
     if let Err(error) = activated {
-        runtime_transaction::settle(&root, None)?;
+        runtime_transaction::settle(root, None)?;
         return Err(error);
     }
     // 响应丢失不能假定保存失败；保留备份，由恢复流程读取 Core 的实际版本。
     commit_config()?;
-    runtime_transaction::settle(&root, Some(&manifest.component_id))?;
-    Ok(root)
+    runtime_transaction::settle(root, Some(&manifest.component_id))?;
+    Ok(())
 }
 
 async fn publish_installed_version(
@@ -604,15 +610,11 @@ async fn install_runtime_with_elevation(
             .map_err(|_| "HDR-PKG-004: installation task failed".to_string())?;
         }
         let runtime = runtime.to_string_lossy().into_owned();
-        let id = operation.id.clone();
-        let process = tokio::task::spawn_blocking(move || {
-            crate::utils::launch_current_executable_elevated(
-                &[ELEVATED_INSTALL_ARG, &runtime, &id],
-                windows::Win32::UI::WindowsAndMessaging::SW_HIDE.0,
-            )
-        })
-        .await
-        .map_err(|_| "HDR-OP-002: unable to start installation".to_string())??;
+        let process = crate::elevation::spawn_helper(
+            vec![ELEVATED_INSTALL_ARG.into(), runtime, operation.id.clone()],
+            "HDR-OP-002",
+        )
+        .await?;
         let code = wait_for_component_helper(process).await?;
         if code != 0 {
             return Err("HDR-PKG-004: component helper rejected installation".to_string());
@@ -651,15 +653,11 @@ async fn remove_component_with_elevation(
             .await
             .map_err(|_| "HDR-PKG-004: removal task failed".to_string())?;
         }
-        let id = operation.id.clone();
-        let process = tokio::task::spawn_blocking(move || {
-            crate::utils::launch_current_executable_elevated(
-                &[ELEVATED_REMOVE_ARG, &id],
-                windows::Win32::UI::WindowsAndMessaging::SW_HIDE.0,
-            )
-        })
-        .await
-        .map_err(|_| "HDR-OP-002: unable to start removal".to_string())??;
+        let process = crate::elevation::spawn_helper(
+            vec![ELEVATED_REMOVE_ARG.into(), operation.id.clone()],
+            "HDR-OP-002",
+        )
+        .await?;
         let code = wait_for_component_helper(process).await?;
         if code != 0 {
             if code == 2 {
@@ -746,15 +744,11 @@ pub async fn component_recover() -> Result<EnhancementComponentStatus, String> {
                 .await
                 .map_err(|_| "HDR-PKG-004: component recovery failed".to_string())??;
             } else {
-                let id = operation.id.clone();
-                let process = tokio::task::spawn_blocking(move || {
-                    crate::utils::launch_current_executable_elevated(
-                        &[ELEVATED_RECOVER_ARG, &id],
-                        windows::Win32::UI::WindowsAndMessaging::SW_HIDE.0,
-                    )
-                })
-                .await
-                .map_err(|_| "HDR-OP-002: unable to start recovery".to_string())??;
+                let process = crate::elevation::spawn_helper(
+                    vec![ELEVATED_RECOVER_ARG.into(), operation.id.clone()],
+                    "HDR-OP-002",
+                )
+                .await?;
                 let code = wait_for_component_helper(process).await?;
                 if code != 0 {
                     return Err("HDR-PKG-004: component recovery failed".to_string());
@@ -1118,7 +1112,59 @@ mod tests {
             sha256_file(&path, 3).unwrap(),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+        assert_eq!(
+            sha256_file(&path, u64::MAX).unwrap(),
+            sha256_file(&path, 3).unwrap()
+        );
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn runtime_staging_cleanup_preserves_pending_recovery() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let runtime = root.join(RUNTIME_FILE);
+        write_test_pe(&runtime, 0x8664, true, 0x20b, 1);
+        let previous = manifest_for_runtime(&runtime).unwrap();
+        fs::write(
+            root.join("component.json"),
+            serde_json::to_vec(&previous).unwrap(),
+        )
+        .unwrap();
+
+        let source = tempfile::tempdir().unwrap();
+        let selected = source.path().join(RUNTIME_FILE);
+        write_test_pe(&selected, 0x8664, true, 0x20b, 1);
+        let mut bytes = fs::read(&selected).unwrap();
+        *bytes.last_mut().unwrap() = 1;
+        fs::write(&selected, bytes).unwrap();
+        let next = manifest_for_runtime(&selected).unwrap();
+
+        let error = "HDR-CFG-001: install response was lost";
+        assert_eq!(
+            install_runtime_files(&selected, &next, &root, || Err(error.into())).unwrap_err(),
+            error
+        );
+        assert!(validate_version(&root, &next));
+        assert!(runtime_transaction::pending(&root));
+        let has_staging = || {
+            fs::read_dir(&root).unwrap().any(|entry| {
+                entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("staging-")
+            })
+        };
+        assert!(!has_staging());
+        // Temporary staging is gone, but the durable backup can still restore Core's old version.
+        runtime_transaction::settle(&root, Some(&previous.component_id)).unwrap();
+        assert!(validate_version(&root, &previous));
+
+        install_runtime_files(&selected, &next, &root, || Ok(())).unwrap();
+        assert!(validate_version(&root, &next));
+        assert!(!runtime_transaction::pending(&root));
+        assert!(!has_staging());
     }
 
     #[test]

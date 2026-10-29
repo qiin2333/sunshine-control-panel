@@ -1,5 +1,6 @@
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use sha2::Digest;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -1542,23 +1543,11 @@ fn validate_download_file_identity(
         ));
     }
 
-    let mut file = fs::File::open(path).map_err(|error| format!("打开下载文件失败: {error}"))?;
-    let mut digest = sha2::Sha256::new();
-    let mut buffer = [0u8; 1024 * 1024];
-    use std::io::Read;
-    loop {
-        let count = file
-            .read(&mut buffer)
-            .map_err(|error| format!("读取下载文件失败: {error}"))?;
-        if count == 0 {
-            break;
-        }
-        digest.update(&buffer[..count]);
-    }
     if let Some(expected_sha256) = expected_sha256 {
         let expected_sha256 = normalize_sha256(expected_sha256)
             .ok_or_else(|| "expected SHA-256 必须是 64 位十六进制字符串".to_string())?;
-        let actual = format!("{:x}", digest.finalize());
+        let actual = crate::native_components::install::sha256_file(path, metadata.len())
+            .map_err(|error| format!("读取下载文件失败: {error}"))?;
         if actual != expected_sha256 {
             return Err(format!(
                 "SHA-256 不匹配: expected {expected_sha256}, got {actual}"
@@ -1567,6 +1556,7 @@ fn validate_download_file_identity(
     }
 
     let mut header = [0u8; 4];
+    use std::io::Read;
     let mut header_file =
         fs::File::open(path).map_err(|error| format!("打开下载文件失败: {error}"))?;
     let count = header_file

@@ -1,7 +1,6 @@
 //! Component manifests, install paths, verified downloads, and package hashing.
 
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -13,9 +12,10 @@ use crate::github_download::{
 
 use super::{
     COMPONENT_DOWNLOAD_OVERALL_TIMEOUT, COMPONENT_VERSION, HIDMAESTRO_VERSION,
-    LEGACY_HIDMAESTRO_1_7_3_SHA256, MAX_SIDECAR_PACKAGE_BYTES, MAX_SIDECAR_PACKAGE_MANIFEST_BYTES,
-    PROTOCOL_VERSION, ProgressReporter, SIDECAR_EXE, SIDECAR_PACKAGE_ASSET,
-    SIDECAR_PACKAGE_LICENSE, SIDECAR_PACKAGE_MANIFEST, SIDECAR_PACKAGE_TARGET, report_progress,
+    LEGACY_HIDMAESTRO_1_7_3_SHA256, MAX_EXTRACTED_BYTES, MAX_SIDECAR_PACKAGE_BYTES,
+    MAX_SIDECAR_PACKAGE_MANIFEST_BYTES, PROTOCOL_VERSION, ProgressReporter, SIDECAR_EXE,
+    SIDECAR_PACKAGE_ASSET, SIDECAR_PACKAGE_LICENSE, SIDECAR_PACKAGE_MANIFEST,
+    SIDECAR_PACKAGE_TARGET, report_progress,
 };
 use crate::usbip::USBIP_SHA256;
 
@@ -392,20 +392,8 @@ pub(crate) fn component_matches_current_runtime(
 }
 
 pub(crate) fn sha256_file(path: &Path) -> Result<String, String> {
-    let mut input = File::open(path)
-        .map_err(|error| format!("DS5-PKG-002: unable to open component file: {error}"))?;
-    let mut digest = Sha256::new();
-    let mut buffer = [0u8; 64 * 1024];
-    loop {
-        let count = input
-            .read(&mut buffer)
-            .map_err(|error| format!("DS5-PKG-002: unable to hash component file: {error}"))?;
-        if count == 0 {
-            break;
-        }
-        digest.update(&buffer[..count]);
-    }
-    Ok(format!("{:x}", digest.finalize()))
+    crate::native_components::install::sha256_file(path, MAX_EXTRACTED_BYTES)
+        .map_err(|error| format!("DS5-PKG-002: unable to hash component file: {error}"))
 }
 
 // Before complete Sidecar packages, sha256 held the upstream ZIP digest.

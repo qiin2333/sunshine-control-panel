@@ -104,7 +104,12 @@ pub(crate) fn validate_pe_x64(path: &Path) -> Result<(), String> {
 }
 
 pub(crate) fn sha256_file(path: &Path, maximum: u64) -> Result<String, String> {
-    let mut file = File::open(path).map_err(|error| error.to_string())?;
+    let file = File::open(path).map_err(|error| error.to_string())?;
+    if file.metadata().map_err(|error| error.to_string())?.len() > maximum {
+        return Err("component exceeds its size limit".to_string());
+    }
+    // Keep the read bounded even if another process grows the opened file.
+    let mut file = file.take(maximum.saturating_add(1));
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 64 * 1024];
     let mut consumed = 0u64;

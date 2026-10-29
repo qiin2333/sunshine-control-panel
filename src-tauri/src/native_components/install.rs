@@ -126,3 +126,19 @@ pub(crate) fn sha256_file(path: &Path, maximum: u64) -> Result<String, String> {
     }
     Ok(format!("{:x}", hasher.finalize()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn file_hash_respects_size_limit() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(b"abc").unwrap();
+        let expected = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        assert!(sha256_file(file.path(), 2).is_err());
+        assert_eq!(sha256_file(file.path(), 3).unwrap(), expected);
+        assert_eq!(sha256_file(file.path(), u64::MAX).unwrap(), expected);
+    }
+}

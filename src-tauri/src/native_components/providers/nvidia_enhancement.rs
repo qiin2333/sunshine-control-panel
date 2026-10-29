@@ -383,11 +383,10 @@ fn install_runtime(
     runtime_source: &Path,
     manifest: &ComponentManifest,
     commit_config: impl FnOnce() -> Result<(), String>,
-) -> Result<PathBuf, String> {
+) -> Result<(), String> {
     validate_named_dll(runtime_source, RUNTIME_FILE, MAX_RUNTIME_BYTES)?;
     let root = validate_component_root()?;
-    install_runtime_files(runtime_source, manifest, &root, commit_config)?;
-    Ok(root)
+    install_runtime_files(runtime_source, manifest, &root, commit_config)
 }
 
 fn install_runtime_files(
@@ -405,27 +404,25 @@ fn install_runtime_files(
         .tempdir_in(root)
         .map_err(|error| permission_error("create staging directory", error))?;
     let staging = staging_directory.path();
-    (|| -> Result<(), String> {
-        runtime_transaction::copy_bounded(
-            runtime_source,
-            &staging.join(RUNTIME_FILE),
-            MAX_RUNTIME_BYTES,
-        )?;
-        fs::write(
-            staging.join("component.json"),
-            serde_json::to_vec_pretty(manifest)
-                .map_err(|_| "HDR-PKG-004: invalid component manifest".to_string())?,
-        )
-        .map_err(|error| permission_error("write component manifest", error))?;
-        if sha256_file(&staging.join(RUNTIME_FILE), MAX_RUNTIME_BYTES)
-            .ok()
-            .as_deref()
-            != Some(manifest.runtime_sha256.as_str())
-        {
-            return Err("HDR-PKG-006: staged component failed integrity validation".to_string());
-        }
-        runtime_transaction::prepare(root, manifest)
-    })()?;
+    runtime_transaction::copy_bounded(
+        runtime_source,
+        &staging.join(RUNTIME_FILE),
+        MAX_RUNTIME_BYTES,
+    )?;
+    fs::write(
+        staging.join("component.json"),
+        serde_json::to_vec_pretty(manifest)
+            .map_err(|_| "HDR-PKG-004: invalid component manifest".to_string())?,
+    )
+    .map_err(|error| permission_error("write component manifest", error))?;
+    if sha256_file(&staging.join(RUNTIME_FILE), MAX_RUNTIME_BYTES)
+        .ok()
+        .as_deref()
+        != Some(manifest.runtime_sha256.as_str())
+    {
+        return Err("HDR-PKG-006: staged component failed integrity validation".to_string());
+    }
+    runtime_transaction::prepare(root, manifest)?;
     let activated = (|| -> Result<(), String> {
         for name in [RUNTIME_FILE, "component.json"] {
             let target = root.join(name);
@@ -558,8 +555,7 @@ pub(crate) fn try_handle_elevated_command() -> Option<i32> {
                 verify_source_trust(&status["trusted_components"], &manifest)?;
                 install_runtime(&runtime, &manifest, || {
                     executor.block_on(publish_installed_version(&manifest, &id))
-                })?;
-                Ok(())
+                })
             } else if command == ELEVATED_REMOVE_ARG {
                 remove_managed_runtime()
             } else {
@@ -589,7 +585,7 @@ async fn install_runtime_with_elevation(
     runtime_source: &Path,
     manifest: &ComponentManifest,
     operation: &crate::hdr_enhanced::Maintenance,
-) -> Result<PathBuf, String> {
+) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         let runtime = runtime_source.to_owned();
@@ -620,11 +616,10 @@ async fn install_runtime_with_elevation(
             return Err("HDR-PKG-004: component helper rejected installation".to_string());
         }
         tokio::task::spawn_blocking(move || {
-            let root = component_root();
-            if !validate_version(&root, &manifest) {
+            if !validate_version(&component_root(), &manifest) {
                 return Err("HDR-PKG-006: installed version failed validation".to_string());
             }
-            Ok(root)
+            Ok(())
         })
         .await
         .map_err(|_| "HDR-PKG-004: installation verification failed".to_string())?
@@ -1101,22 +1096,6 @@ mod tests {
         let status = build_status(&config, &runtime);
         assert_eq!(status.state, "degraded");
         assert!(!status.ready);
-    }
-
-    #[test]
-    fn component_hashing_is_bounded() {
-        let path = std::env::temp_dir().join(format!("hdr-hash-{}", uuid::Uuid::new_v4()));
-        fs::write(&path, b"abc").unwrap();
-        assert!(sha256_file(&path, 2).is_err());
-        assert_eq!(
-            sha256_file(&path, 3).unwrap(),
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        );
-        assert_eq!(
-            sha256_file(&path, u64::MAX).unwrap(),
-            sha256_file(&path, 3).unwrap()
-        );
-        fs::remove_file(path).unwrap();
     }
 
     #[test]

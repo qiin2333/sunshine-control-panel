@@ -829,7 +829,7 @@ const isLaunchingPhysicalCalibration = ref(false)
 const activeSection = ref('overview')
 const hasLoadedSnapshot = ref(false)
 const lastSavedSnapshot = ref('')
-const calibrationStatus = reactive({
+const createCalibrationStatus = () => ({
   supported: true,
   vddActive: false,
   hdrEnabled: false,
@@ -838,12 +838,18 @@ const calibrationStatus = reactive({
   state: 'waiting_stream',
   clientUuid: '',
   deviceId: '',
+  sessionId: 0,
   profileName: null,
+  profileHash: null,
+  diagnostic: null,
+  sharedVdd: false,
+  activeClients: [],
   maxNits: null,
   minNits: null,
   maxFullFrameNits: null,
   statusText: '',
 })
+const calibrationStatus = reactive(createCalibrationStatus())
 const vddReuseEnabled = computed(() => Boolean(calibrationStatus.sharedVdd))
 
 let calibrationContextPollTimer = null
@@ -1107,19 +1113,19 @@ const stopCalibrationContextPolling = () => {
   }
 }
 
-const requestCalibration = async (save = false) => {
-  const body = save ? JSON.stringify({
-    clientUuid: calibrationStatus.clientUuid, deviceId: calibrationStatus.deviceId,
-    sessionId: calibrationStatus.sessionId, userSid: calibrationStatus.diagnostic?.userSid,
-    profileName: calibrationStatus.profileName, profileHash: calibrationStatus.profileHash,
+const requestCalibration = async (snapshot = null) => {
+  const body = snapshot ? JSON.stringify({
+    clientUuid: snapshot.clientUuid, deviceId: snapshot.deviceId,
+    sessionId: snapshot.sessionId, userSid: snapshot.diagnostic?.userSid,
+    profileName: snapshot.profileName, profileHash: snapshot.profileHash,
   }) : undefined
   const proxyUrl = await sunshine.getProxyUrl()
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 5000)
   try {
     const response = await fetch(`${proxyUrl}/api/runtime/hdr-calibration`, {
-      method: save ? 'POST' : 'GET',
-      ...(save ? { headers: { 'Content-Type': 'application/json' }, body } : {}),
+      method: snapshot ? 'POST' : 'GET',
+      ...(snapshot ? { headers: { 'Content-Type': 'application/json' }, body } : {}),
       signal: controller.signal,
     })
     const context = await response.json()
@@ -1134,28 +1140,25 @@ const requestCalibration = async (save = false) => {
   }
 }
 
-const loadCalibrationContext = ({ silent = false } = {}) => {
-  if (calibrationContextRequest) return calibrationContextRequest
+const loadCalibrationContext = ({ silent = false, snapshot = null } = {}) => {
+  if (calibrationContextRequest) {
+    if (!snapshot) return calibrationContextRequest
+    return calibrationContextRequest.then(() => loadCalibrationContext({ silent, snapshot }))
+  }
   calibrationContextRequest = (async () => {
     if (!silent) isRefreshingCalibration.value = true
     try {
-      const context = await requestCalibration()
+      const context = await requestCalibration(snapshot)
 
-      Object.assign(calibrationStatus, context, { statusText: '' })
+      Object.assign(calibrationStatus, createCalibrationStatus(), context, { statusText: '' })
+      return context
     } catch (error) {
       console.error('Failed to load VDD calibration context:', error)
-      Object.assign(calibrationStatus, {
-        activeClients: [],
-        vddActive: false,
-        hdrEnabled: false,
-        calibrated: false,
-        canCalibrate: false,
-        profileName: null,
-        maxNits: null,
-        minNits: null,
-        maxFullFrameNits: null,
+      Object.assign(calibrationStatus, createCalibrationStatus(), {
+        state: 'unavailable',
         statusText: getErrorMessage(error, t.value.vddSettings.calibrationRefreshFailed),
       })
+      return null
     } finally {
       calibrationContextRequest = null
       if (!silent) isRefreshingCalibration.value = false
@@ -1206,7 +1209,9 @@ const bindHdrCalibration = async () => {
   if (isSavingCalibration.value) return
   isSavingCalibration.value = true
   try {
-    Object.assign(calibrationStatus, await requestCalibration(true))
+    // Keep the clicked identity even if a pending poll discovers another client.
+    const context = await loadCalibrationContext({ silent: true, snapshot: { ...calibrationStatus } })
+    if (!context) throw new Error(calibrationStatus.statusText)
     ElMessage.success(t.value.vddSettings.calibrationDetected)
   } catch (error) {
     ElMessage.error(getErrorMessage(error, t.value.vddSettings.calibrationRefreshFailed))

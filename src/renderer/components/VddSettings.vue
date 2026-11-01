@@ -275,7 +275,7 @@
               {{ calibrationStatus.calibrated ? t.vddSettings.calibrationRunAgain : t.vddSettings.calibrationLaunch }}
             </el-button>
             <el-button v-if="calibrationStatus.state === 'unbound_profile'"
-              :disabled="!calibrationStatus.canCalibrate" @click="bindHdrCalibration">
+              :disabled="!calibrationStatus.canCalibrate" :loading="isSavingCalibration" @click="bindHdrCalibration">
               {{ t.vddSettings.calibrationUseExisting }}
             </el-button>
             <el-button @click="openHdrCalibrationStore">
@@ -824,6 +824,7 @@ const isStoppingTrace = ref(false)
 const isOpeningTraceFolder = ref(false)
 const isRefreshingCalibration = ref(false)
 const isLaunchingCalibration = ref(false)
+const isSavingCalibration = ref(false)
 const isLaunchingPhysicalCalibration = ref(false)
 const activeSection = ref('overview')
 const hasLoadedSnapshot = ref(false)
@@ -846,7 +847,7 @@ const calibrationStatus = reactive({
 const vddReuseEnabled = computed(() => Boolean(calibrationStatus.sharedVdd))
 
 let calibrationContextPollTimer = null
-let isCalibrationContextLoading = false
+let calibrationContextRequest = null
 
 const {
   edidFileExists,
@@ -1072,6 +1073,7 @@ const calibrationStatusTitle = computed(() => {
   if (calibrationStatus.state === 'locked') return t.value.vddSettings.calibrationLocked
   if (calibrationStatus.state === 'unavailable') return t.value.vddSettings.calibrationRefreshFailed
   if (calibrationStatus.state === 'shared_vdd') return t.value.vddSettings.calibrationSharedWarning
+  if (calibrationStatus.state === 'multiple_streams') return t.value.vddSettings.calibrationMultipleStreams
   if (!calibrationStatus.supported) return t.value.vddSettings.calibrationUnsupported
   if (!calibrationStatus.vddActive) return t.value.vddSettings.calibrationWaitingVdd
   if (!calibrationStatus.hdrEnabled) return t.value.vddSettings.calibrationWaitingHdr
@@ -1083,6 +1085,7 @@ const calibrationStatusDescription = computed(() => {
   if (calibrationStatus.state === 'unbound_profile') return t.value.vddSettings.calibrationUnboundHint
   if (calibrationStatus.state === 'invalid_profile') return t.value.vddSettings.calibrationInvalidHint
   if (calibrationStatus.state === 'locked') return t.value.vddSettings.calibrationLocked
+  if (calibrationStatus.state === 'multiple_streams') return t.value.vddSettings.calibrationMultipleStreams
   if (calibrationStatus.state === 'unavailable') {
     const diagnostic = calibrationStatus.diagnostic
     return `${t.value.vddSettings.calibrationRefreshFailed}${diagnostic?.stage ? ` (${diagnostic.stage}, 0x${Number(diagnostic.hresult).toString(16)})` : ''}`
@@ -1131,32 +1134,34 @@ const requestCalibration = async (save = false) => {
   }
 }
 
-const loadCalibrationContext = async ({ silent = false } = {}) => {
-  if (isCalibrationContextLoading) return
-  isCalibrationContextLoading = true
-  if (!silent) isRefreshingCalibration.value = true
-  try {
-    const context = await requestCalibration()
+const loadCalibrationContext = ({ silent = false } = {}) => {
+  if (calibrationContextRequest) return calibrationContextRequest
+  calibrationContextRequest = (async () => {
+    if (!silent) isRefreshingCalibration.value = true
+    try {
+      const context = await requestCalibration()
 
-    Object.assign(calibrationStatus, context, { statusText: '' })
-  } catch (error) {
-    console.error('Failed to load VDD calibration context:', error)
-    Object.assign(calibrationStatus, {
-      activeClients: [],
-      vddActive: false,
-      hdrEnabled: false,
-      calibrated: false,
-      canCalibrate: false,
-      profileName: null,
-      maxNits: null,
-      minNits: null,
-      maxFullFrameNits: null,
-      statusText: getErrorMessage(error, t.value.vddSettings.calibrationRefreshFailed),
-    })
-  } finally {
-    isCalibrationContextLoading = false
-    if (!silent) isRefreshingCalibration.value = false
-  }
+      Object.assign(calibrationStatus, context, { statusText: '' })
+    } catch (error) {
+      console.error('Failed to load VDD calibration context:', error)
+      Object.assign(calibrationStatus, {
+        activeClients: [],
+        vddActive: false,
+        hdrEnabled: false,
+        calibrated: false,
+        canCalibrate: false,
+        profileName: null,
+        maxNits: null,
+        minNits: null,
+        maxFullFrameNits: null,
+        statusText: getErrorMessage(error, t.value.vddSettings.calibrationRefreshFailed),
+      })
+    } finally {
+      calibrationContextRequest = null
+      if (!silent) isRefreshingCalibration.value = false
+    }
+  })()
+  return calibrationContextRequest
 }
 
 const startCalibrationContextPolling = () => {
@@ -1178,7 +1183,8 @@ const launchHdrCalibration = async () => {
       }
     )
     isLaunchingCalibration.value = true
-    // Recheck the active stream after the confirmation dialog before launching.
+    // Finish any poll, then request a fresh snapshot after the confirmation.
+    await calibrationContextRequest
     await loadCalibrationContext()
     if (!calibrationStatus.canCalibrate) return
     const result = await vdd.launchHdrCalibration()
@@ -1197,11 +1203,15 @@ const launchHdrCalibration = async () => {
 }
 
 const bindHdrCalibration = async () => {
+  if (isSavingCalibration.value) return
+  isSavingCalibration.value = true
   try {
     Object.assign(calibrationStatus, await requestCalibration(true))
     ElMessage.success(t.value.vddSettings.calibrationDetected)
   } catch (error) {
     ElMessage.error(getErrorMessage(error, t.value.vddSettings.calibrationRefreshFailed))
+  } finally {
+    isSavingCalibration.value = false
   }
 }
 

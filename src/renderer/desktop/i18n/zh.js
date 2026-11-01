@@ -865,6 +865,7 @@ export const zh = {
     calibrationTitle: '客户端 HDR 校准',
     calibrationHint: '通过客户端观看当前专属 VDD，并完成端到端 HDR 校准。Sunshine 只检测 Windows 生成的 MHC2 profile，不会把它应用到主机物理屏。',
     calibrationLocked: '解锁 Windows 后可验证校准；已保存的客户端配置仍会保留。',
+    calibrationMultipleStreams: '校准时请只保留一个 HDR VDD 串流连接。',
     calibrationUnbound: '发现未绑定的 HDR 配置',
     calibrationUnboundHint: "Windows 已选择一个校准配置。确认它属于此客户端的 VDD 后，点击“保存给此客户端”。",
     calibrationUseExisting: "保存给此客户端",

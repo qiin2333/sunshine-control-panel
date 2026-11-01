@@ -274,6 +274,10 @@
               <el-icon><VideoPlay /></el-icon>
               {{ calibrationStatus.calibrated ? t.vddSettings.calibrationRunAgain : t.vddSettings.calibrationLaunch }}
             </el-button>
+            <el-button v-if="calibrationStatus.state === 'unbound_profile'"
+              :disabled="!canLaunchCalibration" @click="bindHdrCalibration">
+              {{ t.vddSettings.calibrationUseExisting }}
+            </el-button>
             <el-button @click="openHdrCalibrationStore">
               <el-icon><Download /></el-icon>
               {{ t.vddSettings.calibrationInstall }}
@@ -831,6 +835,10 @@ const calibrationStatus = reactive({
   vddActive: false,
   hdrEnabled: false,
   calibrated: false,
+  canCalibrate: false,
+  state: 'waiting_stream',
+  clientUuid: '',
+  deviceId: '',
   profileName: null,
   maxNits: null,
   minNits: null,
@@ -1052,6 +1060,7 @@ const vddStatusLabel = useVddStatusLabel(t, vddStatus)
 const activeCalibrationClient = computed(() => activeHdrClients.value[0] || null)
 const hasActiveHdrClient = computed(() => Boolean(activeCalibrationClient.value))
 const canLaunchCalibration = computed(() =>
+  calibrationStatus.canCalibrate &&
   hasActiveHdrClient.value &&
   calibrationStatus.supported &&
   calibrationStatus.vddActive &&
@@ -1066,6 +1075,11 @@ const calibrationStatusTone = computed(() => {
 })
 const calibrationStatusTitle = computed(() => {
   if (calibrationStatus.calibrated) return t.value.vddSettings.calibrationDetected
+  if (calibrationStatus.state === 'unbound_profile') return t.value.vddSettings.calibrationUnbound
+  if (calibrationStatus.state === 'invalid_profile') return t.value.vddSettings.calibrationInvalid
+  if (calibrationStatus.state === 'locked') return t.value.vddSettings.calibrationLocked
+  if (calibrationStatus.state === 'unavailable') return t.value.vddSettings.calibrationRefreshFailed
+  if (calibrationStatus.state === 'shared_vdd') return t.value.vddSettings.calibrationSharedWarning
   if (!calibrationStatus.supported) return t.value.vddSettings.calibrationUnsupported
   if (!calibrationStatus.vddActive) return t.value.vddSettings.calibrationWaitingVdd
   if (!calibrationStatus.hdrEnabled) return t.value.vddSettings.calibrationWaitingHdr
@@ -1074,6 +1088,13 @@ const calibrationStatusTitle = computed(() => {
 const calibrationStatusDescription = computed(() => {
   if (calibrationStatus.statusText) return calibrationStatus.statusText
   if (calibrationStatus.calibrated) return t.value.vddSettings.calibrationDetectedHint
+  if (calibrationStatus.state === 'unbound_profile') return t.value.vddSettings.calibrationUnboundHint
+  if (calibrationStatus.state === 'invalid_profile') return t.value.vddSettings.calibrationInvalidHint
+  if (calibrationStatus.state === 'locked') return t.value.vddSettings.calibrationLocked
+  if (calibrationStatus.state === 'unavailable') {
+    const diagnostic = calibrationStatus.diagnostic
+    return `${t.value.vddSettings.calibrationRefreshFailed}${diagnostic?.stage ? ` (${diagnostic.stage}, 0x${Number(diagnostic.hresult).toString(16)})` : ''}`
+  }
   if (!calibrationStatus.vddActive) return t.value.vddSettings.calibrationWaitingStream
   if (!calibrationStatus.hdrEnabled) return t.value.vddSettings.calibrationWaitingHdrHint
   return t.value.vddSettings.calibrationReadyHint
@@ -1091,23 +1112,35 @@ const stopCalibrationContextPolling = () => {
   }
 }
 
+const requestCalibration = async (save = false) => {
+  const body = save ? JSON.stringify({
+    clientUuid: calibrationStatus.clientUuid, deviceId: calibrationStatus.deviceId,
+    sessionId: calibrationStatus.sessionId, userSid: calibrationStatus.diagnostic?.userSid,
+    profileName: calibrationStatus.profileName, profileHash: calibrationStatus.profileHash,
+  }) : undefined
+  const proxyUrl = await sunshine.getProxyUrl()
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 5000)
+  try {
+    const response = await fetch(`${proxyUrl}/api/runtime/hdr-calibration`, {
+      method: save ? 'POST' : 'GET',
+      ...(save ? { headers: { 'Content-Type': 'application/json' }, body } : {}),
+      signal: controller.signal,
+    })
+    const context = await response.json()
+    if (!response.ok || !context.success) throw new Error(context.status_message || t.value.vddSettings.calibrationRefreshFailed)
+    return context
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
 const loadCalibrationContext = async ({ silent = false } = {}) => {
   if (isCalibrationContextLoading) return
   isCalibrationContextLoading = true
   if (!silent) isRefreshingCalibration.value = true
   try {
-    const proxyUrl = await sunshine.getProxyUrl()
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 2000)
-    let response
-    try {
-      response = await fetch(`${proxyUrl}/api/runtime/hdr-calibration`, { signal: controller.signal })
-    } finally {
-      clearTimeout(timeout)
-    }
-    if (!response.ok) throw new Error(`Sunshine API request failed (${response.status})`)
-    const context = await response.json()
-    if (!context.success) throw new Error(context.status_message || t.value.vddSettings.calibrationRefreshFailed)
+    const context = await requestCalibration()
 
     Object.assign(calibrationStatus, context, { statusText: '' })
     activeHdrClients.value = Array.isArray(context.activeClients) ? context.activeClients : []
@@ -1120,6 +1153,7 @@ const loadCalibrationContext = async ({ silent = false } = {}) => {
       vddActive: false,
       hdrEnabled: false,
       calibrated: false,
+      canCalibrate: false,
       profileName: null,
       maxNits: null,
       minNits: null,
@@ -1151,6 +1185,9 @@ const launchHdrCalibration = async () => {
       }
     )
     isLaunchingCalibration.value = true
+    // Recheck the active stream after the confirmation dialog before launching.
+    await loadCalibrationContext()
+    if (!canLaunchCalibration.value) return
     const result = await vdd.launchHdrCalibration()
     if (!result?.success) {
       throw new Error(result?.message || t.value.vddSettings.calibrationLaunchFailed)
@@ -1163,6 +1200,15 @@ const launchHdrCalibration = async () => {
     }
   } finally {
     isLaunchingCalibration.value = false
+  }
+}
+
+const bindHdrCalibration = async () => {
+  try {
+    Object.assign(calibrationStatus, await requestCalibration(true))
+    ElMessage.success(t.value.vddSettings.calibrationDetected)
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error, t.value.vddSettings.calibrationRefreshFailed))
   }
 }
 

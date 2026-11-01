@@ -267,7 +267,7 @@
           <div class="calibration-actions">
             <el-button
               type="primary"
-              :disabled="!canLaunchCalibration"
+              :disabled="!calibrationStatus.canCalibrate"
               :loading="isLaunchingCalibration"
               @click="launchHdrCalibration"
             >
@@ -275,7 +275,7 @@
               {{ calibrationStatus.calibrated ? t.vddSettings.calibrationRunAgain : t.vddSettings.calibrationLaunch }}
             </el-button>
             <el-button v-if="calibrationStatus.state === 'unbound_profile'"
-              :disabled="!canLaunchCalibration" @click="bindHdrCalibration">
+              :disabled="!calibrationStatus.canCalibrate" @click="bindHdrCalibration">
               {{ t.vddSettings.calibrationUseExisting }}
             </el-button>
             <el-button @click="openHdrCalibrationStore">
@@ -828,8 +828,6 @@ const isLaunchingPhysicalCalibration = ref(false)
 const activeSection = ref('overview')
 const hasLoadedSnapshot = ref(false)
 const lastSavedSnapshot = ref('')
-const activeHdrClients = ref([])
-const vddReuseEnabled = ref(false)
 const calibrationStatus = reactive({
   supported: true,
   vddActive: false,
@@ -845,6 +843,8 @@ const calibrationStatus = reactive({
   maxFullFrameNits: null,
   statusText: '',
 })
+const vddReuseEnabled = computed(() => Boolean(calibrationStatus.sharedVdd))
+
 let calibrationContextPollTimer = null
 let isCalibrationContextLoading = false
 
@@ -1057,16 +1057,8 @@ const driverDetectionDescription = computed(() => driverCheckPhase.value === 'sy
   : t.value.vddSettings.driverDetectionDesc)
 const vddCanInstall = computed(() => !['unsupported', 'payload_missing'].includes(vddStatus.state))
 const vddStatusLabel = useVddStatusLabel(t, vddStatus)
-const activeCalibrationClient = computed(() => activeHdrClients.value[0] || null)
+const activeCalibrationClient = computed(() => calibrationStatus.activeClients?.[0] || null)
 const hasActiveHdrClient = computed(() => Boolean(activeCalibrationClient.value))
-const canLaunchCalibration = computed(() =>
-  calibrationStatus.canCalibrate &&
-  hasActiveHdrClient.value &&
-  calibrationStatus.supported &&
-  calibrationStatus.vddActive &&
-  calibrationStatus.hdrEnabled &&
-  !vddReuseEnabled.value
-)
 const calibrationStatusTone = computed(() => {
   if (calibrationStatus.calibrated) return 'success'
   if (!calibrationStatus.supported) return 'danger'
@@ -1129,7 +1121,11 @@ const requestCalibration = async (save = false) => {
     })
     const context = await response.json()
     if (!response.ok || !context.success) throw new Error(context.status_message || t.value.vddSettings.calibrationRefreshFailed)
-    return context
+    return {
+      ...context,
+      canCalibrate: context.canCalibrate === true,
+      activeClients: Array.isArray(context.activeClients) ? context.activeClients : [],
+    }
   } finally {
     clearTimeout(timeout)
   }
@@ -1143,13 +1139,10 @@ const loadCalibrationContext = async ({ silent = false } = {}) => {
     const context = await requestCalibration()
 
     Object.assign(calibrationStatus, context, { statusText: '' })
-    activeHdrClients.value = Array.isArray(context.activeClients) ? context.activeClients : []
-    vddReuseEnabled.value = Boolean(context.sharedVdd)
   } catch (error) {
     console.error('Failed to load VDD calibration context:', error)
-    activeHdrClients.value = []
-    vddReuseEnabled.value = false
     Object.assign(calibrationStatus, {
+      activeClients: [],
       vddActive: false,
       hdrEnabled: false,
       calibrated: false,
@@ -1187,7 +1180,7 @@ const launchHdrCalibration = async () => {
     isLaunchingCalibration.value = true
     // Recheck the active stream after the confirmation dialog before launching.
     await loadCalibrationContext()
-    if (!canLaunchCalibration.value) return
+    if (!calibrationStatus.canCalibrate) return
     const result = await vdd.launchHdrCalibration()
     if (!result?.success) {
       throw new Error(result?.message || t.value.vddSettings.calibrationLaunchFailed)

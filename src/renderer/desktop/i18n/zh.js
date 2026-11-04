@@ -859,6 +859,7 @@ export const zh = {
     driverStatusCheckFailed: '检测基地显示器（ZakoVDD）驱动失败',
     installRepairTitle: '安装或修复基地显示器驱动（ZakoVDD）',
     installRepairConfirm: 'Windows 将请求管理员权限。若当前正在串流或基地显示器（ZakoVDD）正在使用，安装可能中断串流并暂时改变显示器布局。确定继续吗？',
+    installRepairTrust: '注意：本操作会把驱动签名证书（{subject}，指纹 {thumbprint}）加入本机“受信任的根证书颁发机构”，此后任何由该证书签名的内核代码都会被本机信任；卸载驱动时会尝试移除该证书；若驱动包未能全部清理或删除失败，证书可能保留。',
     installRepairSuccess: '基地显示器驱动已安装并通过验证',
     installRepairFailed: '安装或修复基地显示器驱动失败',
     installVerificationFailed: '安装完成，但驱动尚未就绪。请查看安装日志或重启 Windows 后重新检测。',

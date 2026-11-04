@@ -809,6 +809,9 @@ const vddStatus = reactive({
   version_match: false,
   monitor_active: false,
   status_text: '',
+  certificate_subject: '',
+  certificate_thumbprint: '',
+  certificate_trusted: false,
 })
 
 const isLoading = ref(false)
@@ -1400,8 +1403,15 @@ const installOrRepairDriver = async () => {
   }
 
   try {
+    // The installer adds the driver's signing certificate to the machine trust
+    // stores. Say so before asking for confirmation, when the probe knows it.
+    const trustNotice = vddStatus.certificate_thumbprint
+      ? ' ' + t.value.vddSettings.installRepairTrust
+        .replace('{subject}', vddStatus.certificate_subject || '-')
+        .replace('{thumbprint}', vddStatus.certificate_thumbprint)
+      : ''
     await ElMessageBox.confirm(
-      t.value.vddSettings.installRepairConfirm,
+      t.value.vddSettings.installRepairConfirm + trustNotice,
       t.value.vddSettings.installRepairTitle,
       {
         confirmButtonText: t.value.vddSettings.installRepairDriver,

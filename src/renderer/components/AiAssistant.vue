@@ -45,23 +45,52 @@
 
         <el-form v-show="showConfig" :model="config" label-width="120px" class="ai-form">
           <el-form-item :label="t.aiAssistant.provider">
-            <el-select v-model="config.provider" class="field-control" @change="onProviderChange">
+            <el-select v-model="config.provider" class="field-control" :disabled="isAuthBusy" @change="onProviderChange">
               <el-option v-for="p in providers" :key="p.value" :label="p.label" :value="p.value" />
             </el-select>
           </el-form-item>
 
-          <el-form-item :label="t.aiAssistant.apiUrl">
+          <el-form-item v-if="config.provider === 'openai'" :label="t.aiAssistant.authMode">
+            <el-select v-model="config.authMode" class="field-control" :disabled="isAuthBusy" @change="onAuthModeChange">
+              <el-option :label="t.aiAssistant.apiKeyMode" value="apiKey" />
+              <el-option :label="t.aiAssistant.chatgptMode" value="chatgpt" />
+            </el-select>
+          </el-form-item>
+
+          <el-form-item v-if="config.provider === 'openai' && config.authMode === 'chatgpt'" :label="t.aiAssistant.chatgptAccount">
+            <div class="field-control" aria-live="polite">
+              <el-tag :type="authPending ? 'warning' : config.codexConnected ? 'success' : 'info'">
+                {{ authPending ? (config.codexConnected ? t.aiAssistant.chatgptReauthPending : t.aiAssistant.chatgptPending) : config.codexConnected ? t.aiAssistant.chatgptConnected : t.aiAssistant.chatgptDisconnected }}
+              </el-tag>
+              <el-button v-if="!config.codexConnected || authPending" type="primary" :loading="isAuthBusy" @click="startCodexAuth">
+                {{ authPending ? t.aiAssistant.chatgptRestart : t.aiAssistant.chatgptSignIn }}
+              </el-button>
+              <el-button v-if="config.codexConnected" :disabled="isAuthBusy" @click="logoutCodexAuth">
+                {{ t.aiAssistant.chatgptSignOut }}
+              </el-button>
+              <template v-if="authPending">
+                <p v-if="authUserCode" class="form-tip">{{ t.aiAssistant.chatgptCode }} <strong><code>{{ authUserCode }}</code></strong></p>
+                <el-button v-if="authVerificationUri" link type="primary" @click="openCodexVerification">
+                  {{ t.aiAssistant.chatgptOpenBrowser }}
+                </el-button>
+                <p v-if="authVerificationUri" class="form-tip" style="overflow-wrap: anywhere">{{ authVerificationUri }}</p>
+              </template>
+              <p class="form-tip">{{ t.aiAssistant.chatgptHint }}</p>
+            </div>
+          </el-form-item>
+
+          <el-form-item v-if="config.authMode !== 'chatgpt'" :label="t.aiAssistant.apiUrl">
             <el-input v-model="config.apiBase" class="field-control" placeholder="https://api.openai.com/v1" />
           </el-form-item>
 
-          <el-form-item label="Compatibility">
+          <el-form-item v-if="config.authMode !== 'chatgpt'" label="Compatibility">
             <el-select v-model="config.compatibility" class="field-control">
               <el-option label="OpenAI Chat Completions" value="openai-chat" />
               <el-option label="Anthropic Messages" value="anthropic-messages" />
             </el-select>
           </el-form-item>
 
-          <el-form-item :label="t.aiAssistant.apiKey">
+          <el-form-item v-if="config.authMode !== 'chatgpt'" :label="t.aiAssistant.apiKey">
             <el-input
               v-model="config.apiKey"
               type="password"
@@ -93,12 +122,12 @@
               <el-button
                 :icon="Refresh"
                 :loading="isFetchingModels"
-                @click="fetchRemoteModels"
+                @click="fetchRemoteModels()"
                 :title="t.aiAssistant.fetchModels"
                 circle
               />
             </div>
-            <span class="form-tip">{{ t.aiAssistant.modelHint }}</span>
+            <span class="form-tip">{{ config.authMode === 'chatgpt' ? t.aiAssistant.chatgptModelHint : t.aiAssistant.modelHint }}</span>
           </el-form-item>
 
           <div class="form-actions">
@@ -229,11 +258,19 @@ const {
   isConnected,
   isLoading,
   isClearingApiKey,
+  isAuthBusy,
+  authPending,
+  authUserCode,
+  authVerificationUri,
   isFetchingModels,
   chatHistory,
   currentInput,
   availableModels,
   onProviderChange,
+  onAuthModeChange,
+  startCodexAuth,
+  logoutCodexAuth,
+  openCodexVerification,
   fetchRemoteModels,
   testConnection,
   sendMessage,

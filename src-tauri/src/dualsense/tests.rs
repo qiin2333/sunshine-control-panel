@@ -1087,6 +1087,8 @@ fn elevated_operations_are_strictly_allowlisted() {
         ElevatedOperation::parse("test-standard"),
         Some(ElevatedOperation::TestStandard)
     ));
+    assert_eq!(ElevatedOperation::parse("repair-gameinput"), Some(ElevatedOperation::RepairGameInput));
+    assert_eq!(ElevatedOperation::parse("restore-gameinput"), Some(ElevatedOperation::RestoreGameInput));
     assert!(ElevatedOperation::parse("test-custom").is_none());
     assert!(ElevatedOperation::parse("install C:\\Windows").is_none());
 }

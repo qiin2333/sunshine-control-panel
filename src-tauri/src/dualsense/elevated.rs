@@ -28,6 +28,8 @@ pub(crate) enum ElevatedOperation {
     Update,
     TestStandard,
     TestComposite,
+    RepairGameInput,
+    RestoreGameInput,
     Uninstall,
 }
 
@@ -40,6 +42,8 @@ impl ElevatedOperation {
             Self::Update => "update",
             Self::TestStandard => "test-standard",
             Self::TestComposite => "test-composite",
+            Self::RepairGameInput => "repair-gameinput",
+            Self::RestoreGameInput => "restore-gameinput",
             Self::Uninstall => "uninstall",
         }
     }
@@ -51,6 +55,8 @@ impl ElevatedOperation {
             "update" => Some(Self::Update),
             "test-standard" => Some(Self::TestStandard),
             "test-composite" => Some(Self::TestComposite),
+            "repair-gameinput" => Some(Self::RepairGameInput),
+            "restore-gameinput" => Some(Self::RestoreGameInput),
             "uninstall" => Some(Self::Uninstall),
             _ => None,
         }
@@ -64,6 +70,7 @@ impl ElevatedOperation {
                 std::time::Duration::from_secs(110 * 60)
             }
             Self::TestStandard | Self::TestComposite => std::time::Duration::from_secs(90),
+            Self::RepairGameInput | Self::RestoreGameInput => std::time::Duration::from_secs(60),
             Self::Uninstall => std::time::Duration::from_secs(120),
         }
     }
@@ -200,6 +207,11 @@ async fn run_elevated_helper(operation: ElevatedOperation, token: uuid::Uuid) ->
     } else {
         Ok(Vec::new())
     };
+    let mapping_backup = if operation == ElevatedOperation::RestoreGameInput {
+        super::gameinput::receive_backup_id(&mut pipe_reader).await
+    } else {
+        Ok(None)
+    };
     // After the optional package handoff, EOF means that the parent timed out
     // or failed. Long-running child processes are job-bound and terminate when
     // Windows closes this process's handles.
@@ -264,6 +276,12 @@ async fn run_elevated_helper(operation: ElevatedOperation, token: uuid::Uuid) ->
             }
             ElevatedOperation::TestComposite => {
                 dualsense_self_test_impl("composite".to_string()).await
+            }
+            ElevatedOperation::RepairGameInput => {
+                super::gameinput::run_mapping_command("repair", None).await
+            }
+            ElevatedOperation::RestoreGameInput => {
+                super::gameinput::run_mapping_command("restore", mapping_backup?).await
             }
             ElevatedOperation::Uninstall => serde_json::to_value(dualsense_uninstall_impl().await?)
                 .map_err(|error| error.to_string()),
@@ -366,9 +384,16 @@ pub(crate) async fn run_elevated_operation(
     app: Option<&tauri::AppHandle>,
     operation: ElevatedOperation,
     selected_packages: &[PathBuf],
+    backup_id: Option<String>,
 ) -> Result<serde_json::Value, String> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 
+    if (operation == ElevatedOperation::RestoreGameInput) != backup_id.is_some() {
+        return Err("DS5-MAP-001: invalid restore request".to_string());
+    }
+    if let Some(id) = &backup_id {
+        super::gameinput::validate_backup_id(id)?;
+    }
     let token = uuid::Uuid::new_v4();
     let mut local_packages = if operation == ElevatedOperation::InstallLocal {
         if selected_packages.is_empty() || selected_packages.len() > MAX_LOCAL_COMPONENT_PACKAGES {
@@ -460,6 +485,16 @@ pub(crate) async fn run_elevated_operation(
         })?;
     }
 
+    if let Some(id) = backup_id {
+        server
+            .write_all(id.as_bytes())
+            .await
+            .map_err(|e| format!("DS5-MAP-001: backup ID handoff failed: {e}"))?;
+        server
+            .flush()
+            .await
+            .map_err(|e| format!("DS5-MAP-001: backup ID handoff failed: {e}"))?;
+    }
     let receive = async move {
         let mut reader = BufReader::new(server);
         let mut final_result = None;

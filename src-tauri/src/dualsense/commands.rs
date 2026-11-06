@@ -16,9 +16,9 @@ use super::install::{dualsense_install_impl, dualsense_self_test_impl, dualsense
 #[cfg(not(target_os = "windows"))]
 use super::packages::classify_local_component_packages;
 use super::probe::{
-    dualsense_get_status_with_config, ensure_no_active_session,
-    ensure_no_active_session_for_uninstall, run_installed_probe, validate_requested_profile,
-    StatusProbeReuse, usbip_transport_status,
+    StatusProbeReuse, dualsense_get_status_with_config, ensure_no_active_session,
+    ensure_no_active_session_for_uninstall, run_installed_probe, usbip_transport_status,
+    validate_requested_profile,
 };
 use super::{
     COMPONENT_OPERATION, DualSenseStatus, DualSenseTuningResult, MAX_LOCAL_COMPONENT_PACKAGES,
@@ -85,7 +85,7 @@ pub async fn dualsense_install(
         } else {
             ElevatedOperation::InstallLocal
         };
-        let data = run_elevated_operation(Some(&app), operation, &selected_packages).await?;
+        let data = run_elevated_operation(Some(&app), operation, &selected_packages, None).await?;
         serde_json::from_value(data)
             .map_err(|error| format!("DS5-PKG-003: invalid administrator result: {error}"))
     }
@@ -179,7 +179,7 @@ pub async fn dualsense_self_test(profile: String) -> Result<serde_json::Value, S
         } else {
             ElevatedOperation::TestStandard
         };
-        return run_elevated_operation(None, operation, &[]).await;
+        return run_elevated_operation(None, operation, &[], None).await;
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -195,7 +195,7 @@ pub async fn dualsense_uninstall() -> Result<DualSenseStatus, String> {
     ensure_no_active_session_for_uninstall().await?;
     #[cfg(target_os = "windows")]
     {
-        let data = run_elevated_operation(None, ElevatedOperation::Uninstall, &[]).await?;
+        let data = run_elevated_operation(None, ElevatedOperation::Uninstall, &[], None).await?;
         serde_json::from_value(data)
             .map_err(|error| format!("DS5-PKG-003: invalid administrator result: {error}"))
     }
@@ -203,4 +203,37 @@ pub async fn dualsense_uninstall() -> Result<DualSenseStatus, String> {
     {
         dualsense_uninstall_impl().await
     }
+}
+
+/// Read the mapping independently of driver probing or virtual-device creation.
+#[tauri::command]
+pub async fn dualsense_gameinput_check() -> Result<serde_json::Value, String> {
+    let _operation = COMPONENT_OPERATION
+        .try_lock()
+        .map_err(|_| "DS5-RUN-002: another component operation is running".to_string())?;
+    super::gameinput::run_mapping_command("check", None).await
+}
+
+#[tauri::command]
+pub async fn dualsense_gameinput_repair(
+    backup_id: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let _operation = COMPONENT_OPERATION
+        .try_lock()
+        .map_err(|_| "DS5-RUN-002: another component operation is running".to_string())?;
+    ensure_no_active_session().await?;
+    if let Some(id) = &backup_id {
+        super::gameinput::validate_backup_id(id)?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let operation = if backup_id.is_some() {
+            ElevatedOperation::RestoreGameInput
+        } else {
+            ElevatedOperation::RepairGameInput
+        };
+        run_elevated_operation(None, operation, &[], backup_id).await
+    }
+    #[cfg(not(target_os = "windows"))]
+    Err("DS5-MAP-001: mapping repair is only supported on Windows".to_string())
 }

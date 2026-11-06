@@ -17,6 +17,7 @@ mod config;
 #[cfg(target_os = "windows")]
 mod elevated;
 mod install;
+mod gameinput;
 mod packages;
 mod probe;
 #[cfg(test)]

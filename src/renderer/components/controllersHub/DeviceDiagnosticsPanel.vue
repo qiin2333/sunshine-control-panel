@@ -13,6 +13,7 @@
         </article>
       </div>
       <div v-else class="chub-cards">
+        <GameInputRepairPanel />
         <!-- ControllerMeta -->
         <article class="chub-card">
           <div class="chub-card-head">
@@ -58,6 +59,7 @@
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
+import GameInputRepairPanel from './GameInputRepairPanel.vue'
 import { controllerMeta } from '../../tauri-adapter.js'
 import { useI18n } from '../../desktop/i18n/index.js'
 

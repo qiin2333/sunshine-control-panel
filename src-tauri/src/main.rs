@@ -277,6 +277,8 @@ fn main() {
             dualsense::dualsense_set_config,
             dualsense::dualsense_set_haptics_tuning,
             dualsense::dualsense_self_test,
+            dualsense::dualsense_gameinput_check,
+            dualsense::dualsense_gameinput_repair,
             usbip::usbip_get_status,
             usbip::usbip_get_forwarding_config,
             usbip::usbip_save_forwarding_config,

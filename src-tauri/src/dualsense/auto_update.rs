@@ -90,7 +90,7 @@ pub(crate) fn start_installed_component_update(app: tauri::AppHandle) {
             info!("Updating the installed DualSense component to {COMPONENT_VERSION}");
             // Reuse the same authorization, verified download, staging and
             // rollback as manual updates. This mode never installs USB/IP.
-            match run_elevated_operation(Some(&app), ElevatedOperation::Update, &[]).await {
+            match run_elevated_operation(Some(&app), ElevatedOperation::Update, &[], None).await {
                 Ok(_) => info!("DualSense component update completed"),
                 Err(error) => warn!(
                     "DualSense automatic update failed; manual update remains available: {error}"

@@ -135,6 +135,8 @@ export const dualsense = {
     noiseGate,
   }),
   selfTest: (profile) => wrapResult('dualsense_self_test', { profile }),
+  checkGameInput: () => wrapResult('dualsense_gameinput_check'),
+  repairGameInput: (backupId = null) => wrapResult('dualsense_gameinput_repair', { backupId }),
 }
 
 export const usbip = {

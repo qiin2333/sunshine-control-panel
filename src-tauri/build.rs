@@ -11,6 +11,8 @@ const GENERATED_CAPABILITY_PATH: &str = "capabilities/app-commands.generated.jso
 /// Commands that must never be exposed to the Sunshine backend remote origin.
 /// Their local window-scoped grants live in hand-written capability files.
 const LOCAL_ONLY_COMMANDS: &[&str] = &[
+    "dualsense_gameinput_check",
+    "dualsense_gameinput_repair",
     "capture_screenshot",
     "hdr_enhanced_select_backend",
     "list_native_components",

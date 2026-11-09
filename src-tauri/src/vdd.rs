@@ -32,6 +32,12 @@ pub struct VddStatus {
     pub version_match: bool,
     pub monitor_active: bool,
     pub status_text: String,
+    /// Subject of the certificate the bundled driver package is signed with.
+    pub certificate_subject: String,
+    /// Thumbprint of that certificate, as reported by the installer probe.
+    pub certificate_thumbprint: String,
+    /// Whether the certificate is already in a machine trust store.
+    pub certificate_trusted: bool,
 }
 
 impl VddStatus {
@@ -50,6 +56,14 @@ fn probe_value(output: &str, key: &str) -> String {
         .unwrap_or_default()
         .trim()
         .to_string()
+}
+
+fn certificate_facts(output: &str) -> (String, String, bool) {
+    (
+        probe_value(output, "VDD_CERT_SUBJECT"),
+        probe_value(output, "VDD_CERT_THUMBPRINT"),
+        probe_value(output, "VDD_CERT_TRUSTED") == "1",
+    )
 }
 
 fn vdd_probe_command_line(install_script: &Path) -> String {
@@ -187,6 +201,9 @@ fn probe_vdd_status() -> VddStatus {
         ("ready", "虚拟显示器驱动已就绪".to_string())
     };
 
+    let (certificate_subject, certificate_thumbprint, certificate_trusted) =
+        certificate_facts(&combined);
+
     VddStatus {
         state: state.to_string(),
         installed,
@@ -197,6 +214,9 @@ fn probe_vdd_status() -> VddStatus {
         version_match,
         monitor_active: false,
         status_text,
+        certificate_subject,
+        certificate_thumbprint,
+        certificate_trusted,
     }
 }
 
@@ -1482,6 +1502,24 @@ mod tests {
         assert!(!status("not_installed", false, false).is_usable());
         assert!(!status("unhealthy", true, true).is_usable());
         assert!(!status("reboot_required", true, true).is_usable());
+    }
+
+    #[test]
+    fn probe_reports_the_driver_certificate() {
+        let output = concat!(
+            "VDD_CERT_SUBJECT=CN=\"WDKTestCert example\"\n",
+            "VDD_CERT_THUMBPRINT=0BDDFE6D\n",
+            "VDD_CERT_TRUSTED=1\n"
+        );
+        let (subject, thumbprint, trusted) = certificate_facts(output);
+        assert_eq!(subject, "CN=\"WDKTestCert example\"");
+        assert_eq!(thumbprint, "0BDDFE6D");
+        assert!(trusted);
+
+        let (subject, thumbprint, trusted) = certificate_facts("");
+        assert!(subject.is_empty());
+        assert!(thumbprint.is_empty());
+        assert!(!trusted);
     }
 
     #[test]

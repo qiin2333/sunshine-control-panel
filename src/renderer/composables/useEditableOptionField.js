@@ -28,6 +28,7 @@ export function useEditableOptionField({
   initialValues = [],
   compare,
   validate,
+  normalize = (value) => value,
   messages = {},
 }) {
   const options = ref(new Set(normalizeValues(initialValues)))
@@ -47,7 +48,7 @@ export function useEditableOptionField({
   }
 
   const addValue = (rawValue) => {
-    const value = String(rawValue || '').trim()
+    const value = normalize(String(rawValue || '').trim())
 
     if (!validate(value)) {
       emitMessage(messages.invalid)

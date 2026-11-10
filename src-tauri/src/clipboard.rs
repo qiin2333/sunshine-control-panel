@@ -450,8 +450,8 @@ fn snapshot_and_post(echo: &Arc<Mutex<EchoState>>) {
     // File guard, evaluated with the payload in hand: skip only when the
     // file references came with nothing transferable (Explorer copies carry
     // no bitmap). QQ/WeChat image-message copies attach CF_HDROP + the real
-    // bitmap and sync the bitmap below; inbound applies keep the strict
-    // guard so remote content never clobbers a pending local file paste.
+    // bitmap and sync the bitmap below; inbound applies preserve pure file
+    // clipboards the same way (see is_pending_file_paste).
     if let Ok(files) = ctx.get_files() {
         if !files.is_empty() && text_bytes.is_none() && png_bytes.is_none() {
             st.current = None;
@@ -849,16 +849,51 @@ async fn apply_inbound_ref(frame: Frame, echo: Arc<Mutex<EchoState>>) {
     let _ = tauri::async_runtime::spawn_blocking(move || apply_inbound_inline(frame, &echo)).await;
 }
 
+/// True when the local clipboard is a *pure* file copy — file references with
+/// no transferable payload — and therefore a pending paste that remote
+/// content must not clobber. Image-message copies (QQ/WeChat) attach a
+/// cache-file reference (CF_HDROP) AND the real bitmap; guarding every
+/// file-bearing clipboard silently blocked ALL inbound sync for as long as
+/// such a clipboard sat on the host, and only replacing it (e.g. copying
+/// text) re-armed sync. Those compound clipboards are overwritten like any
+/// other transferable content, mirroring the outbound snapshot guard.
+fn is_pending_file_paste(files: &[String], has_text: bool, has_image: bool) -> bool {
+    !files.is_empty() && !has_text && !has_image
+}
+
+/// Clipboard-reading half of [`is_pending_file_paste`]. A failed flavor read
+/// counts as absent: this guard is a shield for a pending file paste, not a
+/// gate that may wedge sync on a transient read failure.
+fn local_clipboard_is_pending_file_paste(ctx: &ClipboardContext) -> bool {
+    let files = match ctx.get_files() {
+        Ok(files) if !files.is_empty() => files,
+        _ => return false,
+    };
+    let has_text = matches!(ctx.get_text(), Ok(ref t) if !t.is_empty());
+    let has_image = matches!(ctx.get_image(), Ok(ref i) if !i.is_empty());
+    if has_text || has_image {
+        debug!(
+            "local file clipboard carries a transferable payload ({} refs, text={}, image={}); remote content overwrites it",
+            files.len(),
+            has_text,
+            has_image
+        );
+        return false;
+    }
+    info!(
+        "preserving pending local file paste ({} file refs); inbound frame dropped",
+        files.len()
+    );
+    true
+}
+
 /// Write text + image flavors in one clipboard transaction. Only remember a
 /// successful write, while excluding the watcher from intermediate states.
 fn apply_compound(text: &[u8], png: &[u8], echo: &Arc<Mutex<EchoState>>) {
     // Preserve a pending local file paste (mirrors the inline-path guard).
     if let Ok(ctx) = ClipboardContext::new() {
-        if let Ok(files) = ctx.get_files() {
-            if !files.is_empty() {
-                debug!("local file clipboard detected; inbound compound dropped");
-                return;
-            }
+        if local_clipboard_is_pending_file_paste(&ctx) {
+            return;
         }
     }
 
@@ -952,15 +987,13 @@ fn apply_compound(text: &[u8], png: &[u8], echo: &Arc<Mutex<EchoState>>) {
 }
 
 fn apply_inbound_inline(frame: Frame, echo: &Arc<Mutex<EchoState>>) {
-    // Preserve a local file clipboard: Explorer/Finder copies can carry a
-    // thumbnail image, and overwriting them with remote content would
-    // destroy the pending file paste. Mirrors the Qt client's guard.
+    // Preserve a pure file clipboard — a pending Explorer-style paste whose
+    // only payload is the file list. File-bearing clipboards that also carry
+    // a transferable payload (QQ/WeChat image-message copies) are overwritten
+    // like any other content; see is_pending_file_paste.
     if let Ok(ctx) = ClipboardContext::new() {
-        if let Ok(files) = ctx.get_files() {
-            if !files.is_empty() {
-                debug!("local file clipboard detected; inbound dropped");
-                return;
-            }
+        if local_clipboard_is_pending_file_paste(&ctx) {
+            return;
         }
     }
 
@@ -1715,5 +1748,37 @@ mod echo_tests {
         let encoded = ClipboardIdentity::new(None, Some(b"png"), None);
         assert!(!state.observe(encoded));
         assert!(state.observe(encoded));
+    }
+}
+
+#[cfg(test)]
+mod file_guard_tests {
+    use super::*;
+
+    #[test]
+    fn pure_file_copy_is_a_pending_paste() {
+        assert!(is_pending_file_paste(&["C:\\a.txt".to_string()], false, false));
+        assert!(is_pending_file_paste(
+            &["C:\\a.txt".to_string(), "C:\\b.txt".to_string()],
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn file_refs_with_transferable_payload_are_overwritten() {
+        // QQ/WeChat image-message copies: CF_HDROP + bitmap, with or without
+        // a caption. Overwriting them is the intended sync outcome — guarding
+        // them used to block every inbound frame until the host clipboard was
+        // replaced by hand.
+        assert!(!is_pending_file_paste(&["cache.bin".to_string()], false, true));
+        assert!(!is_pending_file_paste(&["cache.bin".to_string()], true, true));
+        assert!(!is_pending_file_paste(&["cache.bin".to_string()], true, false));
+    }
+
+    #[test]
+    fn clipboards_without_file_refs_are_never_preserved() {
+        assert!(!is_pending_file_paste(&[], false, false));
+        assert!(!is_pending_file_paste(&[], true, true));
     }
 }

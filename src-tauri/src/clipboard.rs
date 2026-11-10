@@ -51,7 +51,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use base64::Engine as _;
 use clipboard_rs::{
     common::RustImage as _, Clipboard, ClipboardContext, ClipboardHandler, ClipboardWatcher,
-    ClipboardWatcherContext, RustImageData, WatcherShutdown,
+    ClipboardWatcherContext, ContentFormat, RustImageData, WatcherShutdown,
 };
 use log::{debug, info, warn};
 use serde::Serialize;
@@ -861,16 +861,32 @@ fn is_pending_file_paste(files: &[String], has_text: bool, has_image: bool) -> b
     !files.is_empty() && !has_text && !has_image
 }
 
-/// Clipboard-reading half of [`is_pending_file_paste`]. A failed flavor read
-/// counts as absent: this guard is a shield for a pending file paste, not a
-/// gate that may wedge sync on a transient read failure.
+/// Clipboard-reading half of [`is_pending_file_paste`]. Format availability is
+/// checked before reading payloads: the guard only needs to know whether a
+/// transferable flavor exists, and decoding a potentially large local image
+/// for every inbound frame would unnecessarily block the SSE pump. A text
+/// flavor is counted only when it contains non-empty text, matching the
+/// outbound snapshot contract; image format presence is sufficient because a
+/// producer may expose a valid image lazily.
+fn clipboard_has_image_format(ctx: &ClipboardContext) -> bool {
+    // clipboard-rs 0.3's Windows `has(ContentFormat::Image)` assumes that
+    // its optional registered PNG format is present and unwraps it. If
+    // registration failed, preserve the file clipboard rather than allowing
+    // a library panic to take down the agent.
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        ctx.has(ContentFormat::Image)
+    }))
+    .unwrap_or(false)
+}
+
 fn local_clipboard_is_pending_file_paste(ctx: &ClipboardContext) -> bool {
     let files = match ctx.get_files() {
         Ok(files) if !files.is_empty() => files,
         _ => return false,
     };
-    let has_text = matches!(ctx.get_text(), Ok(ref t) if !t.is_empty());
-    let has_image = matches!(ctx.get_image(), Ok(ref i) if !i.is_empty());
+    let has_text = ctx.has(ContentFormat::Text)
+        && matches!(ctx.get_text(), Ok(ref t) if !t.is_empty());
+    let has_image = clipboard_has_image_format(ctx);
     if has_text || has_image {
         debug!(
             "local file clipboard carries a transferable payload ({} refs, text={}, image={}); remote content overwrites it",
@@ -890,13 +906,6 @@ fn local_clipboard_is_pending_file_paste(ctx: &ClipboardContext) -> bool {
 /// Write text + image flavors in one clipboard transaction. Only remember a
 /// successful write, while excluding the watcher from intermediate states.
 fn apply_compound(text: &[u8], png: &[u8], echo: &Arc<Mutex<EchoState>>) {
-    // Preserve a pending local file paste (mirrors the inline-path guard).
-    if let Ok(ctx) = ClipboardContext::new() {
-        if local_clipboard_is_pending_file_paste(&ctx) {
-            return;
-        }
-    }
-
     let text_str = match std::str::from_utf8(text) {
         Ok(s) if !s.is_empty() && !s.contains('\0') => s,
         _ => {
@@ -912,6 +921,16 @@ fn apply_compound(text: &[u8], png: &[u8], echo: &Arc<Mutex<EchoState>>) {
             return;
         }
     };
+
+    // Hold the echo lock across the guard and write so the outbound watcher
+    // cannot snapshot the clipboard between those two operations.
+    let mut st = echo.lock().unwrap_or_else(|e| e.into_inner());
+    // Preserve a pending local file paste (mirrors the inline-path guard).
+    if let Ok(ctx) = ClipboardContext::new() {
+        if local_clipboard_is_pending_file_paste(&ctx) {
+            return;
+        }
+    }
 
     // Bound decoded pixel count (mirrors the inline PNG path).
     let cursor = std::io::Cursor::new(png);
@@ -934,8 +953,6 @@ fn apply_compound(text: &[u8], png: &[u8], echo: &Arc<Mutex<EchoState>>) {
         }
     };
     let pixel_hash = hash_image_pixels(&img);
-
-    let mut st = echo.lock().unwrap_or_else(|e| e.into_inner());
 
     #[cfg(windows)]
     {
@@ -991,14 +1008,9 @@ fn apply_inbound_inline(frame: Frame, echo: &Arc<Mutex<EchoState>>) {
     // only payload is the file list. File-bearing clipboards that also carry
     // a transferable payload (QQ/WeChat image-message copies) are overwritten
     // like any other content; see is_pending_file_paste.
-    if let Ok(ctx) = ClipboardContext::new() {
-        if local_clipboard_is_pending_file_paste(&ctx) {
-            return;
-        }
-    }
-
+    // Hold the echo lock across the guard and write so the outbound watcher
+    // cannot snapshot the clipboard between those two operations.
     let mut st = echo.lock().unwrap_or_else(|e| e.into_inner());
-
     let ctx = match ClipboardContext::new() {
         Ok(c) => c,
         Err(e) => {
@@ -1006,6 +1018,9 @@ fn apply_inbound_inline(frame: Frame, echo: &Arc<Mutex<EchoState>>) {
             return;
         }
     };
+    if local_clipboard_is_pending_file_paste(&ctx) {
+        return;
+    }
 
     match frame.kind {
         Kind::Text => {

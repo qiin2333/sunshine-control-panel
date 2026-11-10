@@ -709,6 +709,7 @@ import {
   Tools,
 } from '@element-plus/icons-vue'
 import { useEditableOptionField } from '../composables/useEditableOptionField.js'
+import { normalizeResolution } from '../composables/resolutionInput.js'
 import { useVddEdid } from '../composables/useVddEdid.js'
 import { useVddStatusLabel } from '../composables/useVddStatusLabel.js'
 import { installVddWithRecovery } from '../composables/vddInstallRecovery.js'
@@ -889,6 +890,7 @@ const {
   removeValue: removeResolution,
 } = useEditableOptionField({
   compare: compareResolutions,
+  normalize: normalizeResolution,
   validate: (value) => {
     if (!RESOLUTION_PATTERN.test(value)) {
       return false
